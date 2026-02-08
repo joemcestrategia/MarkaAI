@@ -1,0 +1,28 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Public collections: allow read for unauthenticated users so
+    // public shop pages work without login (e.g. markaai.com.br/slug).
+    match /shops/{shopId} {
+      allow read: if true;
+      // Writes require authentication; owners should be validated in app/cloud functions.
+      allow write: if request.auth != null;
+    }
+
+    match /services/{serviceId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    // Allow public reads for reviews (if you store them in a separate collection)
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    // Default: require auth for other documents (appointments, users, etc.)
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}

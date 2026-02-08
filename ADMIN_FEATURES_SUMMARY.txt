@@ -1,0 +1,62 @@
+Admin Panel - Features Summary
+
+Implemented features (so far):
+
+- Authentication & Roles
+  - Admin / admin_dev role checks (Firestore roles and custom claims).
+  - Protected admin routes.
+
+- Cloud Functions
+  - onAppointmentValidatePolicy: enforce shop config permitir_multiplos.
+  - sendTestNotification: HTTP function to send test push notifications for appointment events (new, cancel, reminder).
+  - Various payment and MercadoPago helper endpoints (existing).
+
+- Admin UI
+  - Admin page with tabs: Pesquisa, Lojas, Usuários, Funcionários, Agendamentos.
+  - Search panel (Pesquisa) with:
+    - Search by email / phone / name across users or shops.
+    - Quick test buttons for two test accounts.
+    - Click-to-open editor for user and shop.
+  - Users list: promote/remove admin, open editor (edit name, email, phone, tipo).
+  - Shops list: open editor, edit name, phone, category.
+  - Appointments list: view details and run test notification (previously).
+  - Audit logs: writes to collection "admin_audit" on edits.
+
+- Shop categories
+  - New collection "service_categories" to store normalized categories.
+  - Shop editor allows choosing existing category or "Other" to add new.
+  - Deduplication uses `name_lower` lowercase field to avoid duplicates.
+
+- Editing & Safety
+  - Edits use Firestore merge to avoid overwriting unrelated fields.
+  - All edits recorded in admin_audit (adminUid, action, targetId, before, after, timestamp).
+
+Suggested next items (plans)
+
+Basic plan (included)
+- Admin: view users, basic edit, search, audit logs.
+- Push testing via sendTestNotification.
+- Shop categories list management (add/remove via admin UI).
+
+Pro plan
+- Full CRUD for shops, users, employees with relational views.
+- Role management UI with granular permissions.
+- Export/import CSV for users/shops.
+- Scheduled reminders management with preview and history.
+- Advanced logs and change rollback.
+
+Enterprise plan
+- Multi-tenant dashboards, white-labeling options.
+- Priority support, SLA, extended analytics.
+- Integration with external CRMs and accounting software.
+
+Notes and operational details:
+- The search implements prefix name search (range query) and exact match for email/phone.
+- Category normalization uses lowercase comparison before creating new category.
+- If you want stricter deduplication, consider fuzzy matching / canonicalization (remove accents).
+
+How to extend:
+- Add UI for managing service_categories (rename, merge duplicates).
+- Add confirmation modal prior to destructive edits.
+- Add server-side validation rules and stricter Firestore Security Rules.
+

@@ -1,0 +1,63 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "wismart-118c3",
+          "appId": "1:170942564821:android:2635798cc73d6202cfd55c",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "wismart-118c3",
+          "configurations": {
+            "android": "1:170942564821:android:2635798cc73d6202cfd55c",
+            "ios": "1:170942564821:ios:4c340bd37f25ad5dcfd55c",
+            "web": "1:170942564821:web:a326f050b2a75ebacfd55c"
+          }
+        }
+      }
+    }
+  },
+  "firestore": {
+    "database": "(default)",
+    "location": "nam5",
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "hosting": {
+    "public": "build/web",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  },
+  "storage": {
+    "rules": "storage.rules"
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "disallowLegacyRuntimeConfig": true,
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ],
+      "predeploy": [
+        // "npm --prefix \"$RESOURCE_DIR\" run lint"   // Comentado para evitar erro no Windows
+      ]
+    }
+  ]
+}

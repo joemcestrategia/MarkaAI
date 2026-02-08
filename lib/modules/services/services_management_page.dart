@@ -1,0 +1,816 @@
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:cached_network_image/cached_network_image.dart';
+import '../../core/theme/app_colors.dart';
+import '../../core/services/session_service.dart';
+import 'service_register_page.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
+
+// --- CLASSE DE DETALHES (MANTIDA E OTIMIZADA) ---
+class ServiceDetailsPage extends StatelessWidget {
+  final DocumentSnapshot doc;
+  final VoidCallback onClose;
+  final VoidCallback onEdit;
+
+  const ServiceDetailsPage({
+    super.key,
+    required this.doc,
+    required this.onClose,
+    required this.onEdit,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final data = doc.data() as Map<String, dynamic>;
+    List<dynamic> fotos = data['fotos_urls'] ?? [];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return Container(
+          color: Colors.white,
+          height: constraints.maxHeight,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // HEADER
+              Container(
+                height: 50,
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                decoration: BoxDecoration(
+                  border: Border(bottom: BorderSide(color: Colors.grey[200]!)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      "Detalhes",
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                    Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.edit, size: 20, color: AppColors.primaryPurple),
+                          onPressed: onEdit,
+                          tooltip: "Editar",
+                        ),
+                        const SizedBox(width: 4),
+                        IconButton(
+                          icon: const Icon(Icons.close, size: 20),
+                          onPressed: onClose,
+                          tooltip: "Fechar",
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+
+              // CONTEÚDO COM SCROLL (Para não quebrar em telas pequenas)
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // GALERIA
+                      if (fotos.isNotEmpty)
+                        SizedBox(
+                          height: 200, // Aumentei um pouco para ficar mais bonito
+                          width: double.infinity,
+                          child: PageView.builder(
+                            itemCount: fotos.length,
+                            itemBuilder: (context, i) => Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                CachedNetworkImage(
+                                  imageUrl: fotos[i],
+                                  fit: BoxFit.cover,
+                                  placeholder: (context, url) => Container(color: Colors.grey[100]),
+                                  errorWidget: (context, url, error) => const Icon(Icons.error),
+                                ),
+                                Positioned(
+                                  bottom: 8,
+                                  right: 8,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withValues(alpha: 0.5),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(
+                                      "${i + 1}/${fotos.length}",
+                                      style: const TextStyle(color: Colors.white, fontSize: 10),
+                                    ),
+                                  ),
+                                )
+                              ],
+                            ),
+                          ),
+                        )
+                      else
+                        Container(
+                          height: 150,
+                          width: double.infinity,
+                          color: Colors.grey[50],
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: const [
+                              Icon(Icons.image_not_supported, size: 30, color: Colors.grey),
+                              Text("Sem fotos", style: TextStyle(color: Colors.grey, fontSize: 12))
+                            ],
+                          ),
+                        ),
+
+                      Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              data['nome'] ?? "",
+                              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                _buildBadge(data['categoria'] ?? "Serviço", AppColors.primaryPurple),
+                                if (data['ativo'] == false) ...[
+                                  const SizedBox(width: 8),
+                                  _buildBadge("INATIVO", Colors.red),
+                                ]
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _buildInfoCard(
+                                    Icons.timer_outlined,
+                                    "Duração",
+                                    "${data['tempo_min']} min",
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: _buildInfoCard(
+                                    Icons.attach_money,
+                                    "Valor",
+                                    "R\$ ${data['preco']}",
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            const Divider(),
+                            const SizedBox(height: 8),
+                            const Text(
+                              "Descrição",
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.grey,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              data['descricao']?.toString().isNotEmpty == true
+                                  ? data['descricao']
+                                  : "Nenhuma descrição.",
+                              style: const TextStyle(
+                                fontSize: 14,
+                                height: 1.4,
+                                color: Colors.black87,
+                              ),
+                            ),
+                            const SizedBox(height: 40), // Espaço extra final
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildBadge(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: color,
+          fontWeight: FontWeight.bold,
+          fontSize: 11,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoCard(IconData icon, String label, String value) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8F9FA),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey[200]!),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: Colors.black87),
+          const SizedBox(width: 8),
+          Expanded( // Adicionado Expanded para evitar overflow de texto
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(color: Colors.grey[600], fontSize: 10),
+                ),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// --- PÁGINA DE GESTÃO (AGORA RESPONSIVA) ---
+class ServicesManagementPage extends StatefulWidget {
+  const ServicesManagementPage({super.key});
+
+  @override
+  State<ServicesManagementPage> createState() => _ServicesManagementPageState();
+}
+
+class _ServicesManagementPageState extends State<ServicesManagementPage> {
+  String? shopId;
+  bool _isLoading = true;
+
+  // Controle Desktop
+  bool _showPanel = false;
+  bool _isEditing = false;
+  DocumentSnapshot? _selectedService;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadShopId();
+  }
+
+  Future<void> _loadShopId() async {
+    try {
+      final id = await SessionService.getShopId();
+      if (mounted) {
+        setState(() {
+          shopId = id;
+          _isLoading = false;
+        });
+      }
+
+      if (id == null || id.isEmpty) {
+        await _loadShopIdFromUser();
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _loadShopIdFromUser() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+        if (userDoc.exists) {
+          final userData = userDoc.data() as Map<String, dynamic>;
+          if (mounted) {
+            setState(() {
+              shopId = userData['shopId'];
+              _isLoading = false;
+            });
+          }
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint("Erro load user shop: $e");
+    }
+  }
+
+  // 🧠 CÉREBRO DA NAVEGAÇÃO: Decide se abre painel (PC) ou navega (Mobile)
+  void _handleServiceTap(BuildContext context, DocumentSnapshot doc, bool isMobile) {
+    if (isMobile) {
+      // 📱 MOBILE: Navega para nova tela
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => Scaffold(
+            body: SafeArea(
+              child: ServiceDetailsPage(
+                doc: doc,
+                onClose: () => Navigator.pop(context),
+                onEdit: () {
+                  // Ao clicar em editar dentro do mobile, empilhamos a tela de edição
+                  Navigator.pop(context); // Fecha detalhes
+                  _handleCreateTap(context, isMobile, docToEdit: doc); // Abre edição
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+    } else {
+      // 💻 DESKTOP: Abre painel lateral
+      _openDetailsModeDesktop(doc);
+    }
+  }
+
+  void _handleCreateTap(BuildContext context, bool isMobile, {DocumentSnapshot? docToEdit}) {
+    if (isMobile) {
+      // 📱 MOBILE: Navega para tela de cadastro
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => Scaffold(
+            appBar: AppBar(
+              title: Text(docToEdit == null ? "Novo Serviço" : "Editar Serviço"),
+              backgroundColor: Colors.white,
+              foregroundColor: Colors.black,
+              elevation: 1,
+            ),
+            body: ServiceRegisterPage(
+              serviceToEdit: docToEdit,
+              onClose: () => Navigator.pop(context),
+            ),
+          ),
+        ),
+      );
+    } else {
+      // 💻 DESKTOP: Abre painel lateral
+      if (docToEdit != null) {
+        _openEditModeDesktop(docToEdit);
+      } else {
+        _openCreateModeDesktop();
+      }
+    }
+  }
+
+  // --- Funções de Estado para Desktop ---
+  void _openCreateModeDesktop() {
+    setState(() {
+      _selectedService = null;
+      _isEditing = true;
+      _showPanel = true;
+    });
+  }
+
+  void _openDetailsModeDesktop(DocumentSnapshot doc) {
+    setState(() { _showPanel = false; }); // Reset para rebuild
+    Future.delayed(const Duration(milliseconds: 50), () {
+        if (mounted) {
+            setState(() {
+            _selectedService = doc;
+            _isEditing = false;
+            _showPanel = true;
+            });
+        }
+    });
+  }
+
+  void _openEditModeDesktop(DocumentSnapshot doc) {
+    setState(() {
+      _selectedService = doc;
+      _isEditing = true;
+      _showPanel = true;
+    });
+  }
+
+  void _closePanel() {
+    setState(() {
+      _showPanel = false;
+      _selectedService = null;
+      _isEditing = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 1. Loading
+    if (_isLoading) {
+      return const Scaffold(
+        backgroundColor: Color(0xFFF5F7FB),
+        body: Center(child: CircularProgressIndicator(color: AppColors.primaryPurple)),
+      );
+    }
+
+    // 2. Erro ShopId
+    if (shopId == null || shopId!.isEmpty) {
+      return Scaffold(
+        backgroundColor: const Color(0xFFF5F7FB),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline, size: 64, color: Colors.red),
+              const SizedBox(height: 16),
+              const Text("Erro ao carregar loja"),
+              ElevatedButton(
+                onPressed: () {
+                  setState(() => _isLoading = true);
+                  _loadShopId();
+                },
+                child: const Text("Tentar Novamente"),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // 3. 🛡️ LAYOUT RESPONSIVO (O Guardião)
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        bool isMobile = constraints.maxWidth < 850;
+
+        // No mobile, usamos Scaffold normal com FAB. No desktop, o botão fica no header.
+        return Scaffold(
+          backgroundColor: const Color(0xFFF5F7FB),
+          
+          floatingActionButton: isMobile // Só mostra FAB no mobile
+              ? FloatingActionButton(
+                  onPressed: () => _handleCreateTap(context, isMobile),
+                  backgroundColor: AppColors.primaryPurple,
+                  child: const Icon(Icons.add, color: Colors.white),
+                )
+              : null,
+
+          body: isMobile
+              ? _buildListContent(isMobile) // Mobile: Só lista
+              : Row( // Desktop: Lista + Painel
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: _buildListContent(isMobile),
+                    ),
+                    if (_showPanel) ...[
+                      VerticalDivider(width: 1, color: Colors.grey[300]),
+                      Expanded(
+                        flex: 2,
+                        child: _isEditing
+                            ? ServiceRegisterPage(
+                                key: ValueKey(_selectedService?.id ?? 'novo'), // Força rebuild
+                                serviceToEdit: _selectedService,
+                                onClose: _closePanel,
+                              )
+                            : ServiceDetailsPage(
+                                doc: _selectedService!,
+                                onClose: _closePanel,
+                                onEdit: () => _openEditModeDesktop(_selectedService!),
+                              ),
+                      ),
+                    ],
+                  ],
+                ),
+        );
+      },
+    );
+  }
+
+  // 🧩 WIDGET DE LISTA REUSÁVEL
+  Widget _buildListContent(bool isMobile) {
+    return Column(
+      children: [
+        // CABEÇALHO DA LISTA
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+               const Text(
+                "Serviços",
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+              ),
+              // No Desktop, o botão de novo serviço fica aqui
+              if (!isMobile)
+                ElevatedButton.icon(
+                  onPressed: () => _handleCreateTap(context, isMobile),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primaryPurple,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  ),
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text("NOVO SERVIÇO"),
+                ),
+            ],
+          ),
+        ),
+
+        // LISTA (STREAM)
+        Expanded(
+          child: StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance
+                .collection('services')
+                .where('shopId', isEqualTo: shopId)
+                .snapshots(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator(color: AppColors.primaryPurple));
+              }
+
+              if (snapshot.hasError) {
+                return Center(child: Text("Erro: ${snapshot.error}"));
+              }
+
+              if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                return _buildEmptyState();
+              }
+
+              return ListView.separated(
+                padding: const EdgeInsets.fromLTRB(24, 0, 24, 80),
+                itemCount: snapshot.data!.docs.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 10),
+                itemBuilder: (context, index) {
+                  var doc = snapshot.data!.docs[index];
+                  Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+                  // Seleção visual apenas no Desktop
+                  bool isSelected = !isMobile && _showPanel && _selectedService?.id == doc.id;
+
+                  return GestureDetector(
+                    onTap: () => _handleServiceTap(context, doc, isMobile),
+                    child: Container(
+                      decoration: isSelected
+                          ? BoxDecoration(
+                              border: Border.all(color: AppColors.primaryPurple, width: 2),
+                              borderRadius: BorderRadius.circular(14),
+                            )
+                          : null,
+                      child: _buildCompactCard(doc, data, index),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCompactCard(DocumentSnapshot doc, Map<String, dynamic> data, int index) {
+    List<dynamic> fotos = data['fotos_urls'] ?? [];
+    String nome = data['nome'] ?? "";
+    bool ativo = data['ativo'] ?? true;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black12,
+            blurRadius: 4,
+            offset: Offset(0, 2),
+          )
+        ],
+      ),
+      padding: const EdgeInsets.all(10),
+      child: Row(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: SizedBox(
+              width: 70,
+              height: 70,
+              child: _buildSmartImage(fotos, nome, data['categoria'] ?? "", index),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  nome,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    color: ativo ? Colors.black87 : Colors.grey,
+                    decoration: ativo ? null : TextDecoration.lineThrough,
+                  ),
+                  maxLines: 1,
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    _buildTag(Icons.access_time, "${data['tempo_min']} min", Colors.blue),
+                    const SizedBox(width: 8),
+                    _buildTag(Icons.attach_money, "R\$ ${data['preco']}", Colors.green),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.more_vert, size: 20, color: Colors.grey),
+            onPressed: () => _showOptions(doc),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTag(IconData icon, String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 4),
+          Text(
+            text,
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.w600,
+              fontSize: 11,
+            ),
+          )
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.content_cut, size: 48, color: Colors.grey[300]),
+          const SizedBox(height: 16),
+          const Text(
+            "Nenhum serviço cadastrado",
+            style: TextStyle(color: Colors.grey, fontSize: 16),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            "Clique em 'Novo Serviço' para começar",
+            style: TextStyle(color: Colors.grey, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSmartImage(List<dynamic> fotos, String nome, String categoria, int index) {
+    if (fotos.isNotEmpty) {
+      return CachedNetworkImage( // Usar CachedNetworkImage aqui também é melhor
+        imageUrl: fotos[0],
+        fit: BoxFit.cover,
+        placeholder: (context, url) => Container(color: Colors.grey[100]),
+        errorWidget: (context, url, error) => const Icon(Icons.error),
+      );
+    }
+    return _PexelsImage(searchQuery: 'beauty salon', index: index);
+  }
+
+  void _showOptions(DocumentSnapshot doc) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            leading: const Icon(Icons.edit, color: AppColors.primaryPurple),
+            title: const Text("Editar"),
+            onTap: () {
+              Navigator.pop(context);
+              // Lógica Responsiva de Edição
+              bool isMobile = MediaQuery.of(context).size.width < 850;
+              if (isMobile) {
+                  _handleCreateTap(context, true, docToEdit: doc);
+              } else {
+                  _openEditModeDesktop(doc);
+              }
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.delete, color: Colors.red),
+            title: const Text("Excluir"),
+            onTap: () {
+              Navigator.pop(context);
+              _confirmDelete(doc.id);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmDelete(String docId) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Excluir Serviço?"),
+        content: const Text("Esta ação não pode ser desfeita."),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Cancelar"),
+          ),
+          TextButton(
+            onPressed: () {
+              FirebaseFirestore.instance.collection('services').doc(docId).delete();
+              if (_selectedService?.id == docId) _closePanel();
+              Navigator.pop(context);
+              
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text("Serviço excluído com sucesso"),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            },
+            child: const Text("Excluir", style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ✅ WIDGET DE IMAGEM PEXELS (MANTIDO IGUAL)
+class _PexelsImage extends StatefulWidget {
+  final String searchQuery;
+  final int index;
+  const _PexelsImage({required this.searchQuery, required this.index});
+  
+  @override
+  State<_PexelsImage> createState() => _PexelsImageState();
+}
+
+class _PexelsImageState extends State<_PexelsImage> {
+  String? _imageUrl;
+  static const String _pexelsApiKey = '1RYDlI3xTEeYwIHOfwh3MZCslQNj3XYeQ7MmyoBRTy6uRQxujW7nfvkf';
+  
+  @override
+  void initState() {
+    super.initState();
+    _loadImage();
+  }
+  
+  Future<void> _loadImage() async {
+    try {
+      final url = Uri.parse(
+        'https://api.pexels.com/v1/search?query=${Uri.encodeComponent(widget.searchQuery)}&per_page=15'
+      );
+      final response = await http.get(url, headers: {'Authorization': _pexelsApiKey});
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final photos = data['photos'] as List;
+        if (photos.isNotEmpty && mounted) {
+          setState(() => _imageUrl = photos[widget.index % photos.length]['src']['medium']);
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint("Erro ao carregar imagem Pexels: $e");
+    }
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    if (_imageUrl == null) {
+      return Container(
+        color: Colors.grey[200],
+        child: const Icon(Icons.image, color: Colors.grey),
+      );
+    }
+    return Image.network(_imageUrl!, fit: BoxFit.cover);
+  }
+}

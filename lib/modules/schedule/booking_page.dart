@@ -1,0 +1,721 @@
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:intl/intl.dart';
+import '../../core/theme/app_colors.dart';
+import '../../pages/checkout_page.dart';
+
+// Helper reutilizável para geração de horários
+List<String> generateSmartSlots({
+  required String startStr,
+  required String endStr,
+  required int interval,
+  required int serviceDuration,
+  required List<Map<String, int>> busyIntervals,
+  required bool preventGaps,
+  required int minAdvanceHours,
+  required DateTime selectedDate,
+}) {
+  List<String> validSlots = [];
+  try {
+    int startDayMin = int.parse(startStr.split(':')[0]) * 60 + int.parse(startStr.split(':')[1]);
+    int endDayMin = int.parse(endStr.split(':')[0]) * 60 + int.parse(endStr.split(':')[1]);
+
+    busyIntervals.sort((a, b) => a['start']!.compareTo(b['start']!));
+
+    if (preventGaps) {
+      Set<int> anchorPoints = {startDayMin};
+      for (var busy in busyIntervals) {
+        if (busy['end']! < endDayMin) {
+          anchorPoints.add(busy['end']!);
+        }
+      }
+
+      List<int> sortedAnchors = anchorPoints.toList()..sort();
+
+      for (int anchor in sortedAnchors) {
+        int current = anchor;
+        int slotEnd = current + serviceDuration;
+        if (slotEnd > endDayMin) continue;
+        bool hasCollision = false;
+        for (var busy in busyIntervals) {
+          if (current < busy['end']! && slotEnd > busy['start']!) {
+            hasCollision = true;
+            break;
+          }
+        }
+
+        bool isPast = false;
+        final now = DateTime.now();
+        final slotDt = DateTime(selectedDate.year, selectedDate.month, selectedDate.day, current ~/ 60, current % 60);
+        final minAllowedTime = now.add(Duration(hours: minAdvanceHours));
+        if (slotDt.isBefore(minAllowedTime)) isPast = true;
+
+        if (!hasCollision && !isPast) {
+          String timeString = "${(current ~/ 60).toString().padLeft(2, '0')}:${(current % 60).toString().padLeft(2, '0')}";
+          if (!validSlots.contains(timeString)) validSlots.add(timeString);
+        }
+      }
+    } else {
+      int current = startDayMin;
+      while (current < endDayMin) {
+        int slotEnd = current + serviceDuration;
+        if (slotEnd > endDayMin) break;
+        bool hasCollision = false;
+        for (var busy in busyIntervals) {
+          if (current < busy['end']! && slotEnd > busy['start']!) {
+            hasCollision = true;
+            break;
+          }
+        }
+
+        bool isPast = false;
+        final now = DateTime.now();
+        final slotDt = DateTime(selectedDate.year, selectedDate.month, selectedDate.day, current ~/ 60, current % 60);
+        final minAllowedTime = now.add(Duration(hours: minAdvanceHours));
+        if (slotDt.isBefore(minAllowedTime)) isPast = true;
+
+        if (!hasCollision && !isPast) {
+          String timeString = "${(current ~/ 60).toString().padLeft(2, '0')}:${(current % 60).toString().padLeft(2, '0')}";
+          validSlots.add(timeString);
+        }
+        current += interval;
+      }
+    }
+  } catch (e) {
+    debugPrint("Erro generateSmartSlots: $e");
+  }
+
+  validSlots.sort((a, b) {
+    int minA = int.parse(a.split(':')[0]) * 60 + int.parse(a.split(':')[1]);
+    int minB = int.parse(b.split(':')[0]) * 60 + int.parse(b.split(':')[1]);
+    return minA.compareTo(minB);
+  });
+
+  return validSlots;
+}
+
+class BookingPage extends StatefulWidget {
+  final DocumentSnapshot shop;
+  final String serviceId;
+  final Map<String, dynamic> serviceData;
+  final Map<String, dynamic>? selectedVariation;
+
+  const BookingPage({
+    super.key, 
+    required this.shop,
+    required this.serviceId,
+    required this.serviceData,
+    this.selectedVariation,
+  });
+
+  @override
+  State<BookingPage> createState() => _BookingPageState();
+}
+
+class _BookingPageState extends State<BookingPage> {
+  final currencyFormat = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+
+  DocumentSnapshot? _selectedProfessional;
+
+  late String shopId;
+  late Map<String, dynamic> shopData;
+  
+  Map<String, dynamic> _shopConfig = {}; 
+  int _intervalMinutes = 60;
+  bool _clientChoosesProfessional = true;
+  // o controle de evitar buracos é lido via shopConfig quando necessário
+  int _bookingWindowDays = 90;
+  int _minAdvanceHours = 7;
+
+  @override
+  void initState() {
+    super.initState();
+    shopId = widget.shop.id;
+    shopData = widget.shop.data() as Map<String, dynamic>;
+    _loadShopSettings();
+  }
+
+  void _loadShopSettings() {
+    if (shopData.containsKey('config')) {
+      _shopConfig = shopData['config'] as Map<String, dynamic>;
+      setState(() {
+        _intervalMinutes = _shopConfig['intervalo_agenda_min'] ?? 60;
+        _clientChoosesProfessional = _shopConfig['cliente_escolhe_prof'] ?? true;
+        _bookingWindowDays = _shopConfig['janela_agendamento_dias'] ?? 90;
+        _minAdvanceHours = _shopConfig['limite_minimo_agendamento_horas'] ?? 7;
+      });
+    }
+  }
+
+  void _autoSelectFirstAvailableDate(DocumentSnapshot profDoc) {
+    final profData = profDoc.data() as Map<String, dynamic>;
+    List<dynamic> rawWorkDays = profData['dias_trabalho'] ?? [1, 2, 3, 4, 5, 6];
+    List<int> workDays = rawWorkDays.map((e) => int.parse(e.toString())).toList();
+
+    DateTime testDate = DateTime.now();
+    
+    if (testDate.hour >= 18) {
+      testDate = testDate.add(const Duration(days: 1));
+    }
+
+    for (int i = 0; i < _bookingWindowDays; i++) {
+      if (workDays.contains(testDate.weekday)) {
+        // encontrado primeiro dia disponível (não armazenamos na página pai)
+        break;
+      }
+      testDate = testDate.add(const Duration(days: 1));
+    }
+  }
+
+  Widget _buildHeader() {
+    String serviceName = widget.serviceData['nome'];
+    if (widget.selectedVariation != null) {
+      serviceName += " (${widget.selectedVariation!['name']})";
+    }
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+      decoration: BoxDecoration(
+        color: AppColors.primaryPurple,
+        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(30)),
+        boxShadow: [BoxShadow(color: AppColors.primaryPurple.withValues(alpha: 0.3), blurRadius: 15, offset: const Offset(0, 5))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              IconButton(
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.arrow_back, color: Colors.white),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              ),
+              const SizedBox(width: 10),
+              const Text("Agendamento", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(14), border: Border.all(color: Colors.white.withValues(alpha: 0.15))),
+            child: Row(
+              children: [
+                Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10)), child: const Icon(Icons.cut, color: AppColors.primaryPurple, size: 20)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(serviceName, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold), maxLines: 1, overflow: TextOverflow.ellipsis),
+                      const SizedBox(height: 4),
+                      Text("${widget.serviceData['tempo_min'] ?? 30} min • ${currencyFormat.format(widget.selectedVariation?['price'] ?? widget.serviceData['preco'])}", style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProfessionalList() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance.collection('employees').where('shopId', isEqualTo: shopId).snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) return const Center(child: CircularProgressIndicator(color: AppColors.primaryPurple));
+
+        final profs = snapshot.data!.docs.where((d) {
+          final skills = (d.data() as Map)['servicos_habilidade'] as List? ?? [];
+          return skills.isEmpty || skills.contains(widget.serviceId);
+        }).toList();
+
+        if (profs.isEmpty) {
+          return const Center(child: Text("Nenhum profissional disponível para este serviço."));
+        }
+
+        if (!_clientChoosesProfessional) {
+          if (_selectedProfessional == null) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) {
+                setState(() {
+                  _selectedProfessional = profs.first;
+                });
+                _autoSelectFirstAvailableDate(profs.first);
+              }
+            });
+          }
+          return const Center(child: CircularProgressIndicator(color: AppColors.primaryPurple)); 
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(padding: EdgeInsets.fromLTRB(20, 20, 20, 10), child: Text("Quem vai te atender?", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
+            Expanded(
+              child: GridView.builder(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, crossAxisSpacing: 15, mainAxisSpacing: 15, childAspectRatio: 0.8),
+                itemCount: profs.length,
+                itemBuilder: (context, index) {
+                  final doc = profs[index];
+                  final data = doc.data() as Map<String, dynamic>;
+                  final isSelected = _selectedProfessional?.id == doc.id;
+
+                  return Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(20),
+                      onTap: () {
+                        setState(() {
+                          _selectedProfessional = doc;
+                          _autoSelectFirstAvailableDate(doc);
+                        });
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => BookingTimePage(
+                              shop: widget.shop,
+                              serviceData: widget.serviceData,
+                              selectedVariation: widget.selectedVariation,
+                              professionalDoc: doc,
+                              shopConfig: _shopConfig,
+                              intervalMinutes: _intervalMinutes,
+                              minAdvanceHours: _minAdvanceHours,
+                            ),
+                          ),
+                        );
+                      },
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        decoration: BoxDecoration(
+                          color: isSelected ? AppColors.primaryPurple : Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: isSelected ? AppColors.primaryPurple : Colors.transparent, width: 2),
+                          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 10, offset: const Offset(0, 4))],
+                        ),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            CircleAvatar(
+                              radius: 35,
+                              backgroundColor: Colors.grey[100],
+                              backgroundImage: data['foto_url'] != null ? NetworkImage(data['foto_url']) : null,
+                              child: data['foto_url'] == null ? Text(data['nome'][0].toUpperCase(), style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: isSelected ? AppColors.primaryPurple : Colors.grey)) : null,
+                            ),
+                            const SizedBox(height: 12),
+                            Text(data['nome'], style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: isSelected ? Colors.white : Colors.black87), textAlign: TextAlign.center),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF8F9FD),
+      body: Column(
+        children: [
+          _buildHeader(),
+          Expanded(child: _buildProfessionalList()),
+        ],
+      ),
+    );
+  }
+}
+
+// ========================================
+// PÁGINA DE SELEÇÃO DE DATA - SEM PROBLEMAS
+// ========================================
+class BookingTimePage extends StatefulWidget {
+  final DocumentSnapshot shop;
+  final Map<String, dynamic> serviceData;
+  final Map<String, dynamic>? selectedVariation;
+  final DocumentSnapshot professionalDoc;
+  final Map<String, dynamic> shopConfig;
+  final int intervalMinutes;
+  final int minAdvanceHours;
+
+  const BookingTimePage({
+    super.key,
+    required this.shop,
+    required this.serviceData,
+    this.selectedVariation,
+    required this.professionalDoc,
+    required this.shopConfig,
+    required this.intervalMinutes,
+    required this.minAdvanceHours,
+  });
+
+  @override
+  State<BookingTimePage> createState() => _BookingTimePageState();
+}
+
+class _BookingTimePageState extends State<BookingTimePage> {
+  DateTime? _selectedDate;
+  int _bookingWindowDays = 90;
+
+  @override
+  void initState() {
+    super.initState();
+    _bookingWindowDays = widget.shopConfig['janela_agendamento_dias'] ?? 90;
+    _autoSelectFirstAvailableDate(widget.professionalDoc);
+  }
+
+  void _autoSelectFirstAvailableDate(DocumentSnapshot profDoc) {
+    final profData = profDoc.data() as Map<String, dynamic>;
+    List<dynamic> rawWorkDays = profData['dias_trabalho'] ?? [1, 2, 3, 4, 5, 6];
+    List<int> workDays = rawWorkDays.map((e) => int.parse(e.toString())).toList();
+
+    DateTime testDate = DateTime.now();
+    if (testDate.hour >= 18) testDate = testDate.add(const Duration(days: 1));
+    
+    for (int i = 0; i < _bookingWindowDays; i++) {
+      if (workDays.contains(testDate.weekday)) {
+        setState(() {
+          _selectedDate = testDate;
+        });
+        break;
+      }
+      testDate = testDate.add(const Duration(days: 1));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final svcName = widget.serviceData['nome'] ?? 'Serviço';
+    final lastAllowedDay = DateTime.now().add(Duration(days: _bookingWindowDays));
+    final profData = widget.professionalDoc.data() as Map<String, dynamic>;
+    List<dynamic> rawWorkDays = profData['dias_trabalho'] ?? [1, 2, 3, 4, 5, 6];
+    List<int> workDays = rawWorkDays.map((e) => int.parse(e.toString())).toList();
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Agendamento - $svcName'),
+        backgroundColor: AppColors.primaryPurple,
+        foregroundColor: Colors.white,
+        elevation: 0,
+      ),
+      backgroundColor: const Color(0xFFF8F9FD),
+      body: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // ✅ USANDO CALENDARDATEPICKER - MAIS ESTÁVEL
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8)],
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Selecione uma data',
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      const SizedBox(height: 16),
+                      // ✅ CalendarDatePicker - RÁPIDO E RESPONSIVO
+                      CalendarDatePicker(
+                        initialDate: _selectedDate ?? DateTime.now(),
+                        firstDate: DateTime.now(),
+                        lastDate: lastAllowedDay,
+                        selectableDayPredicate: (day) {
+                          if (day.isBefore(DateTime.now())) return false;
+                          if (day.isAfter(lastAllowedDay)) return false;
+                          return workDays.contains(day.weekday);
+                        },
+                        onDateChanged: (selected) {
+                          setState(() {
+                            _selectedDate = selected;
+                            // _focusedDay removido (não utilizado)
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+              // ✅ DATA SELECIONADA
+              if (_selectedDate != null)
+                Container(
+                  padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                    color: AppColors.primaryPurple.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.primaryPurple),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.check_circle, color: AppColors.primaryPurple),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          DateFormat('EEEE, dd/MM/yyyy', 'pt_BR').format(_selectedDate!),
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: 24),
+              // ✅ BOTÕES
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Voltar'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: _selectedDate == null
+                          ? null
+                          : () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => BookingSlotsPage(
+                                    shop: widget.shop,
+                                    serviceData: widget.serviceData,
+                                    selectedVariation: widget.selectedVariation,
+                                    professionalDoc: widget.professionalDoc,
+                                    shopConfig: widget.shopConfig,
+                                    intervalMinutes: widget.intervalMinutes,
+                                    minAdvanceHours: widget.minAdvanceHours,
+                                    selectedDate: _selectedDate!,
+                                  ),
+                                ),
+                              );
+                            },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryPurple,
+                      ),
+                      child: const Text(
+                        'Ver Horários',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ========================================
+// PÁGINA DE SELEÇÃO DE HORÁRIOS
+// ========================================
+class BookingSlotsPage extends StatefulWidget {
+  final DocumentSnapshot shop;
+  final Map<String, dynamic> serviceData;
+  final Map<String, dynamic>? selectedVariation;
+  final DocumentSnapshot professionalDoc;
+  final Map<String, dynamic> shopConfig;
+  final int intervalMinutes;
+  final int minAdvanceHours;
+  final DateTime selectedDate;
+
+  const BookingSlotsPage({
+    super.key,
+    required this.shop,
+    required this.serviceData,
+    this.selectedVariation,
+    required this.professionalDoc,
+    required this.shopConfig,
+    required this.intervalMinutes,
+    required this.minAdvanceHours,
+    required this.selectedDate,
+  });
+
+  @override
+  State<BookingSlotsPage> createState() => _BookingSlotsPageState();
+}
+
+class _BookingSlotsPageState extends State<BookingSlotsPage> {
+  TimeOfDay? _selectedTime;
+
+  @override
+  Widget build(BuildContext context) {
+    final svcName = widget.serviceData['nome'] ?? 'Serviço';
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Horários - $svcName'),
+        backgroundColor: AppColors.primaryPurple,
+        foregroundColor: Colors.white,
+        elevation: 0,
+      ),
+      backgroundColor: const Color(0xFFF8F9FD),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    "Data: ${DateFormat('dd/MM/yyyy').format(widget.selectedDate)}",
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(child: _buildSlotsList()),
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Voltar'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: _selectedTime == null
+                          ? null
+                          : () {
+                              final shopId = widget.shop.id;
+                              final shopData = widget.shop.data() as Map<String, dynamic>;
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (c) => CheckoutPage(
+                                    shopId: shopId,
+                                    shopData: shopData,
+                                    shopConfig: widget.shopConfig,
+                                    serviceDoc: widget.shop,
+                                    serviceNameOverride: widget.serviceData['nome'],
+                                    servicePriceOverride: double.tryParse(widget.serviceData['preco'].toString()) ?? 0.0,
+                                    professionalDoc: widget.professionalDoc,
+                                    date: widget.selectedDate,
+                                    time: _selectedTime!,
+                                  ),
+                                ),
+                              );
+                            },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green,
+                      ),
+                      child: const Text(
+                        'Continuar',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSlotsList() {
+    final profData = widget.professionalDoc.data() as Map<String, dynamic>;
+    int duration = int.tryParse(widget.serviceData['tempo_min'].toString()) ?? 30;
+    final startDay = DateTime(widget.selectedDate.year, widget.selectedDate.month, widget.selectedDate.day);
+    final endDay = startDay.add(const Duration(hours: 23, minutes: 59));
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance.collection('appointments')
+          .where('shopId', isEqualTo: widget.shop.id)
+          .where('profissionalId', isEqualTo: widget.professionalDoc.id)
+          .where('data_agendamento', isGreaterThanOrEqualTo: startDay)
+          .where('data_agendamento', isLessThanOrEqualTo: endDay)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator(color: AppColors.primaryPurple));
+        }
+
+        List<Map<String, int>> busyIntervals = [];
+        for (var d in snapshot.data!.docs) {
+          final data = d.data() as Map<String, dynamic>;
+          final dt = (data['data_agendamento'] as Timestamp).toDate();
+          int agDuration = data['duracao_min'] ?? duration;
+          int startMin = dt.hour * 60 + dt.minute;
+          int endMin = startMin + agDuration;
+          busyIntervals.add({"start": startMin, "end": endMin});
+        }
+
+        final preventGaps = widget.shopConfig['evitar_buracos_agenda'] ?? false;
+        List<String> slots = generateSmartSlots(
+          startStr: profData['horario_inicio'] ?? "08:00",
+          endStr: profData['horario_fim'] ?? "18:00",
+          interval: widget.intervalMinutes,
+          serviceDuration: duration,
+          busyIntervals: busyIntervals,
+          preventGaps: preventGaps,
+          minAdvanceHours: widget.minAdvanceHours,
+          selectedDate: widget.selectedDate,
+        );
+
+        if (slots.isEmpty) {
+          return const Center(
+            child: Padding(
+              padding: EdgeInsets.all(24.0),
+              child: Text(
+                "Sem horários disponíveis para este dia.",
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 16),
+              ),
+            ),
+          );
+        }
+
+        return SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+            child: Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: slots.map((t) {
+                final isSelected = _selectedTime != null && 
+                    "${_selectedTime!.hour.toString().padLeft(2, '0')}:${_selectedTime!.minute.toString().padLeft(2, '0')}" == t;
+                return ChoiceChip(
+                  label: Text(t),
+                  selected: isSelected,
+                  onSelected: (sel) {
+                    final p = t.split(':');
+                    setState(() => _selectedTime = TimeOfDay(hour: int.parse(p[0]), minute: int.parse(p[1])));
+                  },
+                  selectedColor: AppColors.primaryPurple,
+                  backgroundColor: Colors.white,
+                );
+              }).toList(),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
