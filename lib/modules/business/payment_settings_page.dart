@@ -467,9 +467,9 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
       return Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: color.withOpacity(0.1),
+          color: color.withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: color.withOpacity(0.5), width: 1.5),
+          border: Border.all(color: color.withValues(alpha: 0.5), width: 1.5),
         ),
         child: Column(
           children: [
@@ -485,7 +485,7 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
                         "Mercado Pago Ativo",
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
-                          color: color.withOpacity(0.9),
+                          color: color.withValues(alpha: 0.9),
                           fontSize: 16,
                         ),
                       ),
@@ -504,12 +504,12 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
                 child: Row(
                   children: [
                     Icon(Icons.access_time,
-                        size: 12, color: color.withOpacity(0.8)),
+                        size: 12, color: color.withValues(alpha: 0.8)),
                     const SizedBox(width: 4),
                     Text(
                       "Desde $_connectedAt",
                       style: TextStyle(
-                          fontSize: 12, color: color.withOpacity(0.8)),
+                          fontSize: 12, color: color.withValues(alpha: 0.8)),
                     ),
                   ],
                 ),
@@ -589,10 +589,14 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: isStatus ? color.withOpacity(0.1) : color.withOpacity(0.05),
+        color: isStatus
+            ? color.withValues(alpha: 0.1)
+            : color.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-            color: isStatus ? color.withOpacity(0.5) : color.withOpacity(0.2),
+            color: isStatus
+                ? color.withValues(alpha: 0.5)
+                : color.withValues(alpha: 0.2),
             width: isStatus ? 1.5 : 1),
       ),
       child: Row(
@@ -600,7 +604,7 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
+              color: color.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Icon(icon, color: color, size: 20),
@@ -614,7 +618,7 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
                   title,
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
-                    color: color.withOpacity(0.9),
+                    color: color.withValues(alpha: 0.9),
                     fontSize: 14,
                   ),
                 ),

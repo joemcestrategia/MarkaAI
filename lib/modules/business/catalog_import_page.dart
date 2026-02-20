@@ -1,8 +1,8 @@
 // ignore_for_file: use_build_context_synchronously, avoid_web_libraries_in_flutter
 import 'dart:async';
 import 'dart:convert';
-import 'dart:html' as html;
-import 'dart:ui_web' as ui_web;
+import 'web_helper_stub.dart' if (dart.library.html) 'web_helper_real.dart'
+    as web_helper;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -229,13 +229,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
 })();
 """;
 
-  String get _origin {
-    try {
-      return html.window.location.origin;
-    } catch (_) {
-      return '*';
-    }
-  }
+  String get _origin => web_helper.getWindowOrigin();
 
   String get _bookmarkletHref =>
       'javascript:${Uri.encodeComponent(_script(_origin))}';
@@ -264,25 +258,17 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
   }
 
   void _listenPostMessage() {
-    _msgSub = html.window.onMessage.listen((event) {
-      try {
-        final raw = event.data?.toString() ?? '';
-        if (raw.isEmpty) return;
-        _handlePayload(raw);
-      } catch (_) {}
+    _msgSub = web_helper.listenPostMessage((raw) {
+      _handlePayload(raw);
     });
   }
 
   void _checkHashData() {
     try {
-      final hash = html.window.location.hash;
-      if (hash.contains('#catalog=')) {
-        final encoded = hash.split('#catalog=').last;
+      final encoded = web_helper.getHashCatalogData();
+      if (encoded != null) {
         final decoded = utf8.decode(base64.decode(encoded));
         _handlePayload(decoded);
-        // Limpa o hash da URL
-        html.window.history
-            .replaceState(null, '', html.window.location.pathname);
       }
     } catch (_) {}
   }
@@ -318,7 +304,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
   void _openCatalog() {
     // Abre web.whatsapp.com diretamente para evitar que o Windows intercepte
     // o link wa.me e abra o app do WhatsApp Desktop.
-    html.window.open('https://web.whatsapp.com', 'markaai_wa');
+    web_helper.openWindow('https://web.whatsapp.com', 'markaai_wa');
     if (_step <= 1) setState(() => _step = 1);
   }
 
@@ -333,9 +319,9 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
     String? text;
     try {
       // Usa a API nativa do navegador (mais confiável no Flutter Web)
-      final jsText = await html.window.navigator.clipboard?.readText();
-      text = jsText;
-    } catch (_) {
+      text = await web_helper.readClipboardWeb();
+    } catch (_) {}
+    if (text == null || text.isEmpty) {
       // Fallback: Flutter Clipboard
       final data = await Clipboard.getData(Clipboard.kTextPlain);
       text = data?.text;
@@ -1106,34 +1092,7 @@ class _BookmarkletCopyButtonState extends State<_BookmarkletCopyButton> {
   void initState() {
     super.initState();
     _viewId = 'bm-${DateTime.now().microsecondsSinceEpoch}';
-    try {
-      ui_web.platformViewRegistry.registerViewFactory(_viewId, (_) {
-        final anchor = html.AnchorElement()
-          ..href = widget.href
-          ..draggable = true
-          ..title = 'Arraste para a barra de favoritos';
-        anchor.style
-          ..display = 'inline-flex'
-          ..alignItems = 'center'
-          ..gap = '8px'
-          ..background = '#25D366'
-          ..color = 'white'
-          ..fontWeight = 'bold'
-          ..fontSize = '14px'
-          ..padding = '12px 20px'
-          ..borderRadius = '10px'
-          ..textDecoration = 'none'
-          ..fontFamily = 'sans-serif'
-          ..cursor = 'grab'
-          ..boxShadow = '0 3px 10px rgba(37,211,102,.3)'
-          ..userSelect = 'none';
-        anchor.text = '🔖  Arraste este favorito para a barra do Chrome';
-        return anchor;
-      });
-      _registered = true;
-    } catch (_) {
-      _registered = false;
-    }
+    _registered = web_helper.registerBookmarkletView(_viewId, widget.href);
   }
 
   @override

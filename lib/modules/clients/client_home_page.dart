@@ -7,12 +7,12 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:intl/intl.dart';
+import 'package:geolocator/geolocator.dart';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 import '../../core/services/profile_check_service.dart';
-import '../business/business_onboarding_page.dart';
 import '../login/login_page.dart';
 import '../schedule/booking_page.dart';
 import 'client_register_page.dart';
@@ -20,6 +20,8 @@ import 'appointment_confirmation_page.dart';
 import 'shop_profile_page.dart';
 import 'my_appointments_page.dart';
 import 'client_service_detail_page.dart';
+import 'address_selector_page.dart';
+import 'client_search_page.dart';
 
 class ClientHomePage extends StatefulWidget {
   const ClientHomePage({super.key});
@@ -43,6 +45,9 @@ class _ClientHomePageState extends State<ClientHomePage> {
   String _selectedLocation = "";
   String _searchText = "";
   String _selectedCategory = "Todos";
+  double? _userLat;
+  double? _userLng;
+  double _selectedRadius = 20.0; // km
 
   final List<Map<String, dynamic>> _categories = [
     {"name": "Todos", "icon": Icons.grid_view},
@@ -135,12 +140,24 @@ class _ClientHomePageState extends State<ClientHomePage> {
           .doc(user.uid)
           .get();
       if (mounted) {
+        final data = doc.data();
         setState(() {
           _userId = user.uid;
-          _userName = doc.data()?['nome'] ?? user.displayName ?? "Cliente";
+          _userName = data?['nome'] ?? user.displayName ?? "Cliente";
           _userEmail = user.email ?? "";
           _userPhotoUrl = user.photoURL;
-          _userTipo = doc.data()?['tipo'] ?? doc.data()?['role'] ?? 'cliente';
+          _userTipo = data?['tipo'] ?? data?['role'] ?? 'cliente';
+          // Restaurar última localização salva
+          final lastLoc = data?['last_location'] as Map<String, dynamic>?;
+          if (lastLoc != null) {
+            _selectedLocation = lastLoc['label'] ?? '';
+            _userLat = lastLoc['lat'] != null
+                ? (lastLoc['lat'] as num).toDouble()
+                : null;
+            _userLng = lastLoc['lng'] != null
+                ? (lastLoc['lng'] as num).toDouble()
+                : null;
+          }
           _isLoadingUserData = false;
         });
       }
@@ -149,89 +166,33 @@ class _ClientHomePageState extends State<ClientHomePage> {
     }
   }
 
-  void _showLocationPicker() {
-    final controller = TextEditingController(text: _selectedLocation);
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.fromLTRB(
-            20, 20, 20, MediaQuery.of(ctx).viewInsets.bottom + 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.location_on, color: AppColors.primaryPurple),
-                const SizedBox(width: 8),
-                const Text('Escolher Local',
-                    style:
-                        TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                const Spacer(),
-                if (_selectedLocation.isNotEmpty)
-                  TextButton(
-                    onPressed: () {
-                      setState(() => _selectedLocation = '');
-                      Navigator.pop(ctx);
-                    },
-                    child: const Text('Limpar',
-                        style: TextStyle(color: Colors.red)),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text('Digite sua cidade ou bairro para ver profissionais próximos',
-                style: TextStyle(color: Colors.grey[600], fontSize: 13)),
-            const SizedBox(height: 16),
-            TextField(
-              controller: controller,
-              autofocus: true,
-              decoration: InputDecoration(
-                hintText: 'Ex: Belo Horizonte, Savassi...',
-                prefixIcon:
-                    const Icon(Icons.search, color: AppColors.primaryPurple),
-                border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(color: Colors.grey.shade300)),
-                focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide:
-                        const BorderSide(color: AppColors.primaryPurple)),
-              ),
-              onSubmitted: (v) {
-                if (v.trim().isNotEmpty) {
-                  setState(() => _selectedLocation = v.trim());
-                }
-                Navigator.pop(ctx);
-              },
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primaryPurple,
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12))),
-                onPressed: () {
-                  if (controller.text.trim().isNotEmpty) {
-                    setState(() => _selectedLocation = controller.text.trim());
-                  }
-                  Navigator.pop(ctx);
-                },
-                child: const Text('Confirmar',
-                    style: TextStyle(color: Colors.white)),
-              ),
-            ),
-          ],
-        ),
-      ),
+  void _showLocationPicker() async {
+    final result = await Navigator.push<Map<String, dynamic>>(
+      context,
+      MaterialPageRoute(builder: (_) => const AddressSelectorPage()),
     );
+    if (result != null && mounted) {
+      setState(() {
+        _selectedLocation = result['label'] ?? result['city'] ?? '';
+        _userLat =
+            result['lat'] != null ? (result['lat'] as num).toDouble() : null;
+        _userLng =
+            result['lng'] != null ? (result['lng'] as num).toDouble() : null;
+      });
+      // Persistir última localização no Firestore
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid != null) {
+        FirebaseFirestore.instance.collection('users').doc(uid).set({
+          'last_location': {
+            'label': _selectedLocation,
+            'address': result['address'],
+            'city': result['city'],
+            'lat': result['lat'],
+            'lng': result['lng'],
+          },
+        }, SetOptions(merge: true));
+      }
+    }
   }
 
   void _confirmLogout() {
@@ -261,115 +222,39 @@ class _ClientHomePageState extends State<ClientHomePage> {
     );
   }
 
-  Future<void> _showAdvancedOptionsDialog() async {
-    final choice = await showDialog<String>(
-        context: context,
-        builder: (ctx) {
-          return SimpleDialog(
-            title: const Text('Opções Avançadas'),
-            children: [
-              SimpleDialogOption(
-                onPressed: () => Navigator.pop(ctx, 'trocar'),
-                child: Row(children: const [
-                  Icon(Icons.swap_horiz),
-                  SizedBox(width: 8),
-                  Text('Trocar Tipo de Conta')
-                ]),
-              ),
-              SimpleDialogOption(
-                onPressed: () => Navigator.pop(ctx, 'delete'),
-                child: Row(children: const [
-                  Icon(Icons.delete_forever, color: Colors.red),
-                  SizedBox(width: 8),
-                  Text('Excluir Conta (Irreversível)',
-                      style: TextStyle(color: Colors.red))
-                ]),
-              ),
-              SimpleDialogOption(
-                onPressed: () => Navigator.pop(ctx, 'close'),
-                child: Row(children: const [
-                  Icon(Icons.close),
-                  SizedBox(width: 8),
-                  Text('Fechar')
-                ]),
-              ),
-            ],
-          );
-        });
-    if (choice == 'delete') {
-      await _deleteAccount();
-    } else if (choice == 'trocar') {
-      if (_userTipo == 'dono' || _userTipo == 'business') {
-        _switchToClient();
-      } else {
-        _switchToOwner();
-      }
-    }
-  }
-
-  Future<void> _switchToClient() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
-    final ok = await showDialog<bool>(
-        context: context,
-        builder: (_) => AlertDialog(
-              title: const Text('Confirmar troca'),
-              content: const Text(
-                  'Deseja mudar sua conta para Cliente? Isso removerá associações de loja.'),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(context, false),
-                    child: const Text('Cancelar')),
-                ElevatedButton(
-                    onPressed: () => Navigator.pop(context, true),
-                    child: const Text('Confirmar')),
-              ],
-            ));
-    if (ok != true) return;
-    await FirebaseFirestore.instance.collection('users').doc(user.uid).update(
-        {'tipo': 'cliente', 'role': 'cliente', 'shopId': FieldValue.delete()});
-    await SessionService.saveLogin(userId: user.uid, userType: 'client');
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Conta alterada para Cliente')));
-      Navigator.pushAndRemoveUntil(
+  void _handleProfileMenu(String value) {
+    switch (value) {
+      case 'edit':
+        final user = FirebaseAuth.instance.currentUser;
+        Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => const ClientHomePage()),
-          (r) => false);
+          MaterialPageRoute(
+            builder: (_) => ClientRegisterPage(
+              user: user,
+              isBusinessAdding: false,
+            ),
+          ),
+        );
+        break;
+      case 'logout':
+        _confirmLogout();
+        break;
     }
   }
 
-  void _switchToOwner() {
-    showDialog<String>(
-        context: context,
-        builder: (ctx) {
-          return AlertDialog(
-            title: const Text('Tornar-se Dono'),
-            content: const Text(
-                'Recomendamos excluir a conta atual e criar uma nova conta de Dono para evitar inconsistências no sistema. '
-                'Se preferir manter a conta atual, ainda é possível cadastrar a loja, mas pode causar conflitos. O que deseja fazer?'),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(ctx, 'cancel'),
-                  child: const Text('Cancelar')),
-              TextButton(
-                  onPressed: () => Navigator.pop(ctx, 'keep'),
-                  child: const Text('Continuar sem excluir')),
-              ElevatedButton(
-                  onPressed: () => Navigator.pop(ctx, 'delete'),
-                  child: const Text('Excluir e continuar')),
-            ],
-          );
-        }).then((choice) {
-      if (choice == 'keep') {
-        Navigator.push(context,
-            MaterialPageRoute(builder: (_) => const BusinessOnboardingPage()));
-      } else if (choice == 'delete') {
-        // deleteAccount will sign the user out after deletion; user must register anew.
-        _deleteAccount();
-      }
-      // cancel -> do nothing
-    });
+  void _navigateToSearch(String query) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ClientSearchPage(
+          initialQuery: query,
+          initialCity: _selectedLocation,
+          userLat: _userLat,
+          userLng: _userLng,
+          initialRadius: _selectedRadius,
+        ),
+      ),
+    );
   }
 
   // Profile bottom sheet removed (menu moved to top-right popup)
@@ -602,7 +487,9 @@ class _ClientHomePageState extends State<ClientHomePage> {
           backgroundColor: const Color(0xFFF5F7FA),
           body: _selectedIndex == 0
               ? _buildExploreView(isDesktop: false)
-              : _buildScheduleView(isDesktop: false),
+              : _selectedIndex == 1
+                  ? _buildFavoritesView(isDesktop: false)
+                  : _buildScheduleView(isDesktop: false),
           bottomNavigationBar: NavigationBar(
             selectedIndex: _selectedIndex,
             onDestinationSelected: (idx) =>
@@ -617,11 +504,138 @@ class _ClientHomePageState extends State<ClientHomePage> {
                   selectedIcon: Icon(Icons.explore),
                   label: "Explorar"),
               NavigationDestination(
+                  icon: Icon(Icons.favorite_border),
+                  selectedIcon: Icon(Icons.favorite),
+                  label: "Favoritos"),
+              NavigationDestination(
                   icon: Icon(Icons.calendar_today_outlined),
                   selectedIcon: Icon(Icons.calendar_today),
                   label: "Agendamentos"),
             ],
           ),
+        );
+      },
+    );
+  }
+
+  // ============ VIEW: FAVORITOS ============
+  Widget _buildFavoritesView({required bool isDesktop}) {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      return const Center(child: Text('Faça login para ver seus favoritos'));
+    }
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .collection('favorites')
+          .orderBy('added_at', descending: true)
+          .snapshots(),
+      builder: (context, favSnap) {
+        if (favSnap.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final favDocs = favSnap.data?.docs ?? [];
+        if (favDocs.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.favorite_border, size: 64, color: Colors.grey[300]),
+                const SizedBox(height: 16),
+                Text('Nenhuma loja favorita ainda',
+                    style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey[500])),
+                const SizedBox(height: 8),
+                Text('Toque no ❤️ nas lojas para adicioná-las aqui',
+                    style: TextStyle(fontSize: 13, color: Colors.grey[400])),
+              ],
+            ),
+          );
+        }
+        final shopIds = favDocs.map((d) => d.id).toList();
+        // Firestore 'whereIn' supports max 30 items per query
+        final chunks = <List<String>>[];
+        for (var i = 0; i < shopIds.length; i += 10) {
+          chunks.add(shopIds.sublist(
+              i, i + 10 > shopIds.length ? shopIds.length : i + 10));
+        }
+        return FutureBuilder<List<DocumentSnapshot>>(
+          future: Future.wait(
+            chunks.map((chunk) => FirebaseFirestore.instance
+                .collection('shops')
+                .where(FieldPath.documentId, whereIn: chunk)
+                .get()
+                .then((s) => s.docs)),
+          ).then((lists) => lists.expand((l) => l).toList()),
+          builder: (context, shopsSnap) {
+            if (shopsSnap.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            final shops = shopsSnap.data ?? [];
+            if (shops.isEmpty) {
+              return Center(
+                child: Text('Nenhuma loja encontrada',
+                    style: TextStyle(color: Colors.grey[500])),
+              );
+            }
+            return CustomScrollView(
+              physics: const BouncingScrollPhysics(),
+              slivers: [
+                SliverAppBar(
+                  backgroundColor: const Color(0xFFF5F7FA),
+                  elevation: 0,
+                  floating: true,
+                  toolbarHeight: 60,
+                  titleSpacing: 20,
+                  title: Row(children: [
+                    const Icon(Icons.favorite, color: Colors.red, size: 22),
+                    const SizedBox(width: 10),
+                    const Text('Meus Favoritos',
+                        style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87)),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text('${shops.length}',
+                          style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.red)),
+                    ),
+                  ]),
+                ),
+                SliverPadding(
+                  padding: const EdgeInsets.all(20),
+                  sliver: SliverGrid(
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2,
+                      childAspectRatio: 0.72,
+                      mainAxisSpacing: 16,
+                      crossAxisSpacing: 16,
+                    ),
+                    delegate: SliverChildBuilderDelegate(
+                      (ctx, i) => _ShopCard(
+                        shop: shops[i],
+                        onTap: () => _openShopProfile(shops[i]),
+                      ),
+                      childCount: shops.length,
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -637,7 +651,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
             backgroundColor: const Color(0xFFF5F7FA),
             elevation: 0,
             floating: true,
-            toolbarHeight: 70, // Altura aumentada para comportar o layout
+            toolbarHeight: 56,
             titleSpacing: 0,
             title: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -648,18 +662,50 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
                   const Spacer(),
 
-                  // Perfil Mini
-                  GestureDetector(
-                    onTap: _showAdvancedOptionsDialog,
-                    child: CircleAvatar(
-                      radius: 18,
-                      backgroundColor: Colors.grey[200],
-                      backgroundImage: _userPhotoUrl != null
-                          ? CachedNetworkImageProvider(_userPhotoUrl!)
-                          : null,
-                      child: _userPhotoUrl == null
-                          ? const Icon(Icons.person, color: Colors.grey)
-                          : null,
+                  // Perfil Mini com PopupMenu
+                  PopupMenuButton<String>(
+                    onSelected: _handleProfileMenu,
+                    offset: const Offset(0, 50),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    itemBuilder: (_) => [
+                      PopupMenuItem(
+                        value: 'edit',
+                        child: Row(children: const [
+                          Icon(Icons.person_outline,
+                              size: 20, color: AppColors.primaryPurple),
+                          SizedBox(width: 10),
+                          Text('Editar Perfil'),
+                        ]),
+                      ),
+                      const PopupMenuDivider(),
+                      PopupMenuItem(
+                        value: 'logout',
+                        child: Row(children: const [
+                          Icon(Icons.logout, size: 20, color: Colors.red),
+                          SizedBox(width: 10),
+                          Text('Sair da Conta',
+                              style: TextStyle(color: Colors.red)),
+                        ]),
+                      ),
+                    ],
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircleAvatar(
+                          radius: 18,
+                          backgroundColor: Colors.grey[200],
+                          backgroundImage: _userPhotoUrl != null
+                              ? CachedNetworkImageProvider(_userPhotoUrl!)
+                              : null,
+                          child: _userPhotoUrl == null
+                              ? const Icon(Icons.person, color: Colors.grey)
+                              : null,
+                        ),
+                        const SizedBox(width: 4),
+                        Icon(Icons.keyboard_arrow_down,
+                            size: 16, color: Colors.grey[500]),
+                      ],
                     ),
                   )
                 ],
@@ -667,30 +713,30 @@ class _ClientHomePageState extends State<ClientHomePage> {
             ),
           ),
 
-        // LOCATION PICKER - Funcional
+        // LOCATION PICKER - Compacto
         SliverToBoxAdapter(
           child: GestureDetector(
             onTap: _showLocationPicker,
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 2),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(Icons.location_on,
-                      size: 14,
+                      size: 13,
                       color: _selectedLocation.isEmpty
-                          ? Colors.grey[600]
+                          ? Colors.grey[500]
                           : AppColors.primaryPurple),
-                  const SizedBox(width: 4),
+                  const SizedBox(width: 3),
                   Text(
                     _selectedLocation.isEmpty
-                        ? "Escolher local"
+                        ? "Escolher localização"
                         : _selectedLocation,
                     style: TextStyle(
                       color: _selectedLocation.isEmpty
-                          ? Colors.grey[600]
+                          ? Colors.grey[500]
                           : AppColors.primaryPurple,
-                      fontSize: 13,
+                      fontSize: 12,
                       fontWeight: _selectedLocation.isEmpty
                           ? FontWeight.normal
                           : FontWeight.w600,
@@ -698,9 +744,9 @@ class _ClientHomePageState extends State<ClientHomePage> {
                   ),
                   const SizedBox(width: 2),
                   Icon(Icons.keyboard_arrow_down,
-                      size: 16,
+                      size: 14,
                       color: _selectedLocation.isEmpty
-                          ? Colors.grey[600]
+                          ? Colors.grey[500]
                           : AppColors.primaryPurple),
                 ],
               ),
@@ -708,13 +754,61 @@ class _ClientHomePageState extends State<ClientHomePage> {
           ),
         ),
 
-        const SliverToBoxAdapter(child: SizedBox(height: 15)),
+        // 📏 SELETOR DE RAIO (KM)
+        if (_selectedLocation.isNotEmpty && _userLat != null)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+              child: Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        "Raio de busca: ${_selectedRadius.toInt()} km",
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                            fontWeight: FontWeight.w500),
+                      ),
+                      Text(
+                        "Aumentar alcance",
+                        style: TextStyle(
+                            fontSize: 10, color: AppColors.primaryPurple),
+                      ),
+                    ],
+                  ),
+                  SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      trackHeight: 2,
+                      thumbShape:
+                          const RoundSliderThumbShape(enabledThumbRadius: 6),
+                      overlayShape:
+                          const RoundSliderOverlayShape(overlayRadius: 14),
+                    ),
+                    child: Slider(
+                      value: _selectedRadius,
+                      min: 1,
+                      max: 100,
+                      divisions: 99,
+                      activeColor: AppColors.primaryPurple,
+                      inactiveColor:
+                          AppColors.primaryPurple.withValues(alpha: 0.1),
+                      onChanged: (v) => setState(() => _selectedRadius = v),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+        const SliverToBoxAdapter(child: SizedBox(height: 8)),
 
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Container(
-              height: 50,
+              height: 44,
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(30), // Mais arredondado
@@ -727,6 +821,11 @@ class _ClientHomePageState extends State<ClientHomePage> {
               ),
               child: TextField(
                 onChanged: (v) => setState(() => _searchText = v),
+                onSubmitted: (v) {
+                  if (v.trim().isNotEmpty) {
+                    _navigateToSearch(v.trim());
+                  }
+                },
                 decoration: const InputDecoration(
                   hintText: "O que você procura hoje?",
                   prefixIcon: Icon(Icons.search, color: Colors.grey),
@@ -739,18 +838,35 @@ class _ClientHomePageState extends State<ClientHomePage> {
           ),
         ),
 
-        const SliverToBoxAdapter(child: SizedBox(height: 16)),
+        const SliverToBoxAdapter(child: SizedBox(height: 10)),
 
         // ⭐ SEÇÃO DESTAQUES - Horizontal
         SliverToBoxAdapter(
           child: StreamBuilder<QuerySnapshot>(
             stream: FirebaseFirestore.instance
                 .collection('shops')
-                .where('destaque', isEqualTo: true)
-                .limit(10)
+                .where('is_boosted', isEqualTo: true)
+                .limit(20)
                 .snapshots(),
             builder: (context, snap) {
-              final docs = snap.data?.docs ?? [];
+              final now = DateTime.now();
+              final docs = (snap.data?.docs ?? []).where((doc) {
+                final d = doc.data() as Map<String, dynamic>;
+                // 📍 Filtro de Cidade
+                final shopCity = (d['endereco'] ?? d['cidade'] ?? '')
+                    .toString()
+                    .toLowerCase();
+                final matchesCity = _selectedLocation.isEmpty ||
+                    shopCity.contains(_selectedLocation.toLowerCase()) ||
+                    _selectedLocation.toLowerCase().contains(shopCity);
+
+                // Filtra lojas com boost expirado
+                final expires = d['boost_expires_at'] as Timestamp?;
+                bool isExpired =
+                    expires == null || expires.toDate().isBefore(now);
+
+                return !isExpired && matchesCity;
+              }).toList();
               if (docs.isEmpty) return const SizedBox.shrink();
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -758,23 +874,49 @@ class _ClientHomePageState extends State<ClientHomePage> {
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 20),
                     child: Row(
-                      children: const [
-                        Icon(Icons.rocket_launch,
-                            size: 16, color: Color(0xFFFFD700)),
-                        SizedBox(width: 6),
-                        Text(
-                          'Destaques na sua Cidade',
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFFFFD700), Color(0xFFFFA000)],
+                            ),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(Icons.rocket_launch,
+                              size: 16, color: Colors.white),
+                        ),
+                        const SizedBox(width: 10),
+                        const Text(
+                          'Destaques',
                           style: TextStyle(
-                              fontSize: 16,
+                              fontSize: 17,
                               fontWeight: FontWeight.bold,
                               color: Colors.black87),
+                        ),
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color:
+                                const Color(0xFFFFD700).withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            '${docs.length}',
+                            style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFFB8860B)),
+                          ),
                         ),
                       ],
                     ),
                   ),
                   const SizedBox(height: 12),
                   SizedBox(
-                    height: 180,
+                    height: 160,
                     child: ListView.builder(
                       scrollDirection: Axis.horizontal,
                       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -807,16 +949,25 @@ class _ClientHomePageState extends State<ClientHomePage> {
                         return GestureDetector(
                           onTap: () => _openShopProfile(docs[i]),
                           child: Container(
-                            width: 150,
+                            width: 140,
                             margin: const EdgeInsets.only(right: 14),
                             decoration: BoxDecoration(
                               color: Colors.white,
                               borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                  color: const Color(0xFFFFD700)
+                                      .withValues(alpha: 0.4),
+                                  width: 1.5),
                               boxShadow: [
                                 BoxShadow(
-                                    color: Colors.black.withValues(alpha: 0.06),
-                                    blurRadius: 8,
-                                    offset: const Offset(0, 3))
+                                    color: const Color(0xFFFFD700)
+                                        .withValues(alpha: 0.12),
+                                    blurRadius: 12,
+                                    offset: const Offset(0, 4)),
+                                BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.05),
+                                    blurRadius: 6,
+                                    offset: const Offset(0, 2)),
                               ],
                             ),
                             child: Column(
@@ -826,7 +977,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
                                   child: Stack(children: [
                                     ClipRRect(
                                       borderRadius: const BorderRadius.vertical(
-                                          top: Radius.circular(14)),
+                                          top: Radius.circular(13)),
                                       child: img.isNotEmpty
                                           ? CachedNetworkImage(
                                               imageUrl: img,
@@ -848,26 +999,81 @@ class _ClientHomePageState extends State<ClientHomePage> {
                                                       color: Colors.grey[400],
                                                       size: 36))),
                                     ),
+                                    // 🚀 Badge dourado "DESTAQUE" com foguetinho
                                     Positioned(
                                       top: 8,
                                       right: 8,
                                       child: Container(
                                         padding: const EdgeInsets.symmetric(
-                                            horizontal: 6, vertical: 3),
+                                            horizontal: 8, vertical: 4),
                                         decoration: BoxDecoration(
-                                            color: const Color(0xFFFFD700),
-                                            borderRadius:
-                                                BorderRadius.circular(20)),
-                                        child: const Text('DESTAQUE',
-                                            style: TextStyle(
-                                                fontSize: 8,
-                                                fontWeight: FontWeight.bold)),
+                                          gradient: const LinearGradient(
+                                            colors: [
+                                              Color(0xFFFFD700),
+                                              Color(0xFFFFA000)
+                                            ],
+                                          ),
+                                          borderRadius:
+                                              BorderRadius.circular(20),
+                                          boxShadow: [
+                                            BoxShadow(
+                                                color: const Color(0xFFFFD700)
+                                                    .withValues(alpha: 0.4),
+                                                blurRadius: 6,
+                                                offset: const Offset(0, 2)),
+                                          ],
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: const [
+                                            Icon(Icons.rocket_launch,
+                                                size: 10, color: Colors.white),
+                                            SizedBox(width: 3),
+                                            Text('DESTAQUE',
+                                                style: TextStyle(
+                                                    fontSize: 8,
+                                                    fontWeight: FontWeight.bold,
+                                                    color: Colors.white,
+                                                    letterSpacing: 0.5)),
+                                          ],
+                                        ),
                                       ),
                                     ),
+                                    // Logo overlay (bottom-left)
+                                    if ((d['logoUrl'] ?? '')
+                                        .toString()
+                                        .isNotEmpty)
+                                      Positioned(
+                                        bottom: 6,
+                                        left: 6,
+                                        child: Container(
+                                          width: 30,
+                                          height: 30,
+                                          decoration: BoxDecoration(
+                                            color: Colors.white,
+                                            shape: BoxShape.circle,
+                                            border: Border.all(
+                                                color: Colors.white, width: 2),
+                                            boxShadow: [
+                                              BoxShadow(
+                                                color: Colors.black
+                                                    .withValues(alpha: 0.1),
+                                                blurRadius: 4,
+                                              ),
+                                            ],
+                                          ),
+                                          child: ClipOval(
+                                            child: CachedNetworkImage(
+                                              imageUrl: d['logoUrl'],
+                                              fit: BoxFit.cover,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
                                   ]),
                                 ),
                                 Padding(
-                                  padding: const EdgeInsets.all(8),
+                                  padding: const EdgeInsets.all(10),
                                   child: Column(
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
@@ -875,13 +1081,25 @@ class _ClientHomePageState extends State<ClientHomePage> {
                                         Text(d['nome'] ?? '',
                                             style: const TextStyle(
                                                 fontWeight: FontWeight.bold,
-                                                fontSize: 12),
+                                                fontSize: 13),
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis),
-                                        Text(cat,
-                                            style: TextStyle(
-                                                color: Colors.grey[500],
-                                                fontSize: 10)),
+                                        const SizedBox(height: 2),
+                                        Row(children: [
+                                          Icon(Icons.category,
+                                              size: 11,
+                                              color: Colors.grey[400]),
+                                          const SizedBox(width: 4),
+                                          Expanded(
+                                            child: Text(cat,
+                                                style: TextStyle(
+                                                    color: Colors.grey[500],
+                                                    fontSize: 11),
+                                                maxLines: 1,
+                                                overflow:
+                                                    TextOverflow.ellipsis),
+                                          ),
+                                        ]),
                                       ]),
                                 ),
                               ],
@@ -901,7 +1119,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
         // Categorias
         SliverToBoxAdapter(
           child: SizedBox(
-            height: 45,
+            height: 38,
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -940,7 +1158,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
           ),
         ),
 
-        const SliverToBoxAdapter(child: SizedBox(height: 20)),
+        const SliverToBoxAdapter(child: SizedBox(height: 10)),
 
         SliverToBoxAdapter(
           child: Padding(
@@ -977,11 +1195,62 @@ class _ClientHomePageState extends State<ClientHomePage> {
                   .toString()
                   .toLowerCase()
                   .contains(_searchText.toLowerCase());
+              // Suporte a múltiplas categorias separadas por ponto e vírgula
               final matchesCat = _selectedCategory == "Todos" ||
-                  (d['categoria'] ?? "").toString().contains(_selectedCategory);
+                  (() {
+                    final cats = (d['categoria'] ?? '')
+                        .toString()
+                        .split(';')
+                        .map((c) => c.trim());
+                    return cats.any((c) => c.contains(_selectedCategory));
+                  })();
 
-              return matchesText && matchesCat && isActive;
+              // 📍 Filtro de Cidade / Raio
+              final shopCity =
+                  (d['endereco'] ?? d['cidade'] ?? '').toString().toLowerCase();
+
+              bool matchesCity = _selectedLocation.isEmpty ||
+                  shopCity.contains(_selectedLocation.toLowerCase()) ||
+                  _selectedLocation.toLowerCase().contains(shopCity);
+
+              // 🛰️ Lógica de Raio (KM)
+              if (_userLat != null &&
+                  _userLng != null &&
+                  d['lat'] != null &&
+                  d['lng'] != null) {
+                final double distance = Geolocator.distanceBetween(
+                      _userLat!,
+                      _userLng!,
+                      (d['lat'] as num).toDouble(),
+                      (d['lng'] as num).toDouble(),
+                    ) /
+                    1000.0; // Converter para KM
+
+                // Se temos coordenadas, o raio TEM PRECEDÊNCIA sobre a cidade
+                matchesCity = distance <= _selectedRadius;
+              }
+
+              // Quando não está pesquisando, mostramos todas da cidade
+              // mas priorizamos na ordenação as que tem perfil completo
+              return matchesText && matchesCat && matchesCity && isActive;
             }).toList();
+
+            // 🔀 Ordenação por Qualidade do Perfil (Media)
+            filtered.sort((a, b) {
+              final da = a.data() as Map<String, dynamic>;
+              final db = b.data() as Map<String, dynamic>;
+
+              int getScore(Map<String, dynamic> d) {
+                int s = 0;
+                if ((d['logoUrl'] ?? '').toString().isNotEmpty) s += 10;
+                if ((d['coverUrl'] ?? '').toString().isNotEmpty ||
+                    (d['imageUrl'] ?? '').toString().isNotEmpty) s += 10;
+                if (d['is_boosted'] == true) s += 100;
+                return s;
+              }
+
+              return getScore(db).compareTo(getScore(da));
+            });
 
             if (filtered.isEmpty) {
               return const SliverToBoxAdapter(
@@ -998,13 +1267,14 @@ class _ClientHomePageState extends State<ClientHomePage> {
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               sliver: SliverGrid(
                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount:
-                      isDesktop ? 3 : 2, // 2 colunas fixas no mobile
+                  crossAxisCount: isDesktop
+                      ? 4
+                      : 3, // 3 colunas no mobile para cards menores
                   childAspectRatio: isDesktop
-                      ? 0.75
-                      : 0.65, // Cards mais altos e proporcionais
-                  crossAxisSpacing: 12,
-                  mainAxisSpacing: 12,
+                      ? 0.85
+                      : 0.70, // Um pouco mais alto para evitar overflow no texto
+                  crossAxisSpacing: 10,
+                  mainAxisSpacing: 10,
                 ),
                 delegate: SliverChildBuilderDelegate(
                   (context, index) => _ShopCard(
@@ -1025,69 +1295,6 @@ class _ClientHomePageState extends State<ClientHomePage> {
   // ============ VIEW: AGENDA ============
   Widget _buildScheduleView({required bool isDesktop}) {
     return const MyAppointmentsPage();
-  }
-
-  // ============ VIEW: FAVORITOS ============
-  Widget _buildFavoritesView({required bool isDesktop}) {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null)
-      return const Center(child: Text("Faça login para ver seus favoritos"));
-
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .collection('favorites')
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData)
-          return const Center(child: CircularProgressIndicator());
-
-        final favoriteDocs = snapshot.data!.docs;
-        if (favoriteDocs.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.favorite_border, size: 80, color: Colors.grey[300]),
-                const SizedBox(height: 16),
-                const Text("Seus favoritos aparecerão aqui",
-                    style: TextStyle(color: Colors.grey, fontSize: 16)),
-              ],
-            ),
-          );
-        }
-
-        return ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: favoriteDocs.length,
-          itemBuilder: (context, index) {
-            final favData = favoriteDocs[index].data() as Map<String, dynamic>;
-            final shopId = favData['shopId'];
-
-            return FutureBuilder<DocumentSnapshot>(
-              future: FirebaseFirestore.instance
-                  .collection('shops')
-                  .doc(shopId)
-                  .get(),
-              builder: (context, shopSnap) {
-                if (!shopSnap.hasData || !shopSnap.data!.exists)
-                  return const SizedBox.shrink();
-
-                final shop = shopSnap.data!;
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 16),
-                  child: _ShopCard(
-                    shop: shop,
-                    onTap: () => _openShopProfile(shop),
-                  ),
-                );
-              },
-            );
-          },
-        );
-      },
-    );
   }
 
   // --- DESKTOP WIDGETS ---
@@ -1169,28 +1376,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
             offset: const Offset(0, 50),
             color: Colors.white,
             surfaceTintColor: Colors.white,
-            onSelected: (v) {
-              if (v == 'perfil') {
-                final user = FirebaseAuth.instance.currentUser;
-                if (user != null) {
-                  Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (c) => ClientRegisterPage(
-                              user: user, isBusinessAdding: false)));
-                }
-              } else if (v == 'trocar') {
-                if (_userTipo == 'dono' || _userTipo == 'business') {
-                  _switchToClient();
-                } else {
-                  _switchToOwner();
-                }
-              } else if (v == 'advanced') {
-                _showAdvancedOptionsDialog();
-              } else if (v == 'sair') {
-                _confirmLogout();
-              }
-            },
+            onSelected: _handleProfileMenu,
             child: Row(
               children: [
                 Column(
@@ -1228,33 +1414,20 @@ class _ClientHomePageState extends State<ClientHomePage> {
             ),
             itemBuilder: (context) => [
               PopupMenuItem(
-                  value: 'perfil',
+                  value: 'edit',
                   child: Row(children: const [
-                    Icon(Icons.person, size: 16),
+                    Icon(Icons.person_outline,
+                        size: 16, color: AppColors.primaryPurple),
                     SizedBox(width: 8),
-                    Text('Perfil')
-                  ])),
-              PopupMenuItem(
-                  value: 'trocar',
-                  child: Row(children: const [
-                    Icon(Icons.swap_horiz, size: 16),
-                    SizedBox(width: 8),
-                    Text('Trocar Tipo')
-                  ])),
-              PopupMenuItem(
-                  value: 'advanced',
-                  child: Row(children: const [
-                    Icon(Icons.security, size: 16),
-                    SizedBox(width: 8),
-                    Text('Opções Avançadas')
+                    Text('Editar Perfil')
                   ])),
               const PopupMenuDivider(),
               PopupMenuItem(
-                  value: 'sair',
+                  value: 'logout',
                   child: Row(children: const [
                     Icon(Icons.logout, color: Colors.red, size: 16),
                     SizedBox(width: 8),
-                    Text('Sair', style: TextStyle(color: Colors.red))
+                    Text('Sair da Conta', style: TextStyle(color: Colors.red))
                   ])),
             ],
           ),
@@ -1268,20 +1441,73 @@ class _ClientHomePageState extends State<ClientHomePage> {
 // 🏰 COMPONENTES VISUAIS (DESIGN SYSTEM)
 // =============================================================================
 
-class _ShopCard extends StatelessWidget {
+class _ShopCard extends StatefulWidget {
   final DocumentSnapshot shop;
   final VoidCallback onTap;
 
   const _ShopCard({required this.shop, required this.onTap});
 
   @override
+  State<_ShopCard> createState() => _ShopCardState();
+}
+
+class _ShopCardState extends State<_ShopCard> {
+  bool _isFavorite = false;
+  bool _loadingFav = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkFavorite();
+  }
+
+  Future<void> _checkFavorite() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      if (mounted) setState(() => _loadingFav = false);
+      return;
+    }
+    final doc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .collection('favorites')
+        .doc(widget.shop.id)
+        .get();
+    if (mounted) {
+      setState(() {
+        _isFavorite = doc.exists;
+        _loadingFav = false;
+      });
+    }
+  }
+
+  Future<void> _toggleFavorite() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    final ref = FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .collection('favorites')
+        .doc(widget.shop.id);
+    setState(() => _isFavorite = !_isFavorite);
+    try {
+      if (_isFavorite) {
+        await ref.set({'added_at': FieldValue.serverTimestamp()});
+      } else {
+        await ref.delete();
+      }
+    } catch (_) {
+      if (mounted) setState(() => _isFavorite = !_isFavorite);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final data = shop.data() as Map<String, dynamic>;
+    final data = widget.shop.data() as Map<String, dynamic>;
     final imgUrl = data['coverUrl'] ?? data['imageUrl'] ?? "";
     final logoUrl = data['logoUrl'] ?? "";
     final categoria = data['categoria']?.toString() ?? 'Outros';
 
-    // Lógica visual baseada em dados
     final bool isDestaque = data['destaque'] == true ||
         (data['rating'] != null && data['rating'] >= 4.5);
 
@@ -1321,11 +1547,11 @@ class _ShopCard extends StatelessWidget {
     final IconData fallbackIcon = getCatIcon(categoria);
 
     return GestureDetector(
-      onTap: onTap,
+      onTap: widget.onTap,
       child: Container(
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(12),
           boxShadow: [
             BoxShadow(
                 color: Colors.black.withValues(alpha: 0.04),
@@ -1337,50 +1563,50 @@ class _ShopCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              flex: 5,
+              flex: 4,
               child: Stack(
                 children: [
                   // IMAGEM OU FALLBACK
                   Positioned.fill(
-                    child: Hero(
-                      tag: 'cover_${shop.id}',
-                      child: ClipRRect(
-                        borderRadius: const BorderRadius.vertical(
-                            top: Radius.circular(16)),
-                        child: imgUrl.isNotEmpty
-                            ? CachedNetworkImage(
-                                imageUrl: imgUrl,
-                                fit: BoxFit.cover,
-                                placeholder: (c, u) =>
-                                    Container(color: Colors.grey[200]),
-                                errorWidget: (c, u, e) => Container(
-                                  color: fallbackColor,
-                                  child: Icon(fallbackIcon,
-                                      color: Colors.grey[400], size: 40),
-                                ),
-                              )
-                            : Container(
+                    child: ClipRRect(
+                      borderRadius:
+                          const BorderRadius.vertical(top: Radius.circular(12)),
+                      child: imgUrl.isNotEmpty
+                          ? CachedNetworkImage(
+                              imageUrl: imgUrl,
+                              fit: BoxFit.cover,
+                              placeholder: (c, u) =>
+                                  Container(color: Colors.grey[200]),
+                              errorWidget: (c, u, e) => Container(
                                 color: fallbackColor,
-                                child: Center(
-                                  child: Icon(fallbackIcon,
-                                      color: Colors.grey[400], size: 50),
-                                ),
+                                child: Icon(fallbackIcon,
+                                    color: Colors.grey[400], size: 40),
                               ),
-                      ),
+                            )
+                          : Container(
+                              color: fallbackColor,
+                              child: Center(
+                                child: Icon(fallbackIcon,
+                                    color: Colors.grey[400], size: 50),
+                              ),
+                            ),
                     ),
                   ),
 
                   // BADGE DESTAQUE (Top Right)
                   if (isDestaque)
                     Positioned(
-                      top: 10,
-                      right: 10,
+                      top: 6,
+                      right: 6,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
+                            horizontal: 5, vertical: 3),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFFFD700), // Dourado
+                          color: const Color(0xFFFFD700),
                           borderRadius: BorderRadius.circular(20),
+                          boxShadow: [
+                            BoxShadow(color: Colors.black12, blurRadius: 4)
+                          ],
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
@@ -1390,54 +1616,88 @@ class _ShopCard extends StatelessWidget {
                             SizedBox(width: 4),
                             Text("DESTAQUE",
                                 style: TextStyle(
-                                    fontSize: 10,
+                                    fontSize: 8,
                                     fontWeight: FontWeight.bold,
                                     color: Colors.black)),
                           ],
                         ),
                       ),
+                    )
+                  else
+                    // AVALIAÇÃO (Top Right se não for destaque)
+                    Positioned(
+                      top: 6,
+                      right: 6,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.black54,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.star,
+                                size: 10, color: Colors.amber),
+                            const SizedBox(width: 2),
+                            Text(
+                              (data['rating'] ?? 5.0).toStringAsFixed(1),
+                              style: const TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
 
-                  // BOTÃO FAVORITO (Top Left)
                   Positioned(
-                    top: 10,
-                    left: 10,
-                    child: Container(
-                      padding: const EdgeInsets.all(6),
-                      decoration: const BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
+                    top: 6,
+                    left: 6,
+                    child: GestureDetector(
+                      onTap: _toggleFavorite,
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.9),
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.1),
+                                blurRadius: 4),
+                          ],
+                        ),
+                        child: Icon(
+                          _isFavorite ? Icons.favorite : Icons.favorite_border,
+                          size: 12,
+                          color: _isFavorite ? Colors.red : Colors.grey[400],
+                        ),
                       ),
-                      child: const Icon(Icons.favorite,
-                          size: 16,
-                          color: Colors
-                              .red), // Ícone fixo vermelho por enquanto (visual requested)
                     ),
                   ),
 
                   // LOGO (Bottom Left - Sobrepondo)
                   if (logoUrl.isNotEmpty)
                     Positioned(
-                      bottom: 10,
-                      left: 10,
-                      child: Hero(
-                        tag: 'logo_${shop.id}',
-                        child: Container(
-                          width: 40,
-                          height: 40,
-                          decoration: BoxDecoration(
-                              color: Colors.white,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white, width: 2),
-                              boxShadow: [
-                                BoxShadow(
-                                    color: Colors.black.withValues(alpha: 0.1),
-                                    blurRadius: 4)
-                              ]),
-                          child: ClipOval(
-                              child: CachedNetworkImage(
-                                  imageUrl: logoUrl, fit: BoxFit.cover)),
-                        ),
+                      bottom: 6,
+                      left: 6,
+                      child: Container(
+                        width: 30,
+                        height: 30,
+                        decoration: BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 2),
+                            boxShadow: [
+                              BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.1),
+                                  blurRadius: 4)
+                            ]),
+                        child: ClipOval(
+                            child: CachedNetworkImage(
+                                imageUrl: logoUrl, fit: BoxFit.cover)),
                       ),
                     ),
                 ],
@@ -1446,9 +1706,9 @@ class _ShopCard extends StatelessWidget {
 
             // INFO DA LOJA
             Expanded(
-              flex: 3,
+              flex: 2,
               child: Padding(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.all(8),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1458,28 +1718,13 @@ class _ShopCard extends StatelessWidget {
                       children: [
                         Text(data['nome'] ?? "Loja",
                             style: const TextStyle(
-                                fontWeight: FontWeight.bold, fontSize: 15),
+                                fontWeight: FontWeight.bold, fontSize: 11),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis),
-                        const SizedBox(height: 4),
+                        const SizedBox(height: 2),
                         Text(data['categoria'] ?? "Serviços",
                             style: TextStyle(
-                                color: Colors.grey[600], fontSize: 11)),
-
-                        // Rating Stars (Visual)
-                        const SizedBox(height: 4),
-                        Row(
-                          children: [
-                            const Icon(Icons.star,
-                                size: 12, color: Colors.amber),
-                            const SizedBox(width: 4),
-                            Text("5.0",
-                                style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.grey[800])),
-                          ],
-                        )
+                                color: Colors.grey[600], fontSize: 9)),
                       ],
                     ),
                   ],

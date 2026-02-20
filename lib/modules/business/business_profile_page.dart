@@ -4,6 +4,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:typed_data';
 import '../../core/theme/app_colors.dart';
+import '../clients/address_selector_page.dart';
 
 class BusinessProfilePage extends StatefulWidget {
   final String shopId;
@@ -24,9 +25,12 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
   final _phoneCtrl = TextEditingController();
   final _categoryCtrl = TextEditingController();
   final _instagramCtrl = TextEditingController(); // âœ… NOVO: Instagram
-  
+  final _cityCtrl = TextEditingController(); // âœ… NOVO: Cidade
+
   String? _imageUrl; // Capa
-  String? _logoUrl;  // Logo
+  String? _logoUrl; // Logo
+  double? _lat;
+  double? _lng;
 
   @override
   void initState() {
@@ -42,46 +46,54 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
     _phoneCtrl.dispose();
     _categoryCtrl.dispose();
     _instagramCtrl.dispose();
+    _cityCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _loadData() async {
     if (widget.shopId.isEmpty) return;
     setState(() => _isLoading = true);
-    
+
     try {
       final doc = await FirebaseFirestore.instance
           .collection('shops')
           .doc(widget.shopId)
           .get();
-          
+
       if (doc.exists) {
         final data = doc.data() as Map<String, dynamic>;
-        
+
         _nameCtrl.text = data['nome'] ?? "";
         _descCtrl.text = data['descricao'] ?? data['bio'] ?? "";
         _addressCtrl.text = data['endereco'] ?? "";
         _phoneCtrl.text = data['telefone'] ?? data['whatsapp'] ?? "";
         _categoryCtrl.text = data['categoria'] ?? "";
         _instagramCtrl.text = data['instagram'] ?? ""; // âœ… CARREGA Instagram
-        
+        _cityCtrl.text =
+            data['cidade'] ?? data['city'] ?? ""; // âœ… CARREGA Cidade
+
+        _lat = data['lat'] != null ? (data['lat'] as num).toDouble() : null;
+        _lng = data['lng'] != null ? (data['lng'] as num).toDouble() : null;
+
         if (mounted) {
           setState(() {
-            _imageUrl = (data['imageUrl'] != null && data['imageUrl'].toString().isNotEmpty) 
-                ? data['imageUrl'] 
+            _imageUrl = (data['imageUrl'] != null &&
+                    data['imageUrl'].toString().isNotEmpty)
+                ? data['imageUrl']
                 : null;
-            
-            _logoUrl = (data['logoUrl'] != null && data['logoUrl'].toString().isNotEmpty) 
-                ? data['logoUrl'] 
+
+            _logoUrl = (data['logoUrl'] != null &&
+                    data['logoUrl'].toString().isNotEmpty)
+                ? data['logoUrl']
                 : data['foto'];
           });
         }
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Erro ao carregar: $e"), backgroundColor: Colors.red)
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text("Erro ao carregar: $e"),
+            backgroundColor: Colors.red));
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -105,30 +117,45 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
         'instagram': _instagramCtrl.text.trim(), // âœ… SALVA Instagram
         'imageUrl': _imageUrl,
         'logoUrl': _logoUrl,
+        'lat': _lat,
+        'lng': _lng,
+        'cidade': _cityCtrl.text.trim(),
       });
-      
+
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("âœ… Perfil atualizado com sucesso!"),
-            backgroundColor: Colors.green,
-          )
-        );
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text("âœ… Perfil atualizado com sucesso!"),
+          backgroundColor: Colors.green,
+        ));
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Erro: $e"), backgroundColor: Colors.red)
-        );
+            SnackBar(content: Text("Erro: $e"), backgroundColor: Colors.red));
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
+  void _selectLocation() async {
+    final result = await Navigator.push<Map<String, dynamic>>(
+      context,
+      MaterialPageRoute(builder: (_) => const AddressSelectorPage()),
+    );
+    if (result != null && mounted) {
+      setState(() {
+        _addressCtrl.text = result['address'] ?? result['label'] ?? '';
+        _cityCtrl.text = result['city'] ?? '';
+        _lat = result['lat'] != null ? (result['lat'] as num).toDouble() : null;
+        _lng = result['lng'] != null ? (result['lng'] as num).toDouble() : null;
+      });
+    }
+  }
+
   Future<void> _pickAndUploadImage(bool isCover) async {
     final ImagePicker picker = ImagePicker();
-    
+
     try {
       final XFile? image = await picker.pickImage(
         source: ImageSource.gallery,
@@ -136,17 +163,17 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
         maxHeight: isCover ? 1080 : 800,
         imageQuality: 85,
       );
-      
+
       if (image == null) return;
 
       setState(() => _isUploading = true);
 
       Uint8List bytes = await image.readAsBytes();
-      
-      String fileName = isCover 
-          ? 'cover_${DateTime.now().millisecondsSinceEpoch}.jpg' 
+
+      String fileName = isCover
+          ? 'cover_${DateTime.now().millisecondsSinceEpoch}.jpg'
           : 'logo_${DateTime.now().millisecondsSinceEpoch}.jpg';
-          
+
       Reference ref = FirebaseStorage.instance
           .ref()
           .child('shops/${widget.shopId}/$fileName');
@@ -164,24 +191,18 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
           _isUploading = false;
         });
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              isCover 
-                  ? "ðŸ“¸ Capa carregada! Clique em SALVAR." 
-                  : "ðŸ“¸ Logo carregada! Clique em SALVAR."
-            ),
-            backgroundColor: Colors.blue,
-          )
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(isCover
+              ? "ðŸ“¸ Capa carregada! Clique em SALVAR."
+              : "ðŸ“¸ Logo carregada! Clique em SALVAR."),
+          backgroundColor: Colors.blue,
+        ));
       }
-
     } catch (e) {
       if (mounted) {
         setState(() => _isUploading = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Erro: $e"), backgroundColor: Colors.red)
-        );
+            SnackBar(content: Text("Erro: $e"), backgroundColor: Colors.red));
       }
     }
   }
@@ -205,7 +226,8 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                     decoration: BoxDecoration(
                       color: Colors.blue[50],
                       borderRadius: BorderRadius.circular(25),
@@ -233,7 +255,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
                 ],
               ),
             ),
-          
+
           // âœ… CONTEÃšDO COM EXPANDED PARA PREENCHER ESPAÃ‡O DISPONÃVEL
           Expanded(
             child: SingleChildScrollView(
@@ -243,228 +265,265 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-
-              // âœ… CARD COMPACTO COM IMAGENS
-              Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.04),
-                      blurRadius: 12,
-                      offset: const Offset(0, 2),
-                    )
-                  ],
-                ),
-                child: Column(
-                  children: [
-                    // Banner + Logo
-                    SizedBox(
-                      height: 130, // âœ… Reduzido ainda mais (era 160)
-                      child: Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          // CAPA
-                          GestureDetector(
-                            onTap: _isUploading ? null : () => _pickAndUploadImage(true),
-                            child: Container(
-                              key: ValueKey('cover_$_imageUrl'),
-                              height: 100, // âœ… Reduzido (era 120)
-                              decoration: BoxDecoration(
-                                color: Colors.grey[200],
-                                borderRadius: const BorderRadius.vertical(
-                                  top: Radius.circular(16),
-                                ),
-                                image: _imageUrl != null && _imageUrl!.isNotEmpty
-                                    ? DecorationImage(
-                                        image: NetworkImage(_imageUrl!),
-                                        fit: BoxFit.cover,
-                                      )
-                                    : null,
-                              ),
-                              child: _imageUrl == null || _imageUrl!.isEmpty
-                                  ? Center(
-                                      child: Column(
-                                        mainAxisAlignment: MainAxisAlignment.center,
-                                        children: const [
-                                          Icon(Icons.add_photo_alternate, 
-                                               color: Colors.grey, size: 32),
-                                          SizedBox(height: 4),
-                                          Text("Adicionar Capa",
-                                               style: TextStyle(color: Colors.grey, fontSize: 12)),
-                                        ],
-                                      ),
-                                    )
-                                  : null,
-                            ),
-                          ),
-                          
-                          // Botão editar capa
-                          Positioned(
-                            top: 8,
-                            right: 8,
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                shape: BoxShape.circle,
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withValues(alpha: 0.1),
-                                    blurRadius: 8,
-                                  )
-                                ],
-                              ),
-                              child: IconButton(
-                                iconSize: 20,
-                                icon: const Icon(Icons.edit, color: AppColors.primaryPurple),
-                                onPressed: _isUploading ? null : () => _pickAndUploadImage(true),
-                              ),
-                            ),
-                          ),
-                          
-                          // âœ… LOGO DA LOJA (editável pelo usuário)
-                          Positioned(
-                            bottom: 0,
-                            left: 20,
-                            child: GestureDetector(
-                              onTap: _isUploading ? null : () => _pickAndUploadImage(false),
-                              child: Container(
-                                key: ValueKey('logo_$_logoUrl'),
-                                height: 70, // âœ… Reduzido (era 80)
-                                width: 70,
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  shape: BoxShape.circle,
-                                  border: Border.all(color: Colors.white, width: 3),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withValues(alpha: 0.15),
-                                      blurRadius: 12,
-                                    ),
-                                  ],
-                                  image: _logoUrl != null && _logoUrl!.isNotEmpty
-                                      ? DecorationImage(
-                                          image: NetworkImage(_logoUrl!),
-                                          fit: BoxFit.cover,
-                                        )
-                                      : null,
-                                ),
-                                child: _logoUrl == null || _logoUrl!.isEmpty
-                                    ? const Center(
-                                        child: Icon(
-                                          Icons.add_a_photo,
-                                          color: Colors.grey,
-                                          size: 24, // âœ… Reduzido
-                                        ),
-                                      )
-                                    : null,
-                              ),
-                            ),
-                          ),
-                          
-                          // Botão de editar logo
-                          Positioned(
-                            bottom: 2,
-                            left: 68, // âœ… Ajustado
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: AppColors.primaryPurple,
-                                shape: BoxShape.circle,
-                                border: Border.all(color: Colors.white, width: 2),
-                              ),
-                              child: IconButton(
-                                iconSize: 14, // âœ… Reduzido
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(
-                                  minWidth: 28, // âœ… Reduzido
-                                  minHeight: 28,
-                                ),
-                                icon: const Icon(Icons.camera_alt, color: Colors.white),
-                                onPressed: _isUploading ? null : () => _pickAndUploadImage(false),
-                              ),
-                            ),
-                          ),
+                    // âœ… CARD COMPACTO COM IMAGENS
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.04),
+                            blurRadius: 12,
+                            offset: const Offset(0, 2),
+                          )
                         ],
                       ),
-                    ),
-                    
-                    // âœ… FORMULÃRIO COMPACTO (2 colunas lado a lado)
-                    Padding(
-                      padding: const EdgeInsets.all(16), // âœ… Reduzido de 20 para 16
                       child: Column(
                         children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                flex: 3,
-                                child: _buildCompactInput(
-                                  "Nome do Negócio",
-                                  _nameCtrl,
-                                  Icons.store,
+                          // Banner + Logo
+                          SizedBox(
+                            height: 130, // âœ… Reduzido ainda mais (era 160)
+                            child: Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                // CAPA
+                                GestureDetector(
+                                  onTap: _isUploading
+                                      ? null
+                                      : () => _pickAndUploadImage(true),
+                                  child: Container(
+                                    key: ValueKey('cover_$_imageUrl'),
+                                    height: 100, // âœ… Reduzido (era 120)
+                                    decoration: BoxDecoration(
+                                      color: Colors.grey[200],
+                                      borderRadius: const BorderRadius.vertical(
+                                        top: Radius.circular(16),
+                                      ),
+                                      image: _imageUrl != null &&
+                                              _imageUrl!.isNotEmpty
+                                          ? DecorationImage(
+                                              image: NetworkImage(_imageUrl!),
+                                              fit: BoxFit.cover,
+                                            )
+                                          : null,
+                                    ),
+                                    child: _imageUrl == null ||
+                                            _imageUrl!.isEmpty
+                                        ? Center(
+                                            child: Column(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
+                                              children: const [
+                                                Icon(Icons.add_photo_alternate,
+                                                    color: Colors.grey,
+                                                    size: 32),
+                                                SizedBox(height: 4),
+                                                Text("Adicionar Capa",
+                                                    style: TextStyle(
+                                                        color: Colors.grey,
+                                                        fontSize: 12)),
+                                              ],
+                                            ),
+                                          )
+                                        : null,
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(width: 10), // âœ… Reduzido
-                              Expanded(
-                                flex: 2,
-                                child: _buildCompactInput(
-                                  "Categoria",
-                                  _categoryCtrl,
-                                  Icons.category,
+
+                                // Botão editar capa
+                                Positioned(
+                                  top: 8,
+                                  right: 8,
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      shape: BoxShape.circle,
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black
+                                              .withValues(alpha: 0.1),
+                                          blurRadius: 8,
+                                        )
+                                      ],
+                                    ),
+                                    child: IconButton(
+                                      iconSize: 20,
+                                      icon: const Icon(Icons.edit,
+                                          color: AppColors.primaryPurple),
+                                      onPressed: _isUploading
+                                          ? null
+                                          : () => _pickAndUploadImage(true),
+                                    ),
+                                  ),
                                 ),
-                              ),
-                            ],
+
+                                // âœ… LOGO DA LOJA (editável pelo usuário)
+                                Positioned(
+                                  bottom: 0,
+                                  left: 20,
+                                  child: GestureDetector(
+                                    onTap: _isUploading
+                                        ? null
+                                        : () => _pickAndUploadImage(false),
+                                    child: Container(
+                                      key: ValueKey('logo_$_logoUrl'),
+                                      height: 70, // âœ… Reduzido (era 80)
+                                      width: 70,
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        shape: BoxShape.circle,
+                                        border: Border.all(
+                                            color: Colors.white, width: 3),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: Colors.black
+                                                .withValues(alpha: 0.15),
+                                            blurRadius: 12,
+                                          ),
+                                        ],
+                                        image: _logoUrl != null &&
+                                                _logoUrl!.isNotEmpty
+                                            ? DecorationImage(
+                                                image: NetworkImage(_logoUrl!),
+                                                fit: BoxFit.cover,
+                                              )
+                                            : null,
+                                      ),
+                                      child:
+                                          _logoUrl == null || _logoUrl!.isEmpty
+                                              ? const Center(
+                                                  child: Icon(
+                                                    Icons.add_a_photo,
+                                                    color: Colors.grey,
+                                                    size: 24, // âœ… Reduzido
+                                                  ),
+                                                )
+                                              : null,
+                                    ),
+                                  ),
+                                ),
+
+                                // Botão de editar logo
+                                Positioned(
+                                  bottom: 2,
+                                  left: 68, // âœ… Ajustado
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: AppColors.primaryPurple,
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                          color: Colors.white, width: 2),
+                                    ),
+                                    child: IconButton(
+                                      iconSize: 14, // âœ… Reduzido
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(
+                                        minWidth: 28, // âœ… Reduzido
+                                        minHeight: 28,
+                                      ),
+                                      icon: const Icon(Icons.camera_alt,
+                                          color: Colors.white),
+                                      onPressed: _isUploading
+                                          ? null
+                                          : () => _pickAndUploadImage(false),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                          const SizedBox(height: 10), // âœ… Reduzido
-                          _buildCompactInput(
-                            "Descrição / Bio",
-                            _descCtrl,
-                            Icons.description,
-                            maxLines: 2,
-                          ),
-                          const SizedBox(height: 10), // âœ… Reduzido
-                          Row(
-                            children: [
-                              Expanded(
-                                child: _buildCompactInput(
-                                  "Endereço",
-                                  _addressCtrl,
-                                  Icons.location_on,
+
+                          // âœ… FORMULÃ RIO COMPACTO (2 colunas lado a lado)
+                          Padding(
+                            padding: const EdgeInsets.all(
+                                16), // âœ… Reduzido de 20 para 16
+                            child: Column(
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      flex: 3,
+                                      child: _buildCompactInput(
+                                        "Nome do Negócio",
+                                        _nameCtrl,
+                                        Icons.store,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10), // âœ… Reduzido
+                                    Expanded(
+                                      flex: 2,
+                                      child: _buildCompactInput(
+                                        "Categoria",
+                                        _categoryCtrl,
+                                        Icons.category,
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                              ),
-                              const SizedBox(width: 10), // âœ… Reduzido
-                              Expanded(
-                                child: _buildCompactInput(
-                                  "Telefone / WhatsApp",
-                                  _phoneCtrl,
-                                  Icons.phone,
+                                const SizedBox(height: 10), // âœ… Reduzido
+                                _buildCompactInput(
+                                  "Descrição / Bio",
+                                  _descCtrl,
+                                  Icons.description,
+                                  maxLines: 2,
                                 ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 10), // âœ… Reduzido
-                          // âœ… CAMPO INSTAGRAM
-                          _buildCompactInput(
-                            "Instagram",
-                            _instagramCtrl,
-                            Icons.camera_alt,
-                            hint: "@seu_usuario",
+                                const SizedBox(height: 10), // âœ… Reduzido
+                                _buildCompactInput(
+                                  "Cidade (Obrigatório)",
+                                  _cityCtrl,
+                                  Icons.location_city,
+                                  hint: "Ex: São Paulo",
+                                ),
+                                const SizedBox(height: 10), // âœ… Reduzido
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: GestureDetector(
+                                        onTap: _selectLocation,
+                                        child: AbsorbPointer(
+                                          child: _buildCompactInput(
+                                            "Endereço / Localização",
+                                            _addressCtrl,
+                                            Icons.location_on,
+                                            hint:
+                                                "Clique para selecionar no mapa",
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10), // âœ… Reduzido
+                                    Expanded(
+                                      child: _buildCompactInput(
+                                        "Telefone / WhatsApp",
+                                        _phoneCtrl,
+                                        Icons.phone,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 10), // âœ… Reduzido
+                                // âœ… CAMPO INSTAGRAM
+                                _buildCompactInput(
+                                  "Instagram",
+                                  _instagramCtrl,
+                                  Icons.camera_alt,
+                                  hint: "@seu_usuario",
+                                ),
+                              ],
+                            ),
                           ),
                         ],
                       ),
                     ),
-                  ],
-                ),
-              ),
-              
+
                     const SizedBox(height: 16), // âœ… Reduzido de 20 para 16
-                    
+
                     // âœ… BOTÃO SALVAR
                     SizedBox(
                       width: double.infinity,
                       height: 48,
                       child: ElevatedButton.icon(
-                        onPressed: (_isLoading || _isUploading) ? null : _saveData,
+                        onPressed:
+                            (_isLoading || _isUploading) ? null : _saveData,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.primaryPurple,
                           disabledBackgroundColor: Colors.grey[400],
@@ -482,7 +541,8 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
                                   strokeWidth: 2,
                                 ),
                               )
-                            : const Icon(Icons.check_circle, color: Colors.white),
+                            : const Icon(Icons.check_circle,
+                                color: Colors.white),
                         label: Text(
                           _isLoading ? "Salvando..." : "SALVAR ALTERAÃ‡Ã•ES",
                           style: const TextStyle(
@@ -532,15 +592,16 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: AppColors.primaryPurple, width: 2),
+          borderSide:
+              const BorderSide(color: AppColors.primaryPurple, width: 2),
         ),
         filled: true,
         fillColor: Colors.grey[50],
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         isDense: true,
       ),
       validator: (v) => v == null || v.trim().isEmpty ? "Obrigatório" : null,
     );
   }
 }
-

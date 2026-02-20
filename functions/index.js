@@ -109,28 +109,20 @@ exports.publicShopPreview = onRequest({ cors: true }, async (req, res) => {
     if (address) ogDescription += ` • ${address}`;
     if (descricao && descricao.length > 0) ogDescription = descricao;
 
-    res.set('Cache-Control', 'public, max-age=300');
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
 
-    if (!isBot) {
-      // Human visitor: return page with JS redirect to the Flutter SPA
-      // (keeps the URL clean; the router inside the SPA handles /{slug})
-      return res.status(200).send(`<!doctype html><html lang="pt-BR"><head>
-        <meta charset="utf-8">
-        <meta http-equiv="refresh" content="0;url=${escapeHtml(shopUrl)}?_loaded=1">
-        <title>${escapeHtml(name)}</title>
-        <script>window.location.replace(${JSON.stringify(shopUrl + '?_loaded=1')});</script>
-      </head><body></body></html>`);
+    // 1. Basic path validation to avoid asset interception
+    // If it looks like a file or system path, don't treat it as a slug
+    if (slug.includes('.') || slug.startsWith('_') || slug === 'index.html') {
+      return res.status(404).send('Not a shop');
     }
 
-    // Bot: serve full Open Graph HTML so WhatsApp/Facebook can build the preview
-    const ogHtml = `<!doctype html>
-<html lang="pt-BR">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+    // Build common OG meta tags
+    const ogHtmlTags = `
   <title>${escapeHtml(ogTitle)}</title>
-
-  <!-- Open Graph (WhatsApp, Facebook, LinkedIn) -->
+  <meta name="description"        content="${escapeHtml(ogDescription)}" />
   <meta property="og:type"        content="website" />
   <meta property="og:site_name"   content="Marka AI" />
   <meta property="og:url"         content="${escapeHtml(shopUrl)}" />
@@ -140,23 +132,61 @@ exports.publicShopPreview = onRequest({ cors: true }, async (req, res) => {
   <meta property="og:image:width"  content="1200" />
   <meta property="og:image:height" content="630" />
   <meta property="og:image:type"   content="image/jpeg" />
-
-  <!-- Twitter Card -->
   <meta name="twitter:card"        content="summary_large_image" />
   <meta name="twitter:title"       content="${escapeHtml(ogTitle)}" />
   <meta name="twitter:description" content="${escapeHtml(ogDescription)}" />
   <meta name="twitter:image"       content="${escapeHtml(imageUrl)}" />
+  <link rel="canonical" href="${escapeHtml(shopUrl)}" />`;
 
-  <link rel="canonical" href="${escapeHtml(shopUrl)}" />
+    // Serve HTML (Common for Bots OR Human)
+    // We no longer redirect to ?_loaded=1 to avoid loops and flickering.
+    // Instead, we serve the bootstrap HTML with OG tags immediately.
+    const fullHtml = `<!doctype html>
+<html lang="pt-BR">
+<!-- Version: 1.0.1-no-redirect -->
+<head>
+  <base href="/">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  
+  ${ogHtmlTags}
+  
+  <meta name="google-signin-client_id" content="170942564821-s8doqh3tcqe4rs7muauefgkdqehcf1l9.apps.googleusercontent.com">
+  <link rel="icon" type="image/png" href="favicon.png"/>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/croppie/2.6.5/croppie.css" />
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/croppie/2.6.5/croppie.min.js"></script>
 </head>
-<body>
-  <h1>${escapeHtml(name)}</h1>
-  <p>${escapeHtml(ogDescription)}</p>
-  <a href="${escapeHtml(shopUrl)}">Agendar agora</a>
+<body style="margin: 0; padding: 0; background: #5B2DB6;">
+  <!-- Splash / Loading state -->
+  <div id="splash" style="position: fixed; inset: 0; background: linear-gradient(180deg, #5B2DB6, #4A1F8A); display: flex; align-items: center; justify-content: center; flex-direction: column; z-index: 9999; color: #fff; font-family: sans-serif;">
+    <div style="font-size: 24px; font-weight: bold; margin-bottom: 20px;">Marka AI</div>
+    <div style="font-size: 14px; opacity: 0.8;">Carregando ${escapeHtml(name)}...</div>
+  </div>
+
+  <!-- Bot Content (Hidden for humans, visible for crawlers) -->
+  <div style="display: none;">
+    <h1>${escapeHtml(name)}</h1>
+    <p>${escapeHtml(ogDescription)}</p>
+    <a href="${escapeHtml(shopUrl)}">Agendar agora</a>
+  </div>
+
+  <!-- Flutter Loader -->
+  <script src="flutter_bootstrap.js" async></script>
+  <script>
+    function hideSplash() {
+      var s = document.getElementById('splash');
+      if (s) s.style.display = 'none';
+    }
+    window.addEventListener('flutter-first-frame', hideSplash);
+    setTimeout(hideSplash, 10000);
+  </script>
 </body>
 </html>`;
 
-    return res.status(200).send(ogHtml);
+    return res.status(200).send(fullHtml);
+
   } catch (err) {
     console.error('publicShopPreview error:', err);
     return res.status(500).send('Internal error');
@@ -1734,7 +1764,8 @@ exports.onClientProfileUpdate = onDocumentUpdated('users/{userId}', async (event
 // 🔄 GOOGLE CALENDAR BACKUP - SINCRONIZAÇÃO AUTOMÁTICA
 // ============================================================================
 
-const { google } = require('googleapis');
+
+
 
 /**
  * Sincroniza um agendamento com o Google Calendar do dono da loja
@@ -1809,6 +1840,9 @@ async function syncToUserCalendar(userId, appointmentId, appointmentData) {
 
     // Verifica se está conectado
     if (!calendarData || !calendarData.connected) return;
+
+    // Carregar googleapis de forma tardia (lazy loading)
+    const { google } = require('googleapis');
 
     // Configura OAuth2
     const oauth2Client = new google.auth.OAuth2(
@@ -1948,6 +1982,9 @@ async function deleteFromGoogleCalendar(userId, appointmentId, eventId) {
     const calendarData = userData.googleCalendar;
 
     if (!calendarData || !calendarData.connected || !eventId) return;
+
+    // Carregar googleapis de forma tardia (lazy loading)
+    const { google } = require('googleapis');
 
     const oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,

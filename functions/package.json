@@ -8,8 +8,10 @@
   },
   "scripts": {
     "start": "firebase emulators:start --only functions",
-    "deploy": "firebase deploy --only functions:getInstallments",
-    "logs": "firebase functions:log --only getInstallments"
+    "deploy": "firebase deploy --only functions",
+    "deploy:preview": "firebase deploy --only functions:publicShopPreview",
+    "deploy:installments": "firebase deploy --only functions:getInstallments",
+    "logs": "firebase functions:log"
   },
   "dependencies": {
     "axios": "^1.13.5",
