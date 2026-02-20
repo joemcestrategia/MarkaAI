@@ -1,11 +1,11 @@
 {
-    "name": "flutter_application_1",
-    "short_name": "flutter_application_1",
+    "name": "MarkaAI.app",
+    "short_name": "MarkaAI",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#ffffff",
+    "theme_color": "#5B2DB6",
+    "description": "MarkaAI - Gestão Inteligente de Agendamentos.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

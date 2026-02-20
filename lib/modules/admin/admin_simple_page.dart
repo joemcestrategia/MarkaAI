@@ -1,3 +1,4 @@
+// ignore_for_file: use_build_context_synchronously
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -114,6 +115,7 @@ class _AdminSimplePageState extends State<AdminSimplePage> {
     final name = TextEditingController(text: data['nome'] ?? '');
     final phone = TextEditingController(text: data['telefone'] ?? '');
     final plansSnap = await FirebaseFirestore.instance.collection('plans').orderBy('price_month').get();
+    if (!mounted) return;
     final planIds = plansSnap.docs.map((d)=>d.id).toList();
     String selPlan = data['plan'] ?? (planIds.isNotEmpty ? planIds.first : 'start');
     await showDialog(context: context, builder: (ctx){
@@ -211,6 +213,7 @@ class _AdminSimplePageState extends State<AdminSimplePage> {
     final phone = TextEditingController(text: data['telefone'] ?? '');
     // load shops for stats dropdown
     final shopsSnap = await FirebaseFirestore.instance.collection('shops').orderBy('nome').get();
+    if (!mounted) return;
     final shops = shopsSnap.docs;
     String? selectedShop = shops.isNotEmpty ? shops.first.id : null;
 
@@ -247,6 +250,7 @@ class _AdminSimplePageState extends State<AdminSimplePage> {
               .where('shopId', isEqualTo: selectedShop)
               .orderBy('data_agendamento', descending: true)
             .get();
+            if (!mounted) return;
             final appts = apptsSnap.docs.map((d) => d.data()).toList();
             final totalAppointments = appts.length;
             final cancellations = appts.where((a)=> (a['status'] ?? '') == 'cancelado').length;
@@ -289,10 +293,11 @@ class _AdminSimplePageState extends State<AdminSimplePage> {
                     final idToken = await FirebaseAuth.instance.currentUser?.getIdToken();
                     final url = Uri.parse('https://us-central1-wismart-118c3.cloudfunctions.net/addTagToUser');
                     final resp = await http.post(url, headers: {'Content-Type':'application/json','Authorization':'Bearer $idToken'}, body: jsonEncode({'userId': doc.id, 'shopId': selectedShop, 'tag': 'VIP'}));
+                    if (!mounted) return;
                     if (resp.statusCode == 200) {
-                      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Usuário marcado como VIP')));
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Usuário marcado como VIP')));
                     } else {
-                      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao marcar VIP: ${resp.statusCode}')));
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao marcar VIP: ${resp.statusCode}')));
                     }
                   }, child: const Text('Marcar VIP')),
                 ],
@@ -305,7 +310,8 @@ class _AdminSimplePageState extends State<AdminSimplePage> {
             await FirebaseFirestore.instance.collection('users').doc(doc.id).set(after, SetOptions(merge:true));
             await FirebaseFirestore.instance.collection('admin_audit').add({'adminUid': user?.uid, 'action':'edit_user','targetId':doc.id,'before':before,'after':after,'createdAt': FieldValue.serverTimestamp()});
             Navigator.pop(ctx);
-            if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Usuário atualizado')));
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Usuário atualizado')));
           }, child: const Text('Salvar')),
         ],
       );

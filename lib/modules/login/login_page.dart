@@ -30,7 +30,8 @@ class ViaCepService {
 }
 
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key});
+  final bool returnOnSuccess;
+  const LoginPage({super.key, this.returnOnSuccess = false});
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -44,7 +45,8 @@ class _LoginPageState extends State<LoginPage>
   bool _obscurePassword = true;
   bool _obscurePasswordConfirm = true;
   String? _selectedRole;
-  int _currentStep = 0; // 0: Credenciais, 1: Perfil, 2: Dados Pessoais, 3: Endereço
+  int _currentStep =
+      0; // 0: Credenciais, 1: Perfil, 2: Dados Pessoais, 3: Endereço
 
   // Controllers
   final _emailCtrl = TextEditingController();
@@ -61,12 +63,12 @@ class _LoginPageState extends State<LoginPage>
   final _cidadeCtrl = TextEditingController();
 
   // Máscaras
-  final _phoneMask =
-      MaskTextInputFormatter(mask: '(##) #####-####', filter: {"#": RegExp(r'[0-9]')});
-  final _cepMask =
-      MaskTextInputFormatter(mask: '#####-###', filter: {"#": RegExp(r'[0-9]')});
-  final _dateMask =
-      MaskTextInputFormatter(mask: '##/##/####', filter: {"#": RegExp(r'[0-9]')});
+  final _phoneMask = MaskTextInputFormatter(
+      mask: '(##) #####-####', filter: {"#": RegExp(r'[0-9]')});
+  final _cepMask = MaskTextInputFormatter(
+      mask: '#####-###', filter: {"#": RegExp(r'[0-9]')});
+  final _dateMask = MaskTextInputFormatter(
+      mask: '##/##/####', filter: {"#": RegExp(r'[0-9]')});
 
   @override
   void initState() {
@@ -101,8 +103,10 @@ class _LoginPageState extends State<LoginPage>
   Future<void> _routeUser(User user) async {
     setState(() => _isLoading = true);
     try {
-      final doc =
-          await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
 
       bool needsRegistration = false;
       Map<String, dynamic>? data;
@@ -146,6 +150,11 @@ class _LoginPageState extends State<LoginPage>
       String tipo = data?['tipo'] ?? 'cliente';
 
       if (mounted) {
+        if (widget.returnOnSuccess) {
+          Navigator.pop(context, true);
+          return;
+        }
+
         if (tipo == 'dono' || tipo == 'business') {
           Navigator.pushReplacement(
             context,
@@ -276,8 +285,7 @@ class _LoginPageState extends State<LoginPage>
       if (user == null) {
         UserCredential res = await FirebaseAuth.instance
             .createUserWithEmailAndPassword(
-                email: _emailCtrl.text.trim(),
-                password: _passCtrl.text.trim());
+                email: _emailCtrl.text.trim(), password: _passCtrl.text.trim());
         user = res.user;
       }
 
@@ -306,7 +314,10 @@ class _LoginPageState extends State<LoginPage>
         data['shopId'] = user.uid;
       }
 
-      await FirebaseFirestore.instance.collection('users').doc(user.uid).set(data);
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .set(data);
       await _routeUser(user);
     } on FirebaseAuthException catch (e) {
       _handleFirebaseError(e);
@@ -333,13 +344,20 @@ class _LoginPageState extends State<LoginPage>
       final UserCredential uCred =
           await FirebaseAuth.instance.signInWithCredential(credential);
       // Check if user document exists and is complete; if not, force registration flow
-      final doc = await FirebaseFirestore.instance.collection('users').doc(uCred.user!.uid).get();
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uCred.user!.uid)
+          .get();
       bool needsRegistration = false;
       if (!doc.exists) {
         needsRegistration = true;
       } else {
         final data = doc.data();
-        if (data == null || !data.containsKey('tipo') || !data.containsKey('telefone')) needsRegistration = true;
+        if (data == null ||
+            !data.containsKey('tipo') ||
+            !data.containsKey('telefone')) {
+          needsRegistration = true;
+        }
       }
       if (needsRegistration) {
         if (mounted) {
@@ -365,11 +383,13 @@ class _LoginPageState extends State<LoginPage>
     String msg = "Erro na autenticação";
     if (e.code == 'user-not-found') {
       msg = "E-mail não cadastrado.";
-    } else if (e.code == 'wrong-password') msg = "Senha incorreta.";
-    else if (e.code == 'email-already-in-use')
+    } else if (e.code == 'wrong-password') {
+      msg = "Senha incorreta.";
+    } else if (e.code == 'email-already-in-use') {
       msg = "Este e-mail já está em uso.";
-    else if (e.code == 'weak-password')
+    } else if (e.code == 'weak-password') {
       msg = "A senha deve ter pelo menos 6 caracteres.";
+    }
     _showError(msg);
   }
 
@@ -438,7 +458,8 @@ class _LoginPageState extends State<LoginPage>
                       mainAxisAlignment: MainAxisAlignment.center,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Image.asset('assets/images/logo_white.png', height: 120, fit: BoxFit.contain),
+                        Image.asset('assets/images/logo_white.png',
+                            height: 120, fit: BoxFit.contain),
                         const SizedBox(height: 18),
                         const SizedBox(height: 12),
                         const Text(
@@ -460,7 +481,8 @@ class _LoginPageState extends State<LoginPage>
                                   color: Colors.white.withValues(alpha: 0.2))),
                           child: const Text(
                               "🚀 Agendamento Inteligente • Gestão Financeira",
-                              style: TextStyle(color: Colors.white, fontSize: 14)),
+                              style:
+                                  TextStyle(color: Colors.white, fontSize: 14)),
                         )
                       ],
                     ),
@@ -505,7 +527,8 @@ class _LoginPageState extends State<LoginPage>
             return Center(
               child: Column(
                 children: [
-                  Image.asset('assets/images/logo_purple.png', height: 96, fit: BoxFit.contain),
+                  Image.asset('assets/images/logo_purple.png',
+                      height: 96, fit: BoxFit.contain),
                   const SizedBox(height: 12),
                 ],
               ),
@@ -516,12 +539,16 @@ class _LoginPageState extends State<LoginPage>
         const SizedBox(height: 20),
         const Text("Bem-vindo(a)!",
             style: TextStyle(
-                fontSize: 28, fontWeight: FontWeight.bold, color: Colors.black87)),
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+                color: Colors.black87)),
         const Text("Insira suas credenciais para continuar.",
             style: TextStyle(color: Colors.grey)),
         const SizedBox(height: 30),
         _ModernInput(
-            controller: _emailCtrl, label: "E-mail", icon: Icons.email_outlined),
+            controller: _emailCtrl,
+            label: "E-mail",
+            icon: Icons.email_outlined),
         const SizedBox(height: 16),
         _ModernInput(
           controller: _passCtrl,
@@ -545,7 +572,9 @@ class _LoginPageState extends State<LoginPage>
         ),
         const SizedBox(height: 20),
         _PrimaryButton(
-            text: "ENTRAR", isLoading: _isLoading, onPressed: _handleLoginClick),
+            text: "ENTRAR",
+            isLoading: _isLoading,
+            onPressed: _handleLoginClick),
         const SizedBox(height: 20),
         _DividerOr(),
         const SizedBox(height: 20),
@@ -580,8 +609,7 @@ class _LoginPageState extends State<LoginPage>
     try {
       UserCredential res = await FirebaseAuth.instance
           .signInWithEmailAndPassword(
-              email: _emailCtrl.text.trim(),
-              password: _passCtrl.text.trim());
+              email: _emailCtrl.text.trim(), password: _passCtrl.text.trim());
       await _routeUser(res.user!);
     } on FirebaseAuthException catch (e) {
       // If user not found, switch to the existing registration flow (no extra modal)
@@ -627,7 +655,9 @@ class _LoginPageState extends State<LoginPage>
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancelar')),
           ElevatedButton(
             onPressed: () {
               if (formKey.currentState?.validate() != true) return;
@@ -642,7 +672,8 @@ class _LoginPageState extends State<LoginPage>
 
     setState(() => _isLoading = true);
     try {
-      await FirebaseAuth.instance.sendPasswordResetEmail(email: ctrl.text.trim());
+      await FirebaseAuth.instance
+          .sendPasswordResetEmail(email: ctrl.text.trim());
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -721,13 +752,12 @@ class _LoginPageState extends State<LoginPage>
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12)),
-                    side: const BorderSide(
-                        color: Color(0xFFEEEEEE), width: 1.5),
+                    side:
+                        const BorderSide(color: Color(0xFFEEEEEE), width: 1.5),
                   ),
                   child: const Text("VOLTAR",
                       style: TextStyle(
-                          color: Colors.black87,
-                          fontWeight: FontWeight.bold)),
+                          color: Colors.black87, fontWeight: FontWeight.bold)),
                 ),
               ),
             if (_currentStep > 0) const SizedBox(width: 10),
@@ -833,8 +863,8 @@ class _LoginPageState extends State<LoginPage>
           icon: Icons.lock_outline,
           isPassword: true,
           obscure: _obscurePasswordConfirm,
-          onObscurePressed: () =>
-              setState(() => _obscurePasswordConfirm = !_obscurePasswordConfirm),
+          onObscurePressed: () => setState(
+              () => _obscurePasswordConfirm = !_obscurePasswordConfirm),
         ),
         const SizedBox(height: 16),
         Container(
@@ -1082,7 +1112,8 @@ class _ModernInput extends StatelessWidget {
         contentPadding:
             const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
         border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide.none),
         enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
             borderSide: const BorderSide(color: Color(0xFFEEEEEE))),
@@ -1117,7 +1148,8 @@ class _PrimaryButton extends StatelessWidget {
         onPressed: isLoading ? null : onPressed,
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.primaryPurple,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           elevation: 2,
           shadowColor: AppColors.primaryPurple.withValues(alpha: 0.4),
         ),
@@ -1181,13 +1213,14 @@ class _RoleCard extends StatelessWidget {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
+        decoration: BoxDecoration(
           color: isSelected
               ? AppColors.primaryPurple.withValues(alpha: 0.05)
               : Colors.white,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-              color: isSelected ? AppColors.primaryPurple : Colors.grey.shade200,
+              color:
+                  isSelected ? AppColors.primaryPurple : Colors.grey.shade200,
               width: isSelected ? 2 : 1),
           boxShadow: isSelected
               ? [
@@ -1202,16 +1235,13 @@ class _RoleCard extends StatelessWidget {
           children: [
             Icon(icon,
                 size: 32,
-                color: isSelected
-                    ? AppColors.primaryPurple
-                    : Colors.grey),
+                color: isSelected ? AppColors.primaryPurple : Colors.grey),
             const SizedBox(height: 8),
             Text(title,
                 style: TextStyle(
                     fontWeight: FontWeight.bold,
-                    color: isSelected
-                        ? AppColors.primaryPurple
-                        : Colors.black87)),
+                    color:
+                        isSelected ? AppColors.primaryPurple : Colors.black87)),
             Text(subtitle,
                 style: const TextStyle(fontSize: 10, color: Colors.grey)),
           ],
@@ -1226,8 +1256,7 @@ class _DividerOr extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: const [
-        Expanded(
-            child: Divider(color: Color(0xFFEEEEEE), thickness: 1.5)),
+        Expanded(child: Divider(color: Color(0xFFEEEEEE), thickness: 1.5)),
         Padding(
             padding: EdgeInsets.symmetric(horizontal: 10),
             child: Text("OU",
@@ -1235,8 +1264,7 @@ class _DividerOr extends StatelessWidget {
                     color: Colors.grey,
                     fontSize: 12,
                     fontWeight: FontWeight.bold))),
-        Expanded(
-            child: Divider(color: Color(0xFFEEEEEE), thickness: 1.5)),
+        Expanded(child: Divider(color: Color(0xFFEEEEEE), thickness: 1.5)),
       ],
     );
   }

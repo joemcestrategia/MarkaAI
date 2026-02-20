@@ -1,4 +1,7 @@
+﻿// ignore_for_file: use_build_context_synchronously
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'catalog_import_page.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -7,24 +10,32 @@ import 'package:flutter_application_1/modules/business/store_profile_page.dart';
 import 'package:intl/intl.dart';
 import 'dart:math';
 import 'package:google_sign_in/google_sign_in.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
+import 'business_history_page.dart';
+import '../../core/widgets/splash_loading_widget.dart';
+import 'widgets/profile_completion_widget.dart';
+import 'boost_shop_page.dart';
+import '../admin/admin_dashboard_page.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 import '../../core/services/notification_service.dart';
+import '../../core/widgets/banner_ad_widget.dart';
 import '../login/login_page.dart';
 
-// --- MÓDULOS ---
+// --- MÃ“DULOS ---
 import '../services/services_management_page.dart';
 import '../team/team_management_page.dart';
 import 'business_settings_page.dart';
 import 'business_schedule_page.dart';
 import 'business_clients_page.dart';
-// import '../settings/excel_import_page.dart'; // Import removed — recurso 'Importar Dados' descontinuado
+// import '../settings/excel_import_page.dart'; // Import removed â€” recurso 'Importar Dados' descontinuado
 import '../financial/financial_dashboard_page.dart';
 
-import 'inventory_page.dart';
+import 'subscription_plans_page.dart';
+import '../../modules/inventory/inventory_home_page.dart';
+import 'subscription_service.dart';
+
+import '../help/help_guide_page.dart';
 
 class BusinessHomePage extends StatefulWidget {
   const BusinessHomePage({super.key});
@@ -34,7 +45,7 @@ class BusinessHomePage extends StatefulWidget {
 }
 
 class _BusinessHomePageState extends State<BusinessHomePage> {
-  int _selectedIndex = 0;
+  int _selectedIndex = 1;
 
   String? shopId;
   String userName = "Profissional";
@@ -46,10 +57,26 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   String? shopImageUrl;
 
   bool _isLoading = true;
+  // --- MOBILE AGENDA STATE ---
+  List<DocumentSnapshot> _mobileAppointments = [];
+  DocumentSnapshot? _mobileLastDoc;
+  DocumentSnapshot? _mobileFirstDoc;
+  bool _mobileHasMore = true;
+  bool _mobileLoading = false;
+  final ScrollController _mobileScrollController = ScrollController();
+  final int _mobilePerPage = 20;
+  bool _mobileInitialized = false;
+  bool _mobilePastHasMore = true;
+  GlobalKey? _mobileTodayHeaderKey;
 
-  int _selectedYear = DateTime.now().year; // Começa com o ano atual para economizar
+  int _selectedYear =
+      DateTime.now().year; // Começa com o ano atual para economizar
   // Lista inicial apenas com o ano atual, será populada dinamicamente se necessário
   List<int> _availableYears = [DateTime.now().year];
+
+  // Indices bloqueados para o plano atual
+  List<int> _restrictedIndices = [];
+  bool _canViewCommissions = false;
 
   @override
   void initState() {
@@ -80,19 +107,175 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     });
   }
 
+  // --- MOBILE APPOINTMENTS (infinite scroll, chronological) ---
+  Future<void> _initMobileAppointmentsOnce() async {
+    if (_mobileInitialized) return;
+    _mobileInitialized = true;
+    _mobileScrollController.addListener(() {
+      // load more future when near bottom
+      if (_mobileScrollController.position.pixels >=
+          _mobileScrollController.position.maxScrollExtent * 0.9) {
+        _loadMoreMobileAppointments();
+      }
+      // load more past when near top
+      if (_mobileScrollController.position.pixels <= 200) {
+        _loadMorePastAppointments();
+      }
+    });
+    await _loadMobileAppointmentsInitial();
+  }
+
+  Future<void> _loadMobileAppointmentsInitial() async {
+    if (_mobileLoading || shopId == null) return;
+    setState(() {
+      _mobileLoading = true;
+      _mobileAppointments = [];
+      _mobileLastDoc = null;
+      _mobileHasMore = true;
+      _mobilePastHasMore = true;
+    });
+    try {
+      // Default initial behavior: start from today (most relevant) and show future appointments ascending.
+      final now = DateTime.now();
+      final startOfToday = DateTime(now.year, now.month, now.day, 0, 0, 0);
+      // fetch a reasonable window around today to populate multiple days (avoid single-day-only view)
+      final windowStart = startOfToday.subtract(const Duration(days: 7));
+      final windowEnd = startOfToday.add(const Duration(days: 14));
+
+      Query windowQuery = FirebaseFirestore.instance
+          .collection('appointments')
+          .where('shopId', isEqualTo: shopId)
+          .where('data_agendamento',
+              isGreaterThanOrEqualTo: Timestamp.fromDate(windowStart))
+          .where('data_agendamento',
+              isLessThanOrEqualTo: Timestamp.fromDate(windowEnd))
+          .orderBy('data_agendamento', descending: false)
+          .limit(100);
+
+      final windowSnap = await windowQuery.get();
+      final combined = windowSnap.docs;
+
+      // Estimate hasMore flags based on edges
+      _mobileHasMore =
+          combined.isNotEmpty && (combined.length >= 100) ? true : true;
+      _mobilePastHasMore = true;
+
+      if (mounted) {
+        setState(() {
+          _mobileAppointments = combined;
+          if (combined.isNotEmpty) {
+            _mobileFirstDoc = combined.first;
+            _mobileLastDoc = combined.last;
+          }
+          // prepare a key for today's header to scroll to it after build
+          _mobileTodayHeaderKey = GlobalKey();
+        });
+
+        // ensure today's header visible
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          try {
+            if (_mobileTodayHeaderKey?.currentContext != null) {
+              Scrollable.ensureVisible(_mobileTodayHeaderKey!.currentContext!,
+                  duration: const Duration(milliseconds: 300), alignment: 0.1);
+            }
+          } catch (e) {
+            // ignore
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint("Erro carregar mobile appointments: $e");
+    } finally {
+      if (mounted) setState(() => _mobileLoading = false);
+    }
+  }
+
+  Future<void> _loadMorePastAppointments() async {
+    if (_mobileLoading ||
+        !_mobilePastHasMore ||
+        shopId == null ||
+        _mobileFirstDoc == null) {
+      return;
+    }
+    setState(() {
+      _mobileLoading = true;
+    });
+    try {
+      final firstDate = (_mobileFirstDoc!.data()
+          as Map<String, dynamic>)['data_agendamento'] as Timestamp;
+      Query query = FirebaseFirestore.instance
+          .collection('appointments')
+          .where('shopId', isEqualTo: shopId)
+          .where('data_agendamento', isLessThan: firstDate)
+          .orderBy('data_agendamento', descending: true)
+          .limit(_mobilePerPage);
+      final snap = await query.get();
+      if (mounted) {
+        final newDocs = snap.docs.reversed.toList();
+        setState(() {
+          _mobileAppointments = [...newDocs, ..._mobileAppointments];
+          if (newDocs.isNotEmpty) _mobileFirstDoc = newDocs.first;
+          if (snap.docs.length < _mobilePerPage) _mobilePastHasMore = false;
+        });
+      }
+    } catch (e) {
+      debugPrint("Erro carregar mais past mobile appointments: $e");
+    } finally {
+      if (mounted) setState(() => _mobileLoading = false);
+    }
+  }
+
+  Future<void> _loadMoreMobileAppointments() async {
+    if (_mobileLoading ||
+        !_mobileHasMore ||
+        shopId == null ||
+        _mobileLastDoc == null) {
+      return;
+    }
+    setState(() {
+      _mobileLoading = true;
+    });
+    try {
+      Query query = FirebaseFirestore.instance
+          .collection('appointments')
+          .where('shopId', isEqualTo: shopId)
+          .orderBy('data_agendamento', descending: false)
+          .startAfterDocument(_mobileLastDoc!)
+          .limit(_mobilePerPage);
+      final snap = await query.get();
+      if (mounted) {
+        setState(() {
+          if (snap.docs.isNotEmpty) {
+            _mobileLastDoc = snap.docs.last;
+            _mobileAppointments.addAll(snap.docs);
+          }
+          if (snap.docs.length < _mobilePerPage) _mobileHasMore = false;
+        });
+      }
+    } catch (e) {
+      debugPrint("Erro carregar mais mobile appointments: $e");
+    } finally {
+      if (mounted) setState(() => _mobileLoading = false);
+    }
+  }
+
   Future<void> _checkBusinessAndLoad() async {
     try {
       final id = await SessionService.getShopId();
+      final sessionUserId = await SessionService.getUserId();
       final user = FirebaseAuth.instance.currentUser;
 
-      if (user == null) {
+      // Prioritize session ID (for linked accounts via email)
+      final effectiveUid = sessionUserId ?? user?.uid;
+
+      if (effectiveUid == null) {
         _forceLogout();
         return;
       }
 
       final userDoc = await FirebaseFirestore.instance
           .collection('users')
-          .doc(user.uid)
+          .doc(effectiveUid)
           .get();
 
       if (!userDoc.exists) {
@@ -124,16 +307,19 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         setState(() {
           shopId = currentShopId;
           userName = userData['nome'] ?? "Profissional";
-          userEmail = user.email ?? "";
-          userPhotoUrl = user.photoURL;
+          userEmail = user?.email ?? "";
+          userPhotoUrl = user?.photoURL;
           _isLoading = false;
         });
-        
-        // 🔔 Inicializar notificações push para o dono da loja
+
+        // Verificar restrições do plano
+        _checkPlanRestrictions();
+
+        // ðŸ”” Inicializar notificações push para o dono da loja
         NotificationService.initialize().then((_) {
-          debugPrint('✅ Notificações inicializadas para o dono da loja');
+          debugPrint('âœ… Notificações inicializadas para o dono da loja');
         }).catchError((e) {
-          debugPrint('❌ Erro ao inicializar notificações: $e');
+          debugPrint('âŒ Erro ao inicializar notificações: $e');
         });
       }
     } catch (e) {
@@ -146,15 +332,76 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   }
 
   void _forceLogout() async {
-    // Remover token FCM antes de fazer logout
-    await NotificationService.removeToken();
-    await FirebaseAuth.instance.signOut();
+    // Remover token FCM, limpar sessão local e desconectar providers (Google)
+    try {
+      await NotificationService.removeToken();
+    } catch (_) {}
+
+    try {
+      // Limpa preferências locais da sessão
+      await SessionService.logout();
+    } catch (_) {}
+
+    try {
+      // Garantir que o GoogleSignIn não mantenha sessão automática
+      await GoogleSignIn().signOut();
+      await GoogleSignIn().disconnect();
+    } catch (_) {}
+
+    try {
+      await FirebaseAuth.instance.signOut();
+    } catch (_) {}
+
     if (mounted) {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (context) => const LoginPage()),
       );
     }
+  }
+
+  Future<void> _checkPlanRestrictions() async {
+    final canFinancial = await SubscriptionService.canAccessFinancial();
+    final canInventory = await SubscriptionService.canAccessInventory();
+    final canCommissions = await SubscriptionService.canAccessCommissions();
+
+    setState(() {
+      _restrictedIndices = [];
+      if (!canFinancial) _restrictedIndices.add(5); // Financeiro
+      if (!canInventory) _restrictedIndices.add(7); // Estoque
+      _canViewCommissions = canCommissions;
+    });
+  }
+
+  void _showUpgradeDialog(String feature) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Recurso Premium 🔒"),
+        content: Text(
+            "O módulo de $feature está disponível apenas nos planos pagos.\n\nFaça um upgrade para desbloquear controle financeiro, estoque e muito mais!"),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text("Cancelar")),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => const SubscriptionPlansPage()));
+              if (mounted) setState(() {});
+            },
+            style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryPurple),
+            child: const Text("Ver Planos",
+                style: TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.bold)),
+          )
+        ],
+      ),
+    );
   }
 
   void _confirmLogout() {
@@ -191,21 +438,46 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   }
 
   // --- MENU ACTIONS ---
-  void _handleMenuAction(String value) {
+  Future<void> _handleMenuAction(String value) async {
     switch (value) {
       case 'perfil':
-        Navigator.push(context, MaterialPageRoute(builder: (_) => StoreProfilePage()));
+        Navigator.push(
+            context, MaterialPageRoute(builder: (_) => StoreProfilePage()));
         break;
-      case 'advanced':
-        _showAdvancedOptionsDialog();
+      case 'assinatura':
+        await Navigator.push(context,
+            MaterialPageRoute(builder: (_) => const SubscriptionPlansPage()));
+        if (mounted) {
+          _checkBusinessAndLoad(); // Reload to check for new plan features
+        }
         break;
-      
       case 'importar':
-        // Importar removido — manter compatibilidade caso seja chamado
-        // Navigator.push(context, MaterialPageRoute(builder: (_) => const ExcelImportPage()));
+        // Importar legado removido — mantido para compatibilidade
+        break;
+      case 'catalogo_import':
+        if (kIsWeb) {
+          Navigator.push(context,
+              MaterialPageRoute(builder: (_) => const CatalogImportPage()));
+        }
         break;
       case 'sair':
         _confirmLogout();
+        break;
+      case 'impulsionar':
+        Navigator.push(
+            context, MaterialPageRoute(builder: (_) => const BoostShopPage()));
+        break;
+      case 'admin':
+        Navigator.push(context,
+            MaterialPageRoute(builder: (_) => const AdminDashboardPage()));
+        break;
+      case 'ajuda':
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const HelpGuidePage(),
+          ),
+        );
         break;
     }
   }
@@ -213,28 +485,27 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return const Scaffold(
-        body: Center(
-          child: CircularProgressIndicator(
-            color: AppColors.primaryPurple,
-          ),
-        ),
+      return const SplashLoadingWidget(
+        message: "Carregando seu painel...",
       );
     }
 
     return StreamBuilder<DocumentSnapshot>(
       stream: shopId != null
-          ? FirebaseFirestore.instance.collection('shops').doc(shopId).snapshots()
+          ? FirebaseFirestore.instance
+              .collection('shops')
+              .doc(shopId)
+              .snapshots()
           : null,
       builder: (context, snapshot) {
         if (snapshot.hasData && snapshot.data!.exists) {
           final data = snapshot.data!.data() as Map<String, dynamic>;
           shopName = data['nome'] ?? "Meu Negócio";
 
-          shopLogoUrl = (data['logoUrl'] != null &&
-                  data['logoUrl'].toString().isNotEmpty)
-              ? data['logoUrl']
-              : data['foto'];
+          shopLogoUrl =
+              (data['logoUrl'] != null && data['logoUrl'].toString().isNotEmpty)
+                  ? data['logoUrl']
+                  : data['foto'];
 
           shopImageUrl = (data['imageUrl'] != null &&
                   data['imageUrl'].toString().isNotEmpty)
@@ -256,12 +527,13 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     return [
       _buildHomeDashboard(isDesktop: isDesktop), // 0
       BusinessSchedulePage(shopId: shopId ?? ""), // 1
-      const ServicesManagementPage(), // 2
-      const BusinessClientsScreen(), // 3
-      const FinancialDashboardPage(), // 4
-      const TeamManagementPage(), // 5
-      const BusinessSettingsPage(), // 6
-      const InventoryPage(), // 7 Estoque
+      BusinessHistoryPage(shopId: shopId ?? ""), // 2
+      const ServicesManagementPage(), // 3
+      const BusinessClientsScreen(), // 4
+      const FinancialDashboardPage(), // 5
+      const TeamManagementPage(), // 6
+      const InventoryHomePage(), // 7
+      const BusinessSettingsPage(), // 8
     ];
   }
 
@@ -301,7 +573,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         children: [
           const SizedBox(height: 25),
           Image.asset(
-            'assets/images/logo_full.png',
+            'assets/images/logo_purple.png',
             width: 140,
             errorBuilder: (context, error, stackTrace) {
               return const Text(
@@ -319,23 +591,76 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
             child: ListView(
               padding: EdgeInsets.zero,
               children: [
-                _buildDesktopMenuItem(0, Icons.dashboard_rounded, "Visão Geral"),
-                _buildDesktopMenuItem(1, Icons.event_note_rounded, "Agenda Completa"),
-                _buildDesktopMenuItem(2, Icons.design_services_rounded, "Meus Serviços"),
-                _buildDesktopMenuItem(3, Icons.groups_rounded, "Base de Clientes"),
-                _buildDesktopMenuItem(4, Icons.account_balance_wallet_rounded, "Financeiro"),
-                _buildDesktopMenuItem(5, Icons.people_outline, "Equipe"),
+                _buildDesktopMenuItem(
+                    0, Icons.dashboard_rounded, "Visão Geral"),
+                _buildDesktopMenuItem(
+                    1, Icons.event_note_rounded, "Agenda Completa"),
+                _buildDesktopMenuItem(2, Icons.history, "Histórico"),
+                _buildDesktopMenuItem(
+                    3, Icons.design_services_rounded, "Meus Serviços"),
+                _buildDesktopMenuItem(
+                    4, Icons.groups_rounded, "Base de Clientes"),
+                _buildDesktopMenuItem(
+                    5, Icons.account_balance_wallet_rounded, "Financeiro"),
+                _buildDesktopMenuItem(6, Icons.people_outline, "Equipe"),
+
+                // Index 7 is Inventory (Estoque), adding it to menu if not present or ensuring 8 is consistent
+                _buildDesktopMenuItem(7, Icons.inventory_2_outlined, "Estoque"),
+
+                _buildDesktopMenuItem(8, Icons.settings,
+                    "Configurações"), // Assuming 8 was Settings based on previous _buildScreens list having Settings at index 8? Wait, let me check _buildScreens again.
+                ListTile(
+                  dense: true,
+                  leading: const Icon(Icons.star_border,
+                      size: 20, color: Colors.orange),
+                  title: const Text("Planos & Assinatura",
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.orange)),
+                  onTap: () async {
+                    await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => const SubscriptionPlansPage()));
+                    if (mounted) _checkBusinessAndLoad();
+                  },
+                ),
+                ListTile(
+                  dense: true,
+                  leading: const Icon(Icons.help_outline,
+                      size: 20, color: AppColors.primaryPurple),
+                  title: const Text("Ajuda / Tutorial",
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.primaryPurple)),
+                  onTap: () => _handleMenuAction('ajuda'),
+                ),
+                // Importar Catálogo WhatsApp — apenas Web/PC
+                if (kIsWeb)
+                  ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.upload_file_rounded,
+                        size: 20, color: Color(0xFF25D366)),
+                    title: const Text("Importar Catálogo WhatsApp",
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            color: Color(0xFF25D366))),
+                    onTap: () => _handleMenuAction('catalogo_import'),
+                  ),
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                   child: Divider(height: 1),
                 ),
-                _buildDesktopMenuItem(6, Icons.settings_outlined, "Configurações"),
               ],
             ),
           ),
-          const Padding(
+          Padding(
             padding: EdgeInsets.all(16),
-            child: Text("v1.0 Pro", style: TextStyle(fontSize: 10, color: Colors.grey)),
+            child: Text("v1.0 Pro",
+                style: TextStyle(fontSize: 10, color: Colors.grey)),
           ),
         ],
       ),
@@ -368,7 +693,16 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
             fontSize: 13,
           ),
         ),
-        onTap: () => setState(() => _selectedIndex = index),
+        onTap: () {
+          if (_restrictedIndices.contains(index)) {
+            _showUpgradeDialog(label);
+          } else {
+            setState(() => _selectedIndex = index);
+          }
+        },
+        trailing: _restrictedIndices.contains(index)
+            ? const Icon(Icons.lock, size: 16, color: Colors.grey)
+            : null,
       ),
     );
   }
@@ -401,24 +735,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
             onSelected: _handleMenuAction,
             child: Row(
               children: [
-                Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      userName,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                      ),
-                    ),
-                    Text(
-                      shopName,
-                      style: const TextStyle(fontSize: 10, color: Colors.grey),
-                    ),
-                  ],
-                ),
-                const SizedBox(width: 10),
+                // Mostrar apenas o avatar para economizar espaço
                 CircleAvatar(
                   radius: 18,
                   backgroundColor: Colors.grey[200],
@@ -431,13 +748,28 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                       ? const Icon(Icons.person, size: 20)
                       : null,
                 ),
-                const SizedBox(width: 5),
-                const Icon(Icons.keyboard_arrow_down, size: 18, color: Colors.grey),
+                const SizedBox(width: 6),
+                const Icon(Icons.keyboard_arrow_down,
+                    size: 18, color: Colors.grey),
               ],
             ),
             itemBuilder: (context) => [
               _buildPopupItem('perfil', Icons.store, "Perfil da Loja"),
-              _buildPopupItem('advanced', Icons.security, "Opções Avançadas"),
+              _buildPopupItem(
+                  'assinatura', Icons.star_border, "Assinatura (Planos)",
+                  isRed: false),
+              if (kIsWeb)
+                PopupMenuItem<String>(
+                  value: 'catalogo_import',
+                  child: Row(children: const [
+                    Icon(Icons.upload_file_rounded,
+                        size: 18, color: Color(0xFF25D366)),
+                    SizedBox(width: 10),
+                    Text('Importar Catálogo WhatsApp',
+                        style:
+                            TextStyle(color: Color(0xFF25D366), fontSize: 13)),
+                  ]),
+                ),
               const PopupMenuDivider(),
               _buildPopupItem('sair', Icons.logout, "Sair", isRed: true),
             ],
@@ -447,109 +779,21 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     );
   }
 
-  PopupMenuItem<String> _buildPopupItem(String value, IconData icon, String text, {bool isRed = false}) {
+  PopupMenuItem<String> _buildPopupItem(
+      String value, IconData icon, String text,
+      {bool isRed = false}) {
     return PopupMenuItem<String>(
       value: value,
       child: Row(
         children: [
           Icon(icon, size: 18, color: isRed ? Colors.red : Colors.grey[700]),
           const SizedBox(width: 10),
-          Text(text, style: TextStyle(color: isRed ? Colors.red : Colors.black87, fontSize: 13)),
+          Text(text,
+              style: TextStyle(
+                  color: isRed ? Colors.red : Colors.black87, fontSize: 13)),
         ],
       ),
     );
-  }
-
-  Future<void> _showBusinessTopMenu() async {
-    final choice = await showDialog<String>(context: context, builder: (ctx) {
-      return SimpleDialog(
-        title: const Text('Menu'),
-        children: [
-          SimpleDialogOption(onPressed: () => Navigator.pop(ctx, 'perfil'), child: Row(children: const [Icon(Icons.store), SizedBox(width:8), Text('Perfil da Loja')])),
-          SimpleDialogOption(onPressed: () => Navigator.pop(ctx, 'pagamentos'), child: Row(children: const [Icon(Icons.credit_card), SizedBox(width:8), Text('Configurar Pagamento')])),
-          SimpleDialogOption(onPressed: () => Navigator.pop(ctx, 'importar'), child: Row(children: const [Icon(Icons.cloud_upload_outlined), SizedBox(width:8), Text('Importar Dados')])),
-          SimpleDialogOption(onPressed: () => Navigator.pop(ctx, 'sair'), child: Row(children: const [Icon(Icons.logout), SizedBox(width:8), Text('Sair')])),
-        ],
-      );
-    });
-    if (choice != null) _handleMenuAction(choice);
-  }
-
-  Future<void> _showAdvancedOptionsDialog() async {
-    final choice = await showDialog<String>(context: context, builder: (ctx) {
-      return SimpleDialog(
-        title: const Text('Opções Avançadas'),
-        children: [
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(ctx, 'delete'),
-            child: Row(children: const [Icon(Icons.delete_forever, color: Colors.red), SizedBox(width:8), Text('Excluir Conta (Irreversível)', style: TextStyle(color: Colors.red))]),
-          ),
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(ctx, 'cancel'),
-            child: Row(children: const [Icon(Icons.close), SizedBox(width:8), Text('Fechar')]),
-          ),
-        ],
-      );
-    });
-    if (choice == 'delete') {
-      await _confirmAndDeleteAccount();
-    }
-  }
-
-  Future<void> _confirmAndDeleteAccount() async {
-    final confirmed = await showDialog<bool>(context: context, builder: (ctx) {
-      bool checked = false;
-      return StatefulBuilder(builder: (ctx2, setS) {
-        return AlertDialog(
-          title: const Text('Excluir Conta - Irreversível'),
-          content: Column(mainAxisSize: MainAxisSize.min, children: [
-            const Text('Esta ação excluirá o usuário do Firebase Auth e marcará o perfil como excluído no Firestore. É IRRECUPERÁVEL.'),
-            const SizedBox(height: 12),
-            Row(children: [
-              Checkbox(value: checked, onChanged: (v) => setS(() => checked = v ?? false)),
-              const Expanded(child: Text('Estou ciente e desejo excluir permanentemente esta conta')),
-            ]),
-          ]),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx2, false), child: const Text('Cancelar')),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-              onPressed: checked ? () => Navigator.pop(ctx2, true) : null,
-              child: const Text('Excluir'),
-            ),
-          ],
-        );
-      });
-    });
-    if (confirmed == true) {
-      // perform deletion
-      showDialog(context: context, barrierDismissible: false, builder: (ctx) => const Center(child: CircularProgressIndicator()));
-      try {
-        final user = FirebaseAuth.instance.currentUser;
-        if (user == null) throw 'Usuário não autenticado';
-        final idToken = await user.getIdToken(true);
-        final url = Uri.parse('https://us-central1-wismart-118c3.cloudfunctions.net/deleteUserAccount');
-        final resp = await http.post(url, headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $idToken'}, body: jsonEncode({'confirm': true}));
-        Navigator.pop(context); // remove progress
-        if (resp.statusCode == 200) {
-          try {
-            await GoogleSignIn().signOut();
-            await GoogleSignIn().disconnect();
-          } catch (_) {}
-          await SessionService.logout();
-          await FirebaseAuth.instance.signOut();
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Conta excluída com sucesso. Limpe o cache do app/telefone para evitar reentrar.')));
-            Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const LoginPage()), (r) => false);
-          }
-        } else {
-          if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Falha ao excluir conta: ${resp.statusCode} ${resp.body}')));
-        }
-      } catch (e) {
-        Navigator.pop(context);
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao excluir conta: $e')));
-      }
-    }
   }
 
   // ============================================================================
@@ -582,26 +826,19 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
               padding: const EdgeInsets.only(right: 12),
               child: Row(
                 children: [
-                  Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        userName,
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-                      ),
-                      Text(
-                        shopName,
-                        style: const TextStyle(color: Colors.white70, fontSize: 11),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(width: 8),
+                  // Apenas avatar no topo mobile para economizar espaço
                   CircleAvatar(
                     radius: 18,
                     backgroundColor: Colors.white,
-                    backgroundImage: shopLogoUrl != null ? CachedNetworkImageProvider(shopLogoUrl!) : (userPhotoUrl != null ? CachedNetworkImageProvider(userPhotoUrl!) : null),
-                    child: (shopLogoUrl == null && userPhotoUrl == null) ? const Icon(Icons.store, color: AppColors.primaryPurple) : null,
+                    backgroundImage: shopLogoUrl != null
+                        ? CachedNetworkImageProvider(shopLogoUrl!)
+                        : (userPhotoUrl != null
+                            ? CachedNetworkImageProvider(userPhotoUrl!)
+                            : null),
+                    child: (shopLogoUrl == null && userPhotoUrl == null)
+                        ? const Icon(Icons.store,
+                            color: AppColors.primaryPurple)
+                        : null,
                   ),
                   const SizedBox(width: 6),
                   const Icon(Icons.keyboard_arrow_down, color: Colors.white),
@@ -610,23 +847,51 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
             ),
             itemBuilder: (context) => [
               _buildPopupItem('perfil', Icons.store, "Perfil da Loja"),
-              _buildPopupItem('advanced', Icons.security, "Opções Avançadas"),
+              _buildPopupItem(
+                  'assinatura', Icons.star_border, "Assinatura (Planos)"),
+              _buildPopupItem(
+                  'impulsionar', Icons.rocket_launch, "Impulsionar Negócio"),
+              _buildPopupItem('ajuda', Icons.help_outline, "Ajuda / Tutorial"),
               const PopupMenuDivider(),
               _buildPopupItem('sair', Icons.logout, "Sair", isRed: true),
             ],
           ),
         ],
       ),
-      body: IndexedStack(
-        index: _selectedIndex,
-        children: _buildScreens(isDesktop: false),
-      ),
+      body: Column(children: [
+        if (_selectedIndex == 0) // Show only on dashboard
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: StreamBuilder<DocumentSnapshot>(
+                stream: shopId != null
+                    ? FirebaseFirestore.instance
+                        .collection('shops')
+                        .doc(shopId)
+                        .snapshots()
+                    : null,
+                builder: (context, snapshot) {
+                  final data = snapshot.data?.data() as Map<String, dynamic>?;
+                  return ProfileCompletionWidget(
+                      shopId: shopId ?? '',
+                      shopData: data,
+                      onTap: () => _handleMenuAction('perfil'));
+                }),
+          ),
+        Expanded(child: _buildScreens(isDesktop: false)[_selectedIndex]),
+        const BannerAdWidget(),
+      ]),
       bottomNavigationBar: _buildMobileBottomNav(),
     );
   }
 
   Widget _buildMobileBottomNav() {
-    final mainItems = [0, 1, 2, 3];
+    final mainItems = [
+      0,
+      1,
+      3,
+      4,
+      8
+    ]; // Index 8 is Settings (BusinessSettingsPage). Histórico está no menu lateral.
     int currentBottomIndex = mainItems.contains(_selectedIndex)
         ? mainItems.indexOf(_selectedIndex)
         : 0;
@@ -634,9 +899,24 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     return BottomNavigationBar(
       currentIndex: currentBottomIndex,
       onTap: (index) {
+        final newSelected = mainItems[index];
+
+        if (_restrictedIndices.contains(newSelected)) {
+          // Identify label for dialog
+          String label = "Este recurso";
+          if (newSelected == 5) label = "Financeiro";
+          if (newSelected == 7) label = "Estoque";
+          _showUpgradeDialog(label);
+          return;
+        }
+
         setState(() {
-          _selectedIndex = mainItems[index];
+          _selectedIndex = newSelected;
         });
+        // initialize agenda list only when navigating to Agenda tab
+        if (newSelected == 1) {
+          _initMobileAppointmentsOnce();
+        }
       },
       selectedItemColor: AppColors.primaryPurple,
       unselectedItemColor: Colors.grey,
@@ -661,6 +941,10 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           icon: Icon(Icons.people, size: 24),
           label: "Clientes",
         ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.settings, size: 24),
+          label: "Config",
+        ),
       ],
     );
   }
@@ -669,7 +953,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     return Drawer(
       child: Column(
         children: [
-          UserAccountsDrawerHeader(
+          Container(
+            padding: const EdgeInsets.fromLTRB(20, 50, 20, 20),
             decoration: const BoxDecoration(
               gradient: LinearGradient(
                 colors: [
@@ -680,24 +965,12 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 end: Alignment.bottomRight,
               ),
             ),
-            currentAccountPicture: GestureDetector(
-              onTap: _showBusinessTopMenu,
-              child: CircleAvatar(
-                backgroundColor: Colors.white,
-                backgroundImage: shopLogoUrl != null ? CachedNetworkImageProvider(shopLogoUrl!) : null,
-                child: shopLogoUrl == null ? const Icon(Icons.store, color: AppColors.primaryPurple) : null,
+            child: Center(
+              child: Image.asset(
+                'assets/images/logo_white.png',
+                height: 40,
+                fit: BoxFit.contain,
               ),
-            ),
-            accountName: Text(
-              shopName,
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
-              ),
-            ),
-            accountEmail: Text(
-              userName,
-              style: const TextStyle(fontSize: 13),
             ),
           ),
           Expanded(
@@ -705,14 +978,19 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
               padding: EdgeInsets.zero,
               children: [
                 _buildDrawerItem(
+                  icon: Icons.history,
+                  title: "Histórico",
+                  index: 2,
+                ),
+                _buildDrawerItem(
                   icon: Icons.account_balance_wallet,
                   title: "Financeiro",
-                  index: 4,
+                  index: 5,
                 ),
                 _buildDrawerItem(
                   icon: Icons.people,
                   title: "Equipe",
-                  index: 5,
+                  index: 6,
                 ),
                 _buildDrawerItem(
                   icon: Icons.inventory_2_outlined,
@@ -720,20 +998,77 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                   index: 7,
                 ),
                 ListTile(
-                  leading: const Icon(Icons.security),
-                  title: const Text("Opções Avançadas"),
+                  leading: const Icon(Icons.help_outline,
+                      color: AppColors.primaryPurple),
+                  title: const Text("Ajuda / Tutorial",
+                      style: TextStyle(
+                          color: AppColors.primaryPurple,
+                          fontWeight: FontWeight.bold)),
                   onTap: () {
                     Navigator.pop(context);
-                    _showAdvancedOptionsDialog();
+                    _handleMenuAction('ajuda');
                   },
-                ),
-                _buildDrawerItem(
-                  icon: Icons.settings,
-                  title: "Configurações",
-                  index: 6,
                 ),
               ],
             ),
+          ),
+          FutureBuilder<SubscriptionPlan>(
+            future: SubscriptionService.getCurrentPlan(),
+            builder: (context, snapshot) {
+              final plan = snapshot.data ?? SubscriptionPlan.free;
+              final isFree = plan == SubscriptionPlan.free;
+
+              return SafeArea(
+                top: false,
+                child: Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[50],
+                    border: Border(top: BorderSide(color: Colors.grey[200]!)),
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Text("Seu Plano: ",
+                              style: TextStyle(color: Colors.grey)),
+                          Text(
+                            SubscriptionService.getPlanDetails(plan)['name']
+                                .toString()
+                                .toUpperCase(),
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: isFree
+                                  ? Colors.grey[600]
+                                  : AppColors.primaryPurple,
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (isFree) ...[
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: () {
+                              Navigator.pop(context);
+                              _handleMenuAction('assinatura');
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primaryPurple,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                            ),
+                            child: const Text("ASSINAR AGORA"),
+                          ),
+                        ),
+                      ]
+                    ],
+                  ),
+                ),
+              );
+            },
           ),
         ],
       ),
@@ -768,8 +1103,15 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         ),
         onTap: () {
           Navigator.pop(context);
-          setState(() => _selectedIndex = index);
+          if (_restrictedIndices.contains(index)) {
+            _showUpgradeDialog(title);
+          } else {
+            setState(() => _selectedIndex = index);
+          }
         },
+        trailing: _restrictedIndices.contains(index)
+            ? const Icon(Icons.lock, size: 16, color: Colors.grey)
+            : null,
       ),
     );
   }
@@ -782,12 +1124,12 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     // 1. Definição do Intervalo de Tempo para Leitura (Range)
     // Se selecionado "Todos" (-1), pegamos um range amplo, mas idealmente você limitaria.
     // Aqui vamos focar na otimização do ano selecionado.
-    
+
     DateTime startData;
     DateTime endData;
 
     if (_selectedYear == -1) {
-      // CUIDADO: Ler tudo pode ser caro. 
+      // CUIDADO: Ler tudo pode ser caro.
       // Em produção, recomendo limitar aos últimos 2 anos.
       startData = DateTime(2023, 1, 1);
       endData = DateTime(2030, 12, 31);
@@ -797,8 +1139,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     }
 
     return StreamBuilder<QuerySnapshot>(
-      // 🔥 QUERY BLINDADA: Filtra por Shop + Intervalo de Data
-      // Isso exige um Índice Composto no Firebase (ShopId + Data Asc/Desc)
+      // ðŸ”¥ QUERY BLINDADA: Filtra por Shop + Intervalo de Data
+      // Isso exige um Ãndice Composto no Firebase (ShopId + Data Asc/Desc)
       stream: FirebaseFirestore.instance
           .collection('appointments')
           .where('shopId', isEqualTo: shopId)
@@ -807,7 +1149,9 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           .snapshots(), // Ordenação pode ser feita em memória para economizar índice ou no .orderBy
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-           return Center(child: Text("Erro (Verifique índices no Console): ${snapshot.error}"));
+          return Center(
+              child: Text(
+                  "Erro (Verifique índices no Console): ${snapshot.error}"));
         }
 
         if (!snapshot.hasData) {
@@ -823,13 +1167,15 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         // (monitoring removed to silence linter; keep snapshot processing)
         // Metadata diz a origem
         if (snapshot.data!.metadata.isFromCache) {
-           debugPrint("💰 [ECONOMIA] Lendo ${docs.length} agendamentos do CACHE Local.");
+          debugPrint(
+              "ðŸ’° [ECONOMIA] Lendo ${docs.length} agendamentos do CACHE Local.");
         } else {
-           debugPrint("💸 [CUSTO] Baixando ${docs.length} documentos do SERVIDOR ($shopId).");
+          debugPrint(
+              "ðŸ’¸ [CUSTO] Baixando ${docs.length} documentos do SERVIDOR ($shopId).");
         }
 
-        // --- LÓGICA DE CÁLCULO (Mantida, mas operando sobre o subset filtrado) ---
-        
+        // --- LÃ“GICA DE CÃLCULO (Mantida, mas operando sobre o subset filtrado) ---
+
         bool isAllYears = _selectedYear == -1;
         double faturamentoTotal = 0;
         int totalAtendimentos = 0;
@@ -842,8 +1188,18 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
         // Inicializa estrutura de dados
         chartLabels = [
-          'Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun',
-          'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'
+          'Jan',
+          'Fev',
+          'Mar',
+          'Abr',
+          'Mai',
+          'Jun',
+          'Jul',
+          'Ago',
+          'Set',
+          'Out',
+          'Nov',
+          'Dez'
         ];
         dataMoney = List.filled(12, 0.0);
         dataQty = List.filled(12, 0.0);
@@ -851,29 +1207,28 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         for (var doc in docs) {
           final data = doc.data() as Map<String, dynamic>;
           if (data['data_agendamento'] is! Timestamp) continue;
-          
+
           DateTime date = (data['data_agendamento'] as Timestamp).toDate();
-          
+
           // Filtra status concluído
           if ((data['status'] ?? 'agendado') == 'concluido') {
-            double total = double.tryParse(
-                    data['valor_total']?.toString() ??
-                        data['valor']?.toString() ??
-                        '0') ??
+            double total = double.tryParse(data['valor_total']?.toString() ??
+                    data['valor']?.toString() ??
+                    '0') ??
                 0.0;
-            double maoObra = double.tryParse(
-                    data['valor_mao_de_obra']?.toString() ?? '0') ??
-                0.0;
+            double maoObra =
+                double.tryParse(data['valor_mao_de_obra']?.toString() ?? '0') ??
+                    0.0;
             double produtos =
                 double.tryParse(data['valor_produtos']?.toString() ?? '0') ??
                     0.0;
-            
+
             if (maoObra == 0 && produtos == 0) maoObra = total;
 
             // Se for visualização mensal (ano selecionado)
             if (!isAllYears) {
-               dataMoney[date.month - 1] += total;
-               dataQty[date.month - 1] += 1;
+              dataMoney[date.month - 1] += total;
+              dataQty[date.month - 1] += 1;
             }
 
             faturamentoTotal += total;
@@ -885,24 +1240,25 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
         // Se for "Todos os anos", ajustamos o gráfico para ser por Ano, não por Mês
         if (isAllYears) {
-           // Lógica simplificada para multiplos anos (recalculando baseada nos docs recebidos)
-           Map<int, double> yearMoney = {};
-           Map<int, double> yearQty = {};
-           for (var doc in docs) {
-              final data = doc.data() as Map<String, dynamic>;
-              DateTime date = (data['data_agendamento'] as Timestamp).toDate();
-               if ((data['status'] ?? 'agendado') == 'concluido') {
-                 double total = double.tryParse(data['valor_total']?.toString() ?? '0') ?? 0;
-                 yearMoney[date.year] = (yearMoney[date.year] ?? 0) + total;
-                 yearQty[date.year] = (yearQty[date.year] ?? 0) + 1;
-               }
-           }
-           chartLabels = yearMoney.keys.map((e) => e.toString()).toList();
-           chartLabels.sort();
-           dataMoney = chartLabels.map((key) => yearMoney[int.parse(key)]!).toList();
-           dataQty = chartLabels.map((key) => yearQty[int.parse(key)]!).toList();
+          // Lógica simplificada para multiplos anos (recalculando baseada nos docs recebidos)
+          Map<int, double> yearMoney = {};
+          Map<int, double> yearQty = {};
+          for (var doc in docs) {
+            final data = doc.data() as Map<String, dynamic>;
+            DateTime date = (data['data_agendamento'] as Timestamp).toDate();
+            if ((data['status'] ?? 'agendado') == 'concluido') {
+              double total =
+                  double.tryParse(data['valor_total']?.toString() ?? '0') ?? 0;
+              yearMoney[date.year] = (yearMoney[date.year] ?? 0) + total;
+              yearQty[date.year] = (yearQty[date.year] ?? 0) + 1;
+            }
+          }
+          chartLabels = yearMoney.keys.map((e) => e.toString()).toList();
+          chartLabels.sort();
+          dataMoney =
+              chartLabels.map((key) => yearMoney[int.parse(key)]!).toList();
+          dataQty = chartLabels.map((key) => yearQty[int.parse(key)]!).toList();
         }
-
 
         double ticketMedio =
             totalAtendimentos > 0 ? faturamentoTotal / totalAtendimentos : 0;
@@ -939,7 +1295,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   }
 
   // ... (RESTANTE DOS WIDGETS DE UI - _buildDesktopDashboard, _buildMobileDashboard, ETC. PERMANECEM IGUAIS PARA NÃO QUEBRAR O DESIGN)
-  
+
   Widget _buildDesktopDashboard({
     required bool isAllYears,
     required double faturamentoTotal,
@@ -1035,7 +1391,10 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
             ],
           ),
         ),
-        if (shopId != null && appointmentDocs != null && appointmentDocs.isNotEmpty) ...[
+        if (shopId != null &&
+            appointmentDocs != null &&
+            appointmentDocs.isNotEmpty &&
+            _canViewCommissions) ...[
           const SizedBox(height: 16),
           _buildEquipeComissoesCard(shopId!, appointmentDocs),
         ],
@@ -1043,74 +1402,240 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     );
   }
 
-  Widget _buildEquipeComissoesCard(String shopId, List<QueryDocumentSnapshot> appointmentDocs) {
+  Widget _buildEquipeComissoesCard(
+      String shopId, List<QueryDocumentSnapshot> appointmentDocs) {
+    // Calcular produção por profissional
     final concluidos = appointmentDocs.where((d) {
       final data = d.data() as Map<String, dynamic>;
-      return (data['status'] ?? '') == 'confirmado' || (data['status'] ?? '') == 'concluido';
+      return (data['status'] ?? '') == 'confirmado' ||
+          (data['status'] ?? '') == 'concluido';
     }).toList();
+
     Map<String, double> producaoPorProf = {};
     for (var d in concluidos) {
       final data = d.data() as Map<String, dynamic>;
       final pid = data['profissionalId']?.toString() ?? '';
       if (pid.isEmpty) continue;
-      final valor = double.tryParse(data['valor_pago']?.toString() ?? data['valor_total']?.toString() ?? '0') ?? 0;
+      final valor = double.tryParse(data['valor_pago']?.toString() ??
+              data['valor_total']?.toString() ??
+              '0') ??
+          0;
       producaoPorProf[pid] = (producaoPorProf[pid] ?? 0) + valor;
     }
+
     return FutureBuilder<QuerySnapshot>(
-      future: FirebaseFirestore.instance.collection('employees').where('shopId', isEqualTo: shopId).get(),
+      future: FirebaseFirestore.instance
+          .collection('employees')
+          .where('shopId', isEqualTo: shopId)
+          .get(),
       builder: (context, snap) {
-        if (!snap.hasData || snap.data!.docs.isEmpty) return const SizedBox.shrink();
+        if (!snap.hasData || snap.data!.docs.isEmpty) {
+          return const SizedBox.shrink();
+        }
         final employees = snap.data!.docs;
         double totalComissao = 0;
-        final rows = <Widget>[];
+        final List<Map<String, dynamic>> teamData = [];
+
+        // Preparar dados
         for (var emp in employees) {
           final ed = emp.data() as Map<String, dynamic>?;
-          final nome = ed?['nome']?.toString() ?? 'Sem nome';
+          final nome = ed?['nome']?.toString() ?? 'Profissional';
           final p = ed?['comissao_percent'];
           final percent = (p is num) ? p.toDouble() : 0.0;
           final produzido = producaoPorProf[emp.id] ?? 0.0;
           final aReceber = percent > 0 ? (produzido * percent / 100) : 0.0;
-          totalComissao += aReceber;
-          rows.add(Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(child: Text(nome, style: const TextStyle(fontWeight: FontWeight.w500))),
-                Text(NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(produzido), style: const TextStyle(fontSize: 12)),
-                Text(NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(aReceber), style: TextStyle(fontSize: 12, color: AppColors.primaryPurple, fontWeight: FontWeight.bold)),
-              ],
-            ),
-          ));
+
+          if (produzido > 0 || aReceber > 0) {
+            totalComissao += aReceber;
+            teamData.add({
+              'nome': nome,
+              'produzido': produzido,
+              'aReceber': aReceber,
+              'percent': percent,
+            });
+          }
         }
-        return Card(
-          elevation: 2,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Equipe - Produção e a receber', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+
+        // Se ninguém produziu nada, não mostra ou mostra vazio elegante
+        if (teamData.isEmpty) return const SizedBox.shrink();
+
+        // Ordenar por valor a receber (maior para menor)
+        teamData.sort((a, b) =>
+            (b['aReceber'] as double).compareTo(a['aReceber'] as double));
+
+        return Container(
+          margin: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            children: [
+              // Header com Gradiente
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  borderRadius:
+                      const BorderRadius.vertical(top: Radius.circular(16)),
+                  gradient: LinearGradient(
+                    colors: [
+                      AppColors.primaryPurple,
+                      AppColors.primaryPurple.withValues(alpha: 0.8)
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
+                child: Row(
                   children: [
-                    const Text('Profissional', style: TextStyle(fontSize: 11, color: Colors.grey)),
-                    const Text('Produzido', style: TextStyle(fontSize: 11, color: Colors.grey)),
-                    Text('A receber', style: TextStyle(fontSize: 11, color: AppColors.primaryPurple)),
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(Icons.people_alt_outlined,
+                          color: Colors.white, size: 20),
+                    ),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            "Comissões da Equipe",
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                          Text(
+                            "Produção e valores a repassar",
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        const Text(
+                          "Total a Pagar",
+                          style: TextStyle(color: Colors.white70, fontSize: 10),
+                        ),
+                        Text(
+                          NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$')
+                              .format(totalComissao),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ],
+                    ),
                   ],
                 ),
-                ...rows,
-                const Divider(height: 20),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    Text('Total comissões: ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(totalComissao)}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                  ],
+              ),
+
+              // Lista de Profissionais
+              ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                padding: const EdgeInsets.all(16),
+                itemCount: teamData.length,
+                separatorBuilder: (_, __) => const Divider(height: 24),
+                itemBuilder: (context, index) {
+                  final item = teamData[index];
+                  return Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 20,
+                        backgroundColor:
+                            AppColors.primaryPurple.withValues(alpha: 0.1),
+                        child: Text(
+                          item['nome'].toString().substring(0, 1).toUpperCase(),
+                          style: const TextStyle(
+                            color: AppColors.primaryPurple,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              item['nome'],
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                                color: Colors.black87,
+                              ),
+                            ),
+                            Text(
+                              "Produziu: ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(item['produzido'])}",
+                              style: TextStyle(
+                                color: Colors.grey[600],
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            "Comissão (${item['percent']}%)",
+                            style: TextStyle(
+                                color: Colors.grey[500], fontSize: 10),
+                          ),
+                          Text(
+                            NumberFormat.currency(
+                                    locale: 'pt_BR', symbol: 'R\$')
+                                .format(item['aReceber']),
+                            style: const TextStyle(
+                              color: Colors.green,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  );
+                },
+              ),
+
+              // Footer
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.grey[50],
+                  borderRadius:
+                      const BorderRadius.vertical(bottom: Radius.circular(16)),
                 ),
-              ],
-            ),
+                child: Text(
+                  "Valores calculados com base nos agendamentos concluídos do período selecionado.",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.grey[500], fontSize: 11),
+                ),
+              ),
+            ],
           ),
         );
       },
@@ -1199,7 +1724,9 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
             faturamentoProdutos,
             faturamentoTotal,
           ),
-          if (shopId != null && appointmentDocs != null && appointmentDocs.isNotEmpty) ...[
+          if (shopId != null &&
+              appointmentDocs != null &&
+              appointmentDocs.isNotEmpty) ...[
             const SizedBox(height: 16),
             _buildEquipeComissoesCard(shopId!, appointmentDocs),
           ],
@@ -1468,7 +1995,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           value: _availableYears.contains(_selectedYear) || _selectedYear == -1
               ? _selectedYear
               : -1,
-          icon: const Icon(Icons.filter_list, color: AppColors.primaryPurple, size: 18),
+          icon: const Icon(Icons.filter_list,
+              color: AppColors.primaryPurple, size: 18),
           isDense: true,
           items: [
             const DropdownMenuItem<int>(
@@ -1482,17 +2010,15 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 ),
               ),
             ),
-            ..._availableYears
-                .map(
-                  (int year) => DropdownMenuItem<int>(
-                    value: year,
-                    child: Text(
-                      year.toString(),
-                      style: const TextStyle(fontSize: 13),
-                    ),
-                  ),
-                )
-                
+            ..._availableYears.map(
+              (int year) => DropdownMenuItem<int>(
+                value: year,
+                child: Text(
+                  year.toString(),
+                  style: const TextStyle(fontSize: 13),
+                ),
+              ),
+            )
           ],
           onChanged: (int? newValue) {
             if (newValue != null) {
@@ -1832,17 +2358,19 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       case 1:
         return "Agenda";
       case 2:
-        return "Serviços";
+        return "Histórico";
       case 3:
-        return "Clientes";
+        return "Serviços";
       case 4:
-        return "Financeiro";
+        return "Clientes";
       case 5:
-        return "Equipe";
+        return "Financeiro";
       case 6:
-        return "Configurações";
+        return "Equipe";
       case 7:
         return "Estoque";
+      case 8:
+        return "Configurações";
       default:
         return "";
     }

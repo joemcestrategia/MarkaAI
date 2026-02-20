@@ -1,9 +1,15 @@
+/* getInstallments HTTP endpoint removed (duplicate). Use the onCall getInstallments defined later in this file.
+   The later implementation will be adapted to handle HTTP if needed. */
+
 const functions = require("firebase-functions");
+const { onDocumentCreated, onDocumentUpdated, onDocumentDeleted } = require("firebase-functions/v2/firestore");
+const { onRequest, onCall } = require("firebase-functions/v2/https");
 const { defineString } = require("firebase-functions/params");
 const admin = require("firebase-admin");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
+const cors = require("cors")({ origin: true });
 
 // Definir parâmetro de ambiente para Google Places API Key
 const GOOGLE_PLACES_API_KEY = defineString("GOOGLE_PLACES_API_KEY");
@@ -19,7 +25,7 @@ try {
   console.error("Erro ao carregar checkout_transparente.html:", e.message);
 }
 
-exports.checkoutTransparentePage = functions.https.onRequest((req, res) => {
+exports.checkoutTransparentePage = onRequest({ cors: true }, (req, res) => {
   if (!checkoutHtmlCache) {
     return res.status(500).send("Checkout HTML indisponível");
   }
@@ -28,7 +34,138 @@ exports.checkoutTransparentePage = functions.https.onRequest((req, res) => {
   return res.status(200).send(checkoutHtmlCache);
 });
 
-exports.mercadopagoCallback = functions.https.onRequest(async (req, res) => {
+// Helpers for safety
+function escapeHtml(unsafe) {
+  if (!unsafe) return '';
+  return unsafe
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function escapeJs(unsafe) {
+  if (!unsafe) return '';
+  return unsafe.replace(/'/g, "\\'").replace(/"/g, '\\"');
+}
+
+// Public shop preview page (provides OG meta tags for WhatsApp/social previews)
+exports.publicShopPreview = onRequest({ cors: true }, async (req, res) => {
+  try {
+    // Extract slug from URL path (e.g. /afroed) or query param
+    const slug = (req.path.replace(/^\//, '').replace(/\/$/, '') || req.query.slug || '').trim();
+    if (!slug) {
+      return res.status(400).send('Missing slug');
+    }
+
+    const siteUrl = 'https://markaai.com.br';
+    const shopUrl = `${siteUrl}/${slug}`;
+
+    // Detect social media crawlers / bots by User-Agent
+    const ua = req.headers['user-agent'] || '';
+    const isBot = /whatsapp|facebookexternalhit|twitterbot|googlebot|linkedinbot|slackbot|discordbot|telegrambot|applebot|bingbot|yandex/i.test(ua);
+
+    console.log(`publicShopPreview: slug=${slug} isBot=${isBot} ua=${ua.substring(0, 80)}`);
+
+    // Fetch shop data from Firestore
+    const snap = await admin.firestore().collection('shops').where('slug', '==', slug).limit(1).get();
+
+    if (snap.empty) {
+      console.warn(`publicShopPreview: shop not found for slug=${slug}`);
+      if (!isBot) {
+        return res.redirect(302, siteUrl);
+      }
+      // Fallback OG for bots when shop not found
+      const fallbackHtml = `<!doctype html><html lang="pt-BR"><head>
+        <meta charset="utf-8">
+        <title>Marka AI</title>
+        <meta property="og:title" content="Marka AI" />
+        <meta property="og:description" content="Conectando você aos melhores negócios." />
+        <meta property="og:image" content="${siteUrl}/icons/Icon-512.png" />
+        <meta property="og:url" content="${siteUrl}" />
+        <meta property="og:site_name" content="Marka AI" />
+        <meta property="og:type" content="website" />
+      </head><body></body></html>`;
+      return res.status(200).send(fallbackHtml);
+    }
+
+    const shop = snap.docs[0].data() || {};
+
+    // Map Firestore fields (matching field names used in the Flutter app)
+    const name = shop.nome || 'Loja MarkaAI';
+    const category = shop.categoria || shop.segmento || shop.tipo || '';
+    const descricao = shop.descricao || '';
+    const address = shop.endereco || shop.cidade || '';
+    const imageUrl = shop.logoUrl || shop.coverUrl || shop.imageUrl || `${siteUrl}/icons/Icon-512.png`;
+
+    // Title: "Nome | Categoria [ Reserve agora ]" (similar ao Setmore)
+    const ogTitle = category
+      ? `${name} | ${category} [ Reserve agora ]`
+      : `${name} [ Reserve agora ]`;
+
+    // Description: compelling call to action with address
+    let ogDescription = `Agende sua consulta com ${name}`;
+    if (address) ogDescription += ` • ${address}`;
+    if (descricao && descricao.length > 0) ogDescription = descricao;
+
+    res.set('Cache-Control', 'public, max-age=300');
+
+    if (!isBot) {
+      // Human visitor: return page with JS redirect to the Flutter SPA
+      // (keeps the URL clean; the router inside the SPA handles /{slug})
+      return res.status(200).send(`<!doctype html><html lang="pt-BR"><head>
+        <meta charset="utf-8">
+        <meta http-equiv="refresh" content="0;url=${escapeHtml(shopUrl)}?_loaded=1">
+        <title>${escapeHtml(name)}</title>
+        <script>window.location.replace(${JSON.stringify(shopUrl + '?_loaded=1')});</script>
+      </head><body></body></html>`);
+    }
+
+    // Bot: serve full Open Graph HTML so WhatsApp/Facebook can build the preview
+    const ogHtml = `<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(ogTitle)}</title>
+
+  <!-- Open Graph (WhatsApp, Facebook, LinkedIn) -->
+  <meta property="og:type"        content="website" />
+  <meta property="og:site_name"   content="Marka AI" />
+  <meta property="og:url"         content="${escapeHtml(shopUrl)}" />
+  <meta property="og:title"       content="${escapeHtml(ogTitle)}" />
+  <meta property="og:description" content="${escapeHtml(ogDescription)}" />
+  <meta property="og:image"       content="${escapeHtml(imageUrl)}" />
+  <meta property="og:image:width"  content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:type"   content="image/jpeg" />
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card"        content="summary_large_image" />
+  <meta name="twitter:title"       content="${escapeHtml(ogTitle)}" />
+  <meta name="twitter:description" content="${escapeHtml(ogDescription)}" />
+  <meta name="twitter:image"       content="${escapeHtml(imageUrl)}" />
+
+  <link rel="canonical" href="${escapeHtml(shopUrl)}" />
+</head>
+<body>
+  <h1>${escapeHtml(name)}</h1>
+  <p>${escapeHtml(ogDescription)}</p>
+  <a href="${escapeHtml(shopUrl)}">Agendar agora</a>
+</body>
+</html>`;
+
+    return res.status(200).send(ogHtml);
+  } catch (err) {
+    console.error('publicShopPreview error:', err);
+    return res.status(500).send('Internal error');
+  }
+});
+
+// (escapeHtml and escapeJs already declared above — no duplicate)
+
+exports.mercadopagoCallback = onRequest({ cors: true }, async (req, res) => {
   const code = req.query.code;
   const state = req.query.state;
   const error = req.query.error;
@@ -177,8 +314,9 @@ exports.mercadopagoCallback = functions.https.onRequest(async (req, res) => {
 // ===================================================================
 
 // 1. GERAR PIX
-exports.createPixPayment = functions.https.onCall(async (request, context) => {
-  const data = request.data || request;
+exports.createPixPayment = onCall(async (request) => {
+  const data = request.data;
+  const auth = request.auth;
   console.log("📦 Payload:", JSON.stringify(data));
 
   const accessToken = data.accessToken || data.access_token || (data.data ? data.data.accessToken : null);
@@ -190,8 +328,8 @@ exports.createPixPayment = functions.https.onCall(async (request, context) => {
     throw new functions.https.HttpsError('invalid-argument', 'TOKEN SUMIU (Backend)');
   }
 
-  const idempotencyKey = context.auth
-    ? `pix-${context.auth.uid}-${Date.now()}`
+  const idempotencyKey = auth
+    ? `pix-${auth.uid}-${Date.now()}`
     : `pix-anon-${Date.now()}-${Math.random().toString(36).substring(7)}`;
 
   console.log("🔑 Chave Idempotencia:", idempotencyKey);
@@ -206,8 +344,11 @@ exports.createPixPayment = functions.https.onCall(async (request, context) => {
       },
     };
 
+    const baseUrl = (accessToken && accessToken.startsWith && accessToken.startsWith('TEST-'))
+      ? 'https://api.sandbox.mercadopago.com'
+      : 'https://api.mercadopago.com';
     const response = await axios.post(
-      'https://api.mercadopago.com/v1/payments',
+      `${baseUrl}/v1/payments`,
       paymentData,
       {
         headers: {
@@ -222,34 +363,82 @@ exports.createPixPayment = functions.https.onCall(async (request, context) => {
 
   } catch (error) {
     const mpError = error.response?.data?.message || error.message;
-    const mpDetails = JSON.stringify(error.response?.data?.cause || {});
+    const mpCause = error.response?.data?.cause || error.response?.data || {};
+    const mpDetails = JSON.stringify(mpCause);
     console.error("❌ ERRO MP DETALHADO:", mpError, mpDetails);
+
+    // Detect common Mercado Pago causes and return specific errors for client UX
+    try {
+      const causeStr = JSON.stringify(mpCause).toLowerCase();
+
+      // collector not enabled for QR rendering
+      if (causeStr.includes('collector user') && causeStr.includes('qr')) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'collector_not_enabled_for_qr',
+          { original: mpError, details: mpCause }
+        );
+      }
+
+      // collector has no PIX keys registered (mensagem do suporte Mercado Pago)
+      if (
+        causeStr.includes('pix key') ||
+        causeStr.includes('pix_keys') ||
+        causeStr.includes('no pix') ||
+        causeStr.includes('collector without pix') ||
+        causeStr.includes('collector has no pix') ||
+        causeStr.includes('collector without keys') ||
+        causeStr.includes('chave pix') ||
+        causeStr.includes('chaves pix') ||
+        causeStr.includes('pix não') ||
+        causeStr.includes('pix nao') ||
+        causeStr.includes('pix is not enabled')
+      ) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'collector_no_pix_keys',
+          { original: mpError, details: mpCause }
+        );
+      }
+    } catch (e) {
+      // if we threw an HttpsError above, rethrow to be handled by outer catch
+      if (e instanceof functions.https.HttpsError) throw e;
+      // otherwise ignore parsing errors and continue to generic throw
+    }
+
     throw new functions.https.HttpsError('aborted', `MP Recusou: ${mpError}`, mpDetails);
   }
 });
 
 // 2. VERIFICAR STATUS
-exports.getPaymentStatus = functions.https.onCall(async (data, context) => {
-  const { accessToken, paymentId } = data;
+exports.getPaymentStatus = onCall(async (request) => {
+  const { accessToken, paymentId } = request.data;
 
   try {
+    const baseUrl = (accessToken && accessToken.startsWith && accessToken.startsWith('TEST-'))
+      ? 'https://api.sandbox.mercadopago.com'
+      : 'https://api.mercadopago.com';
     const response = await axios.get(
-      `https://api.mercadopago.com/v1/payments/${paymentId}`,
+      `${baseUrl}/v1/payments/${paymentId}`,
       {
         headers: { 'Authorization': `Bearer ${accessToken}` }
       }
     );
     return response.data;
   } catch (error) {
-    console.error("Erro ao consultar status:", error);
-    throw new functions.https.HttpsError('internal', 'Erro ao consultar status', error.message);
+    console.error("Erro ao consultar status:", {
+      message: error.message,
+      responseData: error.response ? error.response.data : null,
+      status: error.response ? error.response.status : null,
+    });
+    throw new functions.https.HttpsError('internal', 'Erro ao consultar status', error.response ? error.response.data : error.message);
   }
 });
 
 // 2.1 COBRAR CARTÃO (LEGADO - manter para não quebrar deploy)
-exports.cobrarCartao = functions.https.onCall(async (data, context) => {
+exports.cobrarCartao = onCall(async (request) => {
   try {
-    if (!context.auth) {
+    if (!request.auth) {
       throw new functions.https.HttpsError('unauthenticated', 'Usuário não autenticado');
     }
 
@@ -265,7 +454,7 @@ exports.cobrarCartao = functions.https.onCall(async (data, context) => {
       installments,
       description,
       emailCliente,
-    } = data;
+    } = request.data;
 
     let tokenToUse = accessToken;
     if (!tokenToUse && shopId) {
@@ -274,7 +463,7 @@ exports.cobrarCartao = functions.https.onCall(async (data, context) => {
     }
 
     if (!tokenToUse || !cardNumber || !cardHolder || !expirationMonth ||
-        !expirationYear || !securityCode || !amount || !description) {
+      !expirationYear || !securityCode || !amount || !description) {
       throw new functions.https.HttpsError('invalid-argument', 'Dados incompletos');
     }
 
@@ -313,7 +502,7 @@ exports.cobrarCartao = functions.https.onCall(async (data, context) => {
         headers: {
           'Authorization': `Bearer ${tokenToUse}`,
           'Content-Type': 'application/json',
-          'X-Idempotency-Key': context.auth.uid + Date.now(),
+          'X-Idempotency-Key': request.auth.uid + Date.now(),
         },
       }
     );
@@ -326,8 +515,8 @@ exports.cobrarCartao = functions.https.onCall(async (data, context) => {
 });
 
 // 3. COBRAR CARTÃO SALVO
-exports.cobrarCartaoSalvo = functions.https.onCall(async (data, context) => {
-  const { accessToken, amount, customerId, cardId, installments, description, email, securityCode } = data;
+exports.cobrarCartaoSalvo = onCall(async (request) => {
+  const { accessToken, amount, customerId, cardId, installments, description, email, securityCode } = request.data;
 
   try {
     const tokenResponse = await axios.post(
@@ -362,7 +551,7 @@ exports.cobrarCartaoSalvo = functions.https.onCall(async (data, context) => {
         headers: {
           'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
-          'X-Idempotency-Key': context.auth ? context.auth.uid + Date.now() : Date.now().toString()
+          'X-Idempotency-Key': request.auth ? request.auth.uid + Date.now() : Date.now().toString()
         }
       }
     );
@@ -376,56 +565,68 @@ exports.cobrarCartaoSalvo = functions.https.onCall(async (data, context) => {
 });
 
 // 4. BUSCAR PARCELAS
-exports.getInstallments = functions.https.onCall(async (data, context) => {
-  const { accessToken, amount, bin } = data;
-
-  try {
-    console.log(`🔎 Buscando parcelas para BIN ${bin} valor ${amount}`);
-
-    const response = await axios.get(
-      `https://api.mercadopago.com/v1/payment_methods/installments`,
-      {
-        params: {
-          bin: bin,
-          amount: amount,
-        },
-        headers: { 'Authorization': `Bearer ${accessToken}` }
+// Expose an HTTP endpoint to fetch installments using bin + amount.
+// This wraps the existing callable implementation to support direct HTTP POST.
+exports.getInstallments = onRequest({ cors: true }, async (req, res) => {
+  return cors(req, res, async () => {
+    try {
+      if (req.method !== 'POST') return res.status(405).json({ success: false, error: 'Method not allowed' });
+      const body = req.body || {};
+      const { bin, amount, shopId } = body;
+      // Try to read shop config to compute tax_percent if present
+      let accessToken = body.accessToken;
+      let amountNum = Number(amount) || 0;
+      if (!bin || !amount) return res.status(400).json({ success: false, error: 'bin and amount are required' });
+      // Read shop config if shopId provided to compute tax_percent
+      if (shopId) {
+        try {
+          const shopDoc = await admin.firestore().collection('shops').doc(shopId).get();
+          const shop = shopDoc.exists ? shopDoc.data() : {};
+          const cfg = (shop && shop.config) ? shop.config : (shop && shop.payment_options && shop.payment_options.credito_config) ? shop.payment_options.credito_config : {};
+          const taxPercent = Number(cfg?.tax_percent ?? cfg?.porcentagem_a_vista ?? 0) || 0;
+          if (taxPercent > 0) amountNum = amountNum * (1 + taxPercent / 100.0);
+          // If access token not provided, try to get from shop mercadopago config
+          if (!accessToken) accessToken = shop?.mercadopago?.access_token || null;
+        } catch (e) {
+          console.warn('Failed to read shop config for installments:', e.message || e);
+        }
       }
-    );
 
-    const result = response.data[0];
+      // Call Mercado Pago API
+      const baseUrl = accessToken && accessToken.startsWith && accessToken.startsWith('TEST-') ? 'https://api.sandbox.mercadopago.com' : 'https://api.mercadopago.com';
+      const params = { bin: bin.toString().substring(0, 6), amount: amountNum };
+      const headers = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
 
-    if (!result) return [];
+      // If we don't have an accessToken, we can't call the installments endpoint authenticated
+      // The other implementation used a public_key. We should support that fallback if possible.
+      // However, for now we will stick to the existing logic + CORS, as that is the main barrier.
 
-    return result.payer_costs.map(p => ({
-      installments: p.installments,
-      recommended_message: p.recommended_message,
-      total_amount: p.total_amount,
-      installment_amount: p.installment_amount
-    }));
-
-  } catch (error) {
-    console.error("Erro ao buscar parcelas:", error.response?.data || error.message);
-    return [];
-  }
+      const response = await axios.get(`${baseUrl}/v1/payment_methods/installments`, { params, headers });
+      const result = response.data && response.data.length ? response.data[0] : null;
+      return res.json({ success: true, data: result });
+    } catch (err) {
+      console.error('getInstallments http error:', err.message || err, err.response ? err.response.data : null);
+      return res.status(500).json({ success: false, error: err.message || 'internal' });
+    }
+  });
 });
 
 // 5. CRIAR PAGAMENTO COM CARDTOKEN (NOVA FUNÇÃO)
-exports.criarPagamento = functions.https.onRequest(async (req, res) => {
+exports.criarPagamento = onRequest({ cors: true }, async (req, res) => {
   // Configurar CORS para permitir chamadas do app
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  
+
   if (req.method === 'OPTIONS') {
     return res.status(204).send('');
   }
 
   try {
     console.log('📝 Iniciando criarPagamento...');
-    
+
     const data = req.body.data || req.body;
-    
+
     // Validar idToken enviado no body
     let uid = null;
     if (data?.idToken) {
@@ -529,7 +730,7 @@ exports.criarPagamento = functions.https.onRequest(async (req, res) => {
 
     // Gerar chave de idempotência única para evitar pagamentos duplicados
     const idempotencyKey = `payment-${orderId}-${Date.now()}`;
-    
+
     const mpResponse = await axios.post(
       'https://api.mercadopago.com/v1/payments',
       mpPayload,
@@ -648,7 +849,7 @@ function traduzirErro(statusDetail) {
 // ============================================
 
 // Função para pesquisar estabelecimentos no Google
-exports.searchGoogleBusiness = functions.https.onRequest(async (req, res) => {
+exports.searchGoogleBusiness = onRequest({ cors: true }, async (req, res) => {
   // CORS
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -671,7 +872,7 @@ exports.searchGoogleBusiness = functions.https.onRequest(async (req, res) => {
 
     if (!apiKey) {
       console.error('❌ Google Places API Key não configurada');
-      return res.status(500).json({ 
+      return res.status(500).json({
         error: 'Google Places API não está configurada. Configure a variável de ambiente GOOGLE_PLACES_API_KEY'
       });
     }
@@ -688,7 +889,7 @@ exports.searchGoogleBusiness = functions.https.onRequest(async (req, res) => {
 
     if (searchResponse.data.status !== 'OK' && searchResponse.data.status !== 'ZERO_RESULTS') {
       console.error('Erro Google Places API:', searchResponse.data);
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'Erro na busca: ' + searchResponse.data.status,
         details: searchResponse.data.error_message
       });
@@ -713,14 +914,14 @@ exports.searchGoogleBusiness = functions.https.onRequest(async (req, res) => {
 
   } catch (error) {
     console.error('❌ Erro ao buscar estabelecimentos:', error.message);
-    return res.status(500).json({ 
-      error: 'Erro ao buscar: ' + error.message 
+    return res.status(500).json({
+      error: 'Erro ao buscar: ' + error.message
     });
   }
 });
 
 // Função para buscar detalhes e avaliações de um estabelecimento
-exports.getGoogleReviews = functions.https.onRequest(async (req, res) => {
+exports.getGoogleReviews = onRequest({ cors: true }, async (req, res) => {
   // CORS
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -741,7 +942,7 @@ exports.getGoogleReviews = functions.https.onRequest(async (req, res) => {
 
     if (!apiKey) {
       console.error('❌ Google Places API Key não configurada');
-      return res.status(500).json({ 
+      return res.status(500).json({
         error: 'Google Places API não está configurada. Configure a variável de ambiente GOOGLE_PLACES_API_KEY'
       });
     }
@@ -759,13 +960,13 @@ exports.getGoogleReviews = functions.https.onRequest(async (req, res) => {
 
     if (detailsResponse.data.status !== 'OK') {
       console.error('Erro ao buscar detalhes:', detailsResponse.data);
-      return res.status(400).json({ 
-        error: 'Erro ao buscar detalhes: ' + detailsResponse.data.status 
+      return res.status(400).json({
+        error: 'Erro ao buscar detalhes: ' + detailsResponse.data.status
       });
     }
 
     const place = detailsResponse.data.result;
-    
+
     // Formatar avaliações
     const reviews = (place.reviews || []).map(review => ({
       author_name: review.author_name,
@@ -792,14 +993,14 @@ exports.getGoogleReviews = functions.https.onRequest(async (req, res) => {
 
   } catch (error) {
     console.error('❌ Erro ao buscar avaliações:', error.message);
-    return res.status(500).json({ 
-      error: 'Erro ao buscar avaliações: ' + error.message 
+    return res.status(500).json({
+      error: 'Erro ao buscar avaliações: ' + error.message
     });
   }
 });
 
 // Função HTTP para enviar notificações de teste a partir do painel admin
-exports.sendTestNotification = functions.https.onRequest(async (req, res) => {
+exports.sendTestNotification = onRequest({ cors: true }, async (req, res) => {
   // CORS
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -813,7 +1014,7 @@ exports.sendTestNotification = functions.https.onRequest(async (req, res) => {
     }
 
     // Verify Firebase ID token from Authorization header (Bearer ...)
-    const authHeader = (req.get('Authorization') || '') ;
+    const authHeader = (req.get('Authorization') || '');
     const match = authHeader.match(/Bearer\s+(.*)/i);
     if (!match) return res.status(401).json({ error: 'Missing or invalid Authorization header' });
     const idToken = match[1];
@@ -894,7 +1095,7 @@ exports.sendTestNotification = functions.https.onRequest(async (req, res) => {
 });
 
 // Função HTTP para adicionar uma tag a um usuário para uma loja específica e notificar
-exports.addTagToUser = functions.https.onRequest(async (req, res) => {
+exports.addTagToUser = onRequest({ cors: true }, async (req, res) => {
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -974,7 +1175,7 @@ exports.addTagToUser = functions.https.onRequest(async (req, res) => {
 });
 
 // Função HTTP para deletar a conta do usuário autenticado (usa Admin SDK para evitar necessidade de re-autenticação)
-exports.deleteUserAccount = functions.https.onRequest(async (req, res) => {
+exports.deleteUserAccount = onRequest({ cors: true }, async (req, res) => {
   // CORS
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -1029,11 +1230,11 @@ exports.deleteUserAccount = functions.https.onRequest(async (req, res) => {
 });
 
 // Subscriptions: create subscription (with optional trial) - callable by authenticated client/admin
-exports.createSubscription = functions.https.onCall(async (data, context) => {
-  if (!context.auth) {
+exports.createSubscription = onCall(async (request) => {
+  if (!request.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'Usuário não autenticado');
   }
-  const { userId, shopId, planId, wantTrial } = data;
+  const { userId, shopId, planId, wantTrial } = request.data;
   if (!userId || !planId) {
     throw new functions.https.HttpsError('invalid-argument', 'userId and planId required');
   }
@@ -1082,7 +1283,7 @@ exports.createSubscription = functions.https.onCall(async (data, context) => {
 
   // audit
   await admin.firestore().collection('admin_audit').add({
-    adminUid: context.auth.uid,
+    adminUid: request.auth.uid,
     action: 'create_subscription',
     targetId: ref.id,
     subscription: subDoc,
@@ -1104,7 +1305,7 @@ exports.createSubscription = functions.https.onCall(async (data, context) => {
 // Scheduled worker: runs daily to process trials and billing
 // NOTE: checkSubscriptionsDaily is provided as an HTTP endpoint so it can be scheduled via Cloud Scheduler.
 // Use Cloud Scheduler to call this URL every 24 hours.
-exports.checkSubscriptionsDaily = functions.https.onRequest(async (req, res) => {
+exports.checkSubscriptionsDaily = onRequest({ cors: true }, async (req, res) => {
   try {
     console.log('checkSubscriptionsDaily (http) starting');
 
@@ -1167,7 +1368,7 @@ exports.checkSubscriptionsDaily = functions.https.onRequest(async (req, res) => 
 
     // 2) process recurring billing due today or past due
     const billingSnap = await admin.firestore().collection('subscriptions')
-      .where('status', 'in', ['active','past_due'])
+      .where('status', 'in', ['active', 'past_due'])
       .where('next_billing', '<=', now)
       .get();
 
@@ -1236,7 +1437,7 @@ exports.checkSubscriptionsDaily = functions.https.onRequest(async (req, res) => 
 });
 
 // Função administrativa para popular planos (executar uma vez)
-exports.seedPlans = functions.https.onRequest(async (req, res) => {
+exports.seedPlans = onRequest({ cors: true }, async (req, res) => {
   try {
     const plans = [
       {
@@ -1250,21 +1451,21 @@ exports.seedPlans = functions.https.onRequest(async (req, res) => {
         id: 'flex',
         name: 'FLEX',
         price_month: 29.9,
-        features: ['agendamentos','link_personalizado','pagamento_online','relatorios_basicos'],
+        features: ['agendamentos', 'link_personalizado', 'pagamento_online', 'relatorios_basicos'],
         description: 'Recursos adicionais, pagamentos online e relatórios básicos.'
       },
       {
         id: 'plus',
         name: 'PLUS',
         price_month: 69.9,
-        features: ['agendamentos','pagamento_online','relatorios_avancados','tags','categorias','api_admin'],
+        features: ['agendamentos', 'pagamento_online', 'relatorios_avancados', 'tags', 'categorias', 'api_admin'],
         description: 'Segmentação, tags VIP, categorias e relatórios avançados.'
       },
       {
         id: 'prime',
         name: 'PRIME',
         price_month: 149.9,
-        features: ['tudo','prioridade_suporte','white_label','integracoes'],
+        features: ['tudo', 'prioridade_suporte', 'white_label', 'integracoes'],
         description: 'Plano empresarial completo.'
       },
     ];
@@ -1303,7 +1504,7 @@ async function sendPushNotification(tokens, title, body, data = {}) {
   try {
     const response = await admin.messaging().sendEachForMulticast(message);
     console.log(`✅ Notificações enviadas: ${response.successCount} sucesso, ${response.failureCount} falhas`);
-    
+
     // Remover tokens inválidos
     if (response.failureCount > 0) {
       const failedTokens = [];
@@ -1323,211 +1524,211 @@ async function sendPushNotification(tokens, title, body, data = {}) {
 }
 
 // Trigger: Novo agendamento criado
-exports.onNewAppointment = functions.firestore.onDocumentCreated('appointments/{appointmentId}', async (event) => {
-    const snap = event.data;
-    if (!snap) {
-      console.log('No data associated with the event');
+exports.onNewAppointment = onDocumentCreated('appointments/{appointmentId}', async (event) => {
+  const snap = event.data;
+  if (!snap) {
+    console.log('No data associated with the event');
+    return;
+  }
+
+  const appointment = snap.data();
+  const appointmentId = event.params.appointmentId;
+
+  console.log('📅 Novo agendamento criado:', appointmentId);
+
+  try {
+    // Buscar dados da loja
+    const shopDoc = await admin.firestore().collection('shops').doc(appointment.shopId).get();
+    if (!shopDoc.exists) {
+      console.log('⚠️ Loja não encontrada');
       return;
     }
-    
-    const appointment = snap.data();
-    const appointmentId = event.params.appointmentId;
 
-    console.log('📅 Novo agendamento criado:', appointmentId);
+    const shopData = shopDoc.data();
+    const fcmTokens = shopData.fcm_tokens || [];
+
+    if (fcmTokens.length === 0) {
+      console.log('⚠️ Loja não tem tokens FCM');
+      return;
+    }
+
+    // Buscar nome do cliente
+    const clientDoc = await admin.firestore().collection('users').doc(appointment.clientId).get();
+    const clientName = clientDoc.exists ? (clientDoc.data().nome || clientDoc.data().name || 'Cliente') : 'Cliente';
+
+    // Formatar data e hora
+    const appointmentDate = appointment.data_agendamento.toDate();
+    const dateStr = appointmentDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const timeStr = appointmentDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+    // Enviar notificação
+    const title = '🎉 Novo Agendamento!';
+    const body = `${clientName} agendou ${appointment.servico_nome || 'um serviço'} para ${dateStr} às ${timeStr}`;
+    const data = {
+      type: 'new_appointment',
+      appointmentId: appointmentId,
+      shopId: appointment.shopId,
+      clientId: appointment.clientId,
+    };
+
+    await sendPushNotification(fcmTokens, title, body, data);
+
+  } catch (error) {
+    console.error('❌ Erro ao processar novo agendamento:', error);
+  }
+});
+
+// Trigger: Agendamento cancelado
+exports.onAppointmentCancelled = onDocumentUpdated('appointments/{appointmentId}', async (event) => {
+  const before = event.data.before.data();
+  const after = event.data.after.data();
+  const appointmentId = event.params.appointmentId;
+
+  // Verificar se foi cancelamento
+  if (before.status !== 'cancelado' && after.status === 'cancelado') {
+    console.log('🚫 Agendamento cancelado:', appointmentId);
 
     try {
       // Buscar dados da loja
-      const shopDoc = await admin.firestore().collection('shops').doc(appointment.shopId).get();
-      if (!shopDoc.exists) {
-        console.log('⚠️ Loja não encontrada');
-        return;
-      }
+      const shopDoc = await admin.firestore().collection('shops').doc(after.shopId).get();
+      if (!shopDoc.exists) return;
 
       const shopData = shopDoc.data();
       const fcmTokens = shopData.fcm_tokens || [];
 
-      if (fcmTokens.length === 0) {
-        console.log('⚠️ Loja não tem tokens FCM');
-        return;
-      }
+      if (fcmTokens.length === 0) return;
 
       // Buscar nome do cliente
-      const clientDoc = await admin.firestore().collection('users').doc(appointment.clientId).get();
+      const clientDoc = await admin.firestore().collection('users').doc(after.clientId).get();
       const clientName = clientDoc.exists ? (clientDoc.data().nome || clientDoc.data().name || 'Cliente') : 'Cliente';
 
       // Formatar data e hora
-      const appointmentDate = appointment.data_agendamento.toDate();
+      const appointmentDate = after.data_agendamento.toDate();
       const dateStr = appointmentDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
       const timeStr = appointmentDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
+      // Identificar quem cancelou
+      const canceladoPor = after.cancelado_por || 'desconhecido';
+      const bodyText = canceladoPor === 'cliente'
+        ? `${clientName} cancelou o agendamento de ${after.servico_nome || 'serviço'} marcado para ${dateStr} às ${timeStr}`
+        : `Agendamento de ${clientName} para ${dateStr} às ${timeStr} foi cancelado`;
+
       // Enviar notificação
-      const title = '🎉 Novo Agendamento!';
-      const body = `${clientName} agendou ${appointment.servico_nome || 'um serviço'} para ${dateStr} às ${timeStr}`;
+      const title = '❌ Agendamento Cancelado';
+      const body = bodyText;
       const data = {
-        type: 'new_appointment',
+        type: 'appointment_cancelled',
         appointmentId: appointmentId,
-        shopId: appointment.shopId,
-        clientId: appointment.clientId,
+        shopId: after.shopId,
+        clientId: after.clientId,
       };
 
       await sendPushNotification(fcmTokens, title, body, data);
 
     } catch (error) {
-      console.error('❌ Erro ao processar novo agendamento:', error);
+      console.error('❌ Erro ao processar cancelamento:', error);
     }
-  });
+  }
 
-// Trigger: Agendamento cancelado
-exports.onAppointmentCancelled = functions.firestore.onDocumentUpdated('appointments/{appointmentId}', async (event) => {
-    const before = event.data.before.data();
-    const after = event.data.after.data();
-    const appointmentId = event.params.appointmentId;
-
-    // Verificar se foi cancelamento
-    if (before.status !== 'cancelado' && after.status === 'cancelado') {
-      console.log('🚫 Agendamento cancelado:', appointmentId);
-
-      try {
-        // Buscar dados da loja
-        const shopDoc = await admin.firestore().collection('shops').doc(after.shopId).get();
-        if (!shopDoc.exists) return;
-
-        const shopData = shopDoc.data();
-        const fcmTokens = shopData.fcm_tokens || [];
-
-        if (fcmTokens.length === 0) return;
-
-        // Buscar nome do cliente
-        const clientDoc = await admin.firestore().collection('users').doc(after.clientId).get();
-        const clientName = clientDoc.exists ? (clientDoc.data().nome || clientDoc.data().name || 'Cliente') : 'Cliente';
-
-        // Formatar data e hora
-        const appointmentDate = after.data_agendamento.toDate();
-        const dateStr = appointmentDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-        const timeStr = appointmentDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-
-        // Identificar quem cancelou
-        const canceladoPor = after.cancelado_por || 'desconhecido';
-        const bodyText = canceladoPor === 'cliente' 
-          ? `${clientName} cancelou o agendamento de ${after.servico_nome || 'serviço'} marcado para ${dateStr} às ${timeStr}`
-          : `Agendamento de ${clientName} para ${dateStr} às ${timeStr} foi cancelado`;
-
-        // Enviar notificação
-        const title = '❌ Agendamento Cancelado';
-        const body = bodyText;
-        const data = {
-          type: 'appointment_cancelled',
-          appointmentId: appointmentId,
-          shopId: after.shopId,
-          clientId: after.clientId,
-        };
-
-        await sendPushNotification(fcmTokens, title, body, data);
-
-      } catch (error) {
-        console.error('❌ Erro ao processar cancelamento:', error);
-      }
-    }
-
-    // Verificar se houve pagamento
-    if ((!before.valor_pago || before.valor_pago === 0) && after.valor_pago > 0) {
-      console.log('💰 Pagamento recebido:', appointmentId);
-
-      try {
-        const shopDoc = await admin.firestore().collection('shops').doc(after.shopId).get();
-        if (!shopDoc.exists) return;
-
-        const shopData = shopDoc.data();
-        const fcmTokens = shopData.fcm_tokens || [];
-
-        if (fcmTokens.length === 0) return;
-
-        // Buscar nome do cliente
-        const clientDoc = await admin.firestore().collection('users').doc(after.clientId).get();
-        const clientName = clientDoc.exists ? (clientDoc.data().nome || clientDoc.data().name || 'Cliente') : 'Cliente';
-
-        // Formatar valor
-        const valor = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(after.valor_pago);
-
-        // Enviar notificação
-        const title = '💰 Pagamento Recebido!';
-        const body = `${clientName} pagou ${valor} pelo agendamento de ${after.servico_nome || 'serviço'}`;
-        const data = {
-          type: 'payment_received',
-          appointmentId: appointmentId,
-          shopId: after.shopId,
-          clientId: after.clientId,
-          amount: after.valor_pago.toString(),
-        };
-
-        await sendPushNotification(fcmTokens, title, body, data);
-
-      } catch (error) {
-        console.error('❌ Erro ao processar pagamento:', error);
-      }
-    }
-  });
-
-// Trigger: Cliente atualiza dados do perfil
-exports.onClientProfileUpdate = functions.firestore.onDocumentUpdated('users/{userId}', async (event) => {
-    const before = event.data.before.data();
-    const after = event.data.after.data();
-    const userId = event.params.userId;
-
-    // Verificar se houve mudanças significativas
-    const changedFields = [];
-    if (before.nome !== after.nome) changedFields.push('nome');
-    if (before.telefone !== after.telefone) changedFields.push('telefone');
-    if (before.email !== after.email) changedFields.push('email');
-
-    if (changedFields.length === 0) return; // Sem mudanças relevantes
-
-    console.log('👤 Cliente atualizou perfil:', userId, '- Campos:', changedFields);
+  // Verificar se houve pagamento
+  if ((!before.valor_pago || before.valor_pago === 0) && after.valor_pago > 0) {
+    console.log('💰 Pagamento recebido:', appointmentId);
 
     try {
-      // Buscar agendamentos futuros deste cliente
-      const appointmentsSnapshot = await admin.firestore()
-        .collection('appointments')
-        .where('clientId', '==', userId)
-        .where('data_agendamento', '>', admin.firestore.Timestamp.now())
-        .where('status', 'in', ['agendado', 'confirmado', 'pendente'])
-        .get();
+      const shopDoc = await admin.firestore().collection('shops').doc(after.shopId).get();
+      if (!shopDoc.exists) return;
 
-      if (appointmentsSnapshot.empty) {
-        console.log('⚠️ Cliente não tem agendamentos futuros');
-        return;
-      }
+      const shopData = shopDoc.data();
+      const fcmTokens = shopData.fcm_tokens || [];
 
-      // Buscar lojas únicas dos agendamentos
-      const shopIds = [...new Set(appointmentsSnapshot.docs.map(doc => doc.data().shopId))];
+      if (fcmTokens.length === 0) return;
 
-      // Enviar notificação para cada loja
-      for (const shopId of shopIds) {
-        const shopDoc = await admin.firestore().collection('shops').doc(shopId).get();
-        if (!shopDoc.exists) continue;
+      // Buscar nome do cliente
+      const clientDoc = await admin.firestore().collection('users').doc(after.clientId).get();
+      const clientName = clientDoc.exists ? (clientDoc.data().nome || clientDoc.data().name || 'Cliente') : 'Cliente';
 
-        const shopData = shopDoc.data();
-        const fcmTokens = shopData.fcm_tokens || [];
+      // Formatar valor
+      const valor = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(after.valor_pago);
 
-        if (fcmTokens.length === 0) continue;
+      // Enviar notificação
+      const title = '💰 Pagamento Recebido!';
+      const body = `${clientName} pagou ${valor} pelo agendamento de ${after.servico_nome || 'serviço'}`;
+      const data = {
+        type: 'payment_received',
+        appointmentId: appointmentId,
+        shopId: after.shopId,
+        clientId: after.clientId,
+        amount: after.valor_pago.toString(),
+      };
 
-        const clientName = after.nome || after.name || 'Cliente';
-        const title = '📝 Cliente Atualizou Dados';
-        const body = `${clientName} atualizou: ${changedFields.join(', ')}`;
-        const data = {
-          type: 'client_profile_update',
-          userId: userId,
-          shopId: shopId,
-          changedFields: changedFields.join(','),
-        };
-
-        await sendPushNotification(fcmTokens, title, body, data);
-      }
+      await sendPushNotification(fcmTokens, title, body, data);
 
     } catch (error) {
-      console.error('❌ Erro ao processar atualização de perfil:', error);
+      console.error('❌ Erro ao processar pagamento:', error);
     }
-  });
+  }
+});
+
+// Trigger: Cliente atualiza dados do perfil
+exports.onClientProfileUpdate = onDocumentUpdated('users/{userId}', async (event) => {
+  const before = event.data.before.data();
+  const after = event.data.after.data();
+  const userId = event.params.userId;
+
+  // Verificar se houve mudanças significativas
+  const changedFields = [];
+  if (before.nome !== after.nome) changedFields.push('nome');
+  if (before.telefone !== after.telefone) changedFields.push('telefone');
+  if (before.email !== after.email) changedFields.push('email');
+
+  if (changedFields.length === 0) return; // Sem mudanças relevantes
+
+  console.log('👤 Cliente atualizou perfil:', userId, '- Campos:', changedFields);
+
+  try {
+    // Buscar agendamentos futuros deste cliente
+    const appointmentsSnapshot = await admin.firestore()
+      .collection('appointments')
+      .where('clientId', '==', userId)
+      .where('data_agendamento', '>', admin.firestore.Timestamp.now())
+      .where('status', 'in', ['agendado', 'confirmado', 'pendente'])
+      .get();
+
+    if (appointmentsSnapshot.empty) {
+      console.log('⚠️ Cliente não tem agendamentos futuros');
+      return;
+    }
+
+    // Buscar lojas únicas dos agendamentos
+    const shopIds = [...new Set(appointmentsSnapshot.docs.map(doc => doc.data().shopId))];
+
+    // Enviar notificação para cada loja
+    for (const shopId of shopIds) {
+      const shopDoc = await admin.firestore().collection('shops').doc(shopId).get();
+      if (!shopDoc.exists) continue;
+
+      const shopData = shopDoc.data();
+      const fcmTokens = shopData.fcm_tokens || [];
+
+      if (fcmTokens.length === 0) continue;
+
+      const clientName = after.nome || after.name || 'Cliente';
+      const title = '📝 Cliente Atualizou Dados';
+      const body = `${clientName} atualizou: ${changedFields.join(', ')}`;
+      const data = {
+        type: 'client_profile_update',
+        userId: userId,
+        shopId: shopId,
+        changedFields: changedFields.join(','),
+      };
+
+      await sendPushNotification(fcmTokens, title, body, data);
+    }
+
+  } catch (error) {
+    console.error('❌ Erro ao processar atualização de perfil:', error);
+  }
+});
 
 // ============================================================================
 // 🔄 GOOGLE CALENDAR BACKUP - SINCRONIZAÇÃO AUTOMÁTICA
@@ -1543,33 +1744,33 @@ async function syncAppointmentToGoogleCalendar(appointmentId, appointmentData) {
   try {
     // Busca dados do shop
     if (!appointmentData.shopId) return;
-    
+
     const shopDoc = await admin.firestore()
       .collection('shops')
       .doc(appointmentData.shopId)
       .get();
-    
+
     if (!shopDoc.exists) return;
-    
+
     const shopData = shopDoc.data();
     const shopOwnerUid = shopData.owner_uid || shopData.ownerId;
-    
+
     // Sincroniza para o dono da loja (se conectado)
     if (shopOwnerUid) {
       await syncToUserCalendar(shopOwnerUid, appointmentId, appointmentData);
     }
-    
+
     // Sincroniza para o funcionário (se conectado e tem backup configurado)
     if (appointmentData.profissionalId) {
       const employeeDoc = await admin.firestore()
         .collection('employees')
         .doc(appointmentData.profissionalId)
         .get();
-      
+
       if (employeeDoc.exists) {
         const employeeData = employeeDoc.data();
         const employeeEmail = employeeData.backup_email;
-        
+
         // Busca usuário pelo email de backup
         if (employeeEmail) {
           const usersSnapshot = await admin.firestore()
@@ -1577,7 +1778,7 @@ async function syncAppointmentToGoogleCalendar(appointmentId, appointmentData) {
             .where('email', '==', employeeEmail)
             .limit(1)
             .get();
-          
+
           if (!usersSnapshot.empty) {
             const userDoc = usersSnapshot.docs[0];
             await syncToUserCalendar(userDoc.id, appointmentId, appointmentData);
@@ -1585,7 +1786,7 @@ async function syncAppointmentToGoogleCalendar(appointmentId, appointmentData) {
         }
       }
     }
-    
+
   } catch (error) {
     console.error('Erro ao sincronizar com Google Calendar:', error);
   }
@@ -1600,51 +1801,51 @@ async function syncToUserCalendar(userId, appointmentId, appointmentData) {
       .collection('users')
       .doc(userId)
       .get();
-    
+
     if (!userDoc.exists) return;
-    
+
     const userData = userDoc.data();
     const calendarData = userData.googleCalendar;
-    
+
     // Verifica se está conectado
     if (!calendarData || !calendarData.connected) return;
-    
+
     // Configura OAuth2
     const oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET,
       process.env.GOOGLE_REDIRECT_URI
     );
-    
+
     oauth2Client.setCredentials({
       access_token: calendarData.accessToken,
       refresh_token: calendarData.refreshToken,
       expiry_date: new Date(calendarData.expiry).getTime(),
     });
-    
+
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
-    
+
     // Busca ou cria calendário "MarkaAI - Agendamentos"
     let calendarId = await findOrCreateBackupCalendar(calendar);
     if (!calendarId) return;
-    
+
     // Busca dados do serviço e cliente
     const [serviceDoc, clientDoc] = await Promise.all([
-      appointmentData.servicoId 
+      appointmentData.servicoId
         ? admin.firestore().collection('services').doc(appointmentData.servicoId).get()
         : null,
       appointmentData.clientId
         ? admin.firestore().collection('clients').doc(appointmentData.clientId).get()
         : null,
     ]);
-    
+
     const servicoNome = serviceDoc?.exists ? serviceDoc.data().nome : 'Serviço';
     const duracaoMinutos = serviceDoc?.exists ? (serviceDoc.data().duracao || 60) : 60;
     const clienteNome = clientDoc?.exists ? clientDoc.data().nome : 'Cliente';
-    
+
     const dataAgendamento = appointmentData.data_agendamento.toDate();
     const dataFim = new Date(dataAgendamento.getTime() + duracaoMinutos * 60000);
-    
+
     const event = {
       summary: `${servicoNome} - ${clienteNome}`,
       description: `Agendamento MarkaAI\nID: ${appointmentId}\nStatus: ${appointmentData.status}\nValor: R$ ${appointmentData.valor_total?.toFixed(2) || '0.00'}`,
@@ -1663,10 +1864,10 @@ async function syncToUserCalendar(userId, appointmentId, appointmentData) {
         },
       },
     };
-    
+
     // Verifica se já existe evento
     const existingEventId = appointmentData.googleCalendarEventId;
-    
+
     if (existingEventId) {
       // Atualiza evento existente
       await calendar.events.update({
@@ -1681,7 +1882,7 @@ async function syncToUserCalendar(userId, appointmentId, appointmentData) {
         calendarId: calendarId,
         resource: event,
       });
-      
+
       // Salva ID do evento no Firestore
       await admin.firestore()
         .collection('appointments')
@@ -1689,10 +1890,10 @@ async function syncToUserCalendar(userId, appointmentId, appointmentData) {
         .update({
           googleCalendarEventId: response.data.id,
         });
-      
+
       console.log(`✅ Evento criado no Google Calendar: ${response.data.id}`);
     }
-    
+
   } catch (error) {
     console.error(`Erro ao sincronizar para usuário ${userId}:`, error);
   }
@@ -1704,17 +1905,17 @@ async function syncToUserCalendar(userId, appointmentId, appointmentData) {
 async function findOrCreateBackupCalendar(calendar) {
   try {
     const calendarName = 'MarkaAI - Agendamentos';
-    
+
     // Lista calendários
     const listResponse = await calendar.calendarList.list();
     const existingCalendar = listResponse.data.items?.find(
       cal => cal.summary === calendarName
     );
-    
+
     if (existingCalendar) {
       return existingCalendar.id;
     }
-    
+
     // Cria novo calendário
     const createResponse = await calendar.calendars.insert({
       resource: {
@@ -1723,7 +1924,7 @@ async function findOrCreateBackupCalendar(calendar) {
         timeZone: 'America/Sao_Paulo',
       },
     });
-    
+
     return createResponse.data.id;
   } catch (error) {
     console.error('Erro ao criar/encontrar calendário:', error);
@@ -1740,29 +1941,29 @@ async function deleteFromGoogleCalendar(userId, appointmentId, eventId) {
       .collection('users')
       .doc(userId)
       .get();
-    
+
     if (!userDoc.exists) return;
-    
+
     const userData = userDoc.data();
     const calendarData = userData.googleCalendar;
-    
+
     if (!calendarData || !calendarData.connected || !eventId) return;
-    
+
     const oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET,
       process.env.GOOGLE_REDIRECT_URI
     );
-    
+
     oauth2Client.setCredentials({
       access_token: calendarData.accessToken,
       refresh_token: calendarData.refreshToken,
       expiry_date: new Date(calendarData.expiry).getTime(),
     });
-    
+
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
     const calendarId = await findOrCreateBackupCalendar(calendar);
-    
+
     if (calendarId) {
       await calendar.events.delete({
         calendarId: calendarId,
@@ -1776,14 +1977,14 @@ async function deleteFromGoogleCalendar(userId, appointmentId, eventId) {
 }
 
 // Trigger: Quando um agendamento é CRIADO
-exports.onAppointmentCreated = functions.firestore.onDocumentCreated(
+exports.onAppointmentCreated = onDocumentCreated(
   'appointments/{appointmentId}',
   async (event) => {
     const appointmentId = event.params.appointmentId;
     const appointmentData = event.data.data();
-    
+
     console.log('🆕 Novo agendamento criado:', appointmentId);
-    
+
     // Sincroniza com Google Calendar
     await syncAppointmentToGoogleCalendar(appointmentId, appointmentData);
   }
@@ -1792,7 +1993,7 @@ exports.onAppointmentCreated = functions.firestore.onDocumentCreated(
 // (Função administrativa temporária removida)
 
 // Trigger adicional: validar política de agendamentos múltiplos ao criar um appointment
-exports.onAppointmentValidatePolicy = functions.firestore.onDocumentCreated('appointments/{appointmentId}', async (event) => {
+exports.onAppointmentValidatePolicy = onDocumentCreated('appointments/{appointmentId}', async (event) => {
   const snap = event.data;
   if (!snap) return;
   const data = snap.data();
@@ -1845,17 +2046,17 @@ exports.onAppointmentValidatePolicy = functions.firestore.onDocumentCreated('app
 });
 
 // Trigger: Quando um agendamento é ATUALIZADO
-exports.onAppointmentUpdated = functions.firestore.onDocumentUpdated(
+exports.onAppointmentUpdated = onDocumentUpdated(
   'appointments/{appointmentId}',
   async (event) => {
     const appointmentId = event.params.appointmentId;
     const before = event.data.before.data();
     const after = event.data.after.data();
-    
+
     // Verifica se foi cancelado
     if (before.status !== 'cancelado' && after.status === 'cancelado') {
       console.log('❌ Agendamento cancelado:', appointmentId);
-      
+
       // Deleta do Google Calendar se existir eventId
       if (after.googleCalendarEventId) {
         // Busca dono da loja
@@ -1863,11 +2064,11 @@ exports.onAppointmentUpdated = functions.firestore.onDocumentUpdated(
           .collection('shops')
           .doc(after.shopId)
           .get();
-        
+
         if (shopDoc.exists) {
           const shopData = shopDoc.data();
           const shopOwnerUid = shopData.owner_uid || shopData.ownerId;
-          
+
           if (shopOwnerUid) {
             await deleteFromGoogleCalendar(
               shopOwnerUid,
@@ -1876,25 +2077,25 @@ exports.onAppointmentUpdated = functions.firestore.onDocumentUpdated(
             );
           }
         }
-        
+
         // Deleta do calendário do funcionário também
         if (after.profissionalId) {
           const employeeDoc = await admin.firestore()
             .collection('employees')
             .doc(after.profissionalId)
             .get();
-          
+
           if (employeeDoc.exists) {
             const employeeData = employeeDoc.data();
             const employeeEmail = employeeData.backup_email;
-            
+
             if (employeeEmail) {
               const usersSnapshot = await admin.firestore()
                 .collection('users')
                 .where('email', '==', employeeEmail)
                 .limit(1)
                 .get();
-              
+
               if (!usersSnapshot.empty) {
                 await deleteFromGoogleCalendar(
                   usersSnapshot.docs[0].id,
@@ -1915,25 +2116,25 @@ exports.onAppointmentUpdated = functions.firestore.onDocumentUpdated(
 );
 
 // Trigger: Quando um agendamento é DELETADO
-exports.onAppointmentDeleted = functions.firestore.onDocumentDeleted(
+exports.onAppointmentDeleted = onDocumentDeleted(
   'appointments/{appointmentId}',
   async (event) => {
     const appointmentId = event.params.appointmentId;
     const appointmentData = event.data.data();
-    
+
     console.log('🗑️ Agendamento deletado:', appointmentId);
-    
+
     if (appointmentData.googleCalendarEventId) {
       // Busca dono da loja
       const shopDoc = await admin.firestore()
         .collection('shops')
         .doc(appointmentData.shopId)
         .get();
-      
+
       if (shopDoc.exists) {
         const shopData = shopDoc.data();
         const shopOwnerUid = shopData.owner_uid || shopData.ownerId;
-        
+
         if (shopOwnerUid) {
           await deleteFromGoogleCalendar(
             shopOwnerUid,

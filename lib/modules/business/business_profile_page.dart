@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
@@ -23,7 +23,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
   final _addressCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
   final _categoryCtrl = TextEditingController();
-  final _instagramCtrl = TextEditingController(); // ✅ NOVO: Instagram
+  final _instagramCtrl = TextEditingController(); // âœ… NOVO: Instagram
   
   String? _imageUrl; // Capa
   String? _logoUrl;  // Logo
@@ -63,7 +63,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
         _addressCtrl.text = data['endereco'] ?? "";
         _phoneCtrl.text = data['telefone'] ?? data['whatsapp'] ?? "";
         _categoryCtrl.text = data['categoria'] ?? "";
-        _instagramCtrl.text = data['instagram'] ?? ""; // ✅ CARREGA Instagram
+        _instagramCtrl.text = data['instagram'] ?? ""; // âœ… CARREGA Instagram
         
         if (mounted) {
           setState(() {
@@ -102,7 +102,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
         'endereco': _addressCtrl.text.trim(),
         'telefone': _phoneCtrl.text.trim(),
         'categoria': _categoryCtrl.text.trim(),
-        'instagram': _instagramCtrl.text.trim(), // ✅ SALVA Instagram
+        'instagram': _instagramCtrl.text.trim(), // âœ… SALVA Instagram
         'imageUrl': _imageUrl,
         'logoUrl': _logoUrl,
       });
@@ -110,7 +110,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text("✅ Perfil atualizado com sucesso!"),
+            content: Text("âœ… Perfil atualizado com sucesso!"),
             backgroundColor: Colors.green,
           )
         );
@@ -168,8 +168,8 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
           SnackBar(
             content: Text(
               isCover 
-                  ? "📸 Capa carregada! Clique em SALVAR." 
-                  : "📸 Logo carregada! Clique em SALVAR."
+                  ? "ðŸ“¸ Capa carregada! Clique em SALVAR." 
+                  : "ðŸ“¸ Logo carregada! Clique em SALVAR."
             ),
             backgroundColor: Colors.blue,
           )
@@ -197,7 +197,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ✅ INDICADOR DE UPLOAD (se estiver enviando)
+          // âœ… INDICADOR DE UPLOAD (se estiver enviando)
           if (_isUploading)
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
@@ -234,7 +234,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
               ),
             ),
           
-          // ✅ CONTEÚDO COM EXPANDED PARA PREENCHER ESPAÇO DISPONÍVEL
+          // âœ… CONTEÃšDO COM EXPANDED PARA PREENCHER ESPAÃ‡O DISPONÃVEL
           Expanded(
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(24),
@@ -244,7 +244,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
 
-              // ✅ CARD COMPACTO COM IMAGENS
+              // âœ… CARD COMPACTO COM IMAGENS
               Container(
                 decoration: BoxDecoration(
                   color: Colors.white,
@@ -261,7 +261,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
                   children: [
                     // Banner + Logo
                     SizedBox(
-                      height: 130, // ✅ Reduzido ainda mais (era 160)
+                      height: 130, // âœ… Reduzido ainda mais (era 160)
                       child: Stack(
                         clipBehavior: Clip.none,
                         children: [
@@ -270,7 +270,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
                             onTap: _isUploading ? null : () => _pickAndUploadImage(true),
                             child: Container(
                               key: ValueKey('cover_$_imageUrl'),
-                              height: 100, // ✅ Reduzido (era 120)
+                              height: 100, // âœ… Reduzido (era 120)
                               decoration: BoxDecoration(
                                 color: Colors.grey[200],
                                 borderRadius: const BorderRadius.vertical(
@@ -323,7 +323,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
                             ),
                           ),
                           
-                          // ✅ LOGO DA LOJA (editável pelo usuário)
+                          // âœ… LOGO DA LOJA (editável pelo usuário)
                           Positioned(
                             bottom: 0,
                             left: 20,
@@ -331,7 +331,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
                               onTap: _isUploading ? null : () => _pickAndUploadImage(false),
                               child: Container(
                                 key: ValueKey('logo_$_logoUrl'),
-                                height: 70, // ✅ Reduzido (era 80)
+                                height: 70, // âœ… Reduzido (era 80)
                                 width: 70,
                                 decoration: BoxDecoration(
                                   color: Colors.white,
@@ -355,7 +355,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
                                         child: Icon(
                                           Icons.add_a_photo,
                                           color: Colors.grey,
-                                          size: 24, // ✅ Reduzido
+                                          size: 24, // âœ… Reduzido
                                         ),
                                       )
                                     : null,
@@ -366,7 +366,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
                           // Botão de editar logo
                           Positioned(
                             bottom: 2,
-                            left: 68, // ✅ Ajustado
+                            left: 68, // âœ… Ajustado
                             child: Container(
                               decoration: BoxDecoration(
                                 color: AppColors.primaryPurple,
@@ -374,10 +374,10 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
                                 border: Border.all(color: Colors.white, width: 2),
                               ),
                               child: IconButton(
-                                iconSize: 14, // ✅ Reduzido
+                                iconSize: 14, // âœ… Reduzido
                                 padding: EdgeInsets.zero,
                                 constraints: const BoxConstraints(
-                                  minWidth: 28, // ✅ Reduzido
+                                  minWidth: 28, // âœ… Reduzido
                                   minHeight: 28,
                                 ),
                                 icon: const Icon(Icons.camera_alt, color: Colors.white),
@@ -389,9 +389,9 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
                       ),
                     ),
                     
-                    // ✅ FORMULÁRIO COMPACTO (2 colunas lado a lado)
+                    // âœ… FORMULÃRIO COMPACTO (2 colunas lado a lado)
                     Padding(
-                      padding: const EdgeInsets.all(16), // ✅ Reduzido de 20 para 16
+                      padding: const EdgeInsets.all(16), // âœ… Reduzido de 20 para 16
                       child: Column(
                         children: [
                           Row(
@@ -404,7 +404,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
                                   Icons.store,
                                 ),
                               ),
-                              const SizedBox(width: 10), // ✅ Reduzido
+                              const SizedBox(width: 10), // âœ… Reduzido
                               Expanded(
                                 flex: 2,
                                 child: _buildCompactInput(
@@ -415,14 +415,14 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
                               ),
                             ],
                           ),
-                          const SizedBox(height: 10), // ✅ Reduzido
+                          const SizedBox(height: 10), // âœ… Reduzido
                           _buildCompactInput(
                             "Descrição / Bio",
                             _descCtrl,
                             Icons.description,
                             maxLines: 2,
                           ),
-                          const SizedBox(height: 10), // ✅ Reduzido
+                          const SizedBox(height: 10), // âœ… Reduzido
                           Row(
                             children: [
                               Expanded(
@@ -432,7 +432,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
                                   Icons.location_on,
                                 ),
                               ),
-                              const SizedBox(width: 10), // ✅ Reduzido
+                              const SizedBox(width: 10), // âœ… Reduzido
                               Expanded(
                                 child: _buildCompactInput(
                                   "Telefone / WhatsApp",
@@ -442,8 +442,8 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
                               ),
                             ],
                           ),
-                          const SizedBox(height: 10), // ✅ Reduzido
-                          // ✅ CAMPO INSTAGRAM
+                          const SizedBox(height: 10), // âœ… Reduzido
+                          // âœ… CAMPO INSTAGRAM
                           _buildCompactInput(
                             "Instagram",
                             _instagramCtrl,
@@ -457,9 +457,9 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
                 ),
               ),
               
-                    const SizedBox(height: 16), // ✅ Reduzido de 20 para 16
+                    const SizedBox(height: 16), // âœ… Reduzido de 20 para 16
                     
-                    // ✅ BOTÃO SALVAR
+                    // âœ… BOTÃO SALVAR
                     SizedBox(
                       width: double.infinity,
                       height: 48,
@@ -484,7 +484,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
                               )
                             : const Icon(Icons.check_circle, color: Colors.white),
                         label: Text(
-                          _isLoading ? "Salvando..." : "SALVAR ALTERAÇÕES",
+                          _isLoading ? "Salvando..." : "SALVAR ALTERAÃ‡Ã•ES",
                           style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.bold,
@@ -504,7 +504,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
     );
   }
 
-  // ✅ CAMPO MAIS COMPACTO
+  // âœ… CAMPO MAIS COMPACTO
   Widget _buildCompactInput(
     String label,
     TextEditingController ctrl,
@@ -543,3 +543,4 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
     );
   }
 }
+

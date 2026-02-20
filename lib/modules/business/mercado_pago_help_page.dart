@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../core/theme/app_colors.dart';
 
@@ -44,13 +44,13 @@ class MercadoPagoHelpPage extends StatelessWidget {
             _buildStepCard(
               number: "3",
               title: "Ative as Credenciais de Produção",
-              content: "No menu lateral, vá em 'Credenciais de Produção'.\n\n⚠️ IMPORTANTE: Não use as credenciais de 'Teste' (Sandbox), senão o dinheiro não cairá na sua conta real.",
+              content: "No menu lateral, vá em 'Credenciais de Produção'.\n\nâš ï¸ IMPORTANTE: Não use as credenciais de 'Teste' (Sandbox), senão o dinheiro não cairá na sua conta real.",
             ),
 
             _buildStepCard(
               number: "4",
               title: "Copie e Cole",
-              content: "Você verá dois códigos:\n\n🔑 Public Key (Chave Pública)\n🔒 Access Token (Começa com APP_USR...)\n\nCopie esses códigos e cole nas configurações do App.",
+              content: "Você verá dois códigos:\n\nðŸ”‘ Public Key (Chave Pública)\nðŸ”’ Access Token (Começa com APP_USR...)\n\nCopie esses códigos e cole nas configurações do App.",
               isLast: true,
             ),
 
@@ -69,7 +69,7 @@ class MercadoPagoHelpPage extends StatelessWidget {
                   SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      "Nunca compartilhe seu Access Token com estranhos. Ele dá acesso à sua conta.",
+                      "Nunca compartilhe seu Access Token com estranhos. Ele dá acesso Ã  sua conta.",
                       style: TextStyle(color: Colors.orange, fontSize: 12, fontWeight: FontWeight.bold),
                     ),
                   ),
@@ -184,3 +184,4 @@ class MercadoPagoHelpPage extends StatelessWidget {
     );
   }
 }
+

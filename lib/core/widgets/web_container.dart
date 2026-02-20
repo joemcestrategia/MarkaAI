@@ -4,10 +4,10 @@ import 'package:flutter/foundation.dart'; // Para saber se é Web
 class WebContainer extends StatelessWidget {
   final Widget child;
   // Define uma cor de fundo para o site (fora do app)
-  final Color backgroundColor; 
+  final Color backgroundColor;
 
   const WebContainer({
-    super.key, 
+    super.key,
     required this.child,
     this.backgroundColor = const Color(0xFFF0F2F5), // Cinza clarinho padrão web
   });
@@ -39,7 +39,7 @@ class WebContainer extends StatelessWidget {
         ),
       );
     }
-    
+
     // Se for Android/iOS, não faz nada (deixa ocupar tudo)
     return child;
   }

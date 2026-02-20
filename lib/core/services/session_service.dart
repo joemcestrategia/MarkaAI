@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class SessionService {
   static const String _keyUserId = 'userId';
@@ -16,12 +17,17 @@ class SessionService {
     await prefs.setString(_keyUserId, userId);
     await prefs.setString(_keyUserType, userType);
 
-      if (shopId != null && shopId.isNotEmpty) {
+    if (shopId != null && shopId.isNotEmpty) {
       await prefs.setString(_keyShopId, shopId);
-      if (kDebugMode) debugPrint('DEBUG SessionService: shopId salvo no login: $shopId');
+      if (kDebugMode) {
+        debugPrint('DEBUG SessionService: shopId salvo no login: $shopId');
+      }
     } else {
       await prefs.remove(_keyShopId);
-      if (kDebugMode) debugPrint('DEBUG SessionService: shopId removido no login (null ou vazio)');
+      if (kDebugMode) {
+        debugPrint(
+            'DEBUG SessionService: shopId removido no login (null ou vazio)');
+      }
     }
   }
 
@@ -29,38 +35,83 @@ class SessionService {
     final prefs = await SharedPreferences.getInstance();
     if (shopId.isEmpty) {
       await prefs.remove(_keyShopId);
-      if (kDebugMode) debugPrint('DEBUG SessionService: shopId removido (vazio)');
+      if (kDebugMode) {
+        debugPrint('DEBUG SessionService: shopId removido (vazio)');
+      }
     } else {
       await prefs.setString(_keyShopId, shopId);
-      if (kDebugMode) debugPrint('DEBUG SessionService: shopId salvo via saveShopId: $shopId');
+      if (kDebugMode) {
+        debugPrint(
+            'DEBUG SessionService: shopId salvo via saveShopId: $shopId');
+      }
     }
   }
 
   static Future<String?> getShopId() async {
     final prefs = await SharedPreferences.getInstance();
     final shopId = prefs.getString(_keyShopId);
-    if (kDebugMode) debugPrint('DEBUG SessionService: getShopId chamado - retornando: ${shopId ?? "NULL"}');
+    if (kDebugMode) {
+      debugPrint(
+          'DEBUG SessionService: getShopId chamado - retornando: ${shopId ?? "NULL"}');
+    }
     return shopId;
+  }
+
+  // Last selected location (address + lat + lng)
+  static const String _keyLastAddress = 'last_address';
+  static const String _keyLastLat = 'last_lat';
+  static const String _keyLastLng = 'last_lng';
+
+  static Future<void> saveLastLocation(
+      {required String address, double? lat, double? lng}) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyLastAddress, address);
+    if (lat != null) await prefs.setDouble(_keyLastLat, lat);
+    if (lng != null) await prefs.setDouble(_keyLastLng, lng);
+    if (kDebugMode) {
+      debugPrint(
+          'DEBUG SessionService: last location salvo: $address ($lat,$lng)');
+    }
+  }
+
+  static Future<Map<String, dynamic>?> getLastLocation() async {
+    final prefs = await SharedPreferences.getInstance();
+    final address = prefs.getString(_keyLastAddress);
+    if (address == null) return null;
+    final lat =
+        prefs.containsKey(_keyLastLat) ? prefs.getDouble(_keyLastLat) : null;
+    final lng =
+        prefs.containsKey(_keyLastLng) ? prefs.getDouble(_keyLastLng) : null;
+    return {'address': address, 'lat': lat, 'lng': lng};
   }
 
   static Future<String?> getUserId() async {
     final prefs = await SharedPreferences.getInstance();
     final userId = prefs.getString(_keyUserId);
-    if (kDebugMode) debugPrint('DEBUG SessionService: getUserId chamado - retornando: ${userId ?? "NULL"}');
+    if (kDebugMode) {
+      debugPrint(
+          'DEBUG SessionService: getUserId chamado - retornando: ${userId ?? "NULL"}');
+    }
     return userId;
   }
 
   static Future<String?> getUserType() async {
     final prefs = await SharedPreferences.getInstance();
     final userType = prefs.getString(_keyUserType);
-    if (kDebugMode) debugPrint('DEBUG SessionService: getUserType chamado - retornando: ${userType ?? "NULL"}');
+    if (kDebugMode) {
+      debugPrint(
+          'DEBUG SessionService: getUserType chamado - retornando: ${userType ?? "NULL"}');
+    }
     return userType;
   }
 
   static Future<bool> isLoggedIn() async {
     final prefs = await SharedPreferences.getInstance();
     final hasUserId = prefs.containsKey(_keyUserId);
-    if (kDebugMode) debugPrint('DEBUG SessionService: isLoggedIn chamado - tem userId? $hasUserId');
+    if (kDebugMode) {
+      debugPrint(
+          'DEBUG SessionService: isLoggedIn chamado - tem userId? $hasUserId');
+    }
     return hasUserId;
   }
 
@@ -68,13 +119,45 @@ class SessionService {
   static Future<bool> hasShopId() async {
     final prefs = await SharedPreferences.getInstance();
     final hasShop = prefs.containsKey(_keyShopId);
-    if (kDebugMode) debugPrint('DEBUG SessionService: hasShopId chamado - tem shopId? $hasShop');
+    if (kDebugMode) {
+      debugPrint(
+          'DEBUG SessionService: hasShopId chamado - tem shopId? $hasShop');
+    }
     return hasShop;
+  }
+
+  // Check if current user is an admin
+  static Future<bool> isAdmin() async {
+    try {
+      final userId = await getUserId();
+      if (userId == null) return false;
+
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userId)
+          .get();
+
+      final role = doc.data()?['role'] as String?;
+
+      if (kDebugMode) {
+        debugPrint(
+            'DEBUG SessionService: isAdmin checked - role: ${role ?? "NULL"}');
+      }
+      return role == 'admin';
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('ERROR SessionService: isAdmin check failed: $e');
+      }
+      return false;
+    }
   }
 
   static Future<void> logout() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
-    if (kDebugMode) debugPrint('DEBUG SessionService: logout chamado - todas chaves removidas');
+    if (kDebugMode) {
+      debugPrint(
+          'DEBUG SessionService: logout chamado - todas chaves removidas');
+    }
   }
 }

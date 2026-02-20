@@ -35,6 +35,73 @@
     ],
     "rewrites": [
       {
+        "source": "/login",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/register",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/home",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/business",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/client",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/admin",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/settings",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/profile",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/checkout",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/payment",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/success",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/error",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/subscription_plans",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/inventory",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/admin/plans",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/:slug",
+        "function": {
+          "functionId": "publicShopPreview",
+          "region": "us-central1"
+        }
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }
@@ -48,16 +115,12 @@
       "source": "functions",
       "codebase": "default",
       "disallowLegacyRuntimeConfig": true,
+      "platform": "gcfv2",
       "ignore": [
         "node_modules",
-        ".git",
-        "firebase-debug.log",
-        "firebase-debug.*.log",
-        "*.local"
+        ".git"
       ],
-      "predeploy": [
-        // "npm --prefix \"$RESOURCE_DIR\" run lint"   // Comentado para evitar erro no Windows
-      ]
+      "predeploy": []
     }
   ]
 }

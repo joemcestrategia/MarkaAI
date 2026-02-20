@@ -9,6 +9,8 @@ import '../../modules/clients/client_home_page.dart';
 import '../../modules/admin/plans_page.dart';
 import '../../modules/admin/admin_page.dart';
 import '../../core/theme/app_colors.dart';
+import '../../modules/inventory/inventory_home_page.dart';
+import '../../modules/business/subscription_plans_page.dart';
 
 class AppRouter {
   static Route<dynamic> generateRoute(RouteSettings settings) {
@@ -16,7 +18,18 @@ class AppRouter {
     final path = uri.path;
 
     // Remover barras extras
-    final cleanPath = path.replaceAll(RegExp(r'^/+'), '').replaceAll(RegExp(r'/+$'), '');
+    final cleanPath =
+        path.replaceAll(RegExp(r'^/+'), '').replaceAll(RegExp(r'/+$'), '');
+
+    // 🆕 Suporte para redirecionamento via query param (evita loops de rewrite no Firebase)
+    // Se a URL for /?s=afroed, tratamos como se fosse /afroed
+    final querySlug = uri.queryParameters['s'];
+    if (querySlug != null && querySlug.isNotEmpty) {
+      return MaterialPageRoute(
+        builder: (_) => PublicShopPage(slug: querySlug),
+        settings: settings,
+      );
+    }
 
     // Se está vazio, é a home - usar o AuthGate
     if (cleanPath.isEmpty) {
@@ -30,7 +43,7 @@ class AppRouter {
     final segments = cleanPath.split('/');
     if (segments.length == 1) {
       final slug = segments[0];
-      
+
       // Verificar se não é uma rota conhecida
       if (!_isKnownRoute(slug)) {
         // Trata como slug de loja
@@ -42,11 +55,22 @@ class AppRouter {
     }
 
     // Rotas fixas conhecidas (admin)
+    if (cleanPath.toLowerCase() == 'inventory') {
+      return MaterialPageRoute(
+          builder: (_) => const InventoryHomePage(), settings: settings);
+    }
     if (cleanPath.toLowerCase() == 'admin/plans') {
-      return MaterialPageRoute(builder: (_) => const PlansPage(), settings: settings);
+      return MaterialPageRoute(
+          builder: (_) => const PlansPage(), settings: settings);
+    }
+    if (cleanPath.toLowerCase() == 'subscription_plans') {
+      // Lazy import to avoid circular dependency if possible, or ensure import exists
+      return MaterialPageRoute(
+          builder: (_) => const SubscriptionPlansPage(), settings: settings);
     }
     if (cleanPath.toLowerCase() == 'admin') {
-      return MaterialPageRoute(builder: (_) => const AdminPage(), settings: settings);
+      return MaterialPageRoute(
+          builder: (_) => const AdminPage(), settings: settings);
     }
 
     // Rota não encontrada
@@ -60,7 +84,8 @@ class AppRouter {
               const SizedBox(height: 20),
               Text(
                 'Página não encontrada',
-                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                style:
+                    const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 10),
               Text(
@@ -74,6 +99,7 @@ class AppRouter {
       settings: settings,
     );
   }
+
   static bool _isKnownRoute(String route) {
     const knownRoutes = [
       'login',
@@ -87,7 +113,10 @@ class AppRouter {
       'checkout',
       'payment',
       'success',
+      'payment',
+      'success',
       'error',
+      'subscription_plans',
     ];
     return knownRoutes.contains(route.toLowerCase());
   }
@@ -148,12 +177,15 @@ class _AuthRedirectState extends State<AuthRedirect> {
 
       final data = doc.data();
       final tipo = data?['tipo']?.toString() ?? 'cliente';
-      
+
       // Registrar token FCM do dispositivo para notificações (se disponível)
       try {
         final token = await FirebaseMessaging.instance.getToken();
         if (token != null) {
-          await FirebaseFirestore.instance.collection('users').doc(widget.user.uid).update({
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(widget.user.uid)
+              .update({
             'fcmTokens': FieldValue.arrayUnion([token])
           });
         }
@@ -163,6 +195,8 @@ class _AuthRedirectState extends State<AuthRedirect> {
       // Usar Uri.base.path (funciona no web) como fonte mais confiável do caminho atual.
       final browserPath = Uri.base.path; // ex: '/afroed' ou '/'
       if (browserPath == '/' || browserPath.isEmpty) {
+        // Garantir que o widget ainda está montado após possíveis 'await's acima
+        if (!mounted) return;
         if (tipo == 'dono' || tipo == 'business') {
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(builder: (_) => const BusinessHomePage()),

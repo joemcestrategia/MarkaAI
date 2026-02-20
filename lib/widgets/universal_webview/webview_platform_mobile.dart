@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'dart:convert';
 
 Widget buildWebView({
   required String assetPath,
@@ -9,7 +10,16 @@ Widget buildWebView({
 }) {
   final controller = WebViewController()
     ..setJavaScriptMode(JavaScriptMode.unrestricted)
-    ..addJavaScriptChannel('FlutterChannel', onMessageReceived: (msg) => onMessage(msg.message));
+    ..addJavaScriptChannel('FlutterChannel', onMessageReceived: (msg) => onMessage(msg.message))
+    ..setBackgroundColor(const Color(0xFFFFFFFF))
+    ..setNavigationDelegate(NavigationDelegate(
+      onPageFinished: (url) {
+        // notify host that page finished loading so we can inject if needed
+        try {
+          onMessage(jsonEncode({'action': 'loaded'}));
+        } catch (_) {}
+      },
+    ));
 
   // Always load HTTPS page via Cloud Function to avoid SPA/service worker.
   // Function URL: https://us-central1-wismart-118c3.cloudfunctions.net/checkoutTransparentePage

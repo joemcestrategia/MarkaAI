@@ -1,4 +1,4 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -65,7 +65,7 @@ class _FinancialWalletPageState extends State<FinancialWalletPage> {
       color: const Color(0xFFF2F4F8),
       child: Row(
         children: [
-          // --- COLUNA 2: DASHBOARD ESTÁTICO ---
+          // --- COLUNA 2: DASHBOARD ESTÃTICO ---
           Expanded(
             flex: 3,
             child: Padding(
@@ -97,7 +97,7 @@ class _FinancialWalletPageState extends State<FinancialWalletPage> {
             ),
           ),
 
-          // --- COLUNA 3: PAINEL ESTÁTICO ---
+          // --- COLUNA 3: PAINEL ESTÃTICO ---
           VerticalDivider(width: 1, color: Colors.grey[300]),
           Expanded(
             flex: 2,
@@ -136,7 +136,7 @@ class _FinancialWalletPageState extends State<FinancialWalletPage> {
         children: [
           const Text("Saldo Total MP", style: TextStyle(color: Colors.white70, fontSize: 12)),
           const SizedBox(height: 4),
-          Text(_showValues ? NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(totalAmount) : "R\$ ••••••", style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)),
+          Text(_showValues ? NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(totalAmount) : "R\$ â€¢â€¢â€¢â€¢â€¢â€¢", style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)),
         ],
       ),
     );
@@ -152,7 +152,7 @@ class _FinancialWalletPageState extends State<FinancialWalletPage> {
           Icon(icon, color: color, size: 18), 
           const SizedBox(height: 8), 
           Text(title, style: TextStyle(color: Colors.grey[600], fontSize: 11)), 
-          Text(_showValues ? NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(value) : "••••", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14))
+          Text(_showValues ? NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(value) : "â€¢â€¢â€¢â€¢", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14))
         ]
       ),
     );
@@ -183,3 +183,4 @@ class _FinancialWalletPageState extends State<FinancialWalletPage> {
     return Material(color: const Color(0xFFF2F4F8), child: Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [const Icon(Icons.account_balance_wallet_outlined, size: 48, color: Colors.grey), const SizedBox(height: 12), const Text("Configuração Necessária", style: TextStyle(fontWeight: FontWeight.bold)), const SizedBox(height: 12), ElevatedButton(onPressed: () => setState(() => _showSettings = true), child: const Text("Configurar Agora"))])));
   }
 }
+

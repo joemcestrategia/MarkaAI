@@ -1,4 +1,5 @@
 import 'dart:io';
+// ignore_for_file: use_build_context_synchronously
 import 'package:flutter/material.dart';
 import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
 import 'package:pinput/pinput.dart';
@@ -264,7 +265,7 @@ class _ClientOnboardingPageState extends State<ClientOnboardingPage> {
           ),
 
           // Passo 4: Endereço
-          _baseStep(title: "Endereço", child: Column(children: [TextFormField(controller: _cepController, inputFormatters: [_cepMask], keyboardType: TextInputType.number, onChanged: (v) { if(v.length == 9) _buscarCep(v); }, decoration: const InputDecoration(labelText: "CEP")), if(_isLoadingCep) const LinearProgressIndicator(), TextFormField(controller: _addressController, readOnly: true), TextFormField(controller: _numberController, decoration: const InputDecoration(labelText: "Número"))]), onNext: _finishRegistration, isLoading: _isSaving, btnText: "FINALIZAR"),
+          _baseStep(title: "Endereço", child: Column(children: [TextFormField(controller: _cepController, inputFormatters: [_cepMask], keyboardType: TextInputType.number, onChanged: (v) { if(v.length == 9) _buscarCep(v); }, decoration: const InputDecoration(labelText: "CEP")), if(_isLoadingCep) const LinearProgressIndicator(), TextFormField(controller: _addressController), TextFormField(controller: _numberController, decoration: const InputDecoration(labelText: "Número"))]), onNext: _finishRegistration, isLoading: _isSaving, btnText: "FINALIZAR"),
         ],
       ),
     );

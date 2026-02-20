@@ -94,6 +94,7 @@ class ResponsiveHelper {
       // Desktop/Tablet: bottom sheet
       return showModalBottomSheet<T>(
         context: context,
+      useSafeArea: true,
         isDismissible: isDismissible,
         isScrollControlled: true,
         shape: const RoundedRectangleBorder(

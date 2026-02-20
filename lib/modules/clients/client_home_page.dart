@@ -1,4 +1,4 @@
-// ignore_for_file: unused_element, unused_field, unused_local_variable
+﻿// ignore_for_file: unused_element, unused_field, unused_local_variable
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -31,7 +31,7 @@ class ClientHomePage extends StatefulWidget {
 class _ClientHomePageState extends State<ClientHomePage> {
   final currencyFormat = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
 
-  int _selectedIndex = 0; 
+  int _selectedIndex = 0;
   String _userName = "Cliente";
   String _userEmail = "";
   String? _userPhotoUrl;
@@ -40,9 +40,10 @@ class _ClientHomePageState extends State<ClientHomePage> {
   bool _isLoadingUserData = true;
 
   // Filtros
+  String _selectedLocation = "";
   String _searchText = "";
   String _selectedCategory = "Todos";
-  
+
   final List<Map<String, dynamic>> _categories = [
     {"name": "Todos", "icon": Icons.grid_view},
     {"name": "Beleza", "icon": Icons.face},
@@ -63,6 +64,39 @@ class _ClientHomePageState extends State<ClientHomePage> {
     _setupNotifications();
   }
 
+  // Helper para cores de categoria (Smart Fallback)
+  Color _getCategoryColor(String? category) {
+    switch (category?.toLowerCase()) {
+      case 'barbearia':
+        return const Color(0xFFE3F2FD); // Azul claro
+      case 'beleza':
+      case 'estética':
+        return const Color(0xFFFCE4EC); // Rosa claro
+      case 'saúde':
+        return const Color(0xFFE8F5E9); // Verde claro
+      case 'bem-estar':
+        return const Color(0xFFFFF3E0); // Laranja claro
+      default:
+        return Colors.grey[100]!;
+    }
+  }
+
+  IconData _getCategoryIcon(String? category) {
+    switch (category?.toLowerCase()) {
+      case 'barbearia':
+        return Icons.content_cut;
+      case 'beleza':
+      case 'estética':
+        return Icons.face;
+      case 'saúde':
+        return Icons.medical_services;
+      case 'bem-estar':
+        return Icons.self_improvement;
+      default:
+        return Icons.store;
+    }
+  }
+
   void _setupNotifications() {
     // Notificações quando app está em foreground
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
@@ -72,7 +106,8 @@ class _ClientHomePageState extends State<ClientHomePage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: AppColors.primaryPurple,
-            content: Text(message.notification?.body ?? 'Confirme seu agendamento'),
+            content:
+                Text(message.notification?.body ?? 'Confirme seu agendamento'),
             action: SnackBarAction(
               label: 'VER',
               textColor: Colors.white,
@@ -80,7 +115,8 @@ class _ClientHomePageState extends State<ClientHomePage> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => AppointmentConfirmationPage(appointmentId: appointmentId),
+                    builder: (_) => AppointmentConfirmationPage(
+                        appointmentId: appointmentId),
                   ),
                 );
               },
@@ -94,7 +130,10 @@ class _ClientHomePageState extends State<ClientHomePage> {
   Future<void> _loadUserData() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
-      final doc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
       if (mounted) {
         setState(() {
           _userId = user.uid;
@@ -110,6 +149,91 @@ class _ClientHomePageState extends State<ClientHomePage> {
     }
   }
 
+  void _showLocationPicker() {
+    final controller = TextEditingController(text: _selectedLocation);
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.fromLTRB(
+            20, 20, 20, MediaQuery.of(ctx).viewInsets.bottom + 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.location_on, color: AppColors.primaryPurple),
+                const SizedBox(width: 8),
+                const Text('Escolher Local',
+                    style:
+                        TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const Spacer(),
+                if (_selectedLocation.isNotEmpty)
+                  TextButton(
+                    onPressed: () {
+                      setState(() => _selectedLocation = '');
+                      Navigator.pop(ctx);
+                    },
+                    child: const Text('Limpar',
+                        style: TextStyle(color: Colors.red)),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text('Digite sua cidade ou bairro para ver profissionais próximos',
+                style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              decoration: InputDecoration(
+                hintText: 'Ex: Belo Horizonte, Savassi...',
+                prefixIcon:
+                    const Icon(Icons.search, color: AppColors.primaryPurple),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: Colors.grey.shade300)),
+                focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide:
+                        const BorderSide(color: AppColors.primaryPurple)),
+              ),
+              onSubmitted: (v) {
+                if (v.trim().isNotEmpty) {
+                  setState(() => _selectedLocation = v.trim());
+                }
+                Navigator.pop(ctx);
+              },
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primaryPurple,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12))),
+                onPressed: () {
+                  if (controller.text.trim().isNotEmpty) {
+                    setState(() => _selectedLocation = controller.text.trim());
+                  }
+                  Navigator.pop(ctx);
+                },
+                child: const Text('Confirmar',
+                    style: TextStyle(color: Colors.white)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _confirmLogout() {
     showDialog(
       context: context,
@@ -118,9 +242,14 @@ class _ClientHomePageState extends State<ClientHomePage> {
         title: const Text("Sair da Conta"),
         content: const Text("Deseja realmente sair do App?"),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancelar")),
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("Cancelar")),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8))),
             onPressed: () {
               Navigator.pop(context);
               _handleLogout();
@@ -133,25 +262,40 @@ class _ClientHomePageState extends State<ClientHomePage> {
   }
 
   Future<void> _showAdvancedOptionsDialog() async {
-    final choice = await showDialog<String>(context: context, builder: (ctx) {
-      return SimpleDialog(
-        title: const Text('Opções Avançadas'),
-        children: [
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(ctx, 'trocar'),
-            child: Row(children: const [Icon(Icons.swap_horiz), SizedBox(width:8), Text('Trocar Tipo de Conta')]),
-          ),
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(ctx, 'delete'),
-            child: Row(children: const [Icon(Icons.delete_forever, color: Colors.red), SizedBox(width:8), Text('Excluir Conta (Irreversível)', style: TextStyle(color: Colors.red))]),
-          ),
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(ctx, 'close'),
-            child: Row(children: const [Icon(Icons.close), SizedBox(width:8), Text('Fechar')]),
-          ),
-        ],
-      );
-    });
+    final choice = await showDialog<String>(
+        context: context,
+        builder: (ctx) {
+          return SimpleDialog(
+            title: const Text('Opções Avançadas'),
+            children: [
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(ctx, 'trocar'),
+                child: Row(children: const [
+                  Icon(Icons.swap_horiz),
+                  SizedBox(width: 8),
+                  Text('Trocar Tipo de Conta')
+                ]),
+              ),
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(ctx, 'delete'),
+                child: Row(children: const [
+                  Icon(Icons.delete_forever, color: Colors.red),
+                  SizedBox(width: 8),
+                  Text('Excluir Conta (Irreversível)',
+                      style: TextStyle(color: Colors.red))
+                ]),
+              ),
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(ctx, 'close'),
+                child: Row(children: const [
+                  Icon(Icons.close),
+                  SizedBox(width: 8),
+                  Text('Fechar')
+                ]),
+              ),
+            ],
+          );
+        });
     if (choice == 'delete') {
       await _deleteAccount();
     } else if (choice == 'trocar') {
@@ -166,40 +310,60 @@ class _ClientHomePageState extends State<ClientHomePage> {
   Future<void> _switchToClient() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
-    final ok = await showDialog<bool>(context: context, builder: (_) => AlertDialog(
-      title: const Text('Confirmar troca'),
-      content: const Text('Deseja mudar sua conta para Cliente? Isso removerá associações de loja.'),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context,false), child: const Text('Cancelar')),
-        ElevatedButton(onPressed: () => Navigator.pop(context,true), child: const Text('Confirmar')),
-      ],
-    ));
+    final ok = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+              title: const Text('Confirmar troca'),
+              content: const Text(
+                  'Deseja mudar sua conta para Cliente? Isso removerá associações de loja.'),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    child: const Text('Cancelar')),
+                ElevatedButton(
+                    onPressed: () => Navigator.pop(context, true),
+                    child: const Text('Confirmar')),
+              ],
+            ));
     if (ok != true) return;
-    await FirebaseFirestore.instance.collection('users').doc(user.uid).update({'tipo': 'cliente', 'role': 'cliente', 'shopId': FieldValue.delete()});
+    await FirebaseFirestore.instance.collection('users').doc(user.uid).update(
+        {'tipo': 'cliente', 'role': 'cliente', 'shopId': FieldValue.delete()});
     await SessionService.saveLogin(userId: user.uid, userType: 'client');
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Conta alterada para Cliente')));
-      Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const ClientHomePage()), (r)=>false);
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Conta alterada para Cliente')));
+      Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => const ClientHomePage()),
+          (r) => false);
     }
   }
 
   void _switchToOwner() {
-    showDialog<String>(context: context, builder: (ctx) {
-      return AlertDialog(
-        title: const Text('Tornar-se Dono'),
-        content: const Text(
-          'Recomendamos excluir a conta atual e criar uma nova conta de Dono para evitar inconsistências no sistema. '
-          'Se preferir manter a conta atual, ainda é possível cadastrar a loja, mas pode causar conflitos. O que deseja fazer?'
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, 'cancel'), child: const Text('Cancelar')),
-          TextButton(onPressed: () => Navigator.pop(ctx, 'keep'), child: const Text('Continuar sem excluir')),
-          ElevatedButton(onPressed: () => Navigator.pop(ctx, 'delete'), child: const Text('Excluir e continuar')),
-        ],
-      );
-    }).then((choice) {
+    showDialog<String>(
+        context: context,
+        builder: (ctx) {
+          return AlertDialog(
+            title: const Text('Tornar-se Dono'),
+            content: const Text(
+                'Recomendamos excluir a conta atual e criar uma nova conta de Dono para evitar inconsistências no sistema. '
+                'Se preferir manter a conta atual, ainda é possível cadastrar a loja, mas pode causar conflitos. O que deseja fazer?'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, 'cancel'),
+                  child: const Text('Cancelar')),
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, 'keep'),
+                  child: const Text('Continuar sem excluir')),
+              ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx, 'delete'),
+                  child: const Text('Excluir e continuar')),
+            ],
+          );
+        }).then((choice) {
       if (choice == 'keep') {
-        Navigator.push(context, MaterialPageRoute(builder: (_) => const BusinessOnboardingPage()));
+        Navigator.push(context,
+            MaterialPageRoute(builder: (_) => const BusinessOnboardingPage()));
       } else if (choice == 'delete') {
         // deleteAccount will sign the user out after deletion; user must register anew.
         _deleteAccount();
@@ -215,42 +379,62 @@ class _ClientHomePageState extends State<ClientHomePage> {
   Future<void> _deleteAccount() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
-    final confirmed = await showDialog<bool>(context: context, builder: (ctx) {
-      bool checked = false;
-      return StatefulBuilder(builder: (ctx2, setS) {
-        return AlertDialog(
-          title: const Text('Excluir Conta - Irreversível'),
-          content: Column(mainAxisSize: MainAxisSize.min, children: [
-            const Text('Esta ação removerá TODOS os dados ligados a esta conta (agendamentos, perfil, etc.) e é IRRECUPERÁVEL. Após a exclusão, limpe o cache do telefone para evitar reentrar com dados antigos.'),
-            const SizedBox(height: 12),
-            Row(children: [
-              Checkbox(value: checked, onChanged: (v) => setS(() => checked = v ?? false)),
-              const Expanded(child: Text('Estou ciente e desejo excluir permanentemente esta conta')),
-            ])
-          ]),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-              onPressed: checked ? () => Navigator.pop(ctx, true) : null,
-              child: const Text('Excluir'),
-            ),
-          ],
-        );
-      });
-    });
+    final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) {
+          bool checked = false;
+          return StatefulBuilder(builder: (ctx2, setS) {
+            return AlertDialog(
+              title: const Text('Excluir Conta - Irreversível'),
+              content: Column(mainAxisSize: MainAxisSize.min, children: [
+                const Text(
+                    'Esta ação removerá TODOS os dados ligados a esta conta (agendamentos, perfil, etc.) e é IRRECUPERÁVEL. Após a exclusão, limpe o cache do telefone para evitar reentrar com dados antigos.'),
+                const SizedBox(height: 12),
+                Row(children: [
+                  Checkbox(
+                      value: checked,
+                      onChanged: (v) => setS(() => checked = v ?? false)),
+                  const Expanded(
+                      child: Text(
+                          'Estou ciente e desejo excluir permanentemente esta conta')),
+                ])
+              ]),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: const Text('Cancelar')),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                  onPressed: checked ? () => Navigator.pop(ctx, true) : null,
+                  child: const Text('Excluir'),
+                ),
+              ],
+            );
+          });
+        });
     if (confirmed != true) return;
 
-    showDialog(context: context, barrierDismissible: false, builder: (ctx) => const Center(child: CircularProgressIndicator()));
+    showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => const Center(child: CircularProgressIndicator()));
     try {
       final idToken = await FirebaseAuth.instance.currentUser?.getIdToken(true);
       if (idToken == null) {
         Navigator.pop(context);
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Erro: usuário não autenticado')));
+        if (mounted)
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Erro: usuário não autenticado')));
         return;
       }
-      final url = Uri.parse('https://us-central1-wismart-118c3.cloudfunctions.net/deleteUserAccount');
-      final resp = await http.post(url, headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $idToken'}, body: jsonEncode({'confirm': true}));
+      final url = Uri.parse(
+          'https://us-central1-wismart-118c3.cloudfunctions.net/deleteUserAccount');
+      final resp = await http.post(url,
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $idToken'
+          },
+          body: jsonEncode({'confirm': true}));
       Navigator.pop(context);
       if (resp.statusCode == 200) {
         // success
@@ -261,16 +445,26 @@ class _ClientHomePageState extends State<ClientHomePage> {
         await SessionService.logout();
         await FirebaseAuth.instance.signOut();
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Conta excluída com sucesso. Limpe o cache do app/telefone manualmente.')));
-          Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const LoginPage()), (r) => false);
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text(
+                  'Conta excluída com sucesso. Limpe o cache do app/telefone manualmente.')));
+          Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(builder: (_) => const LoginPage()),
+              (r) => false);
         }
       } else {
         final body = resp.body;
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Falha ao excluir conta: ${resp.statusCode} $body')));
+        if (mounted)
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content:
+                  Text('Falha ao excluir conta: ${resp.statusCode} $body')));
       }
     } catch (e) {
       Navigator.pop(context);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao excluir conta: $e')));
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Erro ao excluir conta: $e')));
     }
   }
 
@@ -283,10 +477,9 @@ class _ClientHomePageState extends State<ClientHomePage> {
     await FirebaseAuth.instance.signOut();
     if (mounted) {
       Navigator.pushAndRemoveUntil(
-        context, 
-        MaterialPageRoute(builder: (context) => const LoginPage()), 
-        (route) => false
-      );
+          context,
+          MaterialPageRoute(builder: (context) => const LoginPage()),
+          (route) => false);
     }
   }
 
@@ -297,16 +490,17 @@ class _ClientHomePageState extends State<ClientHomePage> {
         builder: (context) => ShopProfilePage(
           shopDoc: shop,
           onBookService: (serviceId, serviceData) {
-             // 🔥 Navega para a página de detalhes do serviço PRIMEIRO
-             _openServiceDetails(serviceId: serviceId, serviceData: serviceData);
+            // 🔥 Navega para a página de detalhes do serviço PRIMEIRO
+            _openServiceDetails(serviceId: serviceId, serviceData: serviceData);
           },
         ),
       ),
     );
   }
-  
+
   // 🆕 Abre a página de detalhes do serviço com carrossel
-  void _openServiceDetails({required String serviceId, required Map<String, dynamic> serviceData}) {
+  void _openServiceDetails(
+      {required String serviceId, required Map<String, dynamic> serviceData}) {
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -335,16 +529,23 @@ class _ClientHomePageState extends State<ClientHomePage> {
             'Seu perfil ainda não foi todo preenchido. Para agendar, complete seus dados (nome, telefone, endereço). Deseja completar agora?',
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Depois')),
-            ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Completar')),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Depois')),
+            ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Completar')),
           ],
         ),
       );
       if (go == true && mounted) {
         final user = FirebaseAuth.instance.currentUser;
-        Navigator.push(context, MaterialPageRoute(
-          builder: (context) => ClientRegisterPage(user: user, isBusinessAdding: false),
-        ));
+        Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) =>
+                  ClientRegisterPage(user: user, isBusinessAdding: false),
+            ));
       }
       return;
     }
@@ -364,13 +565,16 @@ class _ClientHomePageState extends State<ClientHomePage> {
   @override
   Widget build(BuildContext context) {
     if (_isLoadingUserData) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator(color: AppColors.primaryPurple)));
+      return const Scaffold(
+          body: Center(
+              child:
+                  CircularProgressIndicator(color: AppColors.primaryPurple)));
     }
 
     return LayoutBuilder(
       builder: (context, constraints) {
         bool isDesktop = constraints.maxWidth > 900;
-        
+
         if (isDesktop) {
           return Scaffold(
             backgroundColor: const Color(0xFFF5F7FA),
@@ -382,9 +586,9 @@ class _ClientHomePageState extends State<ClientHomePage> {
                     children: [
                       _buildHeaderDesktop(),
                       Expanded(
-                        child: _selectedIndex == 0 
-                          ? _buildExploreView(isDesktop: true) 
-                          : _buildScheduleView(isDesktop: true),
+                        child: _selectedIndex == 0
+                            ? _buildExploreView(isDesktop: true)
+                            : _buildScheduleView(isDesktop: true),
                       ),
                     ],
                   ),
@@ -396,19 +600,26 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
         return Scaffold(
           backgroundColor: const Color(0xFFF5F7FA),
-          body: _selectedIndex == 0 
+          body: _selectedIndex == 0
               ? _buildExploreView(isDesktop: false)
               : _buildScheduleView(isDesktop: false),
           bottomNavigationBar: NavigationBar(
             selectedIndex: _selectedIndex,
-            onDestinationSelected: (idx) => setState(() => _selectedIndex = idx),
+            onDestinationSelected: (idx) =>
+                setState(() => _selectedIndex = idx),
             backgroundColor: Colors.white,
             elevation: 10,
             shadowColor: Colors.black12,
             indicatorColor: AppColors.primaryPurple.withValues(alpha: 0.2),
             destinations: const [
-              NavigationDestination(icon: Icon(Icons.explore_outlined), selectedIcon: Icon(Icons.explore), label: "Explorar"),
-              NavigationDestination(icon: Icon(Icons.calendar_today_outlined), selectedIcon: Icon(Icons.calendar_today), label: "Agendamentos"),
+              NavigationDestination(
+                  icon: Icon(Icons.explore_outlined),
+                  selectedIcon: Icon(Icons.explore),
+                  label: "Explorar"),
+              NavigationDestination(
+                  icon: Icon(Icons.calendar_today_outlined),
+                  selectedIcon: Icon(Icons.calendar_today),
+                  label: "Agendamentos"),
             ],
           ),
         );
@@ -426,87 +637,93 @@ class _ClientHomePageState extends State<ClientHomePage> {
             backgroundColor: const Color(0xFFF5F7FA),
             elevation: 0,
             floating: true,
-            toolbarHeight: 70,
-            title: Row(
-              children: [
-                // logo no canto esquerdo em vez do texto de saudação
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Row(
-                    children: [
-                      Image.asset('assets/images/logo_purple.png', height: 48, fit: BoxFit.contain),
-                      const SizedBox(width: 12),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-            PopupMenuButton<String>(
-              offset: const Offset(0, 50),
-              color: Colors.white,
-              surfaceTintColor: Colors.white,
-              onSelected: (v) {
-                if (v == 'perfil') {
-                  final user = FirebaseAuth.instance.currentUser;
-                  if (user != null) {
-                    Navigator.push(context, MaterialPageRoute(builder: (c) => ClientRegisterPage(user: user, isBusinessAdding: false)));
-                  }
-                } else if (v == 'advanced') {
-                  _showAdvancedOptionsDialog();
-                } else if (v == 'sair') {
-                  _confirmLogout();
-                }
-              },
-              child: Padding(
-                padding: const EdgeInsets.only(right: 12),
-                child: Row(
-                  children: [
-                    Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(
-                          _userName,
-                          style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 13),
-                        ),
-                        const Text(
-                          "MarkaAI",
-                          style: TextStyle(fontSize: 10, color: Colors.grey),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(width: 10),
-                    CircleAvatar(
+            toolbarHeight: 70, // Altura aumentada para comportar o layout
+            titleSpacing: 0,
+            title: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  // Apenas o logo (já contém o nome do app)
+                  Image.asset('assets/images/logo_purple.png', height: 36),
+
+                  const Spacer(),
+
+                  // Perfil Mini
+                  GestureDetector(
+                    onTap: _showAdvancedOptionsDialog,
+                    child: CircleAvatar(
                       radius: 18,
-                      backgroundColor: Colors.white,
-                      backgroundImage: _userPhotoUrl != null ? CachedNetworkImageProvider(_userPhotoUrl!) : null,
-                      child: (_userPhotoUrl == null) ? const Icon(Icons.person, color: AppColors.primaryPurple, size: 20) : null,
+                      backgroundColor: Colors.grey[200],
+                      backgroundImage: _userPhotoUrl != null
+                          ? CachedNetworkImageProvider(_userPhotoUrl!)
+                          : null,
+                      child: _userPhotoUrl == null
+                          ? const Icon(Icons.person, color: Colors.grey)
+                          : null,
                     ),
-                    const SizedBox(width: 5),
-                    const Icon(Icons.keyboard_arrow_down, size: 18, color: Colors.grey),
-                  ],
-                ),
+                  )
+                ],
               ),
-              itemBuilder: (ctx) => [
-                PopupMenuItem(value: 'perfil', child: Row(children: const [Icon(Icons.person, size: 16), SizedBox(width:8), Text('Perfil')])),
-                PopupMenuItem(value: 'advanced', child: Row(children: const [Icon(Icons.security, size: 16), SizedBox(width:8), Text('Opções Avançadas')])),
-                const PopupMenuDivider(),
-                PopupMenuItem(value: 'sair', child: Row(children: const [Icon(Icons.logout, color: Colors.red, size: 16), SizedBox(width:8), Text('Sair', style: TextStyle(color: Colors.red))])),
-              ],
             ),
-            ],
           ),
+
+        // LOCATION PICKER - Funcional
+        SliverToBoxAdapter(
+          child: GestureDetector(
+            onTap: _showLocationPicker,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 2),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.location_on,
+                      size: 14,
+                      color: _selectedLocation.isEmpty
+                          ? Colors.grey[600]
+                          : AppColors.primaryPurple),
+                  const SizedBox(width: 4),
+                  Text(
+                    _selectedLocation.isEmpty
+                        ? "Escolher local"
+                        : _selectedLocation,
+                    style: TextStyle(
+                      color: _selectedLocation.isEmpty
+                          ? Colors.grey[600]
+                          : AppColors.primaryPurple,
+                      fontSize: 13,
+                      fontWeight: _selectedLocation.isEmpty
+                          ? FontWeight.normal
+                          : FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(width: 2),
+                  Icon(Icons.keyboard_arrow_down,
+                      size: 16,
+                      color: _selectedLocation.isEmpty
+                          ? Colors.grey[600]
+                          : AppColors.primaryPurple),
+                ],
+              ),
+            ),
+          ),
+        ),
+
+        const SliverToBoxAdapter(child: SizedBox(height: 15)),
 
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 10, 20, 15),
+            padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Container(
               height: 50,
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 10, offset: const Offset(0, 4))],
+                borderRadius: BorderRadius.circular(30), // Mais arredondado
+                boxShadow: [
+                  BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.05),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4))
+                ],
               ),
               child: TextField(
                 onChanged: (v) => setState(() => _searchText = v),
@@ -514,74 +731,170 @@ class _ClientHomePageState extends State<ClientHomePage> {
                   hintText: "O que você procura hoje?",
                   prefixIcon: Icon(Icons.search, color: Colors.grey),
                   border: InputBorder.none,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+                  contentPadding:
+                      EdgeInsets.symmetric(horizontal: 20, vertical: 15),
                 ),
               ),
             ),
           ),
         ),
 
-        // Banner Promocional
+        const SliverToBoxAdapter(child: SizedBox(height: 16)),
+
+        // ⭐ SEÇÃO DESTAQUES - Horizontal
         SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-            child: Container(
-              height: 140,
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF6B46C1), Color(0xFF9333EA)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.primaryPurple.withValues(alpha: 0.3),
-                    blurRadius: 15,
-                    offset: const Offset(0, 8),
-                  ),
-                ],
-              ),
-              child: Stack(
+          child: StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance
+                .collection('shops')
+                .where('destaque', isEqualTo: true)
+                .limit(10)
+                .snapshots(),
+            builder: (context, snap) {
+              final docs = snap.data?.docs ?? [];
+              if (docs.isEmpty) return const SizedBox.shrink();
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Positioned(
-                    right: -20,
-                    bottom: -20,
-                    child: Icon(
-                      Icons.auto_awesome,
-                      size: 150,
-                      color: Colors.white.withValues(alpha: 0.1),
-                    ),
-                  ),
                   Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.center,
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Row(
                       children: const [
+                        Icon(Icons.rocket_launch,
+                            size: 16, color: Color(0xFFFFD700)),
+                        SizedBox(width: 6),
                         Text(
-                          'Encontre Profissionais',
+                          'Destaques na sua Cidade',
                           style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        SizedBox(height: 8),
-                        Text(
-                          'Agende serviços de beleza, saúde,\nbem-estar e muito mais!',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                            height: 1.4,
-                          ),
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black87),
                         ),
                       ],
                     ),
                   ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    height: 180,
+                    child: ListView.builder(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      itemCount: docs.length,
+                      itemBuilder: (ctx, i) {
+                        final d = docs[i].data() as Map<String, dynamic>;
+                        final img = d['coverUrl'] ?? d['imageUrl'] ?? '';
+                        final cat = d['categoria']?.toString() ?? '';
+                        Color fallback = Colors.grey[200]!;
+                        IconData fi = Icons.store;
+                        switch (cat.toLowerCase()) {
+                          case 'barbearia':
+                            fallback = const Color(0xFFE3F2FD);
+                            fi = Icons.content_cut;
+                            break;
+                          case 'beleza':
+                          case 'estética':
+                            fallback = const Color(0xFFFCE4EC);
+                            fi = Icons.face;
+                            break;
+                          case 'saúde':
+                            fallback = const Color(0xFFE8F5E9);
+                            fi = Icons.medical_services;
+                            break;
+                          case 'bem-estar':
+                            fallback = const Color(0xFFFFF3E0);
+                            fi = Icons.self_improvement;
+                            break;
+                        }
+                        return GestureDetector(
+                          onTap: () => _openShopProfile(docs[i]),
+                          child: Container(
+                            width: 150,
+                            margin: const EdgeInsets.only(right: 14),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(14),
+                              boxShadow: [
+                                BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.06),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 3))
+                              ],
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: Stack(children: [
+                                    ClipRRect(
+                                      borderRadius: const BorderRadius.vertical(
+                                          top: Radius.circular(14)),
+                                      child: img.isNotEmpty
+                                          ? CachedNetworkImage(
+                                              imageUrl: img,
+                                              fit: BoxFit.cover,
+                                              width: double.infinity,
+                                              height: double.infinity,
+                                              errorWidget: (c, u, e) =>
+                                                  Container(
+                                                      color: fallback,
+                                                      child: Icon(
+                                                          fi,
+                                                          color:
+                                                              Colors.grey[400],
+                                                          size: 36)))
+                                          : Container(
+                                              color: fallback,
+                                              child: Center(
+                                                  child: Icon(fi,
+                                                      color: Colors.grey[400],
+                                                      size: 36))),
+                                    ),
+                                    Positioned(
+                                      top: 8,
+                                      right: 8,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 6, vertical: 3),
+                                        decoration: BoxDecoration(
+                                            color: const Color(0xFFFFD700),
+                                            borderRadius:
+                                                BorderRadius.circular(20)),
+                                        child: const Text('DESTAQUE',
+                                            style: TextStyle(
+                                                fontSize: 8,
+                                                fontWeight: FontWeight.bold)),
+                                      ),
+                                    ),
+                                  ]),
+                                ),
+                                Padding(
+                                  padding: const EdgeInsets.all(8),
+                                  child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(d['nome'] ?? '',
+                                            style: const TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 12),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis),
+                                        Text(cat,
+                                            style: TextStyle(
+                                                color: Colors.grey[500],
+                                                fontSize: 10)),
+                                      ]),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 20),
                 ],
-              ),
-            ),
+              );
+            },
           ),
         ),
 
@@ -600,13 +913,24 @@ class _ClientHomePageState extends State<ClientHomePage> {
                   padding: const EdgeInsets.only(right: 10),
                   child: FilterChip(
                     label: Text(cat['name']),
-                    avatar: isSelected ? null : Icon(cat['icon'], size: 16, color: Colors.grey[600]),
+                    avatar: isSelected
+                        ? null
+                        : Icon(cat['icon'], size: 16, color: Colors.grey[600]),
                     selected: isSelected,
-                    onSelected: (b) => setState(() => _selectedCategory = cat['name']),
+                    onSelected: (b) =>
+                        setState(() => _selectedCategory = cat['name']),
                     backgroundColor: Colors.white,
                     selectedColor: AppColors.primaryPurple,
-                    labelStyle: TextStyle(color: isSelected ? Colors.white : Colors.black87, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: BorderSide(color: isSelected ? Colors.transparent : Colors.grey.shade300)),
+                    labelStyle: TextStyle(
+                        color: isSelected ? Colors.white : Colors.black87,
+                        fontWeight:
+                            isSelected ? FontWeight.bold : FontWeight.normal),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        side: BorderSide(
+                            color: isSelected
+                                ? Colors.transparent
+                                : Colors.grey.shade300)),
                     showCheckmark: false,
                     padding: const EdgeInsets.symmetric(horizontal: 4),
                   ),
@@ -616,14 +940,19 @@ class _ClientHomePageState extends State<ClientHomePage> {
           ),
         ),
 
-        const SliverToBoxAdapter(child: SizedBox(height: 25)),
+        const SliverToBoxAdapter(child: SizedBox(height: 20)),
 
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
             child: Text(
-              _searchText.isEmpty ? "Recomendados para você" : "Resultados da busca",
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+              _searchText.isEmpty
+                  ? "Recomendados para você"
+                  : "Resultados da busca",
+              style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87),
             ),
           ),
         ),
@@ -634,17 +963,23 @@ class _ClientHomePageState extends State<ClientHomePage> {
         StreamBuilder<QuerySnapshot>(
           stream: FirebaseFirestore.instance.collection('shops').snapshots(),
           builder: (context, snapshot) {
-            if (!snapshot.hasData) return const SliverToBoxAdapter(child: Center(child: CircularProgressIndicator()));
-            
+            if (!snapshot.hasData)
+              return const SliverToBoxAdapter(
+                  child: Center(child: CircularProgressIndicator()));
+
             final filtered = snapshot.data!.docs.where((doc) {
               final d = doc.data() as Map<String, dynamic>;
-              
+
               // 🔥 CORREÇÃO: Lojas sem o campo 'ativo' são consideradas ATIVAS
-              final bool isActive = d['ativo'] ?? true; 
-              
-              final matchesText = (d['nome'] ?? "").toString().toLowerCase().contains(_searchText.toLowerCase());
-              final matchesCat = _selectedCategory == "Todos" || (d['categoria'] ?? "").toString().contains(_selectedCategory);
-              
+              final bool isActive = d['ativo'] ?? true;
+
+              final matchesText = (d['nome'] ?? "")
+                  .toString()
+                  .toLowerCase()
+                  .contains(_searchText.toLowerCase());
+              final matchesCat = _selectedCategory == "Todos" ||
+                  (d['categoria'] ?? "").toString().contains(_selectedCategory);
+
               return matchesText && matchesCat && isActive;
             }).toList();
 
@@ -652,29 +987,36 @@ class _ClientHomePageState extends State<ClientHomePage> {
               return const SliverToBoxAdapter(
                 child: Padding(
                   padding: EdgeInsets.only(top: 50),
-                  child: Center(child: Text("Nenhuma loja encontrada.", style: TextStyle(color: Colors.grey))),
+                  child: Center(
+                      child: Text("Nenhuma loja encontrada.",
+                          style: TextStyle(color: Colors.grey))),
                 ),
               );
             }
 
             return SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               sliver: SliverGrid(
-                gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-                  maxCrossAxisExtent: isDesktop ? 300 : 400, 
-                  childAspectRatio: isDesktop ? 0.85 : 1.3, 
-                  crossAxisSpacing: 20,
-                  mainAxisSpacing: 20,
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount:
+                      isDesktop ? 3 : 2, // 2 colunas fixas no mobile
+                  childAspectRatio: isDesktop
+                      ? 0.75
+                      : 0.65, // Cards mais altos e proporcionais
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 12,
                 ),
                 delegate: SliverChildBuilderDelegate(
-                  (context, index) => _ShopCard(shop: filtered[index], onTap: () => _openShopProfile(filtered[index])),
+                  (context, index) => _ShopCard(
+                      shop: filtered[index],
+                      onTap: () => _openShopProfile(filtered[index])),
                   childCount: filtered.length,
                 ),
               ),
             );
           },
         ),
-        
+
         const SliverToBoxAdapter(child: SizedBox(height: 80)),
       ],
     );
@@ -683,6 +1025,69 @@ class _ClientHomePageState extends State<ClientHomePage> {
   // ============ VIEW: AGENDA ============
   Widget _buildScheduleView({required bool isDesktop}) {
     return const MyAppointmentsPage();
+  }
+
+  // ============ VIEW: FAVORITOS ============
+  Widget _buildFavoritesView({required bool isDesktop}) {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null)
+      return const Center(child: Text("Faça login para ver seus favoritos"));
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('favorites')
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData)
+          return const Center(child: CircularProgressIndicator());
+
+        final favoriteDocs = snapshot.data!.docs;
+        if (favoriteDocs.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.favorite_border, size: 80, color: Colors.grey[300]),
+                const SizedBox(height: 16),
+                const Text("Seus favoritos aparecerão aqui",
+                    style: TextStyle(color: Colors.grey, fontSize: 16)),
+              ],
+            ),
+          );
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: favoriteDocs.length,
+          itemBuilder: (context, index) {
+            final favData = favoriteDocs[index].data() as Map<String, dynamic>;
+            final shopId = favData['shopId'];
+
+            return FutureBuilder<DocumentSnapshot>(
+              future: FirebaseFirestore.instance
+                  .collection('shops')
+                  .doc(shopId)
+                  .get(),
+              builder: (context, shopSnap) {
+                if (!shopSnap.hasData || !shopSnap.data!.exists)
+                  return const SizedBox.shrink();
+
+                final shop = shopSnap.data!;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: _ShopCard(
+                    shop: shop,
+                    onTap: () => _openShopProfile(shop),
+                  ),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
   }
 
   // --- DESKTOP WIDGETS ---
@@ -697,9 +1102,12 @@ class _ClientHomePageState extends State<ClientHomePage> {
             padding: EdgeInsets.symmetric(horizontal: 20),
             child: Row(
               children: [
-                Icon(Icons.auto_awesome, color: AppColors.primaryPurple, size: 30),
+                Icon(Icons.auto_awesome,
+                    color: AppColors.primaryPurple, size: 30),
                 SizedBox(width: 10),
-                Text("MarkaAI", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                Text("MarkaAI",
+                    style:
+                        TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
               ],
             ),
           ),
@@ -719,12 +1127,18 @@ class _ClientHomePageState extends State<ClientHomePage> {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
       decoration: BoxDecoration(
-        color: isSelected ? AppColors.primaryPurple.withValues(alpha: 0.1) : Colors.transparent,
+        color: isSelected
+            ? AppColors.primaryPurple.withValues(alpha: 0.1)
+            : Colors.transparent,
         borderRadius: BorderRadius.circular(10),
       ),
       child: ListTile(
-        leading: Icon(icon, color: isSelected ? AppColors.primaryPurple : Colors.grey),
-        title: Text(lbl, style: TextStyle(color: isSelected ? AppColors.primaryPurple : Colors.grey[800], fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
+        leading: Icon(icon,
+            color: isSelected ? AppColors.primaryPurple : Colors.grey),
+        title: Text(lbl,
+            style: TextStyle(
+                color: isSelected ? AppColors.primaryPurple : Colors.grey[800],
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
         onTap: () => setState(() => _selectedIndex = idx),
       ),
     );
@@ -742,8 +1156,12 @@ class _ClientHomePageState extends State<ClientHomePage> {
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(_selectedIndex == 0 ? "Explorar" : "Minha Agenda", style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
-                if (_selectedIndex == 0) const Text("Encontre os melhores serviços perto de você.", style: TextStyle(color: Colors.grey)),
+                Text(_selectedIndex == 0 ? "Explorar" : "Minha Agenda",
+                    style: const TextStyle(
+                        fontSize: 28, fontWeight: FontWeight.bold)),
+                if (_selectedIndex == 0)
+                  const Text("Encontre os melhores serviços perto de você.",
+                      style: TextStyle(color: Colors.grey)),
               ],
             ),
           ),
@@ -755,7 +1173,11 @@ class _ClientHomePageState extends State<ClientHomePage> {
               if (v == 'perfil') {
                 final user = FirebaseAuth.instance.currentUser;
                 if (user != null) {
-                  Navigator.push(context, MaterialPageRoute(builder: (c) => ClientRegisterPage(user: user, isBusinessAdding: false)));
+                  Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (c) => ClientRegisterPage(
+                              user: user, isBusinessAdding: false)));
                 }
               } else if (v == 'trocar') {
                 if (_userTipo == 'dono' || _userTipo == 'business') {
@@ -792,19 +1214,48 @@ class _ClientHomePageState extends State<ClientHomePage> {
                 CircleAvatar(
                   radius: 18,
                   backgroundColor: Colors.grey[200],
-                  backgroundImage: _userPhotoUrl != null ? CachedNetworkImageProvider(_userPhotoUrl!) : null,
-                  child: (_userPhotoUrl == null) ? const Icon(Icons.person, size: 20) : null,
+                  backgroundImage: _userPhotoUrl != null
+                      ? CachedNetworkImageProvider(_userPhotoUrl!)
+                      : null,
+                  child: (_userPhotoUrl == null)
+                      ? const Icon(Icons.person, size: 20)
+                      : null,
                 ),
                 const SizedBox(width: 5),
-                const Icon(Icons.keyboard_arrow_down, size: 18, color: Colors.grey),
+                const Icon(Icons.keyboard_arrow_down,
+                    size: 18, color: Colors.grey),
               ],
             ),
             itemBuilder: (context) => [
-              PopupMenuItem(value: 'perfil', child: Row(children: const [Icon(Icons.person, size: 16), SizedBox(width:8), Text('Perfil')])),
-              PopupMenuItem(value: 'trocar', child: Row(children: const [Icon(Icons.swap_horiz, size: 16), SizedBox(width:8), Text('Trocar Tipo')])),
-              PopupMenuItem(value: 'advanced', child: Row(children: const [Icon(Icons.security, size: 16), SizedBox(width:8), Text('Opções Avançadas')])),
+              PopupMenuItem(
+                  value: 'perfil',
+                  child: Row(children: const [
+                    Icon(Icons.person, size: 16),
+                    SizedBox(width: 8),
+                    Text('Perfil')
+                  ])),
+              PopupMenuItem(
+                  value: 'trocar',
+                  child: Row(children: const [
+                    Icon(Icons.swap_horiz, size: 16),
+                    SizedBox(width: 8),
+                    Text('Trocar Tipo')
+                  ])),
+              PopupMenuItem(
+                  value: 'advanced',
+                  child: Row(children: const [
+                    Icon(Icons.security, size: 16),
+                    SizedBox(width: 8),
+                    Text('Opções Avançadas')
+                  ])),
               const PopupMenuDivider(),
-              PopupMenuItem(value: 'sair', child: Row(children: const [Icon(Icons.logout, color: Colors.red, size: 16), SizedBox(width:8), Text('Sair', style: TextStyle(color: Colors.red))])),
+              PopupMenuItem(
+                  value: 'sair',
+                  child: Row(children: const [
+                    Icon(Icons.logout, color: Colors.red, size: 16),
+                    SizedBox(width: 8),
+                    Text('Sair', style: TextStyle(color: Colors.red))
+                  ])),
             ],
           ),
         ],
@@ -828,6 +1279,46 @@ class _ShopCard extends StatelessWidget {
     final data = shop.data() as Map<String, dynamic>;
     final imgUrl = data['coverUrl'] ?? data['imageUrl'] ?? "";
     final logoUrl = data['logoUrl'] ?? "";
+    final categoria = data['categoria']?.toString() ?? 'Outros';
+
+    // Lógica visual baseada em dados
+    final bool isDestaque = data['destaque'] == true ||
+        (data['rating'] != null && data['rating'] >= 4.5);
+
+    Color getCatColor(String c) {
+      switch (c.toLowerCase()) {
+        case 'barbearia':
+          return const Color(0xFFE3F2FD);
+        case 'beleza':
+        case 'estética':
+          return const Color(0xFFFCE4EC);
+        case 'saúde':
+          return const Color(0xFFE8F5E9);
+        case 'bem-estar':
+          return const Color(0xFFFFF3E0);
+        default:
+          return Colors.grey[100]!;
+      }
+    }
+
+    IconData getCatIcon(String c) {
+      switch (c.toLowerCase()) {
+        case 'barbearia':
+          return Icons.content_cut;
+        case 'beleza':
+        case 'estética':
+          return Icons.face;
+        case 'saúde':
+          return Icons.medical_services;
+        case 'bem-estar':
+          return Icons.self_improvement;
+        default:
+          return Icons.store;
+      }
+    }
+
+    final Color fallbackColor = getCatColor(categoria);
+    final IconData fallbackIcon = getCatIcon(categoria);
 
     return GestureDetector(
       onTap: onTap,
@@ -835,7 +1326,12 @@ class _ShopCard extends StatelessWidget {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
-          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4))],
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 10,
+                offset: const Offset(0, 4))
+          ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -844,60 +1340,111 @@ class _ShopCard extends StatelessWidget {
               flex: 5,
               child: Stack(
                 children: [
+                  // IMAGEM OU FALLBACK
                   Positioned.fill(
                     child: Hero(
                       tag: 'cover_${shop.id}',
                       child: ClipRRect(
-                        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                        borderRadius: const BorderRadius.vertical(
+                            top: Radius.circular(16)),
                         child: imgUrl.isNotEmpty
-                            ? CachedNetworkImage(imageUrl: imgUrl, fit: BoxFit.cover)
-                            : Container(color: Colors.grey[200], child: const Icon(Icons.store, color: Colors.grey, size: 40)),
+                            ? CachedNetworkImage(
+                                imageUrl: imgUrl,
+                                fit: BoxFit.cover,
+                                placeholder: (c, u) =>
+                                    Container(color: Colors.grey[200]),
+                                errorWidget: (c, u, e) => Container(
+                                  color: fallbackColor,
+                                  child: Icon(fallbackIcon,
+                                      color: Colors.grey[400], size: 40),
+                                ),
+                              )
+                            : Container(
+                                color: fallbackColor,
+                                child: Center(
+                                  child: Icon(fallbackIcon,
+                                      color: Colors.grey[400], size: 50),
+                                ),
+                              ),
                       ),
                     ),
                   ),
-                  if (logoUrl.isNotEmpty)
+
+                  // BADGE DESTAQUE (Top Right)
+                  if (isDestaque)
                     Positioned(
-                      bottom: 10, left: 10,
-                      child: Hero(
-                        tag: 'logo_${shop.id}',
-                        child: Container(
-                          width: 40, height: 40,
-                          decoration: BoxDecoration(
-                            color: Colors.white, shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 2),
-                            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 4)]
-                          ),
-                          child: ClipOval(child: CachedNetworkImage(imageUrl: logoUrl, fit: BoxFit.cover)),
+                      top: 10,
+                      right: 10,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFD700), // Dourado
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: const [
+                            Icon(Icons.rocket_launch,
+                                size: 10, color: Colors.black),
+                            SizedBox(width: 4),
+                            Text("DESTAQUE",
+                                style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.black)),
+                          ],
                         ),
                       ),
                     ),
+
+                  // BOTÃO FAVORITO (Top Left)
                   Positioned(
-                    top: 10, right: 10,
-                    child: Builder(builder: (context) {
-                      // Try to read rating from shop document fields
-                      final rawRating = (data['rating'] ?? (data['google_business'] is Map ? data['google_business']['rating'] : null));
-                      String ratingText = '';
-                      if (rawRating != null) {
-                        try {
-                          final r = double.tryParse(rawRating.toString()) ?? (rawRating is num ? rawRating.toDouble() : 0.0);
-                          ratingText = r > 0 ? r.toStringAsFixed(1) : '';
-                        } catch (_) {
-                          ratingText = rawRating.toString();
-                        }
-                      }
-                      if (ratingText.isEmpty) return const SizedBox.shrink();
-                      return Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.9), borderRadius: BorderRadius.circular(12)),
-                        child: Row(
-                          children: [const Icon(Icons.star, size: 12, color: Colors.amber), const SizedBox(width: 4), Text(ratingText, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold))],
+                    top: 10,
+                    left: 10,
+                    child: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.favorite,
+                          size: 16,
+                          color: Colors
+                              .red), // Ícone fixo vermelho por enquanto (visual requested)
+                    ),
+                  ),
+
+                  // LOGO (Bottom Left - Sobrepondo)
+                  if (logoUrl.isNotEmpty)
+                    Positioned(
+                      bottom: 10,
+                      left: 10,
+                      child: Hero(
+                        tag: 'logo_${shop.id}',
+                        child: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                              color: Colors.white,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white, width: 2),
+                              boxShadow: [
+                                BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.1),
+                                    blurRadius: 4)
+                              ]),
+                          child: ClipOval(
+                              child: CachedNetworkImage(
+                                  imageUrl: logoUrl, fit: BoxFit.cover)),
                         ),
-                      );
-                    }),
-                  )
+                      ),
+                    ),
                 ],
               ),
             ),
+
+            // INFO DA LOJA
             Expanded(
               flex: 3,
               child: Padding(
@@ -909,18 +1456,32 @@ class _ShopCard extends StatelessWidget {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(data['nome'] ?? "Loja", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15), maxLines: 1, overflow: TextOverflow.ellipsis),
+                        Text(data['nome'] ?? "Loja",
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 15),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis),
                         const SizedBox(height: 4),
-                        Text(data['categoria'] ?? "Serviços", style: TextStyle(color: Colors.grey[600], fontSize: 11)),
+                        Text(data['categoria'] ?? "Serviços",
+                            style: TextStyle(
+                                color: Colors.grey[600], fontSize: 11)),
+
+                        // Rating Stars (Visual)
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            const Icon(Icons.star,
+                                size: 12, color: Colors.amber),
+                            const SizedBox(width: 4),
+                            Text("5.0",
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.grey[800])),
+                          ],
+                        )
                       ],
                     ),
-                    Row(
-                      children: [
-                        Icon(Icons.location_on, size: 12, color: Colors.grey[400]),
-                        const SizedBox(width: 4),
-                        Expanded(child: Text(data['endereco'] ?? "Endereço não inf.", style: TextStyle(color: Colors.grey[500], fontSize: 10), maxLines: 1, overflow: TextOverflow.ellipsis)),
-                      ],
-                    )
                   ],
                 ),
               ),
@@ -956,10 +1517,13 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
   @override
   Widget build(BuildContext context) {
     final sData = widget.serviceData;
-    
+
     List<String> images = [];
-    dynamic rawFotos = sData['fotos_urls'] ?? sData['fotos'] ?? sData['imageUrl'] ?? sData['imagens'];
-    
+    dynamic rawFotos = sData['fotos_urls'] ??
+        sData['fotos'] ??
+        sData['imageUrl'] ??
+        sData['imagens'];
+
     if (rawFotos is List) {
       images = rawFotos.map((e) => e.toString()).toList();
     } else if (rawFotos is String && rawFotos.isNotEmpty) {
@@ -978,7 +1542,8 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
                 backgroundColor: AppColors.primaryPurple,
                 leading: Container(
                   margin: const EdgeInsets.all(8),
-                  decoration: const BoxDecoration(color: Colors.black45, shape: BoxShape.circle),
+                  decoration: const BoxDecoration(
+                      color: Colors.black45, shape: BoxShape.circle),
                   child: IconButton(
                     icon: const Icon(Icons.arrow_back, color: Colors.white),
                     onPressed: () => Navigator.pop(context),
@@ -991,18 +1556,26 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
                       images.isNotEmpty
                           ? PageView.builder(
                               itemCount: images.length,
-                              onPageChanged: (idx) => setState(() => _currentImageIndex = idx),
+                              onPageChanged: (idx) =>
+                                  setState(() => _currentImageIndex = idx),
                               itemBuilder: (context, index) {
                                 return CachedNetworkImage(
                                   imageUrl: images[index],
                                   fit: BoxFit.cover,
-                                  placeholder: (c, u) => const Center(child: CircularProgressIndicator()),
-                                  errorWidget: (c, u, e) => Container(color: Colors.grey[200], child: const Icon(Icons.broken_image, size: 50, color: Colors.grey)),
+                                  placeholder: (c, u) => const Center(
+                                      child: CircularProgressIndicator()),
+                                  errorWidget: (c, u, e) => Container(
+                                      color: Colors.grey[200],
+                                      child: const Icon(Icons.broken_image,
+                                          size: 50, color: Colors.grey)),
                                 );
                               },
                             )
-                          : Container(color: Colors.grey[200], child: const Center(child: Icon(Icons.spa, size: 80, color: Colors.grey))),
-                      
+                          : Container(
+                              color: Colors.grey[200],
+                              child: const Center(
+                                  child: Icon(Icons.spa,
+                                      size: 80, color: Colors.grey))),
                       if (images.length > 1)
                         Padding(
                           padding: const EdgeInsets.only(bottom: 20),
@@ -1012,10 +1585,14 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
                               return Container(
                                 width: 8.0,
                                 height: 8.0,
-                                margin: const EdgeInsets.symmetric(horizontal: 4.0),
+                                margin:
+                                    const EdgeInsets.symmetric(horizontal: 4.0),
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
-                                  color: Colors.white.withValues(alpha: _currentImageIndex == entry.key ? 0.9 : 0.4),
+                                  color: Colors.white.withValues(
+                                      alpha: _currentImageIndex == entry.key
+                                          ? 0.9
+                                          : 0.4),
                                 ),
                               );
                             }).toList(),
@@ -1025,7 +1602,6 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
                   ),
                 ),
               ),
-
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.all(24),
@@ -1039,7 +1615,10 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
                           Expanded(
                             child: Text(
                               sData['nome'] ?? "Serviço",
-                              style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold, height: 1.2),
+                              style: const TextStyle(
+                                  fontSize: 26,
+                                  fontWeight: FontWeight.bold,
+                                  height: 1.2),
                             ),
                           ),
                           const SizedBox(width: 10),
@@ -1048,11 +1627,15 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
                             children: [
                               Text(
                                 currencyFormat.format(sData['preco'] ?? 0),
-                                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppColors.primaryPurple),
+                                style: const TextStyle(
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.bold,
+                                    color: AppColors.primaryPurple),
                               ),
                               Text(
                                 "${sData['tempo_min'] ?? 30} min",
-                                style: TextStyle(color: Colors.grey[600], fontSize: 14),
+                                style: TextStyle(
+                                    color: Colors.grey[600], fontSize: 14),
                               ),
                             ],
                           ),
@@ -1061,11 +1644,15 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
                       const SizedBox(height: 20),
                       const Divider(),
                       const SizedBox(height: 20),
-                      const Text("Sobre o serviço", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                      const Text("Sobre o serviço",
+                          style: TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 10),
                       Text(
-                        sData['descricao'] ?? "Sem descrição disponível para este serviço.",
-                        style: TextStyle(color: Colors.grey[700], fontSize: 16, height: 1.6),
+                        sData['descricao'] ??
+                            "Sem descrição disponível para este serviço.",
+                        style: TextStyle(
+                            color: Colors.grey[700], fontSize: 16, height: 1.6),
                       ),
                       const SizedBox(height: 100),
                     ],
@@ -1074,7 +1661,6 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
               ),
             ],
           ),
-
           Positioned(
             bottom: 0,
             left: 0,
@@ -1084,7 +1670,10 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
               decoration: BoxDecoration(
                 color: Colors.white,
                 boxShadow: [
-                  BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 10, offset: const Offset(0, -5))
+                  BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.1),
+                      blurRadius: 10,
+                      offset: const Offset(0, -5))
                 ],
               ),
               child: SafeArea(
@@ -1094,12 +1683,16 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
                     onPressed: widget.onBookPressed,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primaryPurple,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
                       elevation: 0,
                     ),
                     child: const Text(
                       "AGENDAR AGORA",
-                      style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold),
                     ),
                   ),
                 ),

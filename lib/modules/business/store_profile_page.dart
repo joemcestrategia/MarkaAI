@@ -19,7 +19,7 @@ class StoreProfilePage extends StatefulWidget {
 
 class _StoreProfilePageState extends State<StoreProfilePage> {
   final _formKey = GlobalKey<FormState>();
-  
+
   // Controladores
   final _nameController = TextEditingController();
   final _descController = TextEditingController();
@@ -62,7 +62,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
     if (user != null) {
       try {
         String? id = await SessionService.getShopId();
-        
+
         if (id == null || id.isEmpty) {
           final userDoc = await FirebaseFirestore.instance
               .collection('users')
@@ -78,7 +78,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
               .get();
           if (shopDoc.exists) {
             final data = shopDoc.data() as Map<String, dynamic>;
-            
+
             if (mounted) {
               setState(() {
                 _shopId = id;
@@ -127,7 +127,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
       source: ImageSource.gallery,
       maxWidth: 2048,
     );
-    
+
     if (image != null && mounted) {
       // Abrir editor
       final editedImage = await Navigator.push<XFile>(
@@ -139,7 +139,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
           ),
         ),
       );
-      
+
       if (editedImage != null) {
         setState(() {
           if (isCover) {
@@ -155,7 +155,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
   Future<String> _uploadFile(XFile file, String type) async {
     final ref = FirebaseStorage.instance.ref().child(
         'shops/$_shopId/${type}_${DateTime.now().millisecondsSinceEpoch}.jpg');
-    
+
     if (kIsWeb) {
       await ref.putData(
         await file.readAsBytes(),
@@ -164,21 +164,21 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
     } else {
       await ref.putFile(File(file.path));
     }
-    
+
     return await ref.getDownloadURL();
   }
 
   Future<bool> _isSlugAvailable(String slug) async {
     if (slug.isEmpty) return true;
-    
+
     final querySnapshot = await FirebaseFirestore.instance
         .collection('shops')
         .where('slug', isEqualTo: slug)
         .get();
-    
+
     // Se não encontrou nenhum, está disponível
     if (querySnapshot.docs.isEmpty) return true;
-    
+
     // Se encontrou, verifica se é o próprio shop
     return querySnapshot.docs.first.id == _shopId;
   }
@@ -198,12 +198,12 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
 
   Future<void> _saveProfile() async {
     if (!_formKey.currentState!.validate()) return;
-    
+
     // Validar slug se foi preenchido
     if (_slugController.text.trim().isNotEmpty) {
       final slugNormalizado = _normalizeSlug(_slugController.text.trim());
       final isAvailable = await _isSlugAvailable(slugNormalizado);
-      
+
       if (!isAvailable) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -213,10 +213,10 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
         );
         return;
       }
-      
+
       _slugController.text = slugNormalizado;
     }
-    
+
     setState(() => _isSaving = true);
 
     try {
@@ -226,20 +226,19 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
       if (_newLogoFile != null) {
         logoDownloadUrl = await _uploadFile(_newLogoFile!, "logo");
       }
-      
+
       if (_newCoverFile != null) {
         coverDownloadUrl = await _uploadFile(_newCoverFile!, "cover");
       }
 
-      await FirebaseFirestore.instance
-          .collection('shops')
-          .doc(_shopId)
-          .set({
+      await FirebaseFirestore.instance.collection('shops').doc(_shopId).set({
         'nome': _nameController.text.trim(),
         'descricao': _descController.text.trim(),
         'endereco': _addressController.text.trim(),
         'telefone': _phoneController.text.trim(),
-        'slug': _slugController.text.trim().isNotEmpty ? _slugController.text.trim() : null,
+        'slug': _slugController.text.trim().isNotEmpty
+            ? _slugController.text.trim()
+            : null,
         'instagram': _instagramController.text.trim(),
         'whatsapp': _whatsappController.text.trim(),
         'logoUrl': logoDownloadUrl,
@@ -267,9 +266,9 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
       );
     } catch (e) {
       debugPrint("Erro ao salvar perfil: $e");
-      
+
       if (!mounted) return;
-      
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text("Erro ao salvar: $e"),
@@ -316,7 +315,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
               if (!snapshot.hasData) {
                 return const Center(child: CircularProgressIndicator());
               }
-              
+
               if (snapshot.data!.docs.isEmpty) {
                 return Center(
                   child: Container(
@@ -328,7 +327,8 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.storefront, color: Colors.grey[400], size: 40),
+                        Icon(Icons.storefront,
+                            color: Colors.grey[400], size: 40),
                         const SizedBox(height: 8),
                         Text(
                           "Nenhum serviço ativo.",
@@ -342,15 +342,15 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
 
               final docsWithPhotos = snapshot.data!.docs.where((doc) {
                 final data = doc.data() as Map<String, dynamic>;
-                final fotos = data['fotos_urls'] ?? 
-                              data['fotos'] ?? 
-                              data['imageUrl'] ?? 
-                              data['imagens'] ?? 
-                              [];
-                
+                final fotos = data['fotos_urls'] ??
+                    data['fotos'] ??
+                    data['imageUrl'] ??
+                    data['imagens'] ??
+                    [];
+
                 if (fotos is String && fotos.isNotEmpty) return true;
                 if (fotos is List && fotos.isNotEmpty) return true;
-                
+
                 return false;
               }).toList();
 
@@ -372,16 +372,16 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                 scrollDirection: Axis.horizontal,
                 itemCount: docsWithPhotos.length,
                 itemBuilder: (context, index) {
-                  final data = docsWithPhotos[index].data() 
-                      as Map<String, dynamic>;
-                  
-                  dynamic fotosData = data['fotos_urls'] ?? 
-                                      data['fotos'] ?? 
-                                      data['imageUrl'] ?? 
-                                      data['imagens'];
-                  
+                  final data =
+                      docsWithPhotos[index].data() as Map<String, dynamic>;
+
+                  dynamic fotosData = data['fotos_urls'] ??
+                      data['fotos'] ??
+                      data['imageUrl'] ??
+                      data['imagens'];
+
                   String? thumb;
-                  
+
                   if (fotosData is String) {
                     thumb = fotosData;
                   } else if (fotosData is List && fotosData.isNotEmpty) {
@@ -414,15 +414,16 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                             placeholder: (c, u) => Container(
                               color: Colors.grey[200],
                               child: const Center(
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
                               ),
                             ),
                             errorWidget: (c, u, e) => Container(
                               color: Colors.grey[300],
-                              child: const Icon(Icons.broken_image, color: Colors.grey),
+                              child: const Icon(Icons.broken_image,
+                                  color: Colors.grey),
                             ),
                           ),
-                          
                           Positioned(
                             bottom: 0,
                             left: 0,
@@ -467,15 +468,14 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F9FD), // Fundo levemente cinza (moderno)
-      // Botão Salvar Fixo no Rodapé (Sticky Footer)
+      backgroundColor: const Color(0xFFF4F5FB),
       bottomNavigationBar: SafeArea(
         child: Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
           decoration: BoxDecoration(
             color: Colors.white,
             boxShadow: [
-                BoxShadow(
+              BoxShadow(
                 color: Colors.black.withValues(alpha: 0.05),
                 blurRadius: 10,
                 offset: const Offset(0, -4),
@@ -483,50 +483,49 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
             ],
           ),
           child: SizedBox(
-            height: 54,
+            height: 50,
             child: ElevatedButton(
               onPressed: _isSaving ? null : _saveProfile,
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primaryPurple,
-                disabledBackgroundColor: AppColors.primaryPurple.withValues(alpha: 0.6),
+                disabledBackgroundColor:
+                    AppColors.primaryPurple.withValues(alpha: 0.6),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
+                    borderRadius: BorderRadius.circular(12)),
                 elevation: 0,
               ),
               child: _isSaving
                   ? const SizedBox(
-                      width: 24,
-                      height: 24,
+                      width: 22,
+                      height: 22,
                       child: CircularProgressIndicator(
-                        color: Colors.white,
-                        strokeWidth: 2,
-                      ),
+                          color: Colors.white, strokeWidth: 2),
                     )
                   : const Text(
                       "SALVAR ALTERAÇÕES",
                       style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                      ),
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15),
                     ),
             ),
           ),
         ),
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: AppColors.primaryPurple))
+          ? const Center(
+              child: CircularProgressIndicator(color: AppColors.primaryPurple))
           : CustomScrollView(
               slivers: [
-                // 1. Header Imersivo com Capa
+                // ─── APP BAR com CAPA e LOGO embutido ────────────────────
                 SliverAppBar(
                   expandedHeight: 200.0,
                   pinned: true,
                   backgroundColor: AppColors.primaryPurple,
                   title: Text(
                     _isSaving ? "Salvando..." : "Editar Perfil",
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                    style: const TextStyle(
+                        color: Colors.white, fontWeight: FontWeight.bold),
                   ),
                   centerTitle: true,
                   iconTheme: const IconThemeData(color: Colors.white),
@@ -534,110 +533,148 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                     background: Stack(
                       fit: StackFit.expand,
                       children: [
-                        // Imagem da Capa
+                        // ── Imagem da Capa ──────────────────────────────
                         GestureDetector(
                           onTap: () => _pickAndEditImage(isCover: true),
                           child: _newCoverFile != null
                               ? (kIsWeb
-                                  ? Image.network(_newCoverFile!.path, fit: BoxFit.cover)
-                                  : Image.file(File(_newCoverFile!.path), fit: BoxFit.cover))
+                                  ? Image.network(_newCoverFile!.path,
+                                      fit: BoxFit.cover)
+                                  : Image.file(File(_newCoverFile!.path),
+                                      fit: BoxFit.cover))
                               : (_coverUrl != null
                                   ? CachedNetworkImage(
                                       imageUrl: _coverUrl!,
                                       fit: BoxFit.cover,
-                                      placeholder: (c, u) => Container(color: AppColors.primaryPurple.withValues(alpha: 0.2)),
+                                      placeholder: (c, u) => Container(
+                                          color: AppColors.primaryPurple
+                                              .withValues(alpha: 0.2)),
                                     )
                                   : Container(
                                       decoration: const BoxDecoration(
                                         gradient: LinearGradient(
-                                          colors: [AppColors.primaryPurple, Color(0xFF4A148C)],
+                                          colors: [
+                                            AppColors.primaryPurple,
+                                            Color(0xFF4A148C)
+                                          ],
                                           begin: Alignment.topLeft,
                                           end: Alignment.bottomRight,
                                         ),
                                       ),
                                       child: const Center(
-                                        child: Icon(Icons.store, size: 60, color: Colors.white24),
-                                      ),
+                                          child: Icon(Icons.store,
+                                              size: 60, color: Colors.white24)),
                                     )),
                         ),
-                        // Overlay Escuro para botão de editar ficar visível
-                        Container(color: Colors.black12),
-                        // Botão Editar Capa
+                        // Overlay escurecido no bottom para legibilidade
                         Positioned(
-                          right: 16,
-                          bottom: 16,
-                          child: InkWell(
-                            onTap: () => _pickAndEditImage(isCover: true),
-                            child: Container(
-                              padding: const EdgeInsets.all(8),
-                              decoration: BoxDecoration(
-                                color: Colors.black.withValues(alpha: 0.6),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: const Row(
-                                children: [
-                                  Icon(Icons.camera_alt, color: Colors.white, size: 18),
-                                  SizedBox(width: 6),
-                                  Text(
-                                    "Alterar Capa",
-                                    style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
-                                  ),
+                          bottom: 0,
+                          left: 0,
+                          right: 0,
+                          height: 80,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [
+                                  Colors.transparent,
+                                  Colors.black.withValues(alpha: 0.45),
                                 ],
                               ),
                             ),
                           ),
                         ),
-                        // Logo sobreposta (posicionada para ficar acima da capa)
+                        // ── Logo circular na esquerda inferior ──────────
                         Positioned(
-                          bottom: -55,
-                          left: 0,
-                          right: 0,
-                          child: Center(
-                            child: GestureDetector(
-                              onTap: () => _pickAndEditImage(isCover: false),
-                              child: Stack(
-                                alignment: Alignment.bottomRight,
+                          left: 16,
+                          bottom: 12,
+                          child: GestureDetector(
+                            onTap: () => _pickAndEditImage(isCover: false),
+                            child: Stack(
+                              alignment: Alignment.bottomRight,
+                              children: [
+                                Container(
+                                  width: 80,
+                                  height: 80,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: Colors.white,
+                                    border: Border.all(
+                                        color: Colors.white, width: 3),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black
+                                            .withValues(alpha: 0.25),
+                                        blurRadius: 8,
+                                        offset: const Offset(0, 3),
+                                      )
+                                    ],
+                                  ),
+                                  child: ClipOval(
+                                    child: _newLogoFile != null
+                                        ? (kIsWeb
+                                            ? Image.network(_newLogoFile!.path,
+                                                fit: BoxFit.cover)
+                                            : Image.file(
+                                                File(_newLogoFile!.path),
+                                                fit: BoxFit.cover))
+                                        : (_logoUrl != null
+                                            ? CachedNetworkImage(
+                                                imageUrl: _logoUrl!,
+                                                fit: BoxFit.cover,
+                                                placeholder: (c, u) =>
+                                                    const CircularProgressIndicator(
+                                                        strokeWidth: 2),
+                                                errorWidget: (c, u, e) =>
+                                                    const Icon(Icons.store,
+                                                        color: Colors.grey,
+                                                        size: 32),
+                                              )
+                                            : Icon(Icons.add_a_photo,
+                                                color: Colors.grey[300],
+                                                size: 30)),
+                                  ),
+                                ),
+                                // Botão de edição do logo
+                                Container(
+                                  margin: const EdgeInsets.only(
+                                      right: 1, bottom: 1),
+                                  padding: const EdgeInsets.all(5),
+                                  decoration: const BoxDecoration(
+                                    color: AppColors.primaryPurple,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(Icons.edit,
+                                      color: Colors.white, size: 11),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        // ── Botão editar capa (direita inferior) ────────
+                        Positioned(
+                          right: 14,
+                          bottom: 14,
+                          child: GestureDetector(
+                            onTap: () => _pickAndEditImage(isCover: true),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.55),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Row(
                                 children: [
-                                  Container(
-                                    width: 110,
-                                    height: 110,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: Colors.white,
-                                      border: Border.all(color: Colors.white, width: 4),
-                                      boxShadow: [
-                                          BoxShadow(
-                                          color: Colors.black.withValues(alpha: 0.15),
-                                          blurRadius: 10,
-                                          offset: const Offset(0, 4),
-                                        )
-                                      ],
-                                    ),
-                                    child: ClipOval(
-                                      child: _newLogoFile != null
-                                          ? (kIsWeb
-                                              ? Image.network(_newLogoFile!.path, fit: BoxFit.cover)
-                                              : Image.file(File(_newLogoFile!.path), fit: BoxFit.cover))
-                                          : (_logoUrl != null
-                                              ? CachedNetworkImage(
-                                                  imageUrl: _logoUrl!,
-                                                  fit: BoxFit.cover,
-                                                  placeholder: (c, u) => const CircularProgressIndicator(),
-                                                  errorWidget: (c, u, e) => const Icon(Icons.store, color: Colors.grey, size: 40),
-                                                )
-                                              : Icon(Icons.add_a_photo, color: Colors.grey[400], size: 40)),
-                                    ),
-                                  ),
-                                  // Botão Editar Logo
-                                  Container(
-                                    margin: const EdgeInsets.only(right: 4, bottom: 4),
-                                    padding: const EdgeInsets.all(8),
-                                    decoration: const BoxDecoration(
-                                      color: AppColors.primaryPurple,
-                                      shape: BoxShape.circle,
-                                    ),
-                                    child: const Icon(Icons.edit, color: Colors.white, size: 16),
-                                  ),
+                                  Icon(Icons.camera_alt,
+                                      color: Colors.white, size: 15),
+                                  SizedBox(width: 5),
+                                  Text("Alterar Capa",
+                                      style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.bold)),
                                 ],
                               ),
                             ),
@@ -648,235 +685,241 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                   ),
                 ),
 
-                // 2. Conteúdo do Corpo (Form)
+                // ─── FORMULÁRIO ───────────────────────────────────────────
                 SliverToBoxAdapter(
-                  child: Column(
-                    children: [
-                      // Espaço reservado para a logo sobreposta
-                      const SizedBox(height: 60),
-                      // Formulário
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 20),
-                        child: Form(
-                          key: _formKey,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _buildTextField(
-                                controller: _nameController,
-                                label: "Nome da Loja",
-                                icon: Icons.store_mall_directory,
-                                validator: (v) => v!.isEmpty ? "Campo obrigatório" : null,
-                              ),
-                              const SizedBox(height: 16),
-                              _buildTextField(
-                                controller: _descController,
-                                label: "Descrição",
-                                icon: Icons.description,
-                                maxLines: 3,
-                              ),
-                              const SizedBox(height: 16),
-                              _buildTextField(
-                                controller: _addressController,
-                                label: "Endereço",
-                                icon: Icons.location_on,
-                              ),
-                              const SizedBox(height: 16),
-                              _buildTextField(
-                                controller: _phoneController,
-                                label: "Telefone / WhatsApp",
-                                icon: Icons.phone,
-                                keyboardType: TextInputType.phone,
-                              ),
-                              const SizedBox(height: 20),
-                              
-                              // Seção Link Personalizado
-                              Container(
-                                padding: const EdgeInsets.all(16),
-                                decoration: BoxDecoration(
-                                  color: AppColors.primaryPurple.withValues(alpha: 0.05),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color: AppColors.primaryPurple.withValues(alpha: 0.2),
-                                  ),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        const Icon(Icons.link, color: AppColors.primaryPurple, size: 20),
-                                        const SizedBox(width: 8),
-                                        const Text(
-                                          "Link Personalizado da Sua Loja",
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 14,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 8),
-                                    const Text(
-                                      "Crie um link único para seus clientes acessarem sua loja",
-                                      style: TextStyle(fontSize: 12, color: Colors.grey),
-                                    ),
-                                    const SizedBox(height: 12),
-                                    TextFormField(
-                                      controller: _slugController,
-                                      decoration: InputDecoration(
-                                        labelText: "Seu Link (ex: afroED)",
-                                        prefixIcon: const Icon(Icons.link, color: AppColors.primaryPurple),
-                                        prefixText: "markaai.com.br/",
-                                        prefixStyle: const TextStyle(
-                                          color: AppColors.primaryPurple,
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                        border: OutlineInputBorder(
-                                          borderRadius: BorderRadius.circular(12),
-                                        ),
-                                        filled: true,
-                                        fillColor: Colors.white,
-                                      ),
-                                      validator: (v) {
-                                        if (v == null || v.isEmpty) return null;
-                                        if (v.length < 3) return "Mínimo 3 caracteres";
-                                        if (!RegExp(r'^[a-zA-Z0-9-]+$').hasMatch(v)) {
-                                          return "Apenas letras, números e hífen";
-                                        }
-                                        return null;
-                                      },
-                                      onChanged: (value) {
-                                        setState(() {}); // Atualiza o preview
-                                      },
-                                    ),
-                                    if (_slugController.text.isNotEmpty) ...[
-                                      const SizedBox(height: 12),
-                                      Container(
-                                        padding: const EdgeInsets.all(12),
-                                        decoration: BoxDecoration(
-                                          color: Colors.white,
-                                          borderRadius: BorderRadius.circular(8),
-                                          border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
-                                        ),
-                                        child: Row(
-                                          children: [
-                                            const Icon(Icons.check_circle, color: Colors.green, size: 18),
-                                            const SizedBox(width: 8),
-                                            Expanded(
-                                              child: Column(
-                                                crossAxisAlignment: CrossAxisAlignment.start,
-                                                children: [
-                                                  const Text(
-                                                    "Seu link público:",
-                                                    style: TextStyle(fontSize: 11, color: Colors.grey),
-                                                  ),
-                                                  const SizedBox(height: 4),
-                                                  SelectableText(
-                                                    "https://markaai.com.br/${_normalizeSlug(_slugController.text)}",
-                                                    style: const TextStyle(
-                                                      fontSize: 13,
-                                                      fontWeight: FontWeight.bold,
-                                                      color: AppColors.primaryPurple,
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                            const SizedBox(width: 8),
-                                            IconButton(
-                                              icon: const Icon(Icons.copy, size: 20),
-                                              color: AppColors.primaryPurple,
-                                              tooltip: "Copiar link",
-                                              onPressed: () {
-                                                final link = "https://markaai.com.br/${_normalizeSlug(_slugController.text)}";
-                                                Clipboard.setData(ClipboardData(text: link));
-                                                ScaffoldMessenger.of(context).showSnackBar(
-                                                  const SnackBar(
-                                                    content: Text("Link copiado!"),
-                                                    backgroundColor: Colors.green,
-                                                    duration: Duration(seconds: 2),
-                                                  ),
-                                                );
-                                              },
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                              ),
-                              
-                              const SizedBox(height: 20),
-                              
-                              // Seção Redes Sociais
-                              Container(
-                                padding: const EdgeInsets.all(16),
-                                decoration: BoxDecoration(
-                                  color: Colors.blue.shade50.withValues(alpha: 0.3),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color: Colors.blue.shade100,
-                                  ),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Icon(Icons.share, color: Colors.blue.shade700, size: 20),
-                                        const SizedBox(width: 8),
-                                        Text(
-                                          "Redes Sociais",
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 14,
-                                            color: Colors.blue.shade700,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 8),
-                                    const Text(
-                                      "Conecte suas redes sociais para seus clientes encontrarem você",
-                                      style: TextStyle(fontSize: 12, color: Colors.grey),
-                                    ),
-                                    const SizedBox(height: 12),
-                                    _buildTextField(
-                                      controller: _instagramController,
-                                      label: "Instagram (ex: @minha_loja)",
-                                      icon: Icons.camera_alt,
-                                      keyboardType: TextInputType.text,
-                                    ),
-                                    const SizedBox(height: 12),
-                                    _buildTextField(
-                                      controller: _whatsappController,
-                                      label: "WhatsApp Público (ex: 11999999999)",
-                                      icon: Icons.phone,
-                                      keyboardType: TextInputType.phone,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              
-                              const SizedBox(height: 30),
-                            ],
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                    child: Form(
+                      key: _formKey,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildTextField(
+                            controller: _nameController,
+                            label: "Nome da Loja",
+                            icon: Icons.store_mall_directory,
+                            validator: (v) =>
+                                v!.isEmpty ? "Campo obrigatório" : null,
                           ),
-                        ),
-                      ),
+                          const SizedBox(height: 12),
+                          _buildTextField(
+                            controller: _descController,
+                            label: "Descrição",
+                            icon: Icons.description,
+                            maxLines: 3,
+                          ),
+                          const SizedBox(height: 12),
+                          _buildTextField(
+                            controller: _addressController,
+                            label: "Endereço",
+                            icon: Icons.location_on,
+                          ),
+                          const SizedBox(height: 12),
+                          _buildTextField(
+                            controller: _phoneController,
+                            label: "Telefone / WhatsApp",
+                            icon: Icons.phone,
+                            keyboardType: TextInputType.phone,
+                          ),
+                          const SizedBox(height: 16),
 
-                      // Vitrine de Serviços (Estilo Moderno)
-                      Container(
-                        color: Colors.white, // Fundo branco para destacar a seção
-                        padding: const EdgeInsets.only(bottom: 30),
-                        child: _buildServicesShowcase(),
+                          // ── Link Personalizado ──────────────────────────
+                          Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: AppColors.primaryPurple
+                                  .withValues(alpha: 0.05),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                  color: AppColors.primaryPurple
+                                      .withValues(alpha: 0.2)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    const Icon(Icons.link,
+                                        color: AppColors.primaryPurple,
+                                        size: 18),
+                                    const SizedBox(width: 8),
+                                    const Text(
+                                      "Link Personalizado da Loja",
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 13),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                const Text(
+                                  "Crie um link único para seus clientes acessarem sua loja",
+                                  style: TextStyle(
+                                      fontSize: 11, color: Colors.grey),
+                                ),
+                                const SizedBox(height: 10),
+                                TextFormField(
+                                  controller: _slugController,
+                                  decoration: InputDecoration(
+                                    labelText: "Seu Link (ex: afroED)",
+                                    prefixIcon: const Icon(Icons.link,
+                                        color: AppColors.primaryPurple),
+                                    prefixText: "markaai.com.br/",
+                                    prefixStyle: const TextStyle(
+                                      color: AppColors.primaryPurple,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                    border: OutlineInputBorder(
+                                        borderRadius:
+                                            BorderRadius.circular(12)),
+                                    filled: true,
+                                    fillColor: Colors.white,
+                                  ),
+                                  validator: (v) {
+                                    if (v == null || v.isEmpty) return null;
+                                    if (v.length < 3)
+                                      return "Mínimo 3 caracteres";
+                                    if (!RegExp(r'^[a-zA-Z0-9-]+$')
+                                        .hasMatch(v)) {
+                                      return "Apenas letras, números e hífen";
+                                    }
+                                    return null;
+                                  },
+                                  onChanged: (value) => setState(() {}),
+                                ),
+                                if (_slugController.text.isNotEmpty) ...[
+                                  const SizedBox(height: 10),
+                                  Container(
+                                    padding: const EdgeInsets.all(10),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(
+                                          color: Colors.green
+                                              .withValues(alpha: 0.3)),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        const Icon(Icons.check_circle,
+                                            color: Colors.green, size: 16),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              const Text("Seu link público:",
+                                                  style: TextStyle(
+                                                      fontSize: 10,
+                                                      color: Colors.grey)),
+                                              const SizedBox(height: 2),
+                                              SelectableText(
+                                                "https://markaai.com.br/${_normalizeSlug(_slugController.text)}",
+                                                style: const TextStyle(
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.bold,
+                                                  color:
+                                                      AppColors.primaryPurple,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        IconButton(
+                                          icon:
+                                              const Icon(Icons.copy, size: 18),
+                                          color: AppColors.primaryPurple,
+                                          tooltip: "Copiar link",
+                                          onPressed: () {
+                                            final link =
+                                                "https://markaai.com.br/${_normalizeSlug(_slugController.text)}";
+                                            Clipboard.setData(
+                                                ClipboardData(text: link));
+                                            ScaffoldMessenger.of(context)
+                                                .showSnackBar(
+                                              const SnackBar(
+                                                content: Text("Link copiado!"),
+                                                backgroundColor: Colors.green,
+                                                duration: Duration(seconds: 2),
+                                              ),
+                                            );
+                                          },
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+
+                          const SizedBox(height: 14),
+
+                          // ── Redes Sociais ────────────────────────────────
+                          Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color:
+                                  Colors.blue.shade50.withValues(alpha: 0.35),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.blue.shade100),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Icon(Icons.share,
+                                        color: Colors.blue.shade700, size: 18),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      "Redes Sociais",
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 13,
+                                          color: Colors.blue.shade700),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                const Text(
+                                  "Conecte suas redes para seus clientes encontrarem você",
+                                  style: TextStyle(
+                                      fontSize: 11, color: Colors.grey),
+                                ),
+                                const SizedBox(height: 10),
+                                _buildTextField(
+                                  controller: _instagramController,
+                                  label: "Instagram (ex: @minha_loja)",
+                                  icon: Icons.camera_alt,
+                                ),
+                                const SizedBox(height: 10),
+                                _buildTextField(
+                                  controller: _whatsappController,
+                                  label: "WhatsApp Público (ex: 11999999999)",
+                                  icon: Icons.phone,
+                                  keyboardType: TextInputType.phone,
+                                ),
+                              ],
+                            ),
+                          ),
+
+                          const SizedBox(height: 20),
+                        ],
                       ),
-                      
-                      const SizedBox(height: 20),
-                    ],
+                    ),
                   ),
                 ),
+
+                // ── Vitrine de Serviços ─────────────────────────────────
+                SliverToBoxAdapter(
+                  child: Container(
+                    color: Colors.white,
+                    padding: const EdgeInsets.only(top: 4, bottom: 24),
+                    child: _buildServicesShowcase(),
+                  ),
+                ),
+                const SliverToBoxAdapter(child: SizedBox(height: 16)),
               ],
             ),
     );
@@ -892,17 +935,17 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
     String? Function(String?)? validator,
   }) {
     return Container(
-            decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.03),
-                blurRadius: 6,
-                offset: const Offset(0, 2),
-              ),
-            ],
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
           ),
+        ],
+      ),
       child: TextFormField(
         controller: controller,
         maxLines: maxLines,
@@ -910,14 +953,16 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
         validator: validator,
         decoration: InputDecoration(
           labelText: label,
-          prefixIcon: Icon(icon, color: AppColors.primaryPurple.withValues(alpha: 0.7)),
+          prefixIcon:
+              Icon(icon, color: AppColors.primaryPurple.withValues(alpha: 0.7)),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide.none,
           ),
           filled: true,
           fillColor: Colors.white,
-          contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+          contentPadding:
+              const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
         ),
       ),
     );
@@ -946,88 +991,90 @@ class _ImageAdjustmentPageState extends State<_ImageAdjustmentPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
+    return SafeArea(
+      child: Scaffold(
         backgroundColor: Colors.black,
-        foregroundColor: Colors.white,
-        title: const Text("Ajustar Imagem"),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context, widget.imageFile);
+        appBar: AppBar(
+          backgroundColor: Colors.black,
+          foregroundColor: Colors.white,
+          title: const Text("Ajustar Imagem"),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context, widget.imageFile);
+              },
+              child: const Text(
+                "PRONTO",
+                style: TextStyle(
+                  color: AppColors.primaryPurple,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+        body: Center(
+          child: GestureDetector(
+            onScaleStart: (details) {
+              _previousScale = _scale;
+              _previousOffset = _offset;
             },
-            child: const Text(
-              "PRONTO",
-              style: TextStyle(
-                color: AppColors.primaryPurple,
-                fontWeight: FontWeight.bold,
+            onScaleUpdate: (details) {
+              setState(() {
+                _scale = (_previousScale * details.scale).clamp(1.0, 4.0);
+                _offset = _previousOffset + details.focalPointDelta;
+              });
+            },
+            child: ClipRect(
+              child: Transform(
+                transform: Matrix4.identity()
+                  ..translate(_offset.dx, _offset.dy)
+                  ..scale(_scale),
+                child: kIsWeb
+                    ? Image.network(widget.imageFile.path)
+                    : Image.file(File(widget.imageFile.path)),
               ),
             ),
           ),
-        ],
-      ),
-      body: Center(
-        child: GestureDetector(
-          onScaleStart: (details) {
-            _previousScale = _scale;
-            _previousOffset = _offset;
-          },
-          onScaleUpdate: (details) {
-            setState(() {
-              _scale = (_previousScale * details.scale).clamp(1.0, 4.0);
-              _offset = _previousOffset + details.focalPointDelta;
-            });
-          },
-          child: ClipRect(
-            child: Transform(
-              transform: Matrix4.identity()
-                ..translate(_offset.dx, _offset.dy)
-                ..scale(_scale),
-              child: kIsWeb
-                  ? Image.network(widget.imageFile.path)
-                  : Image.file(File(widget.imageFile.path)),
-            ),
-          ),
         ),
-      ),
-      bottomNavigationBar: Container(
-        color: Colors.black87,
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.zoom_out, color: Colors.white),
-                  onPressed: () {
-                    setState(() {
-                      _scale = (_scale - 0.1).clamp(1.0, 4.0);
-                    });
-                  },
-                ),
-                Text(
-                  "${(_scale * 100).toInt()}%",
-                  style: const TextStyle(color: Colors.white),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.zoom_in, color: Colors.white),
-                  onPressed: () {
-                    setState(() {
-                      _scale = (_scale + 0.1).clamp(1.0, 4.0);
-                    });
-                  },
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            const Text(
-              "Arraste para reposicionar • Pinçar para zoom",
-              style: TextStyle(color: Colors.white70, fontSize: 12),
-            ),
-          ],
+        bottomNavigationBar: Container(
+          color: Colors.black87,
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.zoom_out, color: Colors.white),
+                    onPressed: () {
+                      setState(() {
+                        _scale = (_scale - 0.1).clamp(1.0, 4.0);
+                      });
+                    },
+                  ),
+                  Text(
+                    "${(_scale * 100).toInt()}%",
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.zoom_in, color: Colors.white),
+                    onPressed: () {
+                      setState(() {
+                        _scale = (_scale + 0.1).clamp(1.0, 4.0);
+                      });
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                "Arraste para reposicionar • Pinçar para zoom",
+                style: TextStyle(color: Colors.white70, fontSize: 12),
+              ),
+            ],
+          ),
         ),
       ),
     );

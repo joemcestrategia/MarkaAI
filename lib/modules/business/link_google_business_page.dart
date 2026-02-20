@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
@@ -134,7 +134,7 @@ class _LinkGoogleBusinessPageState extends State<LinkGoogleBusinessPage> {
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primaryPurple,
             ),
-            child: const Text('SIM, É MEU NEGÓCIO'),
+            child: const Text('SIM, Ã‰ MEU NEGÃ“CIO'),
           ),
         ],
       ),
@@ -479,3 +479,5 @@ class _LinkGoogleBusinessPageState extends State<LinkGoogleBusinessPage> {
     super.dispose();
   }
 }
+
+

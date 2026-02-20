@@ -1,10 +1,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     package="com.example.flutter_application_1">
 
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Location permissions required for geolocation features -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
 
     <application
-        android:label="flutter_application_1"
+        android:label="MarkaAI"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         
@@ -25,7 +29,7 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
-            <!-- Deep link support for markaai.com.br (opens app when installed) -->
+            <!-- Deep link support for markaai.app (opens app when installed) -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -37,10 +41,16 @@
         <activity
             android:name="com.yalantis.ucrop.UCropActivity"
             android:screenOrientation="portrait"
-            android:theme="@style/Theme.AppCompat.Light.NoActionBar"/>
+            android:theme="@style/UCropActivityTheme"
+            tools:replace="android:theme"/>
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        
+        <!-- AdMob Application ID -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="ca-app-pub-4304690293754093~6073797484"/>
     </application>
     
     <queries>

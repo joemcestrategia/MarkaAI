@@ -1,4 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+﻿import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
+import 'subscription_service.dart';
 
 class PaymentSettingsPage extends StatefulWidget {
   final VoidCallback onClose;
@@ -25,7 +26,7 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
   bool _showHelpView = false;
   String? _shopId;
   late AnimationController _animationController;
-  final TextEditingController _publicKeyCtrl = TextEditingController();
+  // Observação: configurações de taxa/parcelamento são centralizadas em BusinessSettingsPage
 
   @override
   void initState() {
@@ -41,7 +42,6 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
   @override
   void dispose() {
     _animationController.dispose();
-    _publicKeyCtrl.dispose();
     super.dispose();
   }
 
@@ -51,7 +51,7 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
     if (mounted) _animationController.forward();
   }
 
-  // 🔄 LISTENER EM TEMPO REAL - Atualiza quando há mudanças no Firestore
+  // ðŸ”„ LISTENER EM TEMPO REAL - Atualiza quando há mudanças no Firestore
   void _setupRealtimeListener() {
     Future.delayed(const Duration(seconds: 1), () {
       if (_shopId == null || !mounted) return;
@@ -65,30 +65,30 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
           if (!mounted) return;
 
           final data = docSnapshot.data() ?? {};
-          final accessToken = data['mercadopago']?['access_token']?.toString() ??
-              data['mp_access_token']?.toString() ??
-              '';
+          final accessToken =
+              data['mercadopago']?['access_token']?.toString() ??
+                  data['mp_access_token']?.toString() ??
+                  '';
           final connectedFlag = data['mercadopago']?['connected'];
-          final isConnected = connectedFlag is bool ? connectedFlag : accessToken.isNotEmpty;
-          final publicKey = data['mercadopago']?['public_key']?.toString() ??
-              data['mp_public_key']?.toString() ??
-              '';
+          final isConnected =
+              connectedFlag is bool ? connectedFlag : accessToken.isNotEmpty;
 
           // Se o status mudou, atualiza a UI
           if (isConnected != _isConnected) {
-            debugPrint("🔄 [REALTIME] Status de pagamento atualizado!");
-            
+            debugPrint("ðŸ”„ [REALTIME] Status de pagamento atualizado!");
+
             setState(() {
               _isConnected = isConnected;
               if (_isConnected) {
-                final timestamp = data['mercadopago']?['updated_at'] as Timestamp?;
+                final timestamp =
+                    data['mercadopago']?['updated_at'] as Timestamp?;
                 if (timestamp != null) {
                   _connectedAt =
                       DateFormat('dd/MM/yyyy HH:mm').format(timestamp.toDate());
                 } else {
                   _connectedAt = "Data desconhecida";
                 }
-                
+
                 // Mostra notificação de sucesso
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
@@ -99,9 +99,6 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
                 );
               }
             });
-            if (publicKey.isNotEmpty && _publicKeyCtrl.text != publicKey) {
-              _publicKeyCtrl.text = publicKey;
-            }
           }
         },
         onError: (error) {
@@ -148,14 +145,23 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
 
       // Additional guard: ensure the current user is the owner of the shop (only owners can configure Mercado Pago)
       try {
-        final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
-        final udata = userDoc.exists ? userDoc.data() as Map<String, dynamic> : <String, dynamic>{};
+        final userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+        final udata = userDoc.exists
+            ? userDoc.data() as Map<String, dynamic>
+            : <String, dynamic>{};
         final userShopId = udata['shopId'];
         final userRole = (udata['tipo'] ?? udata['role'] ?? '').toString();
         // Se não for dono, permite visualizar (sem editar)
-        if (userShopId != _shopId || !(userRole == 'dono' || userRole == 'business')) {
+        if (userShopId != _shopId ||
+            !(userRole == 'dono' || userRole == 'business')) {
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Visualização apenas: apenas o dono pode alterar a conexão do Mercado Pago.'), backgroundColor: Colors.orange));
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text(
+                    'Visualização apenas: apenas o dono pode alterar a conexão do Mercado Pago.'),
+                backgroundColor: Colors.orange));
             _canEdit = false;
           }
         } else {
@@ -182,7 +188,7 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
       if (doc.metadata.isFromCache) {
         // Cache read
       } else {
-        debugPrint("💸 [SERVER] Baixando status de pagamento atualizado.");
+        debugPrint("ðŸ’¸ [SERVER] Baixando status de pagamento atualizado.");
       }
 
       if (!doc.exists) return;
@@ -192,10 +198,8 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
           data['mp_access_token']?.toString() ??
           '';
       final connectedFlag = data['mercadopago']?['connected'];
-      final isConnected = connectedFlag is bool ? connectedFlag : accessToken.isNotEmpty;
-      final publicKey = data['mercadopago']?['public_key']?.toString() ??
-          data['mp_public_key']?.toString() ??
-          '';
+      final isConnected =
+          connectedFlag is bool ? connectedFlag : accessToken.isNotEmpty;
 
       if (mounted) {
         setState(() {
@@ -210,9 +214,6 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
             }
           }
         });
-        if (publicKey.isNotEmpty && _publicKeyCtrl.text != publicKey) {
-          _publicKeyCtrl.text = publicKey;
-        }
       }
     } catch (e) {
       debugPrint('Erro ao ler status: $e');
@@ -340,11 +341,8 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
     setState(() => _isConnecting = true);
 
     try {
-      debugPrint("✂️ [WRITE] Removendo credenciais do Mercado Pago...");
-      await FirebaseFirestore.instance
-          .collection('shops')
-          .doc(_shopId)
-          .update({
+      debugPrint("âœ‚ï¸ [WRITE] Removendo credenciais do Mercado Pago...");
+      await FirebaseFirestore.instance.collection('shops').doc(_shopId).update({
         'mercadopago.access_token': FieldValue.delete(),
         'mercadopago.refresh_token': FieldValue.delete(),
         'mercadopago.user_id': FieldValue.delete(),
@@ -383,489 +381,356 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
     }
   }
 
-
   @override
   Widget build(BuildContext context) {
-    final isMobile = MediaQuery.of(context).size.width < 600;
+    // final isMobile = MediaQuery.of(context).size.width < 600; // Not used anymore
 
-    return Material(
-      color: Colors.white,
-      child: SafeArea(
-        child: Column(
-          children: [
-            // --- HEADER REFINADO ---
-            Container(
-              height: 64,
-              padding: EdgeInsets.symmetric(
-                horizontal: isMobile ? 16 : 24,
-                vertical: 8,
-              ),
-              decoration: BoxDecoration(
-                border: Border(
-                  bottom: BorderSide(
-                    color: Colors.grey[200]!,
-                    width: 1,
-                  ),
-                ),
-                color: Colors.white,
-              ),
-              child: Row(
+    return Scaffold(
+      backgroundColor: const Color(0xFFF2F4F8),
+      appBar: AppBar(
+        title: const Text('Pagamentos',
+            style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+        centerTitle: true,
+        backgroundColor: AppColors.primaryPurple,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.close, color: Colors.white),
+          onPressed: widget.onClose,
+        ),
+        actions: [
+          IconButton(
+            icon: Icon(
+              _showHelpView ? Icons.refresh : Icons.help_outline,
+              color: Colors.white,
+            ),
+            tooltip: _showHelpView ? 'Voltar' : 'Ajuda',
+            onPressed: () => setState(() => _showHelpView = !_showHelpView),
+          ),
+        ],
+      ),
+      body: _isLoading
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Expanded(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _showHelpView ? 'Ajuda: Conexão' : 'Pagamentos',
-                          style: const TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: -0.5,
-                          ),
-                        ),
-                        if (!_showHelpView)
-                          Text(
-                            'Conecte sua conta Mercado Pago',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey[600],
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                      ],
+                  CircularProgressIndicator(
+                    color: AppColors.primaryPurple,
+                    strokeWidth: 2.5,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Carregando...',
+                    style: TextStyle(
+                      color: Colors.grey[600],
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: Colors.grey[100],
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (!isMobile)
-                          Tooltip(
-                            message: _showHelpView ? 'Voltar' : 'Ajuda',
-                            child: IconButton(
-                              icon: Icon(
-                                _showHelpView
-                                    ? Icons.keyboard_arrow_left
-                                    : Icons.help_outline,
-                                color: AppColors.primaryPurple,
-                              ),
-                              onPressed: () =>
-                                  setState(() => _showHelpView = !_showHelpView),
-                            ),
-                          ),
-                        Tooltip(
-                          message: 'Fechar',
-                          child: IconButton(
-                            icon: const Icon(Icons.close),
-                            onPressed: widget.onClose,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (isMobile)
-                    IconButton(
-                      icon: Icon(
-                        _showHelpView
-                            ? Icons.keyboard_arrow_left
-                            : Icons.help_outline,
-                        color: AppColors.primaryPurple,
-                      ),
-                      onPressed: () =>
-                          setState(() => _showHelpView = !_showHelpView),
-                    ),
                 ],
               ),
+            )
+          : AnimatedSwitcher(
+              duration: const Duration(milliseconds: 400),
+              transitionBuilder: (child, animation) {
+                return FadeTransition(opacity: animation, child: child);
+              },
+              child: _showHelpView ? _buildHelpContent() : _buildMainContent(),
             ),
-
-            // --- CONTEÚDO COM ANIMAÇÃO ---
-            Expanded(
-              child: _isLoading
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          CircularProgressIndicator(
-                            color: AppColors.primaryPurple,
-                            strokeWidth: 2.5,
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            'Carregando...',
-                            style: TextStyle(
-                              color: Colors.grey[600],
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                    )
-                  : AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 400),
-                      transitionBuilder: (child, animation) {
-                        return FadeTransition(opacity: animation, child: child);
-                      },
-                      child: _showHelpView
-                          ? _buildHelpContent()
-                          : _buildMainContent(),
-                    ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 
   Widget _buildMainContent() {
     final isMobile = MediaQuery.of(context).size.width < 600;
 
-    return SingleChildScrollView(
-      padding: EdgeInsets.all(isMobile ? 20 : 28),
+    return Padding(
+      padding: EdgeInsets.all(isMobile ? 16 : 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (_isConnected) _buildConnectedState() else _buildDisconnectedState(),
-          const SizedBox(height: 48),
-          _buildSecurityNote(),
+          _buildStatusSection(),
+          const SizedBox(height: 12),
+          _buildInfoSection(),
+          const SizedBox(height: 12),
+          _buildDisclaimerCard(),
+          const Spacer(),
+          if (_isConnected) _buildDisconnectButton() else _buildConnectButton(),
+          // Add extra padding for Android Nav Bar
+          SizedBox(height: MediaQuery.of(context).viewPadding.bottom + 32),
         ],
       ),
     );
   }
 
-  // ✅ ESTADO: CONECTADO (MELHORADO)
-  Widget _buildConnectedState() {
-    return Column(
-      children: [
-        // Cartão de Status Premium
-        Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                Colors.green[50]!,
-                Colors.green[100]!.withValues(alpha: 0.3),
+  Widget _buildStatusSection() {
+    if (_isConnected) {
+      final color = Colors.blue;
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: color.withOpacity(0.5), width: 1.5),
+        ),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Icon(Icons.check_circle, color: color, size: 24),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        "Mercado Pago Ativo",
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: color.withOpacity(0.9),
+                          fontSize: 16,
+                        ),
+                      ),
+                      Text(
+                        "Conta conectada.",
+                        style: TextStyle(color: Colors.grey[800], fontSize: 13),
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.green[300]!, width: 1.5),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.green[200]!.withValues(alpha: 0.3),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
+            if (_connectedAt != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Row(
+                  children: [
+                    Icon(Icons.access_time,
+                        size: 12, color: color.withOpacity(0.8)),
+                    const SizedBox(width: 4),
+                    Text(
+                      "Desde $_connectedAt",
+                      style: TextStyle(
+                          fontSize: 12, color: color.withOpacity(0.8)),
+                    ),
+                  ],
+                ),
               ),
-            ],
+          ],
+        ),
+      );
+    } else {
+      return _buildInfoCard(
+        icon: Icons.account_balance_wallet,
+        color: Colors.grey,
+        title: "Não Conectado",
+        text: "Conecte sua conta para receber pagamentos.",
+        isStatus: true,
+      );
+    }
+  }
+
+  Widget _buildInfoSection() {
+    return Column(
+      children: [
+        _buildInfoCard(
+          icon: Icons.pix,
+          color: Colors.teal,
+          title: "Chave PIX Necessária",
+          text:
+              "Verifique no seu app do Mercado Pago se você possui uma Chave PIX cadastrada para receber.",
+        ),
+        const SizedBox(height: 8), // Reduced spacing
+        _buildInfoCard(
+          icon: Icons.percent,
+          color: Colors.orange,
+          title: "Taxas e Prazos",
+          text:
+              "Consulte suas taxas e prazos de recebimento diretamente na sua conta do Mercado Pago.",
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDisclaimerCard() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey[100],
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[300]!),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline, color: Colors.grey[600], size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              "A MarkaAI não é um banco e não tem controle, acesso ou responsabilidade sobre taxas, prazos e aprovações do Mercado Pago. Somos apenas uma integração facilitadora.",
+              style: TextStyle(
+                color: Colors.grey[700],
+                fontSize: 12,
+                height: 1.3,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
           ),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoCard({
+    required IconData icon,
+    required Color color,
+    required String title,
+    required String text,
+    bool isStatus = false,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: isStatus ? color.withOpacity(0.1) : color.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+            color: isStatus ? color.withOpacity(0.5) : color.withOpacity(0.2),
+            width: isStatus ? 1.5 : 1),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(icon, color: color, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: Colors.green[600],
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Center(
-                        child: Icon(Icons.check_rounded,
-                            color: Colors.white, size: 28),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Mercado Pago Ativo',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: -0.3,
-                            ),
-                          ),
-                          if (_connectedAt != null)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 6),
-                              child: Text(
-                                'Desde $_connectedAt',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: Colors.grey[700],
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                Container(
-                  height: 1,
-                  color: Colors.green[300],
-                ),
-                const SizedBox(height: 16),
                 Text(
-                  'Seus clientes já podem realizar pagamentos via PIX ou Cartão de Crédito diretamente pelo app. O dinheiro é transferido automaticamente para sua conta Mercado Pago.',
+                  title,
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: color.withOpacity(0.9),
+                    fontSize: 14,
+                  ),
+                ),
+                Text(
+                  text,
                   style: TextStyle(
                     color: Colors.grey[800],
-                    height: 1.6,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
+                    fontSize: 12,
+                    height: 1.3,
                   ),
                 ),
               ],
             ),
           ),
-        ),
-        const SizedBox(height: 36),
+        ],
+      ),
+    );
+  }
 
-        // Public Key (preenchida automaticamente ao conectar)
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: Colors.blueGrey[50],
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: Colors.blueGrey[100]!),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Public Key do Mercado Pago',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 6),
-              const Text(
-                'Preenchida automaticamente ao conectar. Necessária para parcelas e tokenização.',
-                style: TextStyle(fontSize: 12, color: Colors.black54),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _publicKeyCtrl,
-                readOnly: true,
-                decoration: InputDecoration(
-                  hintText: 'Não informada (reconecte a conta)',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                  isDense: true,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 20),
-
-        // Botão de Desconectar com Hover
-        Container(
-          decoration: BoxDecoration(
+  Widget _buildDisconnectButton() {
+    return SizedBox(
+      width: double.infinity,
+      height: 48,
+      child: ElevatedButton.icon(
+        onPressed: (!_canEdit || _isConnecting) ? null : _disconnectMercadoPago,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFF009EE3),
+          foregroundColor: Colors.white,
+          elevation: 0,
+          shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.red[300]!.withValues(alpha: 0.1),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: SizedBox(
-            width: double.infinity,
-            height: 56,
-            child: Material(
-              color: Colors.transparent,
-                child: OutlinedButton.icon(
-                onPressed: (!_canEdit || _isConnecting) ? null : _disconnectMercadoPago,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.red[700],
-                  side: BorderSide(
-                    color: Colors.red[300]!,
-                    width: 1.5,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  backgroundColor: Colors.red[50]?.withValues(alpha: 0.3),
-                  disabledForegroundColor: Colors.grey[400],
-                ),
-                icon: _isConnecting
-                    ? SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          color: Colors.red[700],
-                          strokeWidth: 2.5,
-                        ),
-                      )
-                    : Icon(Icons.link_off, color: Colors.red[700]),
-                label: Text(
-                  _isConnecting ? "DESCONECTANDO..." : "DESCONECTAR CONTA",
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
-                    letterSpacing: 0.3,
-                    color: _isConnecting
-                        ? Colors.grey[600]
-                        : Colors.red[700],
-                  ),
-                ),
-              ),
-            ),
           ),
         ),
-      ],
+        icon: _isConnecting
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                    color: Colors.white, strokeWidth: 2.5),
+              )
+            : const Icon(Icons.link_off, size: 20),
+        label: Text(
+          _isConnecting ? "DESCONECTANDO..." : "DESCONECTAR CONTA",
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+      ),
     );
   }
 
-  // 🔌 ESTADO: DESCONECTADO (PREMIUM)
-  Widget _buildDisconnectedState() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          padding: const EdgeInsets.all(32),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                Colors.blue[50]!,
-                Colors.indigo[50]!.withValues(alpha: 0.4),
-              ],
-            ),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: Colors.blue[200]!,
-              width: 1.5,
-            ),
-            boxShadow: [
-                BoxShadow(
-                      color: Colors.blue[200]!.withValues(alpha: 0.2),
-                      blurRadius: 16,
-                      offset: const Offset(0, 8),
-                    ),
-            ],
-          ),
-          child: Column(
-            children: [
-              Container(
-                width: 80,
-                height: 80,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                      BoxShadow(
-                      color: Colors.blue[300]!.withValues(alpha: 0.15),
-                      blurRadius: 12,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: Image.network(
-                  "https://logospng.org/download/mercado-pago/logo-mercado-pago-icone-1024.png",
-                  errorBuilder: (c, e, s) => Icon(
-                    Icons.account_balance_wallet,
-                    size: 44,
-                    color: Colors.blue[600],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 28),
-              const Text(
-                'Receba Pagamentos Online',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.3,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Conecte sua conta Mercado Pago para receber PIX e Cartão de Crédito dos seus clientes de forma segura e automática.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Colors.grey[700],
-                  fontSize: 14,
-                  height: 1.6,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 36),
+  // Botões extraídos para ficarem no final
+  Widget _buildConnectButton() {
+    return FutureBuilder<bool>(
+      future: SubscriptionService.canUseOnlinePayment(),
+      builder: (context, snapshot) {
+        final canUseOnline = snapshot.data ?? false;
 
-        // Botão de Conexão com Estilo Premium
-        Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xFF009EE3).withValues(alpha: 0.25),
-                blurRadius: 16,
-                offset: const Offset(0, 8),
-              ),
-            ],
-          ),
-          child: SizedBox(
+        if (!canUseOnline) {
+          return SizedBox(
             width: double.infinity,
-            height: 58,
-            child: Material(
-              color: Colors.transparent,
-              child: ElevatedButton.icon(
-                onPressed: (!_canEdit || _isConnecting) ? null : _connectWithMercadoPago,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF009EE3),
-                  foregroundColor: Colors.white,
-                  disabledBackgroundColor: Colors.grey[400],
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  elevation: 0,
-                  shadowColor: Colors.transparent,
+            child: ElevatedButton(
+              onPressed: _showUpgradeDialog,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                icon: _isConnecting
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          color: Colors.white,
-                          strokeWidth: 2.5,
-                        ),
-                      )
-                    : const Icon(Icons.link, size: 20),
-                label: Text(
-                  _isConnecting
-                      ? 'CONECTANDO...'
-                      : 'CONECTAR AGORA',
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.3,
-                  ),
-                ),
+              ),
+              child: const Text(
+                "FAZER UPGRADE PARA CONECTAR",
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+          );
+        }
+
+        return SizedBox(
+          width: double.infinity,
+          height: 56,
+          child: ElevatedButton.icon(
+            onPressed:
+                (!_canEdit || _isConnecting) ? null : _connectWithMercadoPago,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF009EE3),
+              foregroundColor: Colors.white,
+              disabledBackgroundColor: Colors.grey[300],
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+              elevation: 0,
+            ),
+            icon: _isConnecting
+                ? const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(
+                      color: Colors.white,
+                      strokeWidth: 2.5,
+                    ),
+                  )
+                : const Icon(Icons.link, size: 24),
+            label: Text(
+              _isConnecting ? 'CONECTANDO...' : 'CONECTAR MERCADO PAGO',
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
               ),
             ),
           ),
-        ),
-      ],
+        );
+      },
     );
   }
 
-  // 📖 CONTEÚDO DE AJUDA (MELHORADO)
+  // ðŸ“– CONTEÃšDO DE AJUDA (MELHORADO)
   Widget _buildHelpContent() {
     final isMobile = MediaQuery.of(context).size.width < 600;
 
@@ -1048,20 +913,29 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
     }
   }
 
-  Widget _buildSecurityNote() {
-    return Center(
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.lock, size: 14, color: Colors.grey[500]),
-          const SizedBox(width: 8),
-          Text(
-            'Conexão criptografada ponta a ponta',
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey[600],
-              fontWeight: FontWeight.w500,
-            ),
+  void _showUpgradeDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Recurso Premium ⭐"),
+        content: const Text(
+            "Receber pagamentos online via PIX e Cartão é exclusivo dos planos pagos.\n\nAssine agora para liberar!"),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Depois"),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              // Navegar para tela de planos
+              await Navigator.pushNamed(context, '/subscription_plans');
+              if (mounted) setState(() {});
+            },
+            style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryPurple,
+                foregroundColor: Colors.white),
+            child: const Text("Ver Planos"),
           ),
         ],
       ),

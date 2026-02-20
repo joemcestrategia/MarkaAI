@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
+import 'core/utils/url_strategy_stub.dart'
+    if (dart.library.html) 'core/utils/url_strategy_web.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:flutter_web_plugins/url_strategy.dart';
 import 'core/theme/app_colors.dart';
 import 'core/services/notification_service.dart';
 import 'core/router/app_router.dart';
 import 'modules/clients/appointment_confirmation_page.dart';
+import 'modules/business/mobile_subscription_manager.dart';
 
 // 🚨 IMPORTANTE: Importe o arquivo que o comando gerou
 import 'firebase_options.dart';
@@ -21,13 +23,20 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Use path-based URLs (remove #) so deep links like /slug work on web hosting
-  setUrlStrategy(PathUrlStrategy());
+  // Configure path-based URLs (remove #) on web hosting
+  configurePathUrlStrategy();
 
   // Inicializar Firebase
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  // Inicializar IAP (In-App Purchases)
+  // Importante estar aqui para escutar streams de compra restaurada/pendente
+  // O Manager tem proteção interna para Web.
+
+  // Inicializar IAP (In-App Purchases)
+  await MobileSubscriptionManager.initialize();
 
   // Configurar handler de background ANTES de qualquer outra coisa
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
@@ -41,13 +50,14 @@ void main() async {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         MarkaAIApp.navigatorKey.currentState?.push(
           MaterialPageRoute(
-            builder: (_) => AppointmentConfirmationPage(appointmentId: appointmentId),
+            builder: (_) =>
+                AppointmentConfirmationPage(appointmentId: appointmentId),
           ),
         );
       });
     }
   });
-  
+
   // Notificação quando app está fechado e usuário abre via notificação
   FirebaseMessaging.instance.getInitialMessage().then((RemoteMessage? message) {
     if (message != null) {
@@ -57,7 +67,8 @@ void main() async {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           MarkaAIApp.navigatorKey.currentState?.push(
             MaterialPageRoute(
-              builder: (_) => AppointmentConfirmationPage(appointmentId: appointmentId),
+              builder: (_) =>
+                  AppointmentConfirmationPage(appointmentId: appointmentId),
             ),
           );
         });
@@ -75,8 +86,9 @@ void main() async {
 
 class MarkaAIApp extends StatelessWidget {
   const MarkaAIApp({super.key});
-  
-  static final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+  static final GlobalKey<NavigatorState> navigatorKey =
+      GlobalKey<NavigatorState>();
 
   @override
   Widget build(BuildContext context) {

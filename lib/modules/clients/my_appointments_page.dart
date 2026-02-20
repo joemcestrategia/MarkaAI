@@ -113,6 +113,7 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
 
     showModalBottomSheet(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) => Container(
@@ -270,6 +271,7 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
   void _showPixModal(String qr64, String copyPaste, DocumentSnapshot appointment, double amount) {
     showModalBottomSheet(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       isDismissible: false,
       builder: (ctx) => Container(

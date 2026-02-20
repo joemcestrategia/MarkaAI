@@ -223,6 +223,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
     showModalBottomSheet(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) => Container(

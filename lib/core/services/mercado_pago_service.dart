@@ -29,6 +29,22 @@ class MercadoPagoService {
     } on FirebaseFunctionsException catch (e) {
       debugPrint("❌ Erro na Cloud Function: ${e.code} - ${e.message}");
       debugPrint("❌ Detalhes: ${e.details}");
+      // Detect specific backend error for collector not enabled for PIX QR
+      final detailsStr = (e.details ?? '').toString().toLowerCase();
+      final messageStr = (e.message ?? '').toString().toLowerCase();
+      if (messageStr.contains('collector_not_enabled_for_qr') ||
+          detailsStr.contains('collector_not_enabled_for_qr') ||
+          (detailsStr.contains('collector user') && detailsStr.contains('qr'))) {
+        throw Exception('collector_not_enabled_for_qr');
+      }
+      if (messageStr.contains('collector_no_pix_keys') ||
+          detailsStr.contains('collector_no_pix_keys') ||
+          detailsStr.contains('pix key') ||
+          detailsStr.contains('chave pix') ||
+          detailsStr.contains('chaves pix') ||
+          detailsStr.contains('collector without pix')) {
+        throw Exception('collector_no_pix_keys');
+      }
       throw Exception(e.message ?? "Erro ao processar PIX no servidor.");
     } catch (e) {
       debugPrint("❌ Erro local: $e");

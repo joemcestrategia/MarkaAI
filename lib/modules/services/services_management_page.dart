@@ -702,6 +702,7 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
   void _showOptions(DocumentSnapshot doc) {
     showModalBottomSheet(
       context: context,
+      useSafeArea: true,
       builder: (context) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [
