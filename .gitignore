@@ -50,3 +50,4 @@ functions/.env
 .env.local
 .env
 android/key.properties
+.env.tokens
