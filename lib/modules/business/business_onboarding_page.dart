@@ -13,6 +13,36 @@ import '../../core/services/session_service.dart';
 // 🚨 IMPORT CORRIGIDO: Apontando para a Home de Negócios real
 import 'business_home_page.dart';
 
+const List<String> _kOnboardingUFs = [
+  'AC',
+  'AL',
+  'AP',
+  'AM',
+  'BA',
+  'CE',
+  'DF',
+  'ES',
+  'GO',
+  'MA',
+  'MT',
+  'MS',
+  'MG',
+  'PA',
+  'PB',
+  'PR',
+  'PE',
+  'PI',
+  'RJ',
+  'RN',
+  'RS',
+  'RO',
+  'RR',
+  'SC',
+  'SP',
+  'SE',
+  'TO',
+];
+
 class BusinessOnboardingPage extends StatefulWidget {
   const BusinessOnboardingPage({super.key});
 
@@ -30,6 +60,8 @@ class _BusinessOnboardingPageState extends State<BusinessOnboardingPage> {
   final _categoriaController = TextEditingController();
   final _donoNomeController = TextEditingController();
   final _telefoneController = TextEditingController();
+  final _cidadeController = TextEditingController(); // 🌍 NOVO
+  String? _estadoSelecionado; // 🌍 NOVO
   final _phoneMask = MaskTextInputFormatter(
       mask: '(##) #####-####', filter: {"#": RegExp(r'[0-9]')});
 
@@ -99,6 +131,9 @@ class _BusinessOnboardingPageState extends State<BusinessOnboardingPage> {
         'dono_id': uid,
         'telefone': _telefoneController.text.trim(),
         'imageUrl': logoUrl, // Sincronizado com o nome usado na ClientHomePage
+        'cidade': _cidadeController.text.trim(), // 🌍 NOVO
+        'estado': _estadoSelecionado ?? '', // 🌍 NOVO
+        'sem_endereco_fixo': false,
         'criado_em': FieldValue.serverTimestamp(),
         // 🚀 Configuração de Assinatura (Trial de 90 dias)
         'subscription': {
@@ -213,10 +248,49 @@ class _BusinessOnboardingPageState extends State<BusinessOnboardingPage> {
                   decoration: const InputDecoration(
                       labelText: "WhatsApp da Empresa",
                       border: OutlineInputBorder())),
+              const SizedBox(height: 20),
+              // 🌍 CIDADE E ESTADO — obrigatórios desde o cadastro inicial
+              TextFormField(
+                controller: _cidadeController,
+                decoration: const InputDecoration(
+                  labelText: 'Cidade *',
+                  hintText: 'Ex: São Paulo',
+                  prefixIcon: Icon(Icons.location_city),
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                value: _estadoSelecionado,
+                decoration: const InputDecoration(
+                  labelText: 'Estado (UF) *',
+                  prefixIcon: Icon(Icons.flag),
+                  border: OutlineInputBorder(),
+                ),
+                hint: const Text('Selecione o estado'),
+                items: _kOnboardingUFs
+                    .map((uf) => DropdownMenuItem(value: uf, child: Text(uf)))
+                    .toList(),
+                onChanged: (v) => setState(() => _estadoSelecionado = v),
+              ),
             ]),
             btnText: "FINALIZAR E ABRIR PAINEL",
             isLoading: _isSaving,
-            onNext: _finalizarCadastroEmpresa,
+            onNext: () {
+              if (_telefoneController.text.isEmpty) return;
+              if (_cidadeController.text.trim().isEmpty ||
+                  _estadoSelecionado == null) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content:
+                        Text('⚠️ Informe a cidade e o estado para continuar.'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+                return;
+              }
+              _finalizarCadastroEmpresa();
+            },
           ),
         ],
       ),

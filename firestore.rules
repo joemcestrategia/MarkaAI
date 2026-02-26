@@ -1,26 +1,77 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Public collections: allow read for unauthenticated users so
-    // public shop pages work without login (e.g. markaai.com.br/slug).
+
+    // ─── LOJAS ─────────────────────────────────────────────────────────────
+    // Leitura pública (página da loja, preview)
+    // Escrita: autenticado. Subscription só via Cloud Function (campo protegido por CF admin)
     match /shops/{shopId} {
       allow read: if true;
-      // Writes require authentication; owners should be validated in app/cloud functions.
-      allow write: if request.auth != null;
+      allow create, update: if request.auth != null
+        // Impede que o cliente altere diretamente campos sensíveis de pagamento/assinatura
+        && !('mercadopago' in request.resource.data.diff(resource.data).affectedKeys())
+        && !('subscription' in request.resource.data.diff(resource.data).affectedKeys());
+      allow delete: if false; // Nunca delete lojas diretamente
     }
 
+    // ─── SERVIÇOS ──────────────────────────────────────────────────────────
     match /services/{serviceId} {
       allow read: if true;
       allow write: if request.auth != null;
     }
 
-    // Allow public reads for reviews (if you store them in a separate collection)
+    // ─── AVALIAÇÕES ────────────────────────────────────────────────────────
     match /reviews/{reviewId} {
       allow read: if true;
       allow write: if request.auth != null;
     }
 
-    // Default: require auth for other documents (appointments, users, etc.)
+    // ─── ASSINATURAS ──────────────────────────────────────────────────────
+    // Apenas Cloud Functions (admin SDK) podem escrever — clientes só leem as suas
+    match /subscriptions/{subId} {
+      allow read: if request.auth != null
+        && resource.data.userId == request.auth.uid;
+      allow write: if false; // Escrita exclusiva via CF (Admin SDK ignora rules)
+    }
+
+    // ─── PAGAMENTOS APROVADOS ──────────────────────────────────────────────
+    match /approved_payments/{paymentId} {
+      allow read: if request.auth != null
+        && resource.data.userId == request.auth.uid;
+      allow write: if false; // Escrita exclusiva via CF
+    }
+
+    // ─── PAGAMENTOS PENDENTES ──────────────────────────────────────────────
+    match /pending_payments/{paymentId} {
+      allow read: if request.auth != null
+        && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
+    // ─── LOGS DE WEBHOOK ──────────────────────────────────────────────────
+    match /webhook_logs/{logId} {
+      allow read: if false; // Somente admins via console
+      allow write: if false; // Escrita exclusiva via CF
+    }
+
+    // ─── RATE LIMITS ──────────────────────────────────────────────────────
+    match /rate_limits/{docId} {
+      allow read, write: if false; // Gerenciado exclusivamente por CF
+    }
+
+    // ─── AUDIT LOG ────────────────────────────────────────────────────────
+    match /admin_audit/{docId} {
+      allow read: if false;
+      allow write: if false;
+    }
+
+    // ─── PLANOS ───────────────────────────────────────────────────────────
+    match /plans/{planId} {
+      allow read: if true;
+      allow write: if false; // Somente via seedPlans CF
+    }
+
+    // ─── DEFAULT: require auth ────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if request.auth != null;
     }

@@ -22,6 +22,7 @@ import 'my_appointments_page.dart';
 import 'client_service_detail_page.dart';
 import 'address_selector_page.dart';
 import 'client_search_page.dart';
+import '../../core/widgets/seletor_de_cidade.dart';
 
 class ClientHomePage extends StatefulWidget {
   const ClientHomePage({super.key});
@@ -41,13 +42,16 @@ class _ClientHomePageState extends State<ClientHomePage> {
   String _userTipo = 'cliente';
   bool _isLoadingUserData = true;
 
-  // Filtros
+  // Filtros de localização
   String _selectedLocation = "";
   String _searchText = "";
   String _selectedCategory = "Todos";
   double? _userLat;
   double? _userLng;
   double _selectedRadius = 20.0; // km
+
+  // 🌍 Cidade selecionada pelo cliente (persiste no SharedPreferences)
+  CidadeSelecionada? _cidadeSelecionada;
 
   final List<Map<String, dynamic>> _categories = [
     {"name": "Todos", "icon": Icons.grid_view},
@@ -67,6 +71,30 @@ class _ClientHomePageState extends State<ClientHomePage> {
     super.initState();
     _loadUserData();
     _setupNotifications();
+    _loadCidadeSalva();
+  }
+
+  // Carrega cidade salva no SharedPreferences
+  Future<void> _loadCidadeSalva() async {
+    final cidade = await CidadePrefs.carregar();
+    if (mounted && cidade != null) {
+      setState(() => _cidadeSelecionada = cidade);
+    }
+  }
+
+  // Abre o modal de seleção de cidade
+  void _mostrarSeletorDeCidade() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => SeletorDeCidadeModal(
+        cidadeAtual: _cidadeSelecionada,
+        onCidadeSelecionada: (c) {
+          setState(() => _cidadeSelecionada = c);
+        },
+      ),
+    );
   }
 
   // Helper para cores de categoria (Smart Fallback)
@@ -374,24 +402,21 @@ class _ClientHomePageState extends State<ClientHomePage> {
       MaterialPageRoute(
         builder: (context) => ShopProfilePage(
           shopDoc: shop,
-          onBookService: (serviceId, serviceData) {
+          onBookService: (sDoc) {
             // 🔥 Navega para a página de detalhes do serviço PRIMEIRO
-            _openServiceDetails(serviceId: serviceId, serviceData: serviceData);
+            _openServiceDetails(serviceDoc: sDoc);
           },
         ),
       ),
     );
   }
 
-  // 🆕 Abre a página de detalhes do serviço com carrossel
-  void _openServiceDetails(
-      {required String serviceId, required Map<String, dynamic> serviceData}) {
+  void _openServiceDetails({required DocumentSnapshot serviceDoc}) {
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => ClientServiceDetailPage(
-          serviceId: serviceId,
-          serviceData: serviceData,
+          serviceDoc: serviceDoc,
         ),
       ),
     );
@@ -399,8 +424,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
   Future<void> _openBookingPage({
     required DocumentSnapshot shop,
-    required String serviceId,
-    required Map<String, dynamic> serviceData,
+    required DocumentSnapshot serviceDoc,
   }) async {
     final uid = _userId ?? FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
@@ -428,9 +452,8 @@ class _ClientHomePageState extends State<ClientHomePage> {
         Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) =>
-                  ClientRegisterPage(user: user, isBusinessAdding: false),
-            ));
+                builder: (context) =>
+                    ClientRegisterPage(user: user, isBusinessAdding: false)));
       }
       return;
     }
@@ -440,8 +463,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
       MaterialPageRoute(
         builder: (context) => BookingPage(
           shop: shop,
-          serviceId: serviceId,
-          serviceData: serviceData,
+          serviceDoc: serviceDoc,
         ),
       ),
     );
@@ -713,43 +735,28 @@ class _ClientHomePageState extends State<ClientHomePage> {
             ),
           ),
 
-        // LOCATION PICKER - Compacto
+        // 🌍 SELETOR DE CIDADE — exibe a cidade atual ou convida o usuário a escolher
         SliverToBoxAdapter(
-          child: GestureDetector(
-            onTap: _showLocationPicker,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.location_on,
-                      size: 13,
-                      color: _selectedLocation.isEmpty
-                          ? Colors.grey[500]
-                          : AppColors.primaryPurple),
-                  const SizedBox(width: 3),
-                  Text(
-                    _selectedLocation.isEmpty
-                        ? "Escolher localização"
-                        : _selectedLocation,
-                    style: TextStyle(
-                      color: _selectedLocation.isEmpty
-                          ? Colors.grey[500]
-                          : AppColors.primaryPurple,
-                      fontSize: 12,
-                      fontWeight: _selectedLocation.isEmpty
-                          ? FontWeight.normal
-                          : FontWeight.w600,
-                    ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                SeletorDeCidadeButton(
+                  cidadeSelecionada: _cidadeSelecionada,
+                  onTap: _mostrarSeletorDeCidade,
+                ),
+                if (_cidadeSelecionada != null) ...[
+                  const SizedBox(width: 6),
+                  GestureDetector(
+                    onTap: () async {
+                      await CidadePrefs.limpar();
+                      setState(() => _cidadeSelecionada = null);
+                    },
+                    child: Icon(Icons.close, size: 15, color: Colors.grey[400]),
                   ),
-                  const SizedBox(width: 2),
-                  Icon(Icons.keyboard_arrow_down,
-                      size: 14,
-                      color: _selectedLocation.isEmpty
-                          ? Colors.grey[500]
-                          : AppColors.primaryPurple),
                 ],
-              ),
+              ],
             ),
           ),
         ),
@@ -1205,33 +1212,42 @@ class _ClientHomePageState extends State<ClientHomePage> {
                     return cats.any((c) => c.contains(_selectedCategory));
                   })();
 
-              // 📍 Filtro de Cidade / Raio
-              final shopCity =
-                  (d['endereco'] ?? d['cidade'] ?? '').toString().toLowerCase();
+              // 📍 Filtro por cidade/estado (SeletorDeCidade)
+              bool matchesCity = true;
+              if (_cidadeSelecionada != null) {
+                final shopCidade =
+                    (d['cidade'] ?? '').toString().trim().toLowerCase();
+                final shopEstado =
+                    (d['estado'] ?? '').toString().trim().toUpperCase();
+                final selCidade = _cidadeSelecionada!.cidade.toLowerCase();
+                final selEstado = _cidadeSelecionada!.estado.toUpperCase();
+                matchesCity =
+                    shopCidade == selCidade && shopEstado == selEstado;
+              } else if (_selectedLocation.isNotEmpty) {
+                // Fallback: filtro legado por _selectedLocation (do AddressSelector)
+                final shopCity = (d['endereco'] ?? d['cidade'] ?? '')
+                    .toString()
+                    .toLowerCase();
+                matchesCity =
+                    shopCity.contains(_selectedLocation.toLowerCase()) ||
+                        _selectedLocation.toLowerCase().contains(shopCity);
 
-              bool matchesCity = _selectedLocation.isEmpty ||
-                  shopCity.contains(_selectedLocation.toLowerCase()) ||
-                  _selectedLocation.toLowerCase().contains(shopCity);
-
-              // 🛰️ Lógica de Raio (KM)
-              if (_userLat != null &&
-                  _userLng != null &&
-                  d['lat'] != null &&
-                  d['lng'] != null) {
-                final double distance = Geolocator.distanceBetween(
-                      _userLat!,
-                      _userLng!,
-                      (d['lat'] as num).toDouble(),
-                      (d['lng'] as num).toDouble(),
-                    ) /
-                    1000.0; // Converter para KM
-
-                // Se temos coordenadas, o raio TEM PRECEDÊNCIA sobre a cidade
-                matchesCity = distance <= _selectedRadius;
+                // 🛠️ Raio por coordenadas (se disponível)
+                if (_userLat != null &&
+                    _userLng != null &&
+                    d['lat'] != null &&
+                    d['lng'] != null) {
+                  final double distance = Geolocator.distanceBetween(
+                        _userLat!,
+                        _userLng!,
+                        (d['lat'] as num).toDouble(),
+                        (d['lng'] as num).toDouble(),
+                      ) /
+                      1000.0;
+                  matchesCity = distance <= _selectedRadius;
+                }
               }
 
-              // Quando não está pesquisando, mostramos todas da cidade
-              // mas priorizamos na ordenação as que tem perfil completo
               return matchesText && matchesCat && matchesCity && isActive;
             }).toList();
 

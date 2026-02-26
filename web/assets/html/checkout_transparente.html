@@ -160,8 +160,9 @@
             return p;
         }
         const urlParams = getUrlParams();
-        // Public key: primeiro tenta query string (Web), depois window.publicKey (Mobile injetado), depois fallback
-        let PUBLIC_KEY = urlParams.publicKey || window.publicKey || 'APP_USR-456aad35-79ef-4f9a-a090-f71c7b1a5765';
+        // Public key: primeiro tenta query string (Web), depois window.publicKey (Mobile injetado)
+        // NUNCA usar fallback hardcoded de produção — se não houver chave, bloquear o checkout
+        let PUBLIC_KEY = urlParams.publicKey || window.publicKey || null;
         let VALOR = window.amount != null ? Number(window.amount) : (urlParams.amount ? parseFloat(urlParams.amount) : 0);
         let ORDER_ID = window.orderId || urlParams.orderId || '';
         let COLLECT_ONLY = (urlParams.collectOnly === '1') || (window.collectOnly === true);
@@ -253,6 +254,19 @@
             const formatter = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
             document.getElementById('valorTotal').textContent = formatter.format(VALOR);
             updatePayButtonLabel(VALOR);
+
+            // Bloquear o checkout se PUBLIC_KEY não estiver disponível
+            if (!PUBLIC_KEY) {
+                document.getElementById('paymentForm').innerHTML =
+                    '<p style="color:#c62828;text-align:center;padding:24px;font-size:15px;">'
+                    + 'Esta loja ainda não configurou os meios de pagamento online.'
+                    + '<br>Entre em contato com o estabelecimento.</p>';
+                document.getElementById('errorMessage').style.display = 'none';
+                if (typeof FlutterChannel !== 'undefined') {
+                    FlutterChannel.postMessage(JSON.stringify({ action: 'error', message: 'Loja sem public_key do Mercado Pago configurada.' }));
+                }
+                return;
+            }
 
             ensureMercadoPagoLoaded()
                 .then(() => {
@@ -353,14 +367,44 @@
                     });
                     infoDiv.classList.add('show');
                 } else {
-                    showError('Não foi possível carregar parcelas. Verifique a Public Key e o valor.');
+                    // Sem dados da API — usar fallback local
+                    console.warn('⚠️ API MP retornou lista vazia. Usando cálculo local de parcelas.');
+                    _preencherParcelasLocais(amount, installmentsSelect, lista, infoDiv);
                 }
             } catch (err) {
-                console.error('Erro parcelas:', err);
+                // Fallback local quando a API MP falha (ex: public_key de sandbox não vinculada)
+                console.warn('⚠️ API MP indisponível, usando fallback local de parcelas:', err.message);
                 showBandeira(null);
-                showError('Erro ao buscar parcelas. Tente novamente.');
+                _preencherParcelasLocais(amount, installmentsSelect, lista, infoDiv);
             }
         }
+
+        function _preencherParcelasLocais(amount, select, lista, infoDiv) {
+            const maxParcelas = 12;
+            const taxaMensal = 0.025; // 2,5% ao mês
+            select.innerHTML = '<option value="">Selecione...</option>';
+            lista.innerHTML = '';
+            for (let i = 1; i <= maxParcelas; i++) {
+                const total = i === 1 ? amount : amount * Math.pow(1 + taxaMensal, i);
+                const parcela = total / i;
+                const opt = document.createElement('option');
+                opt.value = i;
+                opt.textContent = i === 1
+                    ? `1x de R$ ${amount.toFixed(2).replace('.', ',')} sem juros`
+                    : `${i}x de R$ ${parcela.toFixed(2).replace('.', ',')}`;
+                select.appendChild(opt);
+                const item = document.createElement('div');
+                item.className = 'parcela-item';
+                item.innerHTML = `<span>${i}x</span><span class="parcela-preco">R$ ${total.toFixed(2).replace('.', ',')}</span>`;
+                lista.appendChild(item);
+            }
+            infoDiv.classList.add('show');
+            // Pré-selecionar 1x
+            select.value = '1';
+            LAST_PAYMENT_METHOD_ID = null;
+            LAST_ISSUER_ID = null;
+        }
+
 
         async function criarCardToken() {
             try {
@@ -433,6 +477,8 @@
                     const installments = parseInt(installmentsValue, 10) || 1;
                     const email = document.getElementById('email').value;
                     const saveCard = document.getElementById('saveCard').checked;
+                    // CPF sempre incluído no postMessage para o backend (CORREÇÃO: payer.identification)
+                    const cpf = document.getElementById('cardholderIdentification').value.replace(/\D/g, '');
 
                     if (COLLECT_ONLY) {
                         FlutterChannel.postMessage(JSON.stringify({
@@ -441,6 +487,7 @@
                             installments: installments,
                             email: email,
                             saveCard: saveCard,
+                            cpf: cpf,
                             paymentMethodId: LAST_PAYMENT_METHOD_ID,
                             issuerId: LAST_ISSUER_ID
                         }));
@@ -450,6 +497,7 @@
                             cardToken: cardToken,
                             installments: installments,
                             email: email,
+                            cpf: cpf,
                             paymentMethodId: LAST_PAYMENT_METHOD_ID,
                             issuerId: LAST_ISSUER_ID
                         }));

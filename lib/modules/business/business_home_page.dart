@@ -36,6 +36,7 @@ import '../../modules/inventory/inventory_home_page.dart';
 import 'subscription_service.dart';
 
 import '../help/help_guide_page.dart';
+import 'business_profile_page.dart';
 
 class BusinessHomePage extends StatefulWidget {
   const BusinessHomePage({super.key});
@@ -498,6 +499,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
               .snapshots()
           : null,
       builder: (context, snapshot) {
+        bool locationIncomplete = false;
+
         if (snapshot.hasData && snapshot.data!.exists) {
           final data = snapshot.data!.data() as Map<String, dynamic>;
           shopName = data['nome'] ?? "Meu Negócio";
@@ -511,12 +514,81 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                   data['imageUrl'].toString().isNotEmpty)
               ? data['imageUrl']
               : null;
+
+          // Verificar se cidade/estado estão preenchidos
+          final cidade = (data['cidade'] ?? '').toString().trim();
+          final estado = (data['estado'] ?? '').toString().trim();
+          locationIncomplete = cidade.isEmpty || estado.isEmpty;
         }
 
         return LayoutBuilder(
           builder: (context, constraints) {
-            bool isDesktop = constraints.maxWidth > 900;
-            return isDesktop ? _buildDesktopLayout() : _buildMobileLayout();
+            final bool isDesktop = constraints.maxWidth > 900;
+            final Widget layout =
+                isDesktop ? _buildDesktopLayout() : _buildMobileLayout();
+
+            if (!locationIncomplete) return layout;
+
+            // Banner de aviso: localização incompleta
+            return Column(
+              children: [
+                Material(
+                  elevation: 2,
+                  color: const Color(0xFFFFF3CD),
+                  child: InkWell(
+                    onTap: () {
+                      if (shopId == null) return;
+                      setState(
+                          () => _selectedIndex = 0); // volta para dashboard
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => BusinessProfilePage(shopId: shopId!),
+                        ),
+                      );
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 10),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.warning_amber_rounded,
+                              color: Color(0xFF856404), size: 20),
+                          const SizedBox(width: 10),
+                          const Expanded(
+                            child: Text(
+                              '⚠️  Sua loja não está visível para os clientes. '
+                              'Complete o endereço (cidade e estado) para aparecer nos resultados de busca.',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xFF533F03),
+                                  fontWeight: FontWeight.w500),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 5),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF856404),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Text(
+                              'Completar →',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                Expanded(child: layout),
+              ],
+            );
           },
         );
       },

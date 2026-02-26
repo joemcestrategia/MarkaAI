@@ -4,15 +4,20 @@
 const functions = require("firebase-functions");
 const { onDocumentCreated, onDocumentUpdated, onDocumentDeleted } = require("firebase-functions/v2/firestore");
 const { onRequest, onCall } = require("firebase-functions/v2/https");
-const { defineString } = require("firebase-functions/params");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
+
+const { defineString, defineSecret } = require("firebase-functions/params");
+
 const admin = require("firebase-admin");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const cors = require("cors")({ origin: true });
 
-// Definir parâmetro de ambiente para Google Places API Key
 const GOOGLE_PLACES_API_KEY = defineString("GOOGLE_PLACES_API_KEY");
+const MP_WEBHOOK_SECRET = defineSecret("MP_WEBHOOK_SECRET");
+const MP_CLIENT_ID = defineSecret("MP_CLIENT_ID");
+const MP_CLIENT_SECRET = defineSecret("MP_CLIENT_SECRET");
 
 admin.initializeApp();
 
@@ -195,7 +200,7 @@ exports.publicShopPreview = onRequest({ cors: true }, async (req, res) => {
 
 // (escapeHtml and escapeJs already declared above — no duplicate)
 
-exports.mercadopagoCallback = onRequest({ cors: true }, async (req, res) => {
+exports.mercadopagoCallback = onRequest({ cors: true, secrets: ['MP_CLIENT_ID', 'MP_CLIENT_SECRET'] }, async (req, res) => {
   const code = req.query.code;
   const state = req.query.state;
   const error = req.query.error;
@@ -236,7 +241,7 @@ exports.mercadopagoCallback = onRequest({ cors: true }, async (req, res) => {
           <div class="steps">
             <strong>Próximos passos</strong>
             <ul>
-              <li>Volte para o app MarcaAI.</li>
+    <li>Volte para o app MarkaAI.</li>
               <li>Se a tela não atualizar, feche e abra o app.</li>
             </ul>
           </div>
@@ -268,9 +273,10 @@ exports.mercadopagoCallback = onRequest({ cors: true }, async (req, res) => {
     ));
   }
 
-  const clientId = "8404269586602737";
-  const clientSecret = "D1NjvPjNYSyUjWMfngTDsO0PDy0DaghB";
+  const clientId = MP_CLIENT_ID.value();
+  const clientSecret = MP_CLIENT_SECRET.value();
   const redirectUri = "https://us-central1-wismart-118c3.cloudfunctions.net/mercadopagoCallback";
+
 
   try {
     console.log('Tentando trocar code por token...');
@@ -347,21 +353,46 @@ exports.mercadopagoCallback = onRequest({ cors: true }, async (req, res) => {
 exports.createPixPayment = onCall(async (request) => {
   const data = request.data;
   const auth = request.auth;
-  console.log("📦 Payload:", JSON.stringify(data));
 
-  const accessToken = data.accessToken || data.access_token || (data.data ? data.data.accessToken : null);
+  // CORREÇÃO DE SEGURANÇA: não aceitar accessToken no payload (risco de token injection)
+  // O token deve sempre ser lido do Firestore usando o shopId
+  if (!auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Autenticação necessária para gerar PIX.');
+  }
+
+  const shopId = data.shopId;
   const amount = parseFloat(data.amount);
   const email = data.email || data.emailCliente || 'cliente@app.com';
   const description = data.description || 'Pagamento App';
 
-  if (!accessToken) {
-    throw new functions.https.HttpsError('invalid-argument', 'TOKEN SUMIU (Backend)');
+  if (!shopId) {
+    throw new functions.https.HttpsError('invalid-argument', 'shopId é obrigatório para gerar PIX.');
+  }
+  if (!amount || isNaN(amount) || amount <= 0) {
+    throw new functions.https.HttpsError('invalid-argument', 'Valor inválido para o pagamento PIX.');
   }
 
-  const idempotencyKey = auth
-    ? `pix-${auth.uid}-${Date.now()}`
-    : `pix-anon-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+  // Busca o access_token da loja no Firestore (nunca aceito do client)
+  let accessToken = null;
+  try {
+    const shopDoc = await admin.firestore().collection('shops').doc(shopId).get();
+    if (!shopDoc.exists) {
+      throw new functions.https.HttpsError('not-found', 'Loja não encontrada.');
+    }
+    accessToken = shopDoc.data()?.mercadopago?.access_token || null;
+  } catch (e) {
+    if (e instanceof functions.https.HttpsError) throw e;
+    throw new functions.https.HttpsError('internal', 'Erro ao acessar configuração da loja.');
+  }
 
+  if (!accessToken) {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'Mercado Pago não configurado nesta loja. O dono precisa conectar a conta.'
+    );
+  }
+
+  const idempotencyKey = `pix-${auth.uid}-${Date.now()}`;
   console.log("🔑 Chave Idempotencia:", idempotencyKey);
 
   try {
@@ -439,6 +470,7 @@ exports.createPixPayment = onCall(async (request) => {
     throw new functions.https.HttpsError('aborted', `MP Recusou: ${mpError}`, mpDetails);
   }
 });
+
 
 // 2. VERIFICAR STATUS
 exports.getPaymentStatus = onCall(async (request) => {
@@ -546,11 +578,22 @@ exports.cobrarCartao = onCall(async (request) => {
 
 // 3. COBRAR CARTÃO SALVO
 exports.cobrarCartaoSalvo = onCall(async (request) => {
-  const { accessToken, amount, customerId, cardId, installments, description, email, securityCode } = request.data;
+  // CORREÇÃO 5: extrair shopId para buscar public_key da loja (variável data era indefinida antes)
+  const { accessToken, amount, customerId, cardId, shopId, installments, description, email, securityCode } = request.data;
 
   try {
+    // Busca a public_key da loja no Firestore (NUNCA usa fallback hardcoded)
+    if (!shopId) {
+      throw new functions.https.HttpsError('invalid-argument', 'shopId é obrigatório para cobrar cartão salvo.');
+    }
+    const shopDoc = await admin.firestore().collection('shops').doc(shopId).get();
+    const shopPublicKey = shopDoc.exists ? shopDoc.data()?.mercadopago?.public_key : null;
+    if (!shopPublicKey) {
+      throw new functions.https.HttpsError('failed-precondition', 'Loja não possui public_key do Mercado Pago configurada.');
+    }
+
     const tokenResponse = await axios.post(
-      `https://api.mercadopago.com/v1/card_tokens?public_key=${data.publicKey || 'PUBLIC_KEY_DA_LOJA_SE_TIVER'}`,
+      `https://api.mercadopago.com/v1/card_tokens?public_key=${shopPublicKey}`,
       {
         security_code: securityCode,
         card_id: cardId
@@ -623,15 +666,33 @@ exports.getInstallments = onRequest({ cors: true }, async (req, res) => {
       }
 
       // Call Mercado Pago API
+      // FASE 3 FIX: usar public_key como fallback quando access_token não disponível
+      const shopPublicKey = (!accessToken && shopId) ? (() => {
+        try { return shop?.mercadopago?.public_key || null; } catch { return null; }
+      })() : null;
+
       const baseUrl = accessToken && accessToken.startsWith && accessToken.startsWith('TEST-') ? 'https://api.sandbox.mercadopago.com' : 'https://api.mercadopago.com';
       const params = { bin: bin.toString().substring(0, 6), amount: amountNum };
-      const headers = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
 
-      // If we don't have an accessToken, we can't call the installments endpoint authenticated
-      // The other implementation used a public_key. We should support that fallback if possible.
-      // However, for now we will stick to the existing logic + CORS, as that is the main barrier.
+      let installmentsUrl;
+      let headers;
+      if (accessToken) {
+        // Autenticado via access_token (preferível)
+        installmentsUrl = `${baseUrl}/v1/payment_methods/installments`;
+        headers = { Authorization: `Bearer ${accessToken}` };
+      } else if (shopPublicKey) {
+        // Fallback: public_key como query param (não precisa de Authorization)
+        installmentsUrl = `${baseUrl}/v1/payment_methods/installments?public_key=${shopPublicKey}`;
+        headers = {};
+        console.log('getInstallments: usando public_key como fallback (sem access_token)');
+      } else {
+        // Sem credenciais — apenas tenta sem autenticação (pode falhar com 401)
+        installmentsUrl = `${baseUrl}/v1/payment_methods/installments`;
+        headers = {};
+        console.warn('getInstallments: sem access_token nem public_key — chamada pode ser rejeitada pela API MP');
+      }
 
-      const response = await axios.get(`${baseUrl}/v1/payment_methods/installments`, { params, headers });
+      const response = await axios.get(installmentsUrl, { params, headers });
       const result = response.data && response.data.length ? response.data[0] : null;
       return res.json({ success: true, data: result });
     } catch (err) {
@@ -657,17 +718,54 @@ exports.criarPagamento = onRequest({ cors: true }, async (req, res) => {
 
     const data = req.body.data || req.body;
 
-    // Validar idToken enviado no body
+    // CORREÇÃO 8: Autenticação obrigatória — bloqueia se token inválido ou ausente
     let uid = null;
-    if (data?.idToken) {
-      try {
-        const decoded = await admin.auth().verifyIdToken(data.idToken, true);
-        uid = decoded.uid;
-        console.log('🔐 UID validado:', uid);
-      } catch (err) {
-        console.warn('⚠️ Token inválido ou expirado, mas continuando...', err.message);
-        // NÃO bloqueamos - apenas logamos o erro
+    if (!data?.idToken) {
+      return res.status(401).json({
+        success: false,
+        error: 'Autenticação necessária para realizar pagamentos. Faça login novamente.'
+      });
+    }
+    try {
+      const decoded = await admin.auth().verifyIdToken(data.idToken, true);
+      uid = decoded.uid;
+      console.log('🔐 UID validado:', uid);
+    } catch (err) {
+      console.error('❌ Token inválido ou expirado:', err.message);
+      return res.status(401).json({
+        success: false,
+        error: 'Sessão inválida. Faça login novamente para continuar.'
+      });
+    }
+
+    // CORREÇÃO 7: Rate limiting — máximo 5 tentativas por usuário por minuto
+    try {
+      const rateLimitRef = admin.firestore().collection('rate_limits').doc(`payment_${uid}`);
+      const rateLimitDoc = await rateLimitRef.get();
+      const now = Date.now();
+      const windowMs = 60 * 1000;
+      const maxRequests = 5;
+      if (rateLimitDoc.exists) {
+        const rlData = rateLimitDoc.data();
+        const windowStart = rlData.windowStart || 0;
+        const count = rlData.count || 0;
+        if (now - windowStart < windowMs) {
+          if (count >= maxRequests) {
+            return res.status(429).json({
+              success: false,
+              error: 'Muitas tentativas de pagamento. Aguarde 1 minuto e tente novamente.'
+            });
+          }
+          await rateLimitRef.update({ count: admin.firestore.FieldValue.increment(1) });
+        } else {
+          await rateLimitRef.set({ windowStart: now, count: 1 });
+        }
+      } else {
+        await rateLimitRef.set({ windowStart: now, count: 1 });
       }
+    } catch (rlErr) {
+      console.warn('Rate limit check failed (non-critical):', rlErr.message);
+      // Não bloqueia por falha no rate limit
     }
 
     // Extrair dados
@@ -680,18 +778,34 @@ exports.criarPagamento = onRequest({ cors: true }, async (req, res) => {
     const descricao = data.descricao;
     const paymentMethodId = data.paymentMethodId;
     const issuerId = data.issuerId;
+    // CORREÇÃO 1: extrair CPF enviado pelo Flutter (via postMessage do HTML)
+    const cpf = (data.cpf || '').replace(/\D/g, '');
 
-    // Enforce plan restrictions: shops on 'start' plan cannot process online payments
+    // Enforce plan restrictions: shops on free plan cannot process online card payments.
+    // Reads subscription.plan_id (the field written by the Flutter SubscriptionService).
     if (shopId) {
       try {
         const shopDocCheck = await admin.firestore().collection('shops').doc(shopId).get();
         if (shopDocCheck.exists) {
-          const shopPlan = shopDocCheck.data()?.plan || (shopDocCheck.data()?.payment_plan) || 'start';
-          if (shopPlan === 'start') {
-            console.warn(`Pagamento bloqueado: loja ${shopId} está no plano START (pagamento online não permitido)`);
+          const sub = shopDocCheck.data()?.subscription || {};
+          // Planos que NÃO suportam pagamento online (mapeamento idêntico ao SubscriptionService do Flutter)
+          const ONLINE_PAYMENT_PLANS = ['starter', 'pro', 'vip'];
+          let planId = (sub.plan_id || '').toLowerCase();
+
+          // Trial ativo conta como VIP (suporta pagamento online)
+          if (sub.status === 'trial') {
+            const trialEndsAt = sub.trial_ends_at?.toDate ? sub.trial_ends_at.toDate() : null;
+            if (trialEndsAt && trialEndsAt > new Date()) {
+              planId = 'vip';
+            }
+          }
+
+          const allowsOnlinePayment = ONLINE_PAYMENT_PLANS.includes(planId);
+          if (!allowsOnlinePayment) {
+            console.warn(`Pagamento bloqueado: loja ${shopId} está no plano '${planId}' (pagamento online não permitido)`);
             return res.status(403).json({
               success: false,
-              error: 'Loja no plano START não permite pagamento online. Utilize pagamento presencial.'
+              error: 'Esta loja não possui um plano que habilite pagamento online. Utilize pagamento presencial.'
             });
           }
         }
@@ -741,11 +855,20 @@ exports.criarPagamento = onRequest({ cors: true }, async (req, res) => {
     // Chamar API Mercado Pago
     console.log('💳 Chamando API Mercado Pago...');
 
+    // CORREÇÃO 1: payer.identification (CPF) incluído no payload para evitar rejeição antifraude do MP
+    const payerObj = { email: email };
+    if (cpf && cpf.length === 11) {
+      payerObj.identification = { type: 'CPF', number: cpf };
+      console.log('💳 CPF incluído no payload:', cpf.substring(0, 3) + '****' + cpf.substring(9));
+    } else {
+      console.warn('⚠️ CPF ausente ou inválido no payload. Pagamento pode ser rejeitado por antifraude.');
+    }
+
     const mpPayload = {
       token: cardToken,
       transaction_amount: Number(valor),
       installments: Number(installments) || 1,
-      payer: { email: email },
+      payer: payerObj,
       description: descricao,
       capture: true,
       statement_descriptor: 'MarkaAI',
@@ -874,9 +997,313 @@ function traduzirErro(statusDetail) {
   return erros[statusDetail] || 'Pagamento recusado';
 }
 
+// ============================================================
+// CORREÇÃO 3: WEBHOOK MERCADO PAGO
+// Endpoint: POST /mercadoPagoWebhook
+// Registrar no painel MP: https://www.mercadopago.com.br/developers/panel/app
+// URL: https://us-central1-wismart-118c3.cloudfunctions.net/mercadoPagoWebhook
+// ============================================================
+exports.mercadoPagoWebhook = onRequest({ cors: false, secrets: ['MP_WEBHOOK_SECRET'] }, async (req, res) => {
+  // Responde 200 IMEDIATAMENTE para evitar timeout/retry do Mercado Pago
+  res.status(200).send('OK');
+
+  try {
+    if (req.method !== 'POST') return;
+
+    // 1. Verificar assinatura X-Signature (segurança crítica em produção)
+    const xSignature = req.headers['x-signature'];
+    const xRequestId = req.headers['x-request-id'];
+    let webhookSecret = null;
+    try {
+      webhookSecret = MP_WEBHOOK_SECRET.value() || null;
+    } catch (e) { webhookSecret = null; }
+
+
+    if (xSignature && webhookSecret) {
+      try {
+        const crypto = require('crypto');
+        const parts = xSignature.split(',');
+        let ts = null; let v1 = null;
+        parts.forEach(part => {
+          const [k, v] = part.trim().split('=');
+          if (k === 'ts') ts = v;
+          if (k === 'v1') v1 = v;
+        });
+        const dataId = req.body?.data?.id;
+        if (ts && v1 && dataId) {
+          const manifest = `id:${dataId};request-id:${xRequestId || ''};ts:${ts};`;
+          const hmac = crypto.createHmac('sha256', webhookSecret);
+          hmac.update(manifest);
+          const expected = hmac.digest('hex');
+          if (expected !== v1) {
+            console.error('Webhook MP: assinatura X-Signature inválida. Evento ignorado.');
+            await admin.firestore().collection('webhook_logs').add({
+              source: 'mercadopago', event_type: req.body?.type || 'unknown',
+              resource_id: String(req.body?.data?.id || ''), payload: req.body,
+              processed: false, processed_at: null,
+              error_message: 'Assinatura X-Signature inválida',
+              created_at: admin.firestore.FieldValue.serverTimestamp()
+            });
+            return;
+          }
+        }
+      } catch (sigErr) {
+        console.warn('Webhook MP: erro ao verificar assinatura (continuando):', sigErr.message);
+      }
+    }
+
+    const eventType = req.body?.type;
+    const resourceId = req.body?.data?.id;
+
+    if (!eventType || !resourceId) {
+      console.warn('Webhook MP: payload inválido recebido', JSON.stringify(req.body));
+      return;
+    }
+
+    console.log(`Webhook MP recebido: type=${eventType} id=${resourceId}`);
+
+    // 2. Verificar idempotência — não processar evento duplicado
+    const logsRef = admin.firestore().collection('webhook_logs');
+    const existing = await logsRef
+      .where('resource_id', '==', String(resourceId))
+      .where('event_type', '==', eventType)
+      .where('processed', '==', true)
+      .limit(1)
+      .get();
+
+    if (!existing.empty) {
+      console.log(`Webhook MP: evento duplicado ignorado. type=${eventType} id=${resourceId}`);
+      return;
+    }
+
+    // 3. Registrar evento como recebido
+    const logRef = await logsRef.add({
+      source: 'mercadopago', event_type: eventType,
+      resource_id: String(resourceId), payload: req.body,
+      processed: false, processed_at: null, error_message: null,
+      created_at: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    // 4. Processar conforme tipo de evento
+    if (eventType === 'payment') {
+      await _webhookProcessarPagamento(String(resourceId), logRef);
+    } else if (eventType === 'subscription_authorized_payment' || eventType === 'preapproval') {
+      await _webhookProcessarPreapproval(String(resourceId), logRef);
+    } else {
+      console.log(`Webhook MP: tipo não tratado: ${eventType}`);
+      await logRef.update({
+        processed: true, processed_at: admin.firestore.FieldValue.serverTimestamp(),
+        error_message: `Tipo de evento não tratado: ${eventType}`
+      });
+    }
+
+  } catch (error) {
+    console.error('Webhook MP: erro ao processar evento:', error.message || error);
+  }
+});
+
+// Processa evento de pagamento recebido via webhook
+async function _webhookProcessarPagamento(paymentId, logRef) {
+  try {
+    // Buscar o pagamento nos registros locais para identificar a loja
+    let accessToken = null;
+    let shopId = null;
+
+    // Procurar em pending_payments (coleção raiz)
+    const pendingSnap = await admin.firestore()
+      .collection('pending_payments')
+      .where('paymentId', '==', paymentId)
+      .limit(1)
+      .get();
+
+    if (!pendingSnap.empty) {
+      const pendingData = pendingSnap.docs[0].data();
+      shopId = pendingData.shopId;
+    }
+
+    // Procurar em approved_payments se não encontrou
+    if (!shopId) {
+      const approvedSnap = await admin.firestore()
+        .collection('approved_payments')
+        .where('paymentId', '==', paymentId)
+        .limit(1)
+        .get();
+      if (!approvedSnap.empty) {
+        shopId = approvedSnap.docs[0].data().shopId;
+      }
+    }
+
+    if (shopId) {
+      const shopDoc = await admin.firestore().collection('shops').doc(shopId).get();
+      accessToken = shopDoc.exists ? shopDoc.data()?.mercadopago?.access_token : null;
+    }
+
+    if (!accessToken) {
+      throw new Error(`Não foi possível encontrar access_token para o pagamento ${paymentId}`);
+    }
+
+    // Busca detalhes do pagamento na API do MP
+    const mpResp = await axios.get(
+      `https://api.mercadopago.com/v1/payments/${paymentId}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    const payment = mpResp.data;
+    const status = payment.status;
+    const orderId = payment.external_reference;
+
+    console.log(`Webhook MP: pagamento ${paymentId} status=${status} orderId=${orderId}`);
+
+    if (status === 'approved' && orderId) {
+      // Mover de pending_payments para approved_payments
+      const pendingRef = admin.firestore().collection('pending_payments').doc(orderId);
+      const pendingDoc = await pendingRef.get();
+      if (pendingDoc.exists) {
+        const pd = pendingDoc.data();
+        await admin.firestore().collection('approved_payments').doc(orderId).set({
+          ...pd, status: 'approved', approvedAt: admin.firestore.FieldValue.serverTimestamp(),
+          webhookConfirmed: true
+        });
+        await pendingRef.delete();
+
+        // Atualizar agendamento associado se existir
+        if (orderId) {
+          const apptSnap = await admin.firestore()
+            .collection('appointments')
+            .where('payment_id', '==', orderId)
+            .limit(1).get();
+          if (!apptSnap.empty) {
+            await apptSnap.docs[0].ref.update({
+              status: 'confirmado', paymentStatus: 'approved',
+              confirmedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+            console.log(`Webhook MP: agendamento ${apptSnap.docs[0].id} confirmado via PIX.`);
+          }
+        }
+      }
+    } else if (status === 'rejected' && orderId) {
+      const pendingRef = admin.firestore().collection('pending_payments').doc(orderId);
+      await pendingRef.update({
+        status: 'rejected', statusDetail: payment.status_detail,
+        rejectedAt: admin.firestore.FieldValue.serverTimestamp()
+      }).catch(() => { });
+    }
+
+    await logRef.update({ processed: true, processed_at: admin.firestore.FieldValue.serverTimestamp() });
+  } catch (error) {
+    console.error(`Webhook MP: erro ao processar pagamento ${paymentId}:`, error.message);
+    await logRef.update({ processed: false, error_message: error.message }).catch(() => { });
+  }
+}
+
+// Processa eventos de preapproval/assinatura
+async function _webhookProcessarPreapproval(resourceId, logRef) {
+  try {
+    console.log(`Webhook MP: processando preapproval ${resourceId}`);
+    const subsSnap = await admin.firestore()
+      .collection('subscriptions')
+      .where('mp_subscription_id', '==', resourceId)
+      .limit(1).get();
+    if (!subsSnap.empty) {
+      await subsSnap.docs[0].ref.update({
+        webhookLastEvent: 'preapproval',
+        webhookLastEventAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+    }
+    await logRef.update({ processed: true, processed_at: admin.firestore.FieldValue.serverTimestamp() });
+  } catch (error) {
+    console.error(`Webhook MP: erro ao processar preapproval ${resourceId}:`, error.message);
+    await logRef.update({ processed: false, error_message: error.message }).catch(() => { });
+  }
+}
+
+
+
+// ============================================================
+// CORREÇÃO 4: CRIAR ASSINATURA (chamado por subscription_service.dart)
+// Registra a intenção de assinatura no Firestore e retorna status.
+// O checkout real é feito via checkout_transparente via CheckoutTransparentePage.
+// ============================================================
+exports.createSubscription = onRequest({ cors: true }, async (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') return res.status(204).send('');
+
+  try {
+    const data = req.body.data || req.body;
+    const { shopId, planId, planName, planPrice, billingCycle, idToken } = data;
+
+    // Autenticação obrigatória
+    if (!idToken) {
+      return res.status(401).json({ success: false, error: 'Autenticação necessária.' });
+    }
+    let uid;
+    try {
+      const decoded = await admin.auth().verifyIdToken(idToken, true);
+      uid = decoded.uid;
+    } catch (authErr) {
+      return res.status(401).json({ success: false, error: 'Sessão inválida. Faça login novamente.' });
+    }
+
+    if (!shopId || !planId || !planPrice) {
+      return res.status(400).json({ success: false, error: 'shopId, planId e planPrice são obrigatórios.' });
+    }
+
+    // Verifica se a loja existe e tem MP configurado
+    const shopDoc = await admin.firestore().collection('shops').doc(shopId).get();
+    if (!shopDoc.exists) {
+      return res.status(404).json({ success: false, error: 'Loja não encontrada.' });
+    }
+    const shopData = shopDoc.data();
+    const mpAccessToken = shopData?.mercadopago?.access_token;
+    if (!mpAccessToken) {
+      return res.status(400).json({ success: false, error: 'Loja não possui Mercado Pago configurado.' });
+    }
+
+    // Registra a assinatura pendente no Firestore
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    const subscriptionData = {
+      plan_id: planId,
+      plan_name: planName,
+      plan_price: Number(planPrice),
+      billing_cycle: billingCycle || 'monthly',
+      status: 'pending_payment',
+      uid: uid,
+      shop_id: shopId,
+      created_at: now,
+      updated_at: now,
+    };
+
+    await admin.firestore()
+      .collection('shops').doc(shopId)
+      .update({ subscription: { ...subscriptionData, status: 'pending_payment' } });
+
+    // Log de assinatura
+    await admin.firestore().collection('subscription_events').add({
+      shop_id: shopId,
+      uid: uid,
+      plan_id: planId,
+      event: 'subscription_initiated',
+      created_at: now,
+    });
+
+    console.log(`createSubscription: loja ${shopId} iniciou assinatura plano ${planId}`);
+
+    return res.status(200).json({
+      success: true,
+      message: `Assinatura do plano ${planName} iniciada. Aguardando pagamento.`,
+      subscriptionData,
+    });
+  } catch (error) {
+    console.error('createSubscription error:', error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // ============================================
 // 🔍 GOOGLE PLACES API - AVALIAÇÕES
 // ============================================
+
 
 // Função para pesquisar estabelecimentos no Google
 exports.searchGoogleBusiness = onRequest({ cors: true }, async (req, res) => {
@@ -1333,66 +1760,124 @@ exports.createSubscription = onCall(async (request) => {
 });
 
 // Scheduled worker: runs daily to process trials and billing
-// NOTE: checkSubscriptionsDaily is provided as an HTTP endpoint so it can be scheduled via Cloud Scheduler.
-// Use Cloud Scheduler to call this URL every 24 hours.
+// Scheduled via Cloud Scheduler: every day at 06:00 BRT
+// URL: https://us-central1-wismart-118c3.cloudfunctions.net/checkSubscriptionsDaily
 exports.checkSubscriptionsDaily = onRequest({ cors: true }, async (req, res) => {
+  // Opcional: proteger com segredo para evitar chamadas externas indesejadas
+  const authKey = req.headers['x-cron-key'] || req.query.key;
+  const cronSecret = process.env.CRON_SECRET || 'markaai-cron-2026';
+  if (authKey !== cronSecret) {
+    console.warn('checkSubscriptionsDaily: chave inválida');
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  const results = { trials_expired: 0, renewals_ok: 0, renewals_failed: 0, downgrades: 0, errors: 0 };
+
   try {
-    console.log('checkSubscriptionsDaily (http) starting');
+    console.log('checkSubscriptionsDaily starting…');
 
     const now = admin.firestore.Timestamp.now();
 
-    // 1) process trials that ended
+    // ─── Helper: cobrar cartão salvo ───────────────────────────────────────
+    async function chargeCard(sub, shopAccessToken, userEmail) {
+      if (!sub.paymentMethod?.token) return null;
+      const payload = {
+        token: sub.paymentMethod.token,
+        transaction_amount: Number(sub.price) || 0,
+        installments: 1,
+        payer: { email: userEmail || 'cliente@markaai.com' },
+        capture: true,
+        description: `Assinatura ${sub.planId} - MarkaAI`,
+        external_reference: `sub-${sub._id}`,
+      };
+      const resp = await axios.post('https://api.mercadopago.com/v1/payments', payload, {
+        headers: { Authorization: `Bearer ${shopAccessToken}`, 'Content-Type': 'application/json' },
+      });
+      return resp.data;
+    }
+
+    // ─── Helper: notificar usuário via FCM ────────────────────────────────
+    async function notifyUser(userId, title, body) {
+      try {
+        const userDoc = await admin.firestore().collection('users').doc(userId).get();
+        const tokens = userDoc.exists ? (userDoc.data().fcmTokens || userDoc.data().fcm_tokens || []) : [];
+        if (!tokens.length) return;
+        await admin.messaging().sendEachForMulticast({
+          notification: { title, body },
+          data: { type: 'subscription_update' },
+          tokens,
+        });
+      } catch (e) { console.warn('notifyUser error:', e.message); }
+    }
+
+    // ─── Helper: downgrade da loja para free ─────────────────────────────
+    async function downgradeShop(shopId, userId, subRef, reason) {
+      if (shopId) {
+        await admin.firestore().collection('shops').doc(shopId).set(
+          { plan: 'free', plan_expires_at: null, subscription_status: 'cancelled' }, { merge: true }
+        );
+      }
+      if (userId) {
+        await admin.firestore().collection('users').doc(userId).set({ plan: 'free' }, { merge: true });
+      }
+      await subRef.update({
+        status: 'cancelled',
+        cancelled_reason: reason,
+        cancelled_at: admin.firestore.Timestamp.now(),
+        updatedAt: admin.firestore.Timestamp.now(),
+      });
+      await admin.firestore().collection('admin_audit').add({
+        adminUid: 'system', action: 'auto_downgrade', shopId, userId, reason,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      results.downgrades++;
+    }
+
+    // ─── 1. TRIALS EXPIRADOS ────────────────────────────────────────────
+
     const trialSnap = await admin.firestore().collection('subscriptions')
       .where('status', '==', 'trialing')
       .where('trial_end', '<=', now)
       .get();
 
     for (const doc of trialSnap.docs) {
-      const s = doc.data();
+      const s = { ...doc.data(), _id: doc.id };
       try {
         const userId = s.userId;
         const userDoc = await admin.firestore().collection('users').doc(userId).get();
         const user = userDoc.exists ? userDoc.data() : {};
-        const paymentMethod = user?.paymentMethod || null;
+        const paymentMethod = user?.paymentMethod || s?.paymentMethod || null;
 
-        if (paymentMethod && paymentMethod.type === 'card' && s.shopId) {
+        if (paymentMethod?.type === 'card' && s.shopId) {
           const shopDoc = await admin.firestore().collection('shops').doc(s.shopId).get();
-          const shopData = shopDoc.exists ? shopDoc.data() : {};
-          const accessToken = shopData?.mercadopago?.access_token;
+          const accessToken = shopDoc.exists ? shopDoc.data()?.mercadopago?.access_token : null;
           if (accessToken) {
             try {
-              const mpPayload = {
-                token: paymentMethod.token,
-                transaction_amount: Number(s.price) || 0,
-                installments: 1,
-                payer: { email: user?.email || 'cliente@markaai.com' },
-                capture: true,
-                description: `Subscription ${s.planId} for user ${userId}`
-              };
-              const resp = await axios.post('https://api.mercadopago.com/v1/payments', mpPayload, {
-                headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' }
-              });
-              if (resp.data && (resp.data.status === 'approved' || resp.data.status === 'pending')) {
-                const nb = new Date();
-                nb.setDate(nb.getDate() + 30);
-                await doc.ref.update({ status: 'active', next_billing: admin.firestore.Timestamp.fromDate(nb), updatedAt: admin.firestore.Timestamp.now() });
-                await admin.firestore().collection('admin_audit').add({ adminUid: 'system', action: 'auto_charge_success', targetId: doc.id, details: resp.data, createdAt: admin.firestore.FieldValue.serverTimestamp() });
+              const charge = await chargeCard({ ...s, paymentMethod }, accessToken, user?.email);
+              if (charge && (charge.status === 'approved' || charge.status === 'pending')) {
+                const nb = new Date(); nb.setDate(nb.getDate() + 30);
+                await doc.ref.update({
+                  status: 'active', next_billing: admin.firestore.Timestamp.fromDate(nb),
+                  retry_count: 0, last_payment_id: charge.id, updatedAt: admin.firestore.Timestamp.now(),
+                });
+                await admin.firestore().collection('shops').doc(s.shopId).set(
+                  { plan: s.planId, plan_expires_at: admin.firestore.Timestamp.fromDate(nb) }, { merge: true }
+                );
+                await notifyUser(userId, '✅ Assinatura Ativa', `Plano ${s.planId.toUpperCase()} renovado com sucesso!`);
+                results.renewals_ok++;
                 continue;
               }
-            } catch (e) {
-              console.error('Auto-charge failed:', e.response?.data || e.message || e);
-              await doc.ref.update({ status: 'past_due', updatedAt: admin.firestore.Timestamp.now() });
-              await admin.firestore().collection('admin_audit').add({ adminUid: 'system', action: 'auto_charge_failed', targetId: doc.id, error: e.response?.data || e.message || String(e), createdAt: admin.firestore.FieldValue.serverTimestamp() });
-              continue;
-            }
+            } catch (e) { console.error('Trial charge failed:', e.message); }
           }
         }
 
-        await doc.ref.update({ status: 'cancelled', updatedAt: admin.firestore.Timestamp.now() });
-        await admin.firestore().collection('users').doc(s.userId).set({ plan: 'start' }, { merge: true });
-        await admin.firestore().collection('admin_audit').add({ adminUid: 'system', action: 'trial_expired_downgrade', targetId: doc.id, createdAt: admin.firestore.FieldValue.serverTimestamp() });
+        // Sem cartão ou cobrança falhou → downgrade
+        await downgradeShop(s.shopId, userId, doc.ref, 'trial_expired_no_payment');
+        await notifyUser(userId, '⚠️ Trial Expirado', 'Atualize seu plano para continuar usando recursos premium.');
+        results.trials_expired++;
       } catch (err) {
-        console.error('Error processing trial subscription', doc.id, err);
+        console.error('Error processing trial:', doc.id, err);
+        results.errors++;
       }
     }
 
@@ -1403,68 +1888,112 @@ exports.checkSubscriptionsDaily = onRequest({ cors: true }, async (req, res) => 
       .get();
 
     for (const doc of billingSnap.docs) {
-      const s = doc.data();
+      const s = { ...doc.data(), _id: doc.id };
       try {
         const userId = s.userId;
         const userDoc = await admin.firestore().collection('users').doc(userId).get();
         const user = userDoc.exists ? userDoc.data() : {};
-        const paymentMethod = user?.paymentMethod || null;
-        if (paymentMethod && paymentMethod.type === 'card' && s.shopId) {
+        const paymentMethod = user?.paymentMethod || s?.paymentMethod || null;
+        const retryCount = s.retry_count || 0;
+
+        // Após 3 falhas → downgrade automático
+        if (retryCount >= 3) {
+          await downgradeShop(s.shopId, userId, doc.ref, 'max_retries_exceeded');
+          await notifyUser(userId, '❌ Assinatura Cancelada', `Após ${retryCount} tentativas falhadas, seu plano foi revertido para o gratuito.`);
+          continue;
+        }
+
+        if (paymentMethod?.type === 'card' && s.shopId) {
           const shopDoc = await admin.firestore().collection('shops').doc(s.shopId).get();
-          const shopData = shopDoc.exists ? shopDoc.data() : {};
-          const accessToken = shopData?.mercadopago?.access_token;
+          const accessToken = shopDoc.exists ? shopDoc.data()?.mercadopago?.access_token : null;
           if (accessToken) {
             try {
-              const mpPayload = {
-                token: paymentMethod.token,
-                transaction_amount: Number(s.price) || 0,
-                installments: 1,
-                payer: { email: user?.email || 'cliente@markaai.com' },
-                capture: true,
-                description: `Recurring subscription ${s.planId} for user ${userId}`
-              };
-              const resp = await axios.post('https://api.mercadopago.com/v1/payments', mpPayload, {
-                headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' }
-              });
-              if (resp.data && resp.data.status === 'approved') {
-                const nb = new Date();
-                nb.setDate(nb.getDate() + 30);
-                await doc.ref.update({ status: 'active', next_billing: admin.firestore.Timestamp.fromDate(nb), updatedAt: admin.firestore.Timestamp.now() });
-                await admin.firestore().collection('admin_audit').add({ adminUid: 'system', action: 'recurring_charge_success', targetId: doc.id, details: resp.data, createdAt: admin.firestore.FieldValue.serverTimestamp() });
+              const charge = await chargeCard({ ...s, paymentMethod }, accessToken, user?.email);
+              if (charge && charge.status === 'approved') {
+                const nb = new Date(); nb.setDate(nb.getDate() + 30);
+                await doc.ref.update({
+                  status: 'active', next_billing: admin.firestore.Timestamp.fromDate(nb),
+                  retry_count: 0, last_payment_id: charge.id, updatedAt: admin.firestore.Timestamp.now(),
+                });
+                await admin.firestore().collection('shops').doc(s.shopId).set(
+                  { plan: s.planId, plan_expires_at: admin.firestore.Timestamp.fromDate(nb) }, { merge: true }
+                );
+                await notifyUser(userId, '✅ Renovação OK', `Plano ${s.planId.toUpperCase()} renovado. Próxima cobrança em 30 dias.`);
+                await admin.firestore().collection('admin_audit').add({
+                  adminUid: 'system', action: 'recurring_charge_success',
+                  targetId: doc.id, paymentId: charge.id, createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+                results.renewals_ok++;
                 continue;
               } else {
-                await doc.ref.update({ status: 'past_due', updatedAt: admin.firestore.Timestamp.now() });
-                await admin.firestore().collection('admin_audit').add({ adminUid: 'system', action: 'recurring_charge_nonapproved', targetId: doc.id, details: resp.data, createdAt: admin.firestore.FieldValue.serverTimestamp() });
+                await doc.ref.update({
+                  status: 'past_due', retry_count: retryCount + 1,
+                  last_charge_status: charge?.status, updatedAt: admin.firestore.Timestamp.now(),
+                });
+                await notifyUser(userId, '⚠️ Falha na Renovação', `Não conseguimos cobrar seu cartão. Tentativa ${retryCount + 1} de 3.`);
+                results.renewals_failed++;
                 continue;
               }
             } catch (e) {
-              console.error('Recurring charge failed:', e.response?.data || e.message || e);
-              await doc.ref.update({ status: 'past_due', updatedAt: admin.firestore.Timestamp.now() });
-              await admin.firestore().collection('admin_audit').add({ adminUid: 'system', action: 'recurring_charge_failed', targetId: doc.id, error: e.response?.data || e.message || String(e), createdAt: admin.firestore.FieldValue.serverTimestamp() });
+              console.error('Recurring charge error:', e.message);
+              await doc.ref.update({
+                status: 'past_due', retry_count: retryCount + 1, updatedAt: admin.firestore.Timestamp.now(),
+              });
+              results.renewals_failed++;
               continue;
             }
           }
         }
 
-        await doc.ref.update({ status: 'past_due', updatedAt: admin.firestore.Timestamp.now() });
+        // Sem cartão → past_due + notifica
+        await doc.ref.update({
+          status: 'past_due', retry_count: retryCount + 1, updatedAt: admin.firestore.Timestamp.now(),
+        });
         await admin.firestore().collection('admin_notifications').add({
           level: 'warning',
-          message: `Subscription ${doc.id} is past due and requires manual action`,
-          subscriptionId: doc.id,
-          createdAt: admin.firestore.FieldValue.serverTimestamp()
+          message: `Subscription ${doc.id} past due — sem método de pagamento`,
+          subscriptionId: doc.id, shopId: s.shopId, createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
+        await notifyUser(userId, '⚠️ Pagamento Pendente', 'Adicione um cartão ao seu perfil para renovar seu plano.');
+        results.renewals_failed++;
       } catch (err) {
-        console.error('Error processing recurring subscription', doc.id, err);
+        console.error('Error processing recurring subscription:', doc.id, err);
+        results.errors++;
       }
     }
 
-    console.log('checkSubscriptionsDaily: finished');
-    return res.status(200).send({ success: true });
+    console.log('checkSubscriptionsDaily finished:', results);
+    return res.status(200).json({ success: true, results });
   } catch (err) {
-    console.error('checkSubscriptionsDaily error:', err);
-    return res.status(500).send({ error: String(err) });
+    console.error('checkSubscriptionsDaily fatal error:', err);
+    return res.status(500).json({ error: String(err) });
   }
 });
+
+// ============================================================
+// CRON: Cloud Scheduler automático — criado pelo Firebase no deploy
+// Roda todos os dias às 06:00 BRT (09:00 UTC)
+// Chama a lógica de renovação de assinaturas sem precisar de gcloud
+// ============================================================
+exports.checkSubscriptionsScheduled = onSchedule(
+  { schedule: '0 9 * * *', timeZone: 'America/Sao_Paulo', region: 'us-central1' },
+  async (event) => {
+    console.log('checkSubscriptionsScheduled: triggered by Cloud Scheduler', event?.scheduleTime);
+
+    // Reutiliza o mesmo endpoint HTTP internamente para não duplicar código
+    try {
+      const axios = require('axios');
+      const resp = await axios.post(
+        'https://checksubscriptionsdaily-jvae5gyh3q-uc.a.run.app',
+        {},
+        { headers: { 'x-cron-key': process.env.CRON_SECRET || 'markaai-cron-2026' } }
+      );
+      console.log('checkSubscriptionsScheduled: result', resp.data);
+    } catch (err) {
+      console.error('checkSubscriptionsScheduled: falha ao chamar endpoint HTTP', err.message);
+    }
+  }
+);
 
 // Função administrativa para popular planos (executar uma vez)
 exports.seedPlans = onRequest({ cors: true }, async (req, res) => {
@@ -1552,6 +2081,143 @@ async function sendPushNotification(tokens, title, body, data = {}) {
     return [];
   }
 }
+
+// ─────────────────────────────────────────────────────────
+// FASE 1 — Ambiente de Testes: usuário, loja, serviços, agenda, pagamento
+// Protegido por x-admin-key. Usar apenas em ambiente de TEST.
+// ─────────────────────────────────────────────────────────
+exports.seedTestEnvironment = onRequest({ cors: true }, async (req, res) => {
+  const adminKey = req.headers['x-admin-key'] || req.query.key;
+  if (adminKey !== (process.env.CRON_SECRET || 'markaai-cron-2026')) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  const db = admin.firestore();
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const results = {};
+
+  try {
+    // ─── 1.1 Usuário CLIENTE de teste ────────────────────
+    const clienteId = 'test_cliente_001';
+    await db.collection('users').doc(clienteId).set({
+      nome: 'Cliente Teste',
+      email: 'cliente.teste@markaai.com.br',
+      tipo: 'cliente',
+      cpf: '111.444.777-35', // CPF válido para testes MP
+      telefone: '11999998888',
+      createdAt: now,
+      _test: true,
+    }, { merge: true });
+    results['1.1_cliente'] = `✅ users/${clienteId}`;
+
+    // ─── 1.2 Usuário LOJISTA de teste ────────────────────
+    const lojistaNome = 'Lojista Teste';
+    const lojistaId = 'test_lojista_001';
+    await db.collection('users').doc(lojistaId).set({
+      nome: lojistaNome,
+      email: 'lojista.teste@markaai.com.br',
+      tipo: 'lojista',
+      shopId: 'test_shop_001',
+      createdAt: now,
+      _test: true,
+    }, { merge: true });
+    results['1.2_lojista'] = `✅ users/${lojistaId}`;
+
+    // ─── 1.3 Loja de teste ───────────────────────────────
+    const shopId = 'test_shop_001';
+    await db.collection('shops').doc(shopId).set({
+      nome: 'Salão Teste MarkaAI',
+      slug: 'markaai-teste',
+      email: 'lojista.teste@markaai.com.br',
+      ownerId: lojistaId,
+      telefone: '11999990000',
+      descricao: 'Loja criada automaticamente para testes de pagamento.',
+      plan: 'flex',
+      plan_expires_at: admin.firestore.Timestamp.fromDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)),
+      config: {
+        agendamento_online_ativo: true,
+        pagamento_pix: true,
+        pagamento_cartao: true,
+        pagamento_dinheiro: true,
+        exigir_sinal: false,
+        aceitar_parcelas: true,
+        max_parcelas: 6,
+        tax_percent: 0,
+        intervalo_agenda_min: 60,
+        janela_agendamento_dias: 30,
+        limite_minimo_agendamento_horas: 1,
+        tempo_cancelamento_horas: 2,
+      },
+      createdAt: now,
+      _test: true,
+    }, { merge: true });
+    results['1.3_loja'] = `✅ shops/${shopId} (slug: markaai-teste)`;
+
+    // ─── 1.4 Serviços de teste ───────────────────────────
+    const servicos = [
+      { nome: 'Corte Simples', preco: 50.00, duracao: 60, descricao: 'Corte masculino ou feminino simples' },
+      { nome: 'Coloração', preco: 150.00, duracao: 120, descricao: 'Coloração completa com tinta' },
+      { nome: 'Manicure', preco: 35.00, duracao: 45, descricao: 'Esmaltação completa' },
+    ];
+    for (const s of servicos) {
+      const ref = db.collection('shops').doc(shopId).collection('services').doc();
+      await ref.set({ ...s, shopId, ativo: true, createdAt: now, _test: true });
+    }
+    results['1.4_servicos'] = `✅ ${servicos.length} serviços criados em shops/${shopId}/services`;
+
+    // ─── 1.5 Horários disponíveis ────────────────────────
+    // Profissional de teste
+    const profId = 'test_prof_001';
+    await db.collection('shops').doc(shopId).collection('professionals').doc(profId).set({
+      nome: lojistaNome,
+      email: 'lojista.teste@markaai.com.br',
+      ativo: true,
+      shopId,
+      createdAt: now,
+      _test: true,
+    }, { merge: true });
+
+    // Grade de horários: Seg-Sex 08:00–18:00
+    const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'];
+    const schedule = {};
+    days.forEach(d => {
+      schedule[d] = { active: true, start: '08:00', end: '18:00' };
+    });
+    schedule['saturday'] = { active: false };
+    schedule['sunday'] = { active: false };
+
+    await db.collection('shops').doc(shopId).collection('professionals').doc(profId)
+      .collection('schedule').doc('weekly').set({ schedule, updatedAt: now });
+    results['1.5_horarios'] = `✅ Grade Seg-Sex 08:00–18:00 para professionals/${profId}`;
+
+    // ─── 1.6 Configuração de pagamento (mercadopago) ─────
+    // Usa token de TESTE público do Mercado Pago (sandbox)
+    // O lojista deve conectar sua conta TEST via OAuth, mas popula estrutura mínima
+    await db.collection('shops').doc(shopId).update({
+      'mercadopago.connected': false, // Será true após OAuth com conta TEST
+      'mercadopago.ambiente': 'sandbox',
+      'mercadopago.instrucoes': 'Acesse Configurações → Pagamentos → Conectar Mercado Pago com conta de TESTE',
+      'payment_options': {
+        pix: true,
+        credito: true,
+        presencial: true,
+        credito_config: {
+          aceitar_parcelas: true,
+          max_parcelas: 6,
+          repasse_ao_cliente: false,
+          porcentagem_a_vista: 0,
+        }
+      }
+    });
+    results['1.6_pagamento'] = '✅ Estrutura de pagamento configurada. Conecte conta TEST MP via OAuth para ativar.';
+
+    console.log('seedTestEnvironment: concluído', results);
+    return res.status(200).json({ success: true, shopId, results });
+  } catch (err) {
+    console.error('seedTestEnvironment error:', err);
+    return res.status(500).json({ error: String(err) });
+  }
+});
 
 // Trigger: Novo agendamento criado
 exports.onNewAppointment = onDocumentCreated('appointments/{appointmentId}', async (event) => {
@@ -2183,3 +2849,571 @@ exports.onAppointmentDeleted = onDocumentDeleted(
     }
   }
 );
+
+// ============================================================
+// createSubscription: Ativa/muda o plano de assinatura da plataforma MarkaAI
+// Callable Function (onCall) — auth é verificado automaticamente pelo Firebase
+// ============================================================
+exports.createSubscription = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Usuário não autenticado.');
+  }
+
+  const uid = auth.uid;
+  const data = request.data;
+
+  // Validar parâmetros
+  const { shopId, planId, planName, planPrice, billingCycle } = data;
+  if (!shopId || !planId || !planName) {
+    throw new functions.https.HttpsError(
+      'invalid-argument',
+      'Parâmetros incompletos: shopId, planId e planName são obrigatórios.'
+    );
+  }
+
+  const validPlans = ['free', 'starter', 'pro', 'vip'];
+  if (!validPlans.includes(planId)) {
+    throw new functions.https.HttpsError('invalid-argument', `Plano inválido: ${planId}`);
+  }
+
+  // Verificar que a loja existe
+  const shopDoc = await admin.firestore().collection('shops').doc(shopId).get();
+  if (!shopDoc.exists) {
+    throw new functions.https.HttpsError('not-found', 'Loja não encontrada.');
+  }
+
+  // Verificar que o usuário logado é dono desta loja
+  const shopData = shopDoc.data();
+  const shopOwnerUid = shopData?.ownerId || shopData?.userId || shopData?.owner_uid || null;
+
+  if (shopOwnerUid && shopOwnerUid !== uid) {
+    console.warn(`createSubscription: uid ${uid} tentou alterar loja de ${shopOwnerUid}`);
+    throw new functions.https.HttpsError('permission-denied', 'Você não tem permissão para alterar esta loja.');
+  }
+
+  // Se ownerId não estiver na loja, verificar via documento do usuário
+  if (!shopOwnerUid) {
+    const userDoc = await admin.firestore().collection('users').doc(uid).get();
+    const userShopId = userDoc.data()?.shopId;
+    if (userShopId && userShopId !== shopId) {
+      console.warn(`createSubscription: shopId ${shopId} não pertence ao usuário ${uid}`);
+      throw new functions.https.HttpsError('permission-denied', 'Você não tem permissão para alterar esta loja.');
+    }
+  }
+
+  // Atualizar plano no Firestore
+  const subscriptionData = {
+    plan_id: planId,
+    plan_name: planName,
+    price: parseFloat(planPrice) || 0,
+    status: 'active',
+    billing_cycle: billingCycle || 'monthly',
+    updated_at: admin.firestore.FieldValue.serverTimestamp(),
+    activated_by: uid,
+  };
+
+  await admin.firestore().collection('shops').doc(shopId).update({
+    subscription: subscriptionData,
+  });
+
+  console.log(`✅ createSubscription: loja ${shopId} mudou para plano ${planId} (uid ${uid})`);
+
+  return {
+    success: true,
+    message: `Plano ${planName} ativado com sucesso!`,
+    planId,
+  };
+});
+
+// ============================================================
+// FASE 1 — SEED DE DADOS DE TESTE
+// Endpoint: POST /seedTestData
+// Header requerido: x-seed-key: markaai-seed-dev
+// Uso no terminal: curl -X POST https://REGION-PROJECT.cloudfunctions.net/seedTestData \
+//                      -H "x-seed-key: markaai-seed-dev" -H "Content-Type: application/json" -d '{}'
+// Cleanup: -d '{"action":"cleanup"}'
+// ATENÇÃO: remover em produção ou garantir que x-seed-key não seja exposta.
+// ============================================================
+const { seedTestData } = require('./seed_test_data');
+exports.seedTestData = seedTestData;
+
+// ============================================================
+// ASSINATURA: CICLO DE VIDA
+// ============================================================
+
+// TESTE 10 — Upgrade de plano com crédito pro-rata
+exports.upgradeSubscription = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) throw new functions.https.HttpsError('unauthenticated', 'Usuário não autenticado.');
+  const uid = auth.uid;
+  const { shopId, newPlanId, newPlanName, newPlanPrice } = request.data;
+  if (!shopId || !newPlanId || !newPlanName) {
+    throw new functions.https.HttpsError('invalid-argument', 'shopId, newPlanId e newPlanName são obrigatórios.');
+  }
+  const validPlans = ['free', 'starter', 'pro', 'vip'];
+  if (!validPlans.includes(newPlanId)) {
+    throw new functions.https.HttpsError('invalid-argument', `Plano inválido: ${newPlanId}`);
+  }
+  const db = admin.firestore();
+  const shopRef = db.collection('shops').doc(shopId);
+  const shopDoc = await shopRef.get();
+  if (!shopDoc.exists) throw new functions.https.HttpsError('not-found', 'Loja não encontrada.');
+  const shopData = shopDoc.data();
+  const ownerId = shopData?.ownerId || shopData?.userId || shopData?.owner_uid;
+  if (ownerId && ownerId !== uid) {
+    throw new functions.https.HttpsError('permission-denied', 'Sem permissão para alterar esta loja.');
+  }
+  // Calcular crédito pro-rata (dias restantes do ciclo atual)
+  const current = shopData?.subscription || {};
+  const currentPeriodEnd = current.current_period_end?.toDate ? current.current_period_end.toDate() : null;
+  const now = new Date();
+  let upgradeCredit = 0;
+  if (currentPeriodEnd && currentPeriodEnd > now) {
+    const daysLeft = Math.max(0, Math.ceil((currentPeriodEnd - now) / (1000 * 60 * 60 * 24)));
+    const dailyRate = (current.price || 0) / 30;
+    upgradeCredit = parseFloat((daysLeft * dailyRate).toFixed(2));
+  }
+  // Novo período: 30 dias a partir de hoje
+  const newPeriodEnd = new Date(now);
+  newPeriodEnd.setDate(newPeriodEnd.getDate() + 30);
+  await shopRef.update({
+    subscription: {
+      plan_id: newPlanId,
+      plan_name: newPlanName,
+      price: parseFloat(newPlanPrice) || 0,
+      status: 'active',
+      billing_cycle: 'monthly',
+      current_period_start: admin.firestore.FieldValue.serverTimestamp(),
+      current_period_end: admin.firestore.Timestamp.fromDate(newPeriodEnd),
+      upgrade_credit: upgradeCredit,
+      updated_at: admin.firestore.FieldValue.serverTimestamp(),
+      upgraded_by: uid,
+    },
+    plan: newPlanId,
+    plan_id: newPlanId,
+  });
+  console.log(`✅ upgradeSubscription: loja ${shopId} → ${newPlanId}, crédito=R$${upgradeCredit} (uid ${uid})`);
+  return { success: true, message: `Plano ${newPlanName} ativado com crédito de R$ ${upgradeCredit.toFixed(2).replace('.', ',')}!`, upgradeCredit };
+});
+
+// TESTE 11 — Downgrade agendado para próximo ciclo
+exports.downgradeSubscription = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) throw new functions.https.HttpsError('unauthenticated', 'Usuário não autenticado.');
+  const uid = auth.uid;
+  const { shopId, newPlanId, newPlanName } = request.data;
+  if (!shopId || !newPlanId) {
+    throw new functions.https.HttpsError('invalid-argument', 'shopId e newPlanId são obrigatórios.');
+  }
+  const db = admin.firestore();
+  const shopRef = db.collection('shops').doc(shopId);
+  const shopDoc = await shopRef.get();
+  if (!shopDoc.exists) throw new functions.https.HttpsError('not-found', 'Loja não encontrada.');
+  const shopData = shopDoc.data();
+  const ownerId = shopData?.ownerId || shopData?.userId || shopData?.owner_uid;
+  if (ownerId && ownerId !== uid) {
+    throw new functions.https.HttpsError('permission-denied', 'Sem permissão para alterar esta loja.');
+  }
+  const current = shopData?.subscription || {};
+  const currentPeriodEnd = current.current_period_end || null;
+  // Plano atual continua até fim do período; downgrade entra depois
+  await shopRef.update({
+    'subscription.pending_downgrade': {
+      plan_id: newPlanId,
+      plan_name: newPlanName || newPlanId,
+      scheduled_for: currentPeriodEnd || admin.firestore.FieldValue.serverTimestamp(),
+      scheduled_by: uid,
+      created_at: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    'subscription.updated_at': admin.firestore.FieldValue.serverTimestamp(),
+  });
+  console.log(`✅ downgradeSubscription: loja ${shopId} downgrade agendado para ${newPlanId} (uid ${uid})`);
+  return { success: true, message: `Downgrade para ${newPlanName || newPlanId} agendado para o próximo ciclo.` };
+});
+
+// TESTE 12 — Cancelamento com manutenção de acesso até fim do período
+exports.cancelSubscription = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) throw new functions.https.HttpsError('unauthenticated', 'Usuário não autenticado.');
+  const uid = auth.uid;
+  const { shopId } = request.data;
+  if (!shopId) throw new functions.https.HttpsError('invalid-argument', 'shopId é obrigatório.');
+  const db = admin.firestore();
+  const shopRef = db.collection('shops').doc(shopId);
+  const shopDoc = await shopRef.get();
+  if (!shopDoc.exists) throw new functions.https.HttpsError('not-found', 'Loja não encontrada.');
+  const shopData = shopDoc.data();
+  const ownerId = shopData?.ownerId || shopData?.userId || shopData?.owner_uid;
+  if (ownerId && ownerId !== uid) {
+    throw new functions.https.HttpsError('permission-denied', 'Sem permissão para alterar esta loja.');
+  }
+  const current = shopData?.subscription || {};
+  const currentPeriodEnd = current.current_period_end || null;
+  // Status = 'canceled', acesso mantido até current_period_end
+  await shopRef.update({
+    'subscription.status': 'canceled',
+    'subscription.cancel_at': admin.firestore.FieldValue.serverTimestamp(),
+    'subscription.canceled_by': uid,
+    'subscription.access_until': currentPeriodEnd || admin.firestore.FieldValue.serverTimestamp(),
+    'subscription.updated_at': admin.firestore.FieldValue.serverTimestamp(),
+  });
+  console.log(`✅ cancelSubscription: loja ${shopId} cancelada (acesso até ${currentPeriodEnd ? 'fim do período' : 'agora'}) (uid ${uid})`);
+  const accessMsg = currentPeriodEnd ? 'Você mantém acesso até o fim do período atual.' : 'Assinatura cancelada.';
+  return { success: true, message: `Assinatura cancelada. ${accessMsg}` };
+});
+
+// TESTE 13 — Reativação de assinatura cancelada
+exports.reactivateSubscription = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) throw new functions.https.HttpsError('unauthenticated', 'Usuário não autenticado.');
+  const uid = auth.uid;
+  const { shopId, planId, planName } = request.data;
+  if (!shopId) throw new functions.https.HttpsError('invalid-argument', 'shopId é obrigatório.');
+  const db = admin.firestore();
+  const shopRef = db.collection('shops').doc(shopId);
+  const shopDoc = await shopRef.get();
+  if (!shopDoc.exists) throw new functions.https.HttpsError('not-found', 'Loja não encontrada.');
+  const shopData = shopDoc.data();
+  const ownerId = shopData?.ownerId || shopData?.userId || shopData?.owner_uid;
+  if (ownerId && ownerId !== uid) {
+    throw new functions.https.HttpsError('permission-denied', 'Sem permissão para alterar esta loja.');
+  }
+  const current = shopData?.subscription || {};
+  const resolvedPlanId = planId || current.plan_id || 'free';
+  const resolvedPlanName = planName || current.plan_name || resolvedPlanId;
+  // Novo período de 30 dias
+  const newPeriodEnd = new Date();
+  newPeriodEnd.setDate(newPeriodEnd.getDate() + 30);
+  await shopRef.update({
+    'subscription.status': 'active',
+    'subscription.plan_id': resolvedPlanId,
+    'subscription.plan_name': resolvedPlanName,
+    'subscription.current_period_start': admin.firestore.FieldValue.serverTimestamp(),
+    'subscription.current_period_end': admin.firestore.Timestamp.fromDate(newPeriodEnd),
+    'subscription.cancel_at': admin.firestore.FieldValue.delete(),
+    'subscription.canceled_by': admin.firestore.FieldValue.delete(),
+    'subscription.access_until': admin.firestore.FieldValue.delete(),
+    'subscription.pending_downgrade': admin.firestore.FieldValue.delete(),
+    'subscription.reactivated_by': uid,
+    'subscription.updated_at': admin.firestore.FieldValue.serverTimestamp(),
+    plan: resolvedPlanId,
+    plan_id: resolvedPlanId,
+  });
+  console.log(`✅ reactivateSubscription: loja ${shopId} reativada como ${resolvedPlanId} (uid ${uid})`);
+  return { success: true, message: `Assinatura ${resolvedPlanName} reativada com sucesso!`, planId: resolvedPlanId };
+});
+
+// ============================================================
+// 🌍 SISTEMA DE LOCALIZAÇÃO — ETAPA 1 (Backend)
+// ============================================================
+
+// Cache em memória para resultados do ViaCEP (TTL: 24h)
+const cepCache = new Map();
+const CEP_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 horas
+
+/**
+ * fetchCep — Proxy interno para a API do ViaCEP.
+ * Callable: cliente chama functions().httpsCallable('fetchCep')({ cep: '01310100' })
+ * Retorna: { logradouro, bairro, cidade, estado, cep } ou lança erro.
+ */
+exports.fetchCep = onCall(async (request) => {
+  const cepRaw = (request.data.cep || '').toString().replace(/\D/g, '');
+  if (cepRaw.length !== 8) {
+    throw new functions.https.HttpsError('invalid-argument', 'CEP deve conter 8 dígitos.');
+  }
+
+  // Verificar cache
+  const cached = cepCache.get(cepRaw);
+  if (cached && (Date.now() - cached.ts) < CEP_CACHE_TTL_MS) {
+    console.log(`[fetchCep] Cache hit para CEP: ${cepRaw}`);
+    return cached.data;
+  }
+
+  try {
+    console.log(`[fetchCep] Consultando ViaCEP para: ${cepRaw}`);
+    const response = await axios.get(`https://viacep.com.br/ws/${cepRaw}/json/`, {
+      timeout: 5000,
+    });
+
+    const data = response.data;
+    if (data.erro) {
+      throw new functions.https.HttpsError('not-found', 'CEP não encontrado. Verifique o número e tente novamente.');
+    }
+
+    const result = {
+      cep: data.cep || cepRaw,
+      logradouro: data.logradouro || '',
+      bairro: data.bairro || '',
+      cidade: data.localidade || '',
+      estado: data.uf || '',
+    };
+
+    // Salvar no cache
+    cepCache.set(cepRaw, { data: result, ts: Date.now() });
+    console.log(`[fetchCep] OK: ${result.cidade}/${result.estado}`);
+    return result;
+
+  } catch (err) {
+    if (err instanceof functions.https.HttpsError) throw err;
+    console.error('[fetchCep] Erro ao consultar ViaCEP:', err.message);
+    throw new functions.https.HttpsError(
+      'unavailable',
+      'Não foi possível consultar o CEP no momento. Preencha cidade e estado manualmente.'
+    );
+  }
+});
+
+/**
+ * getAvailableCities — Retorna cidades distintas cadastradas na coleção `shops`.
+ * Callable: cliente chama functions().httpsCallable('getAvailableCities')({ query: 'São', estado: 'SP' })
+ * Idéal para autocomplete do SeletorDeCidade.
+ */
+// Cache de cidades (TTL: 10 minutos)
+let citiesCache = null;
+let citiesCacheTs = 0;
+const CITIES_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutos
+
+exports.getAvailableCities = onCall(async (request) => {
+  const queryStr = ((request.data || {}).query || '').toLowerCase().trim();
+  const estadoFilter = ((request.data || {}).estado || '').toUpperCase().trim();
+
+  const now = Date.now();
+
+  // Usar cache se disponível e recente
+  let allCities = citiesCache;
+  if (!allCities || (now - citiesCacheTs) > CITIES_CACHE_TTL_MS) {
+    console.log('[getAvailableCities] Carregando cidades do Firestore...');
+    const snap = await admin.firestore()
+      .collection('shops')
+      .where('cidade', '!=', '')
+      .get();
+
+    const citySet = new Map(); // key = 'cidade|estado'
+    snap.docs.forEach((doc) => {
+      const d = doc.data();
+      const cidade = (d.cidade || '').trim();
+      const estado = (d.estado || '').trim().toUpperCase();
+      if (cidade && estado.length === 2) {
+        const key = `${cidade.toLowerCase()}|${estado}`;
+        if (!citySet.has(key)) {
+          citySet.set(key, { cidade, estado });
+        }
+      }
+    });
+
+    allCities = Array.from(citySet.values()).sort((a, b) =>
+      a.cidade.localeCompare(b.cidade, 'pt-BR')
+    );
+    citiesCache = allCities;
+    citiesCacheTs = now;
+    console.log(`[getAvailableCities] ${allCities.length} cidades distintas encontradas.`);
+  }
+
+  // Filtrar por query e/ou estado
+  let filtered = allCities;
+  if (estadoFilter) {
+    filtered = filtered.filter((c) => c.estado === estadoFilter);
+  }
+  if (queryStr) {
+    filtered = filtered.filter((c) =>
+      c.cidade.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .includes(queryStr.normalize('NFD').replace(/[\u0300-\u036f]/g, ''))
+    );
+  }
+
+  return { cities: filtered.slice(0, 50) }; // Limitar a 50 resultados
+});
+
+// ============================================================
+// 🔄 SISTEMA DE CANCELAMENTO E REAGENDAMENTO (FASE 8)
+// ============================================================
+
+exports.cancelAppointment = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) throw new functions.https.HttpsError('unauthenticated', 'Usuário não autenticado.');
+
+  const { appointmentId, reason, requestRefund, pixKey, amount } = request.data;
+  if (!appointmentId) throw new functions.https.HttpsError('invalid-argument', 'ID do agendamento é obrigatório.');
+
+  const db = admin.firestore();
+  const docRef = db.collection('appointments').doc(appointmentId);
+
+  return db.runTransaction(async (transaction) => {
+    const docSnap = await transaction.get(docRef);
+    if (!docSnap.exists) throw new functions.https.HttpsError('not-found', 'Agendamento não encontrado.');
+
+    const data = docSnap.data();
+
+    // Authorization check
+    // Clients can only cancel their own appointments. Shops can cancel any appointment belonging to them.
+    const isClient = data.cliente_id === auth.uid;
+    const isShopOwner = data.shopId; // We should ideally check if the auth.uid is the shop owner, but for now we trust shop-side requests or we do a quick check
+
+    let shopData = null;
+    const shopSnap = await transaction.get(db.collection('shops').doc(data.shopId));
+    if (shopSnap.exists) {
+      shopData = shopSnap.data();
+    }
+
+    const isAdmin = shopData && shopData.owner_uid === auth.uid;
+
+    if (!isClient && !isAdmin) {
+      throw new functions.https.HttpsError('permission-denied', 'Sem permissão para cancelar este agendamento.');
+    }
+
+    if (data.status === 'cancelado') {
+      throw new functions.https.HttpsError('failed-precondition', 'Este agendamento já está cancelado.');
+    }
+
+    // Time validation for cancellation (default 24h)
+    const tempoMinimo = shopData?.config?.tempo_cancelamento_horas ?? 24;
+    const appointmentDate = data.data_agendamento.toDate();
+    const now = new Date();
+    const horasRestantes = (appointmentDate - now) / (1000 * 60 * 60);
+
+    // Only enforce time limit for clients. Shop owners can cancel at any time.
+    if (isClient && horasRestantes < tempoMinimo) {
+      throw new functions.https.HttpsError('failed-precondition', `O cancelamento deve ser feito com no mínimo ${tempoMinimo} horas de antecedência.`);
+    }
+
+    const valorPago = data.valor_pago || 0;
+    const updateData = {
+      status: 'cancelado',
+      cancelado_em: admin.firestore.FieldValue.serverTimestamp(),
+      cancelado_por: isClient ? 'cliente' : 'loja',
+      motivo_cancelamento: reason || null
+    };
+
+    if (requestRefund && valorPago > 0) {
+      updateData.reembolso_pendente = true;
+
+      const refundRef = db.collection('refundRequests').doc();
+      transaction.set(refundRef, {
+        appointmentId: docRef.id,
+        shopId: data.shopId,
+        clientId: data.cliente_id,
+        clientName: data.cliente_nome,
+        valor_pago: amount || valorPago, // Optional partial refund
+        chave_pix: pixKey || '',
+        motivo: reason || '',
+        status: 'pendente',
+        data_solicitacao: admin.firestore.FieldValue.serverTimestamp()
+      });
+    }
+
+    transaction.update(docRef, updateData);
+    return { success: true, message: 'Agendamento cancelado com sucesso.' };
+  });
+});
+
+exports.rescheduleAppointment = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) throw new functions.https.HttpsError('unauthenticated', 'Usuário não autenticado.');
+
+  const { appointmentId, newDateISO, newProfessionalId, newProfessionalName } = request.data;
+  if (!appointmentId || !newDateISO) throw new functions.https.HttpsError('invalid-argument', 'Faltam dados obrigatórios.');
+
+  const db = admin.firestore();
+  const docRef = db.collection('appointments').doc(appointmentId);
+  const newDate = new Date(newDateISO);
+
+  return db.runTransaction(async (transaction) => {
+    const docSnap = await transaction.get(docRef);
+    if (!docSnap.exists) throw new functions.https.HttpsError('not-found', 'Agendamento não encontrado.');
+    const data = docSnap.data();
+
+    // Permissões
+    const isClient = data.cliente_id === auth.uid;
+    const shopSnap = await transaction.get(db.collection('shops').doc(data.shopId));
+    let shopData = null;
+    if (shopSnap.exists) shopData = shopSnap.data();
+
+    const isAdmin = shopData && shopData.owner_uid === auth.uid;
+
+    if (!isClient && !isAdmin) {
+      throw new functions.https.HttpsError('permission-denied', 'Sem permissão para reagendar.');
+    }
+
+    if (data.status === 'cancelado') {
+      throw new functions.https.HttpsError('failed-precondition', 'Agendamento cancelado não pode ser reagendado.');
+    }
+
+    // Regras da loja (permitir reagendamento, tempo minimo)
+    const storeConfig = shopData?.config || {};
+    if (isClient && storeConfig.permitir_reagendamento === false) {
+      throw new functions.https.HttpsError('failed-precondition', 'Esta loja não permite reagendamento via app.');
+    }
+
+    // A loja pode forçar que não permita por padrão
+    const tempoMinimo = storeConfig.tempo_reagendamento_horas ?? 12; // 12h se não configurado
+    const oldDate = data.data_agendamento.toDate();
+    const now = new Date();
+    const horasParaAntigo = (oldDate - now) / (1000 * 60 * 60);
+
+    if (isClient && horasParaAntigo < tempoMinimo) {
+      throw new functions.https.HttpsError('failed-precondition', `A loja exige antecedência mínima de ${tempoMinimo}h para reagendar.`);
+    }
+
+    // UPDATE
+    const updateData = {
+      data_agendamento: admin.firestore.Timestamp.fromDate(newDate),
+      reagendado_em: admin.firestore.FieldValue.serverTimestamp(),
+      reagendado_por: isClient ? 'cliente' : 'loja',
+    };
+
+    if (newProfessionalId) {
+      updateData.profissional_id = newProfessionalId;
+      updateData.profissional_nome = newProfessionalName || null;
+    }
+
+    transaction.update(docRef, updateData);
+    return { success: true, message: 'Agendamento alterado com sucesso.' };
+  });
+});
+
+exports.approveRefund = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) throw new functions.https.HttpsError('unauthenticated', 'Usuário não autenticado.');
+
+  const { refundId, approve } = request.data;
+  if (!refundId) throw new functions.https.HttpsError('invalid-argument', 'ID do reembolso é obrigatório.');
+
+  const db = admin.firestore();
+  const refundRef = db.collection('refundRequests').doc(refundId);
+
+  return db.runTransaction(async (transaction) => {
+    const refundSnap = await transaction.get(refundRef);
+    if (!refundSnap.exists) throw new functions.https.HttpsError('not-found', 'Solicitação não encontrada.');
+    const refundData = refundSnap.data();
+
+    if (refundData.status !== 'pendente') {
+      throw new functions.https.HttpsError('failed-precondition', 'Solicitação já processada.');
+    }
+
+    // Verificação de segurança: quem chama DEVE ser o dono da loja
+    const shopSnap = await transaction.get(db.collection('shops').doc(refundData.shopId));
+    if (!shopSnap.exists || shopSnap.data().owner_uid !== auth.uid) {
+      throw new functions.https.HttpsError('permission-denied', 'Só o dono da loja pode processar o reembolso.');
+    }
+
+    const novoStatus = approve ? 'aprovado' : 'recusado';
+
+    transaction.update(refundRef, {
+      status: novoStatus,
+      data_processamento: admin.firestore.FieldValue.serverTimestamp(),
+      processado_por: auth.uid
+    });
+
+    if (approve && refundData.appointmentId) {
+      // Atualizar no agendamento para não constar mais como pendente
+      const appRef = db.collection('appointments').doc(refundData.appointmentId);
+      transaction.update(appRef, {
+        reembolso_pendente: false,
+        reembolso_pago: true
+      });
+    }
+
+    return { success: true, message: `Reembolso ${novoStatus}.` };
+  });
+});

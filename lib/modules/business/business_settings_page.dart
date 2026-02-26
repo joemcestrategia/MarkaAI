@@ -11,6 +11,8 @@ import 'link_google_business_page.dart';
 import '../backup/calendar_backup_page.dart';
 import 'payment_settings_page.dart';
 import 'subscription_service.dart';
+import 'subscription_plans_page.dart';
+import '../../core/widgets/plan_gate_widget.dart';
 
 class BusinessSettingsPage extends StatefulWidget {
   const BusinessSettingsPage({super.key});
@@ -57,6 +59,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   // Notificações
   bool _notifyClientAppointment = true;
   int _notifyDaysBefore = 1; // Padrão: 1 dia antes
+
+  // FASE 4 — Parcelamento no cartão de crédito
+  bool _acceptInstallments = true; // Aceitar parcelamento
+  int _maxInstallments = 6; // Máximo de parcelas (2-12)
 
   @override
   void initState() {
@@ -137,6 +143,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 _notifyClientAppointment =
                     config['notificar_cliente_agendamento'] ?? true;
                 _notifyDaysBefore = config['notificar_dias_antes'] ?? 1;
+
+                // FASE 4 — Parcelamento
+                _acceptInstallments = config['aceitar_parcelas'] ?? true;
+                _maxInstallments = (config['max_parcelas'] ?? 6).clamp(2, 12);
               });
             }
           }
@@ -166,11 +176,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       final canUseOnline = await SubscriptionService.canUseOnlinePayment();
 
       if (!canUseOnline) {
-        // Enforce Free plan restrictions
+        // Free plan: force cash only
         _acceptPix = false;
         _acceptCard = false;
         _requireDeposit = false;
-        _acceptCash = true; // Force cash payment
+        _acceptCash = true;
+        _creditTaxPercent = 0.0; // ← [FIX] não salvar taxa para plano free
+        _acceptInstallments =
+            false; // ← [FIX] não salvar parcelamento para plano free
       } else {
         // Paid Plan Validation: Ensure at least one payment method is enabled (pix, card or cash)
         if (!(_acceptPix || _acceptCard || _acceptCash)) {
@@ -206,6 +219,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           'tax_percent': _creditTaxPercent,
           'notificar_cliente_agendamento': _notifyClientAppointment,
           'notificar_dias_antes': _notifyDaysBefore,
+          // FASE 4 — Parcelamento
+          'aceitar_parcelas': _acceptInstallments,
+          'max_parcelas': _acceptInstallments ? _maxInstallments : 1,
           'atualizado_em': FieldValue.serverTimestamp(),
         }
       });
@@ -348,13 +364,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-
                       // ═══ REGRAS DE AGENDAMENTO ═══
-                      _buildSectionHeader("Regras de Agendamento", Icons.settings_suggest),
+                      _buildSectionHeader(
+                          "Regras de Agendamento", Icons.settings_suggest),
                       _buildSettingCard([
                         // INTERVALO
                         Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 12),
                           child: Row(
                             children: [
                               Expanded(
@@ -362,35 +379,49 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     const Text("Intervalo da Agenda",
-                                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-                                    _subtitled(Icons.schedule, "Espaço entre horários (Ex: 08:00, 09:00)"),
+                                        style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.bold)),
+                                    _subtitled(Icons.schedule,
+                                        "Espaço entre horários (Ex: 08:00, 09:00)"),
                                   ],
                                 ),
                               ),
                               Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 12),
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 12),
                                 decoration: BoxDecoration(
-                                    color: AppColors.primaryPurple.withValues(alpha: 0.1),
+                                    color: AppColors.primaryPurple
+                                        .withValues(alpha: 0.1),
                                     borderRadius: BorderRadius.circular(8)),
                                 child: DropdownButtonHideUnderline(
                                   child: DropdownButton<int>(
                                     value: _appointmentIntervalMinutes,
                                     icon: const Icon(Icons.access_time,
-                                        size: 18, color: AppColors.primaryPurple),
+                                        size: 18,
+                                        color: AppColors.primaryPurple),
                                     style: const TextStyle(
                                         color: AppColors.primaryPurple,
                                         fontWeight: FontWeight.bold,
                                         fontSize: 13),
                                     items: const [
-                                      DropdownMenuItem(value: 15, child: Text("15 min")),
-                                      DropdownMenuItem(value: 30, child: Text("30 min")),
-                                      DropdownMenuItem(value: 45, child: Text("45 min")),
-                                      DropdownMenuItem(value: 60, child: Text("1 hora")),
-                                      DropdownMenuItem(value: 90, child: Text("1h 30min")),
-                                      DropdownMenuItem(value: 120, child: Text("2 horas")),
+                                      DropdownMenuItem(
+                                          value: 15, child: Text("15 min")),
+                                      DropdownMenuItem(
+                                          value: 30, child: Text("30 min")),
+                                      DropdownMenuItem(
+                                          value: 45, child: Text("45 min")),
+                                      DropdownMenuItem(
+                                          value: 60, child: Text("1 hora")),
+                                      DropdownMenuItem(
+                                          value: 90, child: Text("1h 30min")),
+                                      DropdownMenuItem(
+                                          value: 120, child: Text("2 horas")),
                                     ],
                                     onChanged: (val) {
-                                      if (val != null) setState(() => _appointmentIntervalMinutes = val);
+                                      if (val != null)
+                                        setState(() =>
+                                            _appointmentIntervalMinutes = val);
                                     },
                                   ),
                                 ),
@@ -414,7 +445,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                 const Flexible(
                                   child: Text("Otimizar Agenda",
                                       overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                                      style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.bold)),
                                 ),
                                 if (!isPremium) _buildPremiumBadge(),
                               ],
@@ -433,10 +466,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
                                 children: [
                                   const Text("Liberar Agenda por (Dias)",
-                                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                                      style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.bold)),
                                   Text("${_bookingWindowDays.round()} dias",
                                       style: const TextStyle(
                                           color: AppColors.primaryPurple,
@@ -452,7 +488,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                 max: 90,
                                 divisions: 83,
                                 activeColor: AppColors.primaryPurple,
-                                onChanged: (v) => setState(() => _bookingWindowDays = v),
+                                onChanged: (v) =>
+                                    setState(() => _bookingWindowDays = v),
                               ),
                             ],
                           ),
@@ -466,10 +503,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
                                 children: [
                                   const Text("Antecedência Mínima (Horas)",
-                                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                                      style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.bold)),
                                   Text("${_minAdvanceHours.round()}h antes",
                                       style: const TextStyle(
                                           color: AppColors.primaryPurple,
@@ -485,7 +525,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                 max: 72,
                                 divisions: 71,
                                 activeColor: AppColors.primaryPurple,
-                                onChanged: (v) => setState(() => _minAdvanceHours = v),
+                                onChanged: (v) =>
+                                    setState(() => _minAdvanceHours = v),
                               ),
                             ],
                           ),
@@ -519,7 +560,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                             "Exibir lista de equipe no agendamento",
                             isPremium ? _clientChoosesProfessional : true,
                             isPremium
-                                ? (v) => setState(() => _clientChoosesProfessional = v)
+                                ? (v) => setState(
+                                    () => _clientChoosesProfessional = v)
                                 : (v) => _showUpgradeDialog(),
                             trailing: !isPremium ? _buildPremiumBadge() : null,
                           ),
@@ -528,22 +570,26 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
 
                       // ═══ POLÍTICA DE CANCELAMENTO ═══
                       const SizedBox(height: 24),
-                      _buildSectionHeader("Política de Cancelamento", Icons.timer_off),
+                      _buildSectionHeader(
+                          "Política de Cancelamento", Icons.timer_off),
                       _buildCancelCard(),
 
                       // ═══ FINANCEIRO E SINAL ═══
                       const SizedBox(height: 24),
-                      _buildSectionHeader("Financeiro e Sinal", Icons.payments_outlined),
+                      _buildSectionHeader(
+                          "Financeiro e Sinal", Icons.payments_outlined),
                       _buildFinanceCard(),
 
                       // ═══ PAGAMENTOS ONLINE ═══
                       const SizedBox(height: 12),
-                      _buildSectionHeader("Pagamentos Online", Icons.account_balance_wallet),
+                      _buildSectionHeader(
+                          "Pagamentos Online", Icons.account_balance_wallet),
                       _buildPaymentIntegrationCard(),
 
                       // ═══ NOTIFICAÇÕES ═══
                       const SizedBox(height: 24),
-                      _buildSectionHeader("Notificações", Icons.notifications_active),
+                      _buildSectionHeader(
+                          "Notificações", Icons.notifications_active),
                       _buildNotificationCard(),
 
                       const SizedBox(height: 24),
@@ -790,188 +836,277 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       builder: (context, snapshot) {
         final isPremium = snapshot.data ?? false;
 
-        return _buildSettingCard([
-          // SINAL / ENTRADA
-          SwitchListTile(
-            title: const Text("Exigir Sinal (Entrada)",
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-            value: _requireDeposit,
-            activeThumbColor: AppColors.primaryPurple,
-            onChanged: isPremium
-                ? (v) => setState(() => _requireDeposit = v)
-                : (v) => _showUpgradeDialog(),
-            subtitle: !isPremium
-                ? Row(
-                    children: [
-                      _buildPremiumBadge(),
-                    ],
-                  )
-                : null,
-          ),
-          if (_requireDeposit)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Row(children: [
-                const Text("Percentual:", style: TextStyle(fontSize: 13)),
-                Expanded(
-                  child: Slider(
-                    value: _depositPercent,
-                    min: 10,
-                    max: 100,
-                    divisions: 18,
-                    activeColor: AppColors.primaryPurple,
-                    onChanged: (v) => setState(() => _depositPercent = v),
-                  ),
-                ),
-                Text("${_depositPercent.round()}%",
-                    style: const TextStyle(fontWeight: FontWeight.bold))
-              ]),
-            ),
-
-          const Divider(height: 1),
-          // MÉTODOS ACEITOS (centralizado)
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text("Métodos de Pagamento Aceitos",
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-
-              // PIX (Online/Premium)
-              Opacity(
-                opacity: isPremium ? 1.0 : 0.6,
-                child: _buildSwitchTile(
-                  "PIX",
-                  "Pagamento instantâneo via QR",
-                  isPremium ? _acceptPix : false,
-                  isPremium
-                      ? (v) => setState(() => _acceptPix = v)
-                      : (v) => _showUpgradeDialog(),
-                  trailing: !isPremium ? _buildPremiumBadge() : null,
-                ),
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Banner de upgrade para usuários free
+            if (snapshot.hasData && !isPremium)
+              PlanUpgradeBanner(
+                currentPlanName: 'Free',
+                featureDescription: 'pagamentos online (PIX e Cartão)',
+                onUpgradeTap: () async {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const SubscriptionPlansPage()),
+                  );
+                  if (mounted) setState(() {});
+                },
               ),
-
-              // Card (Online/Premium)
-              Opacity(
-                opacity: isPremium ? 1.0 : 0.6,
-                child: _buildSwitchTile(
-                  "Cartão",
-                  "Pagamento com cartão via gateway",
-                  isPremium ? _acceptCard : false,
-                  isPremium
-                      ? (v) => setState(() => _acceptCard = v)
-                      : (v) => _showUpgradeDialog(),
-                  trailing: !isPremium ? _buildPremiumBadge() : null,
+            _buildSettingCard([
+              // SINAL / ENTRADA
+              SwitchListTile(
+                title: const Text("Exigir Sinal (Entrada)",
+                    style:
+                        TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                value: _requireDeposit,
+                activeThumbColor: AppColors.primaryPurple,
+                onChanged: isPremium
+                    ? (v) => setState(() => _requireDeposit = v)
+                    : (v) => _showUpgradeDialog(),
+                subtitle: !isPremium
+                    ? Row(
+                        children: [
+                          _buildPremiumBadge(),
+                        ],
+                      )
+                    : null,
+              ),
+              if (_requireDeposit)
+                Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Row(children: [
+                    const Text("Percentual:", style: TextStyle(fontSize: 13)),
+                    Expanded(
+                      child: Slider(
+                        value: _depositPercent,
+                        min: 10,
+                        max: 100,
+                        divisions: 18,
+                        activeColor: AppColors.primaryPurple,
+                        onChanged: (v) => setState(() => _depositPercent = v),
+                      ),
+                    ),
+                    Text("${_depositPercent.round()}%",
+                        style: const TextStyle(fontWeight: FontWeight.bold))
+                  ]),
                 ),
-              ),
 
-              // Cash (Always available, forced ON for Free plan if online is disabled)
-              _buildSwitchTile(
-                "Presencial",
-                "Pagamento no local (dinheiro/cartão)",
-                !isPremium ? true : _acceptCash,
-                !isPremium
-                    ? (v) {}
-                    : (v) =>
-                        setState(() => _acceptCash = v), // Locked ON for Free
-              ),
-            ]),
-          ),
-
-          const Divider(height: 1),
-          // CONFIGURAÇÕES DE CARTÃO (aparecem aqui, estilo centralizado)
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text("Configurações - Cartão de Crédito",
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              _subtitled(Icons.info_outline,
-                  "Defina se a taxa será repassada e o percentual único a aplicar sobre o valor."),
-              const SizedBox(height: 12),
-              // vertical switches (uma linha cada)
-              // único slider de taxa aplicada ao crédito (0% - 20%)
+              const Divider(height: 1),
+              // MÉTODOS ACEITOS
               Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
+                padding: const EdgeInsets.all(12),
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text("Taxa aplicada ao crédito (%)",
-                                style: TextStyle(fontSize: 13)),
-                            Text("${_creditTaxPercent.toStringAsFixed(1)}%",
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold)),
-                          ]),
-                      Slider(
-                        value: _creditTaxPercent,
-                        min: 0,
-                        max: 20,
-                        divisions: 200,
-                        label: "${_creditTaxPercent.toStringAsFixed(1)}%",
-                        onChanged: (v) => setState(() => _creditTaxPercent = v),
-                        activeColor: AppColors.primaryPurple,
+                      const Text("Métodos de Pagamento Aceitos",
+                          style: TextStyle(
+                              fontSize: 14, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+
+                      // PIX
+                      Opacity(
+                        opacity: isPremium ? 1.0 : 0.6,
+                        child: _buildSwitchTile(
+                          "PIX",
+                          "Pagamento instantâneo via QR",
+                          isPremium ? _acceptPix : false,
+                          isPremium
+                              ? (v) => setState(() => _acceptPix = v)
+                              : (v) => _showUpgradeDialog(),
+                          trailing: !isPremium ? _buildPremiumBadge() : null,
+                        ),
+                      ),
+
+                      // Cartão
+                      Opacity(
+                        opacity: isPremium ? 1.0 : 0.6,
+                        child: _buildSwitchTile(
+                          "Cartão",
+                          "Pagamento com cartão via gateway",
+                          isPremium ? _acceptCard : false,
+                          isPremium
+                              ? (v) => setState(() => _acceptCard = v)
+                              : (v) => _showUpgradeDialog(),
+                          trailing: !isPremium ? _buildPremiumBadge() : null,
+                        ),
+                      ),
+
+                      // Dinheiro (sempre)
+                      _buildSwitchTile(
+                        "Presencial",
+                        "Pagamento no local (dinheiro/cartão)",
+                        !isPremium ? true : _acceptCash,
+                        !isPremium
+                            ? (v) {}
+                            : (v) => setState(() => _acceptCash = v),
                       ),
                     ]),
               ),
+
+              const Divider(height: 1),
+              // CONFIGURAÇÕES DE CARTÃO — bloqueado para plano free
+              PlanGateWidget(
+                requiredPlan: SubscriptionPlan.starter,
+                featureLabel: 'Taxa de Cartão e Parcelamento',
+                onUpgradeTap: () async {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const SubscriptionPlansPage()),
+                  );
+                  if (mounted) setState(() {});
+                },
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text("Configurações - Cartão de Crédito",
+                            style: TextStyle(
+                                fontSize: 14, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 8),
+                        _subtitled(Icons.info_outline,
+                            "Defina se a taxa será repassada e o percentual único a aplicar sobre o valor."),
+                        const SizedBox(height: 12),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      const Text("Taxa aplicada ao crédito (%)",
+                                          style: TextStyle(fontSize: 13)),
+                                      Text(
+                                          "${_creditTaxPercent.toStringAsFixed(1)}%",
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.bold)),
+                                    ]),
+                                Slider(
+                                  value: _creditTaxPercent,
+                                  min: 0,
+                                  max: 20,
+                                  divisions: 200,
+                                  label:
+                                      "${_creditTaxPercent.toStringAsFixed(1)}%",
+                                  onChanged: (v) =>
+                                      setState(() => _creditTaxPercent = v),
+                                  activeColor: AppColors.primaryPurple,
+                                ),
+                              ]),
+                        ),
+                        const Divider(height: 1),
+                        const SizedBox(height: 8),
+                        const Text("Parcelamento",
+                            style: TextStyle(
+                                fontSize: 13, fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 4),
+                        _subtitled(Icons.credit_card,
+                            "Defina se seus clientes podem parcelar e o máximo de parcelas permitidas."),
+                        SwitchListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text("Aceitar Parcelamento",
+                              style: TextStyle(fontSize: 13)),
+                          value: _acceptInstallments,
+                          activeThumbColor: AppColors.primaryPurple,
+                          onChanged: (v) =>
+                              setState(() => _acceptInstallments = v),
+                        ),
+                        if (_acceptInstallments) ...[
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text("Máx. de Parcelas",
+                                  style: TextStyle(fontSize: 13)),
+                              Text("${_maxInstallments}x",
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: AppColors.primaryPurple)),
+                            ],
+                          ),
+                          Slider(
+                            value: _maxInstallments.toDouble(),
+                            min: 2,
+                            max: 12,
+                            divisions: 10,
+                            label: "${_maxInstallments}x",
+                            activeColor: AppColors.primaryPurple,
+                            onChanged: (v) =>
+                                setState(() => _maxInstallments = v.round()),
+                          ),
+                        ],
+                      ]),
+                ),
+              ),
             ]),
-          ),
-        ]);
+          ],
+        );
       },
     );
   }
 
   Widget _buildNotificationCard() {
     return _buildSettingCard([
-      SwitchListTile(
-        title: const Text("Notificar Cliente sobre Agendamento",
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-        subtitle: const Text("Envia lembretes automáticos antes do agendamento",
-            style: TextStyle(fontSize: 12)),
-        value: _notifyClientAppointment,
-        activeThumbColor: AppColors.primaryPurple,
-        onChanged: (v) => setState(() => _notifyClientAppointment = v),
+      // Notificação para a LOJA: novo agendamento
+      _buildSwitchTile(
+        'Avisar-me sobre novos agendamentos',
+        'Receba uma notificação push quando um cliente agendar',
+        _notifyClientAppointment,
+        (v) => setState(() => _notifyClientAppointment = v),
       ),
-      if (_notifyClientAppointment) ...[
-        const Divider(height: 1),
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text("Notificar quantos dias antes?",
-                      style:
-                          TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-                  Text(
-                      "$_notifyDaysBefore ${_notifyDaysBefore == 1 ? 'dia' : 'dias'}",
-                      style: const TextStyle(
-                          color: AppColors.primaryPurple,
-                          fontWeight: FontWeight.bold)),
-                ],
-              ),
-              const SizedBox(height: 4),
-              const Text(
-                  "O cliente receberá uma notificação push X dias antes do agendamento para confirmar presença.",
-                  style: TextStyle(fontSize: 12, color: Colors.grey)),
-              Slider(
-                value: _notifyDaysBefore.toDouble(),
-                min: 1,
-                max: 7,
-                divisions: 6,
-                activeColor: AppColors.primaryPurple,
-                onChanged: (v) => setState(() => _notifyDaysBefore = v.round()),
-              ),
-            ],
-          ),
+      const Divider(height: 1),
+
+      // Notificação para o CLIENTE: lembrete
+      Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Lembrete automático para clientes',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Quantas horas antes do agendamento o cliente recebe o lembrete?',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [1, 2, 6, 12, 24, 48].map((h) {
+                // Map existing _notifyDaysBefore (days) → hours
+                final currentH = _notifyDaysBefore * 24;
+                final isSelected = currentH == h;
+                return ChoiceChip(
+                  label: Text(
+                    h < 24 ? '${h}h' : '${h ~/ 24}d',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: isSelected ? Colors.white : Colors.black87,
+                    ),
+                  ),
+                  selected: isSelected,
+                  selectedColor: AppColors.primaryPurple,
+                  onSelected: (s) {
+                    if (s) {
+                      setState(() {
+                        _notifyDaysBefore = h ~/ 24 == 0 ? 1 : h ~/ 24;
+                      });
+                    }
+                  },
+                );
+              }).toList(),
+            ),
+          ],
         ),
-      ],
+      ),
     ]);
   }
 
@@ -1093,44 +1228,65 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   }
 
   Widget _buildPaymentIntegrationCard() {
-    return _buildSettingCard([
-      Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text("Configurações de Pagamento",
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            const Text(
-                "Centralize aqui Mercado Pago, métodos aceitos e regras de parcelamento.",
-                style: TextStyle(fontSize: 12, color: Colors.grey)),
-            const SizedBox(height: 12),
-            // Botão único para ir direto à página de conexão do Mercado Pago
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.account_balance_wallet),
-                label: const Text("Conectar / Configurar Mercado Pago"),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primaryPurple,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                ),
-                onPressed: () {
-                  if (!mounted) return;
-                  Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) => PaymentSettingsPage(
-                              onClose: () => Navigator.pop(context))));
-                },
+    return FutureBuilder<bool>(
+      future: SubscriptionService.canUseOnlinePayment(),
+      builder: (context, canPaySnapshot) {
+        final canPay = canPaySnapshot.data ?? false;
+        return _buildSettingCard([
+          PlanGateWidget(
+            requiredPlan: SubscriptionPlan.starter,
+            featureLabel: 'Conexão com Mercado Pago',
+            onUpgradeTap: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => const SubscriptionPlansPage()),
+              );
+              if (mounted) setState(() {});
+            },
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text("Configurações de Pagamento",
+                      style:
+                          TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  const Text(
+                      "Centralize aqui Mercado Pago, métodos aceitos e regras de parcelamento.",
+                      style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.account_balance_wallet),
+                      label: const Text("Conectar / Configurar Mercado Pago"),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryPurple,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      onPressed: canPay
+                          ? () {
+                              if (!mounted) return;
+                              Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                      builder: (_) => PaymentSettingsPage(
+                                          onClose: () =>
+                                              Navigator.pop(context))));
+                            }
+                          : null,
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
-      )
-    ]);
+          ),
+        ]);
+      },
+    );
   }
 
   Future<bool?> _confirmAndDeleteAccount() async {

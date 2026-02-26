@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import '../../core/theme/app_colors.dart';
 import '../../core/services/mercado_pago_service.dart';
+import '../modules/business/subscription_service.dart';
 import '../modules/schedule/checkout_transparente_page.dart';
 import '../modules/schedule/booking_success_page.dart';
 import '../core/widgets/loading_page.dart';
@@ -50,8 +51,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
   String _selectedPaymentType = 'total';
   String _selectedMethod = 'pix';
   bool _paymentConfigLoaded = false;
-  // Enquanto não tivermos contrato/limitação, liberar métodos para todos
-  final bool _forceAllPayments = true;
+
   /// Dados do cartão coletados no WebView (modo "Confirmar e ir para revisão")
   Map<String, dynamic>? _storedCardData;
 
@@ -70,6 +70,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
   @override
   void initState() {
     super.initState();
+    debugPrint(
+        '🚀 CheckoutPage: initState | shopId: ${widget.shopId} | serviceId: ${widget.serviceDoc.id}');
     _initializeCheckout();
   }
 
@@ -87,27 +89,45 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
   Future<void> _loadShopPaymentConfig() async {
     try {
-      final shopDoc = await FirebaseFirestore.instance.collection('shops').doc(widget.shopId).get();
+      final shopDoc = await FirebaseFirestore.instance
+          .collection('shops')
+          .doc(widget.shopId)
+          .get();
       if (!shopDoc.exists) return;
 
       final data = shopDoc.data()!;
       final mpData = data['mercadopago'] as Map<String, dynamic>?;
-      final config = data['config'] as Map<String, dynamic>? ?? widget.shopConfig;
+      final config =
+          data['config'] as Map<String, dynamic>? ?? widget.shopConfig;
 
       final percentualFromDb = config['percentual_sinal'];
       int percentualFinal = 30;
-      if (percentualFromDb != null) percentualFinal = (percentualFromDb as num).toInt();
+      if (percentualFromDb != null) {
+        percentualFinal = (percentualFromDb as num).toInt();
+      }
 
-      String? token = mpData?['access_token']?.toString() ?? data['mp_access_token']?.toString();
+      String? token = mpData?['access_token']?.toString() ??
+          data['mp_access_token']?.toString();
       final isValidToken = token != null && token.length > 20;
 
-      debugPrint('🔐 Token MP válido: $isValidToken (${token?.length ?? 0} chars)');
+      debugPrint(
+          '🔐 Token MP válido: $isValidToken (${token?.length ?? 0} chars)');
+
+      // Verifica o plano da loja para habilitar pagamento online.
+      // Usamos getShopPlan(shopId) — não getCurrentPlan() — pois o usuário
+      // logado aqui é o CLIENTE, não o dono da loja.
+      final shopPlan = await SubscriptionService.getShopPlan(widget.shopId);
+      final planAllowsOnline =
+          SubscriptionService.planSupportsOnlinePayment(shopPlan);
 
       setState(() {
         shopAccessToken = token;
-        // Se estivermos em modo liberado, permite todos os métodos configurados mesmo sem token.
-        aceitaPix = _forceAllPayments || (config['pagamento_pix'] ?? true);
-        aceitaCartao = _forceAllPayments || (config['pagamento_cartao'] ?? true);
+        // Habilita PIX apenas se o plano da loja suporta online E a loja ativou explicitamente.
+        // Default false: nova loja sem config não ativa PIX automática.
+        aceitaPix = planAllowsOnline && (config['pagamento_pix'] ?? false);
+        // Habilita cartão apenas se o plano da loja suporta online E a loja ativou explicitamente.
+        aceitaCartao =
+            planAllowsOnline && (config['pagamento_cartao'] ?? false);
         exigeSinal = config['exigir_sinal'] ?? false;
         percentualSinalInt = percentualFinal;
 
@@ -124,7 +144,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
   }
 
   void _calculateFinancials() {
-    valorTotal = widget.servicePriceOverride ?? double.tryParse(widget.serviceDoc['preco'].toString()) ?? 0.0;
+    valorTotal = widget.servicePriceOverride ??
+        double.tryParse(widget.serviceDoc['preco'].toString()) ??
+        0.0;
     valorSinal = valorTotal * (percentualSinalInt / 100.0);
     valorFinalComJuros = valorTotal;
   }
@@ -150,7 +172,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
         // Prevent proceeding if payment configuration still loading for online flows
         if (!_paymentConfigLoaded) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Aguarde, carregando opções de pagamento...")));
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text("Aguarde, carregando opções de pagamento...")));
           return;
         }
         // If no online methods are available, silently fallback to "local" payment.
@@ -163,7 +186,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
           break;
         }
         if (_selectedMethod == 'card' && _selectedPaymentType != 'local') {
-          double valorParaCobrar = (_selectedPaymentType == 'sinal') ? valorSinal : valorTotal;
+          double valorParaCobrar =
+              (_selectedPaymentType == 'sinal') ? valorSinal : valorTotal;
           final result = await Navigator.push<Map<String, dynamic>>(
             context,
             MaterialPageRoute(
@@ -204,12 +228,14 @@ class _CheckoutPageState extends State<CheckoutPage> {
     String tituloPagamento = "Pagar no Local";
     String detalhePagamento = "Dinheiro ou Cartão na hora";
     String valorExibido = _currencyFormat.format(valorTotal);
-    
+
     // 🔄 Define o texto do botão baseado no tipo de pagamento
-    String textoBotao = _selectedPaymentType == 'local' ? "FINALIZAR" : "FINALIZAR E PAGAR";
+    String textoBotao =
+        _selectedPaymentType == 'local' ? "FINALIZAR" : "FINALIZAR E PAGAR";
 
     if (_selectedPaymentType != 'local') {
-      double valorReal = (_selectedPaymentType == 'sinal') ? valorSinal : valorTotal;
+      double valorReal =
+          (_selectedPaymentType == 'sinal') ? valorSinal : valorTotal;
       valorExibido = _currencyFormat.format(valorReal);
 
       if (_selectedMethod == 'pix') {
@@ -240,28 +266,46 @@ class _CheckoutPageState extends State<CheckoutPage> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 const Text("Resumo do Pedido",
-                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppColors.primaryPurple)),
-                IconButton(onPressed: () => Navigator.pop(ctx), icon: const Icon(Icons.close))
+                    style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primaryPurple)),
+                IconButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    icon: const Icon(Icons.close))
               ],
             ),
             const SizedBox(height: 5),
-            const Text("Confira os detalhes antes de finalizar.", style: TextStyle(color: Colors.grey)),
+            const Text("Confira os detalhes antes de finalizar.",
+                style: TextStyle(color: Colors.grey)),
             const SizedBox(height: 25),
-            _summaryItem(Icons.cut, "Serviço", widget.serviceNameOverride ?? widget.serviceDoc['nome']),
-            _summaryItem(Icons.person, "Profissional", widget.professionalDoc['nome'] ?? ''),
+            _summaryItem(Icons.cut, "Serviço",
+                widget.serviceNameOverride ?? widget.serviceDoc['nome']),
+            _summaryItem(Icons.person, "Profissional",
+                widget.professionalDoc['nome'] ?? ''),
             _summaryItem(Icons.calendar_today, "Data e Hora",
                 "${DateFormat('dd/MM').format(widget.date)} às ${widget.time.format(context)}"),
             const Divider(height: 30),
-            _summaryItem(Icons.payment, "Forma de Pagamento", tituloPagamento, subtitle: detalhePagamento),
+            _summaryItem(Icons.payment, "Forma de Pagamento", tituloPagamento,
+                subtitle: detalhePagamento),
             const SizedBox(height: 10),
             Container(
               padding: const EdgeInsets.all(15),
-              decoration: BoxDecoration(color: AppColors.primaryPurple.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(10)),
+              decoration: BoxDecoration(
+                  color: AppColors.primaryPurple.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10)),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text("TOTAL A PAGAR", style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.primaryPurple)),
-                  Text(valorExibido, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: AppColors.primaryPurple)),
+                  const Text("TOTAL A PAGAR",
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.primaryPurple)),
+                  Text(valorExibido,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18,
+                          color: AppColors.primaryPurple)),
                 ],
               ),
             ),
@@ -270,22 +314,34 @@ class _CheckoutPageState extends State<CheckoutPage> {
               width: double.infinity,
               height: 55,
               child: ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.green, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12))),
                 onPressed: () {
+                  debugPrint(
+                      '🖱️ CheckoutPage: Finalizar clicado | Tipo: $_selectedPaymentType');
                   Navigator.pop(ctx);
                   // Se pagamento local, finalize imediatamente sem fluxo de pagamento
                   if (_selectedPaymentType == 'local') {
-                    _saveBooking(metodo: "No Local", status: "agendado", valorPago: 0);
+                    _saveBooking(
+                        metodo: "No Local", status: "agendado", valorPago: 0);
                   } else {
                     _executeFinalAction();
                   }
                 },
                 child: Text(textoBotao,
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16)),
               ),
             ),
             const SizedBox(height: 10),
-            Center(child: TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Voltar e Editar")))
+            Center(
+                child: TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text("Voltar e Editar")))
           ],
         ),
       ),
@@ -293,19 +349,22 @@ class _CheckoutPageState extends State<CheckoutPage> {
   }
 
   Future<void> _executeFinalAction() async {
-    debugPrint('Executando ação final | Tipo: $_selectedPaymentType | Método: $_selectedMethod');
+    debugPrint(
+        'Executando ação final | Tipo: $_selectedPaymentType | Método: $_selectedMethod');
 
     if (_selectedPaymentType == 'local') {
       debugPrint('→ Pagamento LOCAL');
       _saveBooking(metodo: "No Local", status: "agendado", valorPago: 0);
     } else if (_selectedMethod == 'pix') {
       debugPrint('→ Pagamento PIX');
-      double valor = (_selectedPaymentType == 'sinal') ? valorSinal : valorTotal;
+      double valor =
+          (_selectedPaymentType == 'sinal') ? valorSinal : valorTotal;
       String desc = (_selectedPaymentType == 'sinal') ? "Sinal" : "Total";
       _generatePix(valor, desc);
     } else {
       debugPrint('→ Pagamento CARTÃO → cobrando com dados já coletados');
-      double valorParaCobrar = (_selectedPaymentType == 'sinal') ? valorSinal : valorTotal;
+      double valorParaCobrar =
+          (_selectedPaymentType == 'sinal') ? valorSinal : valorTotal;
       if (_storedCardData != null) {
         await _processarPagamentoComCartaoArmazenado(
           valor: valorParaCobrar,
@@ -317,7 +376,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Dados do cartão não encontrados. Preencha o cartão novamente.")),
+          const SnackBar(
+              content: Text(
+                  "Dados do cartão não encontrados. Preencha o cartão novamente.")),
         );
       }
     }
@@ -337,7 +398,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
       if (idToken == null) return;
 
       final response = await http.post(
-        Uri.parse('https://us-central1-wismart-118c3.cloudfunctions.net/criarPagamento'),
+        Uri.parse(
+            'https://us-central1-wismart-118c3.cloudfunctions.net/criarPagamento'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'data': {
@@ -381,7 +443,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
   Future<String?> _getPaymentIdToken() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      _showError('Não foi possível validar sua sessão para o pagamento. Tente novamente.');
+      _showError(
+          'Não foi possível validar sua sessão para o pagamento. Tente novamente.');
       return null;
     }
     try {
@@ -390,7 +453,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
       try {
         return await user.getIdToken();
       } catch (_) {
-        _showError('Não foi possível validar sua sessão para o pagamento. Tente novamente.');
+        _showError(
+            'Não foi possível validar sua sessão para o pagamento. Tente novamente.');
         return null;
       }
     }
@@ -401,7 +465,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
     double valorExibido = valorFinalComJuros;
     if (_selectedPaymentType == 'local') {
       valorExibido = valorTotal;
-    } else if (_selectedPaymentType == 'sinal' && _selectedMethod != 'card') valorExibido = valorSinal;
+    } else if (_selectedPaymentType == 'sinal' && _selectedMethod != 'card') {
+      valorExibido = valorSinal;
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -427,9 +493,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
                   children: [
                     _buildResumoHeader(valorExibido),
                     const SizedBox(height: 25),
-                    if (_currentStep == 0) _buildStep1_TipoValor(),
-                    if (_currentStep == 1) _buildStep2_MetodoPagamento(),
-                    if (_currentStep == 2) _buildStep3_Confirmacao(),
+                    if (_currentStep == 0) _buildStep1TipoValor(),
+                    if (_currentStep == 1) _buildStep2MetodoPagamento(),
+                    if (_currentStep == 2) _buildStep3Confirmacao(),
                   ],
                 ),
               ),
@@ -460,7 +526,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     height: 40,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: isActive ? AppColors.primaryPurple : Colors.grey[300],
+                      color:
+                          isActive ? AppColors.primaryPurple : Colors.grey[300],
                     ),
                     child: Center(
                       child: Text(
@@ -477,7 +544,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     stepLabels[index],
                     style: TextStyle(
                       fontSize: 11,
-                      fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                      fontWeight:
+                          isCurrent ? FontWeight.bold : FontWeight.normal,
                       color: isCurrent ? AppColors.primaryPurple : Colors.grey,
                     ),
                   ),
@@ -492,7 +560,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
               value: (_currentStep + 1) / 4,
               minHeight: 4,
               backgroundColor: Colors.grey[300],
-              valueColor: AlwaysStoppedAnimation<Color>(AppColors.primaryPurple),
+              valueColor:
+                  AlwaysStoppedAnimation<Color>(AppColors.primaryPurple),
             ),
           ),
         ],
@@ -500,7 +569,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     );
   }
 
-  Widget _buildStep1_TipoValor() {
+  Widget _buildStep1TipoValor() {
     if (!_paymentConfigLoaded) {
       return Center(
         child: Padding(
@@ -510,7 +579,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
               SizedBox(height: 8),
               CircularProgressIndicator(),
               SizedBox(height: 12),
-              Text("Carregando opções de pagamento...", style: TextStyle(color: Colors.grey)),
+              Text("Carregando opções de pagamento...",
+                  style: TextStyle(color: Colors.grey)),
             ],
           ),
         ),
@@ -520,7 +590,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text("O que deseja pagar?", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: AppColors.primaryPurple)),
+        const Text("O que deseja pagar?",
+            style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 18,
+                color: AppColors.primaryPurple)),
         const SizedBox(height: 20),
         if (exigeSinal && (aceitaPix || aceitaCartao))
           _buildPaymentTypeCard(
@@ -573,7 +647,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: isSelected ? AppColors.primaryPurple.withValues(alpha: 0.08) : Colors.white,
+          color: isSelected
+              ? AppColors.primaryPurple.withValues(alpha: 0.08)
+              : Colors.white,
           border: Border.all(
             color: isSelected ? AppColors.primaryPurple : Colors.grey[300]!,
             width: isSelected ? 2 : 1,
@@ -588,7 +664,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: isSelected ? AppColors.primaryPurple : Colors.grey[400]!,
+                  color:
+                      isSelected ? AppColors.primaryPurple : Colors.grey[400]!,
                   width: 2,
                 ),
               ),
@@ -610,8 +687,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                  Text(subtitle, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                  Text(title,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 15)),
+                  Text(subtitle,
+                      style: const TextStyle(fontSize: 12, color: Colors.grey)),
                 ],
               ),
             ),
@@ -619,20 +699,27 @@ class _CheckoutPageState extends State<CheckoutPage> {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
                     color: badgeColor.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
                     badge,
-                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: badgeColor),
+                    style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        color: badgeColor),
                   ),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   _currencyFormat.format(amount),
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.primaryPurple),
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                      color: AppColors.primaryPurple),
                 ),
               ],
             ),
@@ -642,7 +729,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     );
   }
 
-  Widget _buildStep2_MetodoPagamento() {
+  Widget _buildStep2MetodoPagamento() {
     if (_selectedPaymentType == 'local') {
       return Column(
         children: [
@@ -673,7 +760,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text("Escolha a forma de pagamento", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: AppColors.primaryPurple)),
+        const Text("Escolha a forma de pagamento",
+            style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 18,
+                color: AppColors.primaryPurple)),
         const SizedBox(height: 20),
         Row(
           children: [
@@ -728,7 +819,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
         ),
         child: Column(
           children: [
-            Icon(icon, size: 32, color: isSelected ? Colors.white : AppColors.primaryPurple),
+            Icon(icon,
+                size: 32,
+                color: isSelected ? Colors.white : AppColors.primaryPurple),
             const SizedBox(height: 8),
             Text(
               label,
@@ -750,11 +843,15 @@ class _CheckoutPageState extends State<CheckoutPage> {
     );
   }
 
-  Widget _buildStep3_Confirmacao() {
+  Widget _buildStep3Confirmacao() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text("Confirmação final", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: AppColors.primaryPurple)),
+        const Text("Confirmação final",
+            style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 18,
+                color: AppColors.primaryPurple)),
         const SizedBox(height: 20),
         // Prioriza o tipo de pagamento: se local, mostra mensagem local independente do método selecionado
         if (_selectedPaymentType == 'local')
@@ -819,7 +916,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
                   side: const BorderSide(color: AppColors.primaryPurple),
                   padding: const EdgeInsets.symmetric(vertical: 16),
                 ),
-                child: const Text("Voltar", style: TextStyle(color: AppColors.primaryPurple)),
+                child: const Text("Voltar",
+                    style: TextStyle(color: AppColors.primaryPurple)),
               ),
             ),
           if (_currentStep > 0) const SizedBox(width: 12),
@@ -829,13 +927,19 @@ class _CheckoutPageState extends State<CheckoutPage> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primaryPurple,
                 padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
               ),
               child: _isLoading
-                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                          color: Colors.white, strokeWidth: 2))
                   : Text(
                       _currentStep == 2 ? "REVISAR" : "PRÓXIMO",
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                      style: const TextStyle(
+                          color: Colors.white, fontWeight: FontWeight.bold),
                     ),
             ),
           ),
@@ -847,11 +951,13 @@ class _CheckoutPageState extends State<CheckoutPage> {
   Widget _buildResumoHeader(double v) {
     return Container(
       padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+      decoration: BoxDecoration(
+          color: Colors.white, borderRadius: BorderRadius.circular(16)),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          const Text("Total a Pagar", style: TextStyle(fontSize: 14, color: Colors.grey)),
+          const Text("Total a Pagar",
+              style: TextStyle(fontSize: 14, color: Colors.grey)),
           Text(
             _currencyFormat.format(v),
             style: const TextStyle(
@@ -865,7 +971,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
     );
   }
 
-  Widget _summaryItem(IconData icon, String title, String value, {String? subtitle}) {
+  Widget _summaryItem(IconData icon, String title, String value,
+      {String? subtitle}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 15),
       child: Row(
@@ -873,7 +980,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
         children: [
           Container(
             padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(8)),
+            decoration: BoxDecoration(
+                color: Colors.grey[100],
+                borderRadius: BorderRadius.circular(8)),
             child: Icon(icon, size: 20, color: Colors.grey[700]),
           ),
           const SizedBox(width: 15),
@@ -881,10 +990,14 @@ class _CheckoutPageState extends State<CheckoutPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                Text(title,
+                    style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                Text(value,
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.w600)),
                 if (subtitle != null)
-                  Text(subtitle, style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+                  Text(subtitle,
+                      style: TextStyle(fontSize: 13, color: Colors.grey[600])),
               ],
             ),
           ),
@@ -896,17 +1009,26 @@ class _CheckoutPageState extends State<CheckoutPage> {
   Future<void> _generatePix(double amount, String desc) async {
     if (shopAccessToken == null) return;
     // show full-screen loading
-    if (mounted) Navigator.push(context, MaterialPageRoute(builder: (_) => const AppLoadingPage(message: 'Gerando QR Code...'), fullscreenDialog: true));
+    if (mounted) {
+      Navigator.push(
+          context,
+          MaterialPageRoute(
+              builder: (_) =>
+                  const AppLoadingPage(message: 'Gerando QR Code...'),
+              fullscreenDialog: true));
+    }
     try {
       final user = FirebaseAuth.instance.currentUser!;
       final result = await MercadoPagoService.gerarPix(
-        accessToken: shopAccessToken!,
+        shopId: widget.shopId,
         amount: amount,
         emailCliente: user.email ?? "cliente@app.com",
         description: desc,
       );
-      final qrCode64 = result['point_of_interaction']['transaction_data']['qr_code_base64'];
-      final copyPaste = result['point_of_interaction']['transaction_data']['qr_code'];
+      final qrCode64 =
+          result['point_of_interaction']['transaction_data']['qr_code_base64'];
+      final copyPaste =
+          result['point_of_interaction']['transaction_data']['qr_code'];
       final paymentId = result['id'].toString();
       if (mounted) {
         _startPixMonitoring(paymentId, amount);
@@ -919,7 +1041,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
     } finally {
       if (mounted) {
         // ensure loading is closed if still open
-        try { Navigator.pop(context); } catch (_) {}
+        try {
+          Navigator.pop(context);
+        } catch (_) {}
         setState(() => _isLoading = false);
       }
     }
@@ -931,7 +1055,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     _timerPolling = Timer.periodic(const Duration(seconds: 3), (timer) async {
       try {
         final status = await MercadoPagoService.verificarStatusPix(
-          accessToken: shopAccessToken!,
+          shopId: widget.shopId,
           paymentId: paymentId,
         );
         if (status == 'approved') {
@@ -939,14 +1063,21 @@ class _CheckoutPageState extends State<CheckoutPage> {
           if (mounted) {
             Navigator.pop(context);
             Navigator.pop(context);
-            _saveBooking(metodo: "Pix", status: "confirmado", valorPago: valorPago, paymentId: paymentId);
+            _saveBooking(
+                metodo: "Pix",
+                status: "confirmado",
+                valorPago: valorPago,
+                paymentId: paymentId);
           }
         }
-      } catch (e) {}
+      } catch (e) {
+        debugPrint('Erro ao verificar status PIX: $e');
+      }
     });
   }
 
-  void _showPixModal(String qr64, String copyPaste, String paymentId, double valorPago) {
+  void _showPixModal(
+      String qr64, String copyPaste, String paymentId, double valorPago) {
     // Abre tela full-screen dedicada para o QR code (melhor experiência)
     Navigator.push(
       context,
@@ -960,14 +1091,16 @@ class _CheckoutPageState extends State<CheckoutPage> {
             // Ao confirmar que pagou, fecha a tela e salva o agendamento
             Navigator.pop(c);
             Navigator.pop(context);
-            _saveBooking(metodo: "Pix", status: "pendente_verificacao", valorPago: valorPago, paymentId: paymentId);
+            _saveBooking(
+                metodo: "Pix",
+                status: "pendente_verificacao",
+                valorPago: valorPago,
+                paymentId: paymentId);
           },
         ),
       ),
     );
   }
-
- 
 
   Future<void> _saveBooking({
     required String metodo,
@@ -976,8 +1109,17 @@ class _CheckoutPageState extends State<CheckoutPage> {
     String? paymentId,
   }) async {
     // show full-screen loading while saving booking
-    if (mounted) Navigator.push(context, MaterialPageRoute(builder: (_) => const AppLoadingPage(message: 'Finalizando agendamento...'), fullscreenDialog: true));
+    if (mounted) {
+      Navigator.push(
+          context,
+          MaterialPageRoute(
+              builder: (_) =>
+                  const AppLoadingPage(message: 'Finalizando agendamento...'),
+              fullscreenDialog: true));
+    }
     setState(() => _isLoading = true);
+    // Extract context-dependent values before any async gap
+    final horarioStr = widget.time.format(context);
     try {
       final user = FirebaseAuth.instance.currentUser!;
       final bookingDate = DateTime(
@@ -989,7 +1131,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
       );
 
       // Validação: permitir agendamentos múltiplos (configuração da loja)
-      final permitirMultiplos = (widget.shopConfig['permitir_multiplos'] ?? true) as bool;
+      final permitirMultiplos =
+          (widget.shopConfig['permitir_multiplos'] ?? true) as bool;
       if (!permitirMultiplos) {
         final now = DateTime.now();
         // Para evitar necessidade de índice, buscamos agendamentos do cliente e filtramos localmente.
@@ -1006,11 +1149,22 @@ class _CheckoutPageState extends State<CheckoutPage> {
           try {
             if (ts is Timestamp) {
               dt = ts.toDate();
-            } else if (ts is DateTime) dt = ts;
-          } catch (_) { dt = null; }
-          if (sId != widget.shopId) return false;
-          if (!['agendado', 'confirmado', 'pendente', 'pendente_verificacao'].contains(status)) return false;
-          if (dt == null) return false;
+            } else if (ts is DateTime) {
+              dt = ts;
+            }
+          } catch (_) {
+            dt = null;
+          }
+          if (sId != widget.shopId) {
+            return false;
+          }
+          if (!['agendado', 'confirmado', 'pendente', 'pendente_verificacao']
+              .contains(status)) {
+            return false;
+          }
+          if (dt == null) {
+            return false;
+          }
           return dt.isAfter(now) || dt.isAtSameMomentAs(now);
         }).toList();
         if (conflicting.isNotEmpty) {
@@ -1032,19 +1186,24 @@ class _CheckoutPageState extends State<CheckoutPage> {
         'valor_pago': valorPago,
         'restante_a_pagar': (valorTotal - valorPago),
         'data_agendamento': Timestamp.fromDate(bookingDate),
-        'horario': widget.time.format(context),
+        'horario': horarioStr,
         'status': status,
         'metodo_pagamento': metodo,
         'payment_id': paymentId,
         'criado_em': FieldValue.serverTimestamp(),
-        'valor_sinal': (metodo.contains('Sinal') || _selectedPaymentType == 'sinal') ? valorPago : 0,
+        'valor_sinal':
+            (metodo.contains('Sinal') || _selectedPaymentType == 'sinal')
+                ? valorPago
+                : 0,
       });
 
       if (mounted) {
-        final svcName = widget.serviceNameOverride ?? widget.serviceDoc['nome'] ?? 'Serviço';
+        final svcName = widget.serviceNameOverride ??
+            widget.serviceDoc['nome'] ??
+            'Serviço';
         final profName = widget.professionalDoc['nome'] ?? 'Profissional';
         final dateStr = DateFormat('dd/MM/yyyy').format(widget.date);
-        final timeStr = widget.time.format(context);
+        final timeStr = horarioStr;
         final paidFlag = (valorPago > 0);
         Navigator.pushAndRemoveUntil(
           context,
@@ -1060,11 +1219,15 @@ class _CheckoutPageState extends State<CheckoutPage> {
           (r) => r.isFirst,
         );
         // close loading if present
-        try { Navigator.pop(context); } catch (_) {}
+        try {
+          Navigator.pop(context);
+        } catch (_) {}
       }
     } catch (e) {
       // close loading if present then show error
-      try { Navigator.pop(context); } catch (_) {}
+      try {
+        if (mounted) Navigator.pop(context);
+      } catch (_) {}
       _showError("Erro salvar: $e");
     } finally {
       setState(() => _isLoading = false);
@@ -1085,7 +1248,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
       context: context,
       builder: (ctx) {
         return Dialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           child: Padding(
             padding: const EdgeInsets.all(18),
             child: Column(
@@ -1093,7 +1257,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
               children: [
                 const Icon(Icons.event_busy, size: 48, color: Colors.orange),
                 const SizedBox(height: 12),
-                const Text('Agendamento ativo', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const Text('Agendamento ativo',
+                    style:
+                        TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
                 const Text(
                   'Você já possui um agendamento ativo nesta loja. Aguarde a conclusão antes de agendar novamente.',
@@ -1102,16 +1268,24 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 const SizedBox(height: 16),
                 Row(
                   children: [
-                    Expanded(child: OutlinedButton(onPressed: () => Navigator.pop(ctx), child: const Text('Fechar'))),
+                    Expanded(
+                        child: OutlinedButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            child: const Text('Fechar'))),
                     const SizedBox(width: 12),
                     Expanded(
                       child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryPurple),
+                        style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primaryPurple),
                         onPressed: () {
                           Navigator.pop(ctx);
                           // open My Appointments (if logged)
                           try {
-                            Navigator.push(context, MaterialPageRoute(builder: (_) => const MyAppointmentsPage()));
+                            Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (_) =>
+                                        const MyAppointmentsPage()));
                           } catch (_) {}
                         },
                         child: const Text('Ver Agendamentos'),
@@ -1153,7 +1327,8 @@ class PixPaymentPage extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: AppColors.primaryPurple,
         foregroundColor: Colors.white,
-        title: const Text('Pagar via PIX', style: TextStyle(color: Colors.white)),
+        title:
+            const Text('Pagar via PIX', style: TextStyle(color: Colors.white)),
         elevation: 0,
       ),
       body: SafeArea(
@@ -1163,15 +1338,25 @@ class PixPaymentPage extends StatelessWidget {
               width: double.infinity,
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                gradient: LinearGradient(colors: [AppColors.primaryPurple, Colors.deepPurple.shade400]),
-                borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(20), bottomRight: Radius.circular(20)),
+                gradient: LinearGradient(colors: [
+                  AppColors.primaryPurple,
+                  Colors.deepPurple.shade400
+                ]),
+                borderRadius: const BorderRadius.only(
+                    bottomLeft: Radius.circular(20),
+                    bottomRight: Radius.circular(20)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Valor', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                  Text('Valor',
+                      style: TextStyle(color: Colors.white70, fontSize: 12)),
                   const SizedBox(height: 6),
-                  Text(currency.format(amount), style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+                  Text(currency.format(amount),
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold)),
                 ],
               ),
             ),
@@ -1181,18 +1366,32 @@ class PixPaymentPage extends StatelessWidget {
                 child: qrBase64.isNotEmpty
                     ? Container(
                         padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 12)]),
+                        decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.05),
+                                  blurRadius: 12)
+                            ]),
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             // Logo roxo centralizado acima do QR
-                            Image.asset('assets/images/logo_purple.png', height: 56),
+                            Image.asset('assets/images/logo_purple.png',
+                                height: 56),
                             const SizedBox(height: 12),
                             Image.memory(base64Decode(qrBase64)),
                           ],
                         ),
                       )
-                    : Column(mainAxisAlignment: MainAxisAlignment.center, children: const [Icon(Icons.qr_code, size: 80, color: Colors.grey), SizedBox(height: 12), Text('Erro ao gerar QR')]),
+                    : Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: const [
+                            Icon(Icons.qr_code, size: 80, color: Colors.grey),
+                            SizedBox(height: 12),
+                            Text('Erro ao gerar QR')
+                          ]),
               ),
             ),
             Padding(
@@ -1200,19 +1399,31 @@ class PixPaymentPage extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Text('Pix Copia e Cola', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const Text('Pix Copia e Cola',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(10)),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                        color: Colors.grey[100],
+                        borderRadius: BorderRadius.circular(10)),
                     child: Row(
                       children: [
-                        Expanded(child: Text(copyPaste, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontFamily: 'monospace'))),
+                        Expanded(
+                            child: Text(copyPaste,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style:
+                                    const TextStyle(fontFamily: 'monospace'))),
                         IconButton(
-                          icon: const Icon(Icons.copy, color: AppColors.primaryPurple),
+                          icon: const Icon(Icons.copy,
+                              color: AppColors.primaryPurple),
                           onPressed: () {
                             Clipboard.setData(ClipboardData(text: copyPaste));
-                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Código copiado!")));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                    content: Text("Código copiado!")));
                           },
                         )
                       ],
@@ -1220,14 +1431,19 @@ class PixPaymentPage extends StatelessWidget {
                   ),
                   const SizedBox(height: 14),
                   ElevatedButton(
-                    style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryPurple, minimumSize: const Size(double.infinity, 52)),
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryPurple,
+                        minimumSize: const Size(double.infinity, 52)),
                     onPressed: onPaid,
-                    child: const Text('JÁ REALIZEI O PAGAMENTO', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                    child: const Text('JÁ REALIZEI O PAGAMENTO',
+                        style: TextStyle(
+                            color: Colors.white, fontWeight: FontWeight.bold)),
                   ),
                   const SizedBox(height: 12),
                   TextButton(
                     onPressed: () => Navigator.pop(context),
-                    child: const Text('Voltar', style: TextStyle(color: Colors.black54)),
+                    child: const Text('Voltar',
+                        style: TextStyle(color: Colors.black54)),
                   ),
                 ],
               ),

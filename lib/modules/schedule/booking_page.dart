@@ -17,8 +17,10 @@ List<String> generateSmartSlots({
 }) {
   List<String> validSlots = [];
   try {
-    int startDayMin = int.parse(startStr.split(':')[0]) * 60 + int.parse(startStr.split(':')[1]);
-    int endDayMin = int.parse(endStr.split(':')[0]) * 60 + int.parse(endStr.split(':')[1]);
+    int startDayMin = int.parse(startStr.split(':')[0]) * 60 +
+        int.parse(startStr.split(':')[1]);
+    int endDayMin =
+        int.parse(endStr.split(':')[0]) * 60 + int.parse(endStr.split(':')[1]);
 
     busyIntervals.sort((a, b) => a['start']!.compareTo(b['start']!));
 
@@ -46,12 +48,14 @@ List<String> generateSmartSlots({
 
         bool isPast = false;
         final now = DateTime.now();
-        final slotDt = DateTime(selectedDate.year, selectedDate.month, selectedDate.day, current ~/ 60, current % 60);
+        final slotDt = DateTime(selectedDate.year, selectedDate.month,
+            selectedDate.day, current ~/ 60, current % 60);
         final minAllowedTime = now.add(Duration(hours: minAdvanceHours));
         if (slotDt.isBefore(minAllowedTime)) isPast = true;
 
         if (!hasCollision && !isPast) {
-          String timeString = "${(current ~/ 60).toString().padLeft(2, '0')}:${(current % 60).toString().padLeft(2, '0')}";
+          String timeString =
+              "${(current ~/ 60).toString().padLeft(2, '0')}:${(current % 60).toString().padLeft(2, '0')}";
           if (!validSlots.contains(timeString)) validSlots.add(timeString);
         }
       }
@@ -70,12 +74,14 @@ List<String> generateSmartSlots({
 
         bool isPast = false;
         final now = DateTime.now();
-        final slotDt = DateTime(selectedDate.year, selectedDate.month, selectedDate.day, current ~/ 60, current % 60);
+        final slotDt = DateTime(selectedDate.year, selectedDate.month,
+            selectedDate.day, current ~/ 60, current % 60);
         final minAllowedTime = now.add(Duration(hours: minAdvanceHours));
         if (slotDt.isBefore(minAllowedTime)) isPast = true;
 
         if (!hasCollision && !isPast) {
-          String timeString = "${(current ~/ 60).toString().padLeft(2, '0')}:${(current % 60).toString().padLeft(2, '0')}";
+          String timeString =
+              "${(current ~/ 60).toString().padLeft(2, '0')}:${(current % 60).toString().padLeft(2, '0')}";
           validSlots.add(timeString);
         }
         current += interval;
@@ -96,17 +102,19 @@ List<String> generateSmartSlots({
 
 class BookingPage extends StatefulWidget {
   final DocumentSnapshot shop;
-  final String serviceId;
-  final Map<String, dynamic> serviceData;
+  final DocumentSnapshot serviceDoc;
   final Map<String, dynamic>? selectedVariation;
 
   const BookingPage({
-    super.key, 
+    super.key,
     required this.shop,
-    required this.serviceId,
-    required this.serviceData,
+    required this.serviceDoc,
     this.selectedVariation,
   });
+
+  Map<String, dynamic> get serviceData =>
+      serviceDoc.data() as Map<String, dynamic>;
+  String get serviceId => serviceDoc.id;
 
   @override
   State<BookingPage> createState() => _BookingPageState();
@@ -119,8 +127,8 @@ class _BookingPageState extends State<BookingPage> {
 
   late String shopId;
   late Map<String, dynamic> shopData;
-  
-  Map<String, dynamic> _shopConfig = {}; 
+
+  Map<String, dynamic> _shopConfig = {};
   int _intervalMinutes = 60;
   bool _clientChoosesProfessional = true;
   // o controle de evitar buracos é lido via shopConfig quando necessário
@@ -140,7 +148,8 @@ class _BookingPageState extends State<BookingPage> {
       _shopConfig = shopData['config'] as Map<String, dynamic>;
       setState(() {
         _intervalMinutes = _shopConfig['intervalo_agenda_min'] ?? 60;
-        _clientChoosesProfessional = _shopConfig['cliente_escolhe_prof'] ?? true;
+        _clientChoosesProfessional =
+            _shopConfig['cliente_escolhe_prof'] ?? true;
         _bookingWindowDays = _shopConfig['janela_agendamento_dias'] ?? 90;
         _minAdvanceHours = _shopConfig['limite_minimo_agendamento_horas'] ?? 7;
       });
@@ -150,10 +159,11 @@ class _BookingPageState extends State<BookingPage> {
   void _autoSelectFirstAvailableDate(DocumentSnapshot profDoc) {
     final profData = profDoc.data() as Map<String, dynamic>;
     List<dynamic> rawWorkDays = profData['dias_trabalho'] ?? [1, 2, 3, 4, 5, 6];
-    List<int> workDays = rawWorkDays.map((e) => int.parse(e.toString())).toList();
+    List<int> workDays =
+        rawWorkDays.map((e) => int.parse(e.toString())).toList();
 
     DateTime testDate = DateTime.now();
-    
+
     if (testDate.hour >= 18) {
       testDate = testDate.add(const Duration(days: 1));
     }
@@ -178,7 +188,12 @@ class _BookingPageState extends State<BookingPage> {
       decoration: BoxDecoration(
         color: AppColors.primaryPurple,
         borderRadius: const BorderRadius.vertical(bottom: Radius.circular(30)),
-        boxShadow: [BoxShadow(color: AppColors.primaryPurple.withValues(alpha: 0.3), blurRadius: 15, offset: const Offset(0, 5))],
+        boxShadow: [
+          BoxShadow(
+              color: AppColors.primaryPurple.withValues(alpha: 0.3),
+              blurRadius: 15,
+              offset: const Offset(0, 5))
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -192,24 +207,47 @@ class _BookingPageState extends State<BookingPage> {
                 constraints: const BoxConstraints(),
               ),
               const SizedBox(width: 10),
-              const Text("Agendamento", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+              const Text("Agendamento",
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold)),
             ],
           ),
           const SizedBox(height: 12),
           Container(
             padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(14), border: Border.all(color: Colors.white.withValues(alpha: 0.15))),
+            decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(14),
+                border:
+                    Border.all(color: Colors.white.withValues(alpha: 0.15))),
             child: Row(
               children: [
-                Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10)), child: const Icon(Icons.cut, color: AppColors.primaryPurple, size: 20)),
+                Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(10)),
+                    child: const Icon(Icons.cut,
+                        color: AppColors.primaryPurple, size: 20)),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(serviceName, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold), maxLines: 1, overflow: TextOverflow.ellipsis),
+                      Text(serviceName,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis),
                       const SizedBox(height: 4),
-                      Text("${widget.serviceData['tempo_min'] ?? 30} min • ${currencyFormat.format(widget.selectedVariation?['price'] ?? widget.serviceData['preco'])}", style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                      Text(
+                          "${widget.serviceData['tempo_min'] ?? 30} min • ${currencyFormat.format(widget.selectedVariation?['price'] ?? widget.serviceData['preco'])}",
+                          style: const TextStyle(
+                              color: Colors.white70, fontSize: 13)),
                     ],
                   ),
                 ),
@@ -223,41 +261,81 @@ class _BookingPageState extends State<BookingPage> {
 
   Widget _buildProfessionalList() {
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance.collection('employees').where('shopId', isEqualTo: shopId).snapshots(),
+      stream: FirebaseFirestore.instance
+          .collection('employees')
+          .where('shopId', isEqualTo: shopId)
+          .snapshots(),
       builder: (context, snapshot) {
-        if (!snapshot.hasData) return const Center(child: CircularProgressIndicator(color: AppColors.primaryPurple));
+        if (snapshot.hasError) {
+          debugPrint(
+              '❌ BookingPage: ERRO ao carregar profissionais: ${snapshot.error}');
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Text("Erro ao carregar profissionais: ${snapshot.error}"),
+            ),
+          );
+        }
+        if (!snapshot.hasData)
+          return const Center(
+              child: CircularProgressIndicator(color: AppColors.primaryPurple));
 
         final profs = snapshot.data!.docs.where((d) {
-          final skills = (d.data() as Map)['servicos_habilidade'] as List? ?? [];
+          final skills =
+              (d.data() as Map)['servicos_habilidade'] as List? ?? [];
           return skills.isEmpty || skills.contains(widget.serviceId);
         }).toList();
 
         if (profs.isEmpty) {
-          return const Center(child: Text("Nenhum profissional disponível para este serviço."));
+          return const Center(
+              child: Text("Nenhum profissional disponível para este serviço."));
         }
 
         if (!_clientChoosesProfessional) {
           if (_selectedProfessional == null) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted) {
+              if (mounted) {
+                final selected = profs.first;
                 setState(() {
-                  _selectedProfessional = profs.first;
+                  _selectedProfessional = selected;
                 });
-                _autoSelectFirstAvailableDate(profs.first);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => BookingTimePage(
+                      shop: widget.shop,
+                      serviceDoc: widget.serviceDoc,
+                      selectedVariation: widget.selectedVariation,
+                      professionalDoc: selected,
+                      shopConfig: _shopConfig,
+                      intervalMinutes: _intervalMinutes,
+                      minAdvanceHours: _minAdvanceHours,
+                    ),
+                  ),
+                );
               }
             });
           }
-          return const Center(child: CircularProgressIndicator(color: AppColors.primaryPurple)); 
+          return const Center(
+              child: CircularProgressIndicator(color: AppColors.primaryPurple));
         }
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Padding(padding: EdgeInsets.fromLTRB(20, 20, 20, 10), child: Text("Quem vai te atender?", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
+            const Padding(
+                padding: EdgeInsets.fromLTRB(20, 20, 20, 10),
+                child: Text("Quem vai te atender?",
+                    style:
+                        TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
             Expanded(
               child: GridView.builder(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, crossAxisSpacing: 15, mainAxisSpacing: 15, childAspectRatio: 0.8),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    crossAxisSpacing: 15,
+                    mainAxisSpacing: 15,
+                    childAspectRatio: 0.8),
                 itemCount: profs.length,
                 itemBuilder: (context, index) {
                   final doc = profs[index];
@@ -278,7 +356,7 @@ class _BookingPageState extends State<BookingPage> {
                           MaterialPageRoute(
                             builder: (_) => BookingTimePage(
                               shop: widget.shop,
-                              serviceData: widget.serviceData,
+                              serviceDoc: widget.serviceDoc,
                               selectedVariation: widget.selectedVariation,
                               professionalDoc: doc,
                               shopConfig: _shopConfig,
@@ -291,10 +369,21 @@ class _BookingPageState extends State<BookingPage> {
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 200),
                         decoration: BoxDecoration(
-                          color: isSelected ? AppColors.primaryPurple : Colors.white,
+                          color: isSelected
+                              ? AppColors.primaryPurple
+                              : Colors.white,
                           borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: isSelected ? AppColors.primaryPurple : Colors.transparent, width: 2),
-                          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 10, offset: const Offset(0, 4))],
+                          border: Border.all(
+                              color: isSelected
+                                  ? AppColors.primaryPurple
+                                  : Colors.transparent,
+                              width: 2),
+                          boxShadow: [
+                            BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.05),
+                                blurRadius: 10,
+                                offset: const Offset(0, 4))
+                          ],
                         ),
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
@@ -302,11 +391,28 @@ class _BookingPageState extends State<BookingPage> {
                             CircleAvatar(
                               radius: 35,
                               backgroundColor: Colors.grey[100],
-                              backgroundImage: data['foto_url'] != null ? NetworkImage(data['foto_url']) : null,
-                              child: data['foto_url'] == null ? Text(data['nome'][0].toUpperCase(), style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: isSelected ? AppColors.primaryPurple : Colors.grey)) : null,
+                              backgroundImage: data['foto_url'] != null
+                                  ? NetworkImage(data['foto_url'])
+                                  : null,
+                              child: data['foto_url'] == null
+                                  ? Text(data['nome'][0].toUpperCase(),
+                                      style: TextStyle(
+                                          fontSize: 24,
+                                          fontWeight: FontWeight.bold,
+                                          color: isSelected
+                                              ? AppColors.primaryPurple
+                                              : Colors.grey))
+                                  : null,
                             ),
                             const SizedBox(height: 12),
-                            Text(data['nome'], style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: isSelected ? Colors.white : Colors.black87), textAlign: TextAlign.center),
+                            Text(data['nome'],
+                                style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                    color: isSelected
+                                        ? Colors.white
+                                        : Colors.black87),
+                                textAlign: TextAlign.center),
                           ],
                         ),
                       ),
@@ -340,7 +446,7 @@ class _BookingPageState extends State<BookingPage> {
 // ========================================
 class BookingTimePage extends StatefulWidget {
   final DocumentSnapshot shop;
-  final Map<String, dynamic> serviceData;
+  final DocumentSnapshot serviceDoc;
   final Map<String, dynamic>? selectedVariation;
   final DocumentSnapshot professionalDoc;
   final Map<String, dynamic> shopConfig;
@@ -350,13 +456,16 @@ class BookingTimePage extends StatefulWidget {
   const BookingTimePage({
     super.key,
     required this.shop,
-    required this.serviceData,
+    required this.serviceDoc,
     this.selectedVariation,
     required this.professionalDoc,
     required this.shopConfig,
     required this.intervalMinutes,
     required this.minAdvanceHours,
   });
+
+  Map<String, dynamic> get serviceData =>
+      serviceDoc.data() as Map<String, dynamic>;
 
   @override
   State<BookingTimePage> createState() => _BookingTimePageState();
@@ -369,6 +478,8 @@ class _BookingTimePageState extends State<BookingTimePage> {
   @override
   void initState() {
     super.initState();
+    debugPrint(
+        '🚀 BookingPage: initState | shopId: ${widget.shop.id} | serviceId: ${widget.serviceDoc.id}');
     _bookingWindowDays = widget.shopConfig['janela_agendamento_dias'] ?? 90;
     _autoSelectFirstAvailableDate(widget.professionalDoc);
   }
@@ -376,11 +487,13 @@ class _BookingTimePageState extends State<BookingTimePage> {
   void _autoSelectFirstAvailableDate(DocumentSnapshot profDoc) {
     final profData = profDoc.data() as Map<String, dynamic>;
     List<dynamic> rawWorkDays = profData['dias_trabalho'] ?? [1, 2, 3, 4, 5, 6];
-    List<int> workDays = rawWorkDays.map((e) => int.parse(e.toString())).toList();
+    List<int> workDays =
+        rawWorkDays.map((e) => int.parse(e.toString())).toList();
 
-    DateTime testDate = DateTime.now();
-    if (testDate.hour >= 18) testDate = testDate.add(const Duration(days: 1));
-    
+    final now = DateTime.now();
+    DateTime testDate = DateTime(now.year, now.month, now.day);
+    if (now.hour >= 18) testDate = testDate.add(const Duration(days: 1));
+
     for (int i = 0; i < _bookingWindowDays; i++) {
       if (workDays.contains(testDate.weekday)) {
         setState(() {
@@ -395,10 +508,13 @@ class _BookingTimePageState extends State<BookingTimePage> {
   @override
   Widget build(BuildContext context) {
     final svcName = widget.serviceData['nome'] ?? 'Serviço';
-    final lastAllowedDay = DateTime.now().add(Duration(days: _bookingWindowDays));
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final lastAllowedDay = today.add(Duration(days: _bookingWindowDays));
     final profData = widget.professionalDoc.data() as Map<String, dynamic>;
     List<dynamic> rawWorkDays = profData['dias_trabalho'] ?? [1, 2, 3, 4, 5, 6];
-    List<int> workDays = rawWorkDays.map((e) => int.parse(e.toString())).toList();
+    List<int> workDays =
+        rawWorkDays.map((e) => int.parse(e.toString())).toList();
 
     return Scaffold(
       appBar: AppBar(
@@ -419,7 +535,11 @@ class _BookingTimePageState extends State<BookingTimePage> {
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(16),
-                  boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8)],
+                  boxShadow: [
+                    BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.04),
+                        blurRadius: 8)
+                  ],
                 ),
                 child: Padding(
                   padding: const EdgeInsets.all(16.0),
@@ -433,11 +553,12 @@ class _BookingTimePageState extends State<BookingTimePage> {
                       const SizedBox(height: 16),
                       // ✅ CalendarDatePicker - RÁPIDO E RESPONSIVO
                       CalendarDatePicker(
-                        initialDate: _selectedDate ?? DateTime.now(),
-                        firstDate: DateTime.now(),
+                        initialDate: _selectedDate ?? today,
+                        firstDate: today,
                         lastDate: lastAllowedDay,
                         selectableDayPredicate: (day) {
-                          if (day.isBefore(DateTime.now())) return false;
+                          // Comparação com a data de hoje à meia-noite para permitir selecionar o dia atual
+                          if (day.isBefore(today)) return false;
                           if (day.isAfter(lastAllowedDay)) return false;
                           return workDays.contains(day.weekday);
                         },
@@ -457,19 +578,22 @@ class _BookingTimePageState extends State<BookingTimePage> {
               if (_selectedDate != null)
                 Container(
                   padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
+                  decoration: BoxDecoration(
                     color: AppColors.primaryPurple.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(color: AppColors.primaryPurple),
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.check_circle, color: AppColors.primaryPurple),
+                      const Icon(Icons.check_circle,
+                          color: AppColors.primaryPurple),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
-                          DateFormat('EEEE, dd/MM/yyyy', 'pt_BR').format(_selectedDate!),
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                          DateFormat('EEEE, dd/MM/yyyy', 'pt_BR')
+                              .format(_selectedDate!),
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 16),
                         ),
                       ),
                     ],
@@ -496,7 +620,7 @@ class _BookingTimePageState extends State<BookingTimePage> {
                                 MaterialPageRoute(
                                   builder: (_) => BookingSlotsPage(
                                     shop: widget.shop,
-                                    serviceData: widget.serviceData,
+                                    serviceDoc: widget.serviceDoc,
                                     selectedVariation: widget.selectedVariation,
                                     professionalDoc: widget.professionalDoc,
                                     shopConfig: widget.shopConfig,
@@ -531,7 +655,7 @@ class _BookingTimePageState extends State<BookingTimePage> {
 // ========================================
 class BookingSlotsPage extends StatefulWidget {
   final DocumentSnapshot shop;
-  final Map<String, dynamic> serviceData;
+  final DocumentSnapshot serviceDoc;
   final Map<String, dynamic>? selectedVariation;
   final DocumentSnapshot professionalDoc;
   final Map<String, dynamic> shopConfig;
@@ -542,7 +666,7 @@ class BookingSlotsPage extends StatefulWidget {
   const BookingSlotsPage({
     super.key,
     required this.shop,
-    required this.serviceData,
+    required this.serviceDoc,
     this.selectedVariation,
     required this.professionalDoc,
     required this.shopConfig,
@@ -551,12 +675,21 @@ class BookingSlotsPage extends StatefulWidget {
     required this.selectedDate,
   });
 
+  Map<String, dynamic> get serviceData =>
+      serviceDoc.data() as Map<String, dynamic>;
+
   @override
   State<BookingSlotsPage> createState() => _BookingSlotsPageState();
 }
 
 class _BookingSlotsPageState extends State<BookingSlotsPage> {
   TimeOfDay? _selectedTime;
+
+  @override
+  void initState() {
+    super.initState();
+    debugPrint('🚀 BookingSlotsPage: initState | date: ${widget.selectedDate}');
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -578,7 +711,8 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                 Expanded(
                   child: Text(
                     "Data: ${DateFormat('dd/MM/yyyy').format(widget.selectedDate)}",
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 16),
                   ),
                 ),
               ],
@@ -603,7 +737,8 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                           ? null
                           : () {
                               final shopId = widget.shop.id;
-                              final shopData = widget.shop.data() as Map<String, dynamic>;
+                              final shopData =
+                                  widget.shop.data() as Map<String, dynamic>;
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(
@@ -611,9 +746,13 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                     shopId: shopId,
                                     shopData: shopData,
                                     shopConfig: widget.shopConfig,
-                                    serviceDoc: widget.shop,
-                                    serviceNameOverride: widget.serviceData['nome'],
-                                    servicePriceOverride: double.tryParse(widget.serviceData['preco'].toString()) ?? 0.0,
+                                    serviceDoc: widget.serviceDoc,
+                                    serviceNameOverride:
+                                        widget.serviceData['nome'],
+                                    servicePriceOverride: double.tryParse(widget
+                                            .serviceData['preco']
+                                            .toString()) ??
+                                        0.0,
                                     professionalDoc: widget.professionalDoc,
                                     date: widget.selectedDate,
                                     time: _selectedTime!,
@@ -641,20 +780,34 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
 
   Widget _buildSlotsList() {
     final profData = widget.professionalDoc.data() as Map<String, dynamic>;
-    int duration = int.tryParse(widget.serviceData['tempo_min'].toString()) ?? 30;
-    final startDay = DateTime(widget.selectedDate.year, widget.selectedDate.month, widget.selectedDate.day);
+    int duration =
+        int.tryParse(widget.serviceData['tempo_min'].toString()) ?? 30;
+    final startDay = DateTime(widget.selectedDate.year,
+        widget.selectedDate.month, widget.selectedDate.day);
     final endDay = startDay.add(const Duration(hours: 23, minutes: 59));
 
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance.collection('appointments')
+      stream: FirebaseFirestore.instance
+          .collection('appointments')
           .where('shopId', isEqualTo: widget.shop.id)
           .where('profissionalId', isEqualTo: widget.professionalDoc.id)
           .where('data_agendamento', isGreaterThanOrEqualTo: startDay)
           .where('data_agendamento', isLessThanOrEqualTo: endDay)
           .snapshots(),
       builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          debugPrint(
+              '❌ BookingSlotsPage: ERRO ao carregar agendamentos (slots): ${snapshot.error}');
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Text("Erro ao carregar horários: ${snapshot.error}"),
+            ),
+          );
+        }
         if (!snapshot.hasData) {
-          return const Center(child: CircularProgressIndicator(color: AppColors.primaryPurple));
+          return const Center(
+              child: CircularProgressIndicator(color: AppColors.primaryPurple));
         }
 
         List<Map<String, int>> busyIntervals = [];
@@ -694,19 +847,22 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
 
         return SingleChildScrollView(
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
             child: Wrap(
               spacing: 12,
               runSpacing: 12,
               children: slots.map((t) {
-                final isSelected = _selectedTime != null && 
-                    "${_selectedTime!.hour.toString().padLeft(2, '0')}:${_selectedTime!.minute.toString().padLeft(2, '0')}" == t;
+                final isSelected = _selectedTime != null &&
+                    "${_selectedTime!.hour.toString().padLeft(2, '0')}:${_selectedTime!.minute.toString().padLeft(2, '0')}" ==
+                        t;
                 return ChoiceChip(
                   label: Text(t),
                   selected: isSelected,
                   onSelected: (sel) {
                     final p = t.split(':');
-                    setState(() => _selectedTime = TimeOfDay(hour: int.parse(p[0]), minute: int.parse(p[1])));
+                    setState(() => _selectedTime = TimeOfDay(
+                        hour: int.parse(p[0]), minute: int.parse(p[1])));
                   },
                   selectedColor: AppColors.primaryPurple,
                   backgroundColor: Colors.white,

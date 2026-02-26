@@ -77,7 +77,6 @@
     <div class="container">
         <h1>Finalizar Pagamento</h1>
         <p class="subtitle">Complete seus dados para pagar com segurança</p>
-        <p style="font-size:12px;color:#555;margin-top:6px;margin-bottom:12px;">Observação: quando a loja configurar taxas de cartão, os valores exibidos já incluem essas taxas.</p>
 
         <div class="valor-container">
             <span class="valor-label">Valor total:</span>
@@ -98,7 +97,7 @@
                     <option value="">Selecione o número de parcelas</option>
                 </select>
                 <div class="parcelamento-info" id="parcelamentInfo">
-                    <h3>Parcelamento (valores já incluem taxas da loja)</h3>
+                    <h3>Parcelamento</h3>
                     <div id="parcelasLista"></div>
                 </div>
             </div>
@@ -142,7 +141,6 @@
             </div>
 
             <button type="submit" id="payButton">Pagar R$ 0,00</button>
-            <div id="feesNote" style="font-size:12px;color:#666;margin-top:10px;display:none;">Os valores exibidos incluem as taxas configuradas pela loja quando aplicável.</div>
         </form>
 
         <div class="footer">
@@ -162,10 +160,9 @@
             return p;
         }
         const urlParams = getUrlParams();
-        // Se a página recebeu paymentConfig via query string (web), disponibiliza em window
-        if (urlParams.paymentConfig) window.paymentConfig = urlParams.paymentConfig;
-        // Public key: primeiro tenta query string (Web), depois window.publicKey (Mobile injetado), depois fallback
-        let PUBLIC_KEY = urlParams.publicKey || window.publicKey || 'APP_USR-456aad35-79ef-4f9a-a090-f71c7b1a5765';
+        // Public key: primeiro tenta query string (Web), depois window.publicKey (Mobile injetado)
+        // NUNCA usar fallback hardcoded de produção — se não houver chave, bloquear o checkout
+        let PUBLIC_KEY = urlParams.publicKey || window.publicKey || null;
         let VALOR = window.amount != null ? Number(window.amount) : (urlParams.amount ? parseFloat(urlParams.amount) : 0);
         let ORDER_ID = window.orderId || urlParams.orderId || '';
         let COLLECT_ONLY = (urlParams.collectOnly === '1') || (window.collectOnly === true);
@@ -258,15 +255,25 @@
             document.getElementById('valorTotal').textContent = formatter.format(VALOR);
             updatePayButtonLabel(VALOR);
 
+            // Bloquear o checkout se PUBLIC_KEY não estiver disponível
+            if (!PUBLIC_KEY) {
+                document.getElementById('paymentForm').innerHTML =
+                    '<p style="color:#c62828;text-align:center;padding:24px;font-size:15px;">'
+                    + 'Esta loja ainda não configurou os meios de pagamento online.'
+                    + '<br>Entre em contato com o estabelecimento.</p>';
+                document.getElementById('errorMessage').style.display = 'none';
+                if (typeof FlutterChannel !== 'undefined') {
+                    FlutterChannel.postMessage(JSON.stringify({ action: 'error', message: 'Loja sem public_key do Mercado Pago configurada.' }));
+                }
+                return;
+            }
+
             ensureMercadoPagoLoaded()
                 .then(() => {
                     mp = new MercadoPago(PUBLIC_KEY, { locale: 'pt-BR' });
                     setupFormListeners();
                     setupFormSubmit();
                     applyClientPrefill();
-                    // Carregar parcelas imediatamente usando a configuração da loja (se houver),
-                    // sem depender dos 6 primeiros dígitos do cartão.
-                    try { carregarParcelas(); } catch(e){ console.warn('carregarParcelas() falhou:', e); }
                     if (typeof FlutterChannel !== 'undefined') {
                         FlutterChannel.postMessage(JSON.stringify({ action: 'loaded' }));
                     }
@@ -281,99 +288,14 @@
             // Formatações (igual ao seu código anterior)
             const cardNumber = document.getElementById('cardNumber');
             cardNumber.addEventListener('input', (e) => {
-                let raw = e.target.value.replace(/\D/g, '').substring(0, 19);
-                let v = raw.replace(/(\d{4})/g, '$1 ').trim();
+                let v = e.target.value.replace(/\D/g, '').substring(0, 19);
+                v = v.replace(/(\d{4})/g, '$1 ').trim();
                 e.target.value = v;
-                const digits = raw.replace(/\s/g,'');
-                if (digits.length >= 6) {
-                    const bin = digits.substring(0,6);
-                    // avoid repeating same request for same BIN
-                    if (window.__lastRequestedBin === bin) return;
-                    window.__lastRequestedBin = bin;
-
-                    // 1) try to ask Flutter (mobile)
-                    try {
-                        if (typeof FlutterChannel !== 'undefined') {
-                            FlutterChannel.postMessage(JSON.stringify({ action: 'request_installments', bin: bin, amount: (window.amount || VALOR) }));
-                        }
-                    } catch (e) { console.warn('FlutterChannel.postMessage failed', e); }
-
-                    // 2) fallback: call backend directly from JS (CORS allowed)
-                    try {
-                        const endpoint = 'https://us-central1-wismart-118c3.cloudfunctions.net/getInstallments';
-                        // build payload ensuring amount is a number and omit shopId when falsy
-                        const payload = { amount: Number(window.amount || VALOR), bin: String(bin) };
-                        if (window.shopId) payload.shopId = String(window.shopId);
-                        // debug: notify console and Flutter
-                        console.debug('fetching installments with', payload);
-                        try { if (typeof FlutterChannel !== 'undefined') FlutterChannel.postMessage(JSON.stringify({ action: 'debug_fetch_installments', body: payload })); } catch(e){}
-                        fetch(endpoint, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(payload)
-                        })
-                        .then(async (r) => {
-                            if (r.ok) {
-                                try {
-                                    const j = await r.json();
-                                    // Debug: notify Flutter of response
-                                    try { if (typeof FlutterChannel !== 'undefined') FlutterChannel.postMessage(JSON.stringify({ action: 'debug_installments_response', resp: j })); } catch(e){}
-                                    if (j && j.success && j.data) {
-                                        try { populateInstallments(j.data); } catch(e) { console.warn('populateInstallments failed', e); }
-                                    } else if (j && j.data) {
-                                        try { populateInstallments(j.data); } catch(e) {}
-                                    } else {
-                                        try { carregarParcelas(bin); } catch(e) { console.warn('carregarParcelas(bin) falhou', e); }
-                                    }
-                                } catch (errJson) {
-                                    console.warn('failed parsing installments json', errJson);
-                                    try { if (typeof FlutterChannel !== 'undefined') FlutterChannel.postMessage(JSON.stringify({ action: 'debug_installments_error', error: 'invalid_json' })); } catch(e){}
-                                    try { carregarParcelas(bin); } catch(e) { console.warn('carregarParcelas(bin) falhou', e); }
-                                }
-                            } else {
-                                // non-200: read text for debug and fallback
-                                let txt = null;
-                                try { txt = await r.text(); } catch(_) { txt = null; }
-                                console.warn('installments endpoint returned non-200', r.status, txt);
-                                try { if (typeof FlutterChannel !== 'undefined') FlutterChannel.postMessage(JSON.stringify({ action: 'debug_installments_error', status: r.status, body: txt })); } catch(e){}
-                                try { carregarParcelas(bin); } catch(e) { console.warn('carregarParcelas(bin) falhou', e); }
-                            }
-                        }).catch(err => {
-                            console.warn('fetch installments failed', err);
-                            try { if (typeof FlutterChannel !== 'undefined') FlutterChannel.postMessage(JSON.stringify({ action: 'debug_installments_error', error: (err && err.message) ? err.message : String(err) })); } catch(e){}
-                            try { carregarParcelas(bin); } catch(e) { console.warn('carregarParcelas(bin) falhou', e); }
-                        });
-                    } catch (e) {
-                        console.warn('installments fetch failed', e);
-                        try { carregarParcelas(bin); } catch(e) { console.warn('carregarParcelas(bin) falhou', e); }
-                    }
-                } else {
-                    // clear last bin to allow new queries later
-                    window.__lastRequestedBin = null;
-                    try {
-                        if (typeof FlutterChannel !== 'undefined') {
-                            FlutterChannel.postMessage(JSON.stringify({ action: 'clear_installments' }));
-                        } else {
-                            carregarParcelas();
-                        }
-                    } catch (e) {
-                        console.warn('clear_installments post failed', e);
-                        try { carregarParcelas(); } catch(e){ console.warn('carregarParcelas() falhou', e); }
-                    }
+                if (v.replace(/\s/g, '').length >= 6) {
+                    const bin = v.replace(/\s/g, '').substring(0, 6);
+                    carregarParcelas(bin);
                 }
             });
-
-            // Reset last requested BIN when user focuses the card input (helps on Android retries)
-            try {
-                cardNumber.addEventListener('focus', () => {
-                    try {
-                        window.__lastRequestedBin = null;
-                        if (typeof FlutterChannel !== 'undefined') {
-                            FlutterChannel.postMessage(JSON.stringify({ action: 'debug_bin_reset' }));
-                        }
-                    } catch (e) {}
-                });
-            } catch (e) { /* ignore */ }
 
             const expiration = document.getElementById('cardExpirationDate');
             expiration.addEventListener('input', (e) => {
@@ -404,178 +326,85 @@
             const infoDiv = document.getElementById('parcelamentInfo');
             const lista = document.getElementById('parcelasLista');
             const amount = (VALOR && VALOR > 0) ? VALOR : (window.amount ? Number(window.amount) : 0);
-
-            installmentsSelect.innerHTML = '<option value="">Selecione...</option>';
-            lista.innerHTML = '';
-
-            // Ler configuração da loja (se for fornecida)
-            let shopCfg = null;
-            try {
-                if (window.paymentConfig) shopCfg = JSON.parse(window.paymentConfig);
-                else if (window.shopPaymentConfig) shopCfg = (typeof window.shopPaymentConfig === 'string') ? JSON.parse(window.shopPaymentConfig || '{}') : window.shopPaymentConfig;
-            } catch (e) {
-                shopCfg = null;
+            
+            if (!PUBLIC_KEY) {
+                console.warn('⚠️ Public Key não configurada. Verifique shops/{shopId}.mercadopago.public_key');
             }
-            // debug: notify Flutter what shopCfg and any precomputed installments look like
-            try {
-                if (typeof FlutterChannel !== 'undefined') {
-                    FlutterChannel.postMessage(JSON.stringify({ action: 'debug_received_shopcfg', shopCfg: shopCfg }));
-                }
-            } catch (e) { console.warn('flutter debug post failed', e); }
-
-            if (!amount || amount <= 0) {
-                // Não temos valor para calcular; exibe 1x neutro
-                const opt = document.createElement('option');
-                opt.value = 1;
-                opt.textContent = '1x (valor indisponível)';
-                installmentsSelect.appendChild(opt);
-                infoDiv.classList.remove('show');
+            if (amount <= 0) {
+                console.warn('⚠️ Valor é 0. Verifique se amount foi passado corretamente.');
+                showError('Valor não carregado. Recarregue a página.');
                 return;
             }
 
-            // parse loja config (tolerant)
-            const cfg = (shopCfg && shopCfg.credito_config) ? (shopCfg.credito_config || {}) : null;
-            function toNum(v) {
-                try {
-                    if (v === null || v === undefined) return 0;
-                    if (typeof v === 'number') return v;
-                    if (typeof v === 'string') {
-                        const cleaned = v.replace(',', '.').replace(/[^0-9.\-]/g, '');
-                        const n = parseFloat(cleaned);
-                        return isNaN(n) ? 0 : n;
-                    }
-                    return 0;
-                } catch (e) { return 0; }
-            }
-            function toBool(v) {
-                if (v === true) return true;
-                if (v === false) return false;
-                if (typeof v === 'number') return v !== 0;
-                if (typeof v === 'string') return ['true','1','yes'].includes(v.toLowerCase());
-                return false;
-            }
-            function firstOf(keys) {
-                for (let i=0;i<keys.length;i++) {
-                    const k = keys[i];
-                    if (cfg && cfg[k] !== undefined && cfg[k] !== null) return cfg[k];
-                    if (shopCfg && shopCfg[k] !== undefined && shopCfg[k] !== null) return shopCfg[k];
-                }
-                return null;
-            }
-
-            const maxParc = (firstOf(['max_parcelas','maxParcelas']) != null) ? parseInt(firstOf(['max_parcelas','maxParcelas'])) : (shopCfg && shopCfg.max_parcelas ? shopCfg.max_parcelas : 1);
-            const aceitaParcelas = toBool(firstOf(['aceitar_parcelas','aceitarParcelas','aceita_parcelas','aceitar','accept_installments'])) || false;
-            const percVista = toNum(firstOf(['porcentagem_a_vista','porcentagemAVista','percentual_a_vista','porcentagem_a_vista','tax_percent'])) || 0;
-            const repassa = toBool(firstOf(['repasse_ao_cliente','repassa_ao_cliente','repasse','repassar_taxa','config_repasse_taxa','config_repassar_taxa'])) || false;
-
-            // If BIN provided (6+ digits), prefer Mercado Pago API to get real installments (with amount including tax)
-            if (bin && bin.toString().length >= 6) {
-                try {
-                    const amountWithTax = (repassa && percVista > 0) ? (amount + (amount * (percVista / 100))) : amount;
-                    const url = `https://api.mercadopago.com/v1/payment_methods/installments?public_key=${encodeURIComponent(PUBLIC_KEY)}&amount=${amountWithTax}&bin=${encodeURIComponent(bin.toString().substring(0,6))}`;
-                    const res = await fetch(url);
-                    if (res.ok) {
-                        const data = await res.json();
-                        if (data && data.length > 0) {
-                            const first = data[0];
-                            const pmId = (first.payment_method_id || first.id || '').toString();
-                            LAST_PAYMENT_METHOD_ID = pmId || null;
-                            LAST_ISSUER_ID = first.issuer && first.issuer.id ? first.issuer.id : null;
-                            showBandeira(pmId.toLowerCase());
-                            installmentsSelect.innerHTML = '<option value="">Selecione...</option>';
-                            lista.innerHTML = '';
-                            (first.payer_costs || []).forEach(p => {
-                                const total_amount = p.total_amount || p.installment_amount * p.installments || 0;
-                                const installmentAmount = p.installment_amount || (total_amount / (p.installments || 1));
-                                const opt = document.createElement('option');
-                                opt.value = p.installments;
-                                opt.textContent = `${p.installments}x de R$ ${installmentAmount.toFixed(2).replace('.',',')} (total R$ ${total_amount.toFixed(2).replace('.',',')})`;
-                                installmentsSelect.appendChild(opt);
-                                const item = document.createElement('div');
-                                item.className = 'parcela-item';
-                                item.innerHTML = `<span>${p.installments}x</span><span class=\"parcela-preco\">R$ ${total_amount.toFixed(2).replace('.',',')}</span>`;
-                                lista.appendChild(item);
-                            });
-                            infoDiv.classList.add('show');
-                            try {
-                                const firstCost = (first.payer_costs && first.payer_costs[0]) || null;
-                                if (firstCost) {
-                                    const formatter = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
-                                    document.getElementById('valorTotal').textContent = formatter.format(firstCost.total_amount || (firstCost.installment_amount * firstCost.installments));
-                                    updatePayButtonLabel(firstCost.total_amount || (firstCost.installment_amount * firstCost.installments));
-                                }
-                            } catch(e){}
-                            return;
-                        }
-                    }
-                } catch (e) {
-                    console.warn('MP API parcels failed', e);
-                }
-            }
-
-            // If we reach here (no BIN or API fallback), show a single 1x option.
-            const totalWithTax = (repassa && percVista > 0) ? (amount + (amount * (percVista / 100))) : amount;
-            const opt = document.createElement('option');
-            opt.value = 1;
-            opt.textContent = `1x de R$ ${totalWithTax.toFixed(2).replace('.', ',')}`;
-            installmentsSelect.appendChild(opt);
-            // inform user that parcelamento real será obtido após informar os 6 primeiros dígitos do cartão
-            let infoNote = document.getElementById('parcelNote');
-            if (!infoNote) {
-                infoNote = document.createElement('div');
-                infoNote.id = 'parcelNote';
-                infoNote.style.fontSize = '12px';
-                infoNote.style.color = '#666';
-                infoNote.style.marginTop = '6px';
-                lista.parentNode.insertBefore(infoNote, lista.nextSibling);
-            }
-            if (aceitaParcelas) {
-                infoNote.textContent = 'Parcelamento disponível: informe os 6 primeiros dígitos do cartão para carregar as opções reais do Mercado Pago.';
-            } else {
-                infoNote.textContent = 'Esta loja não aceita parcelamento.';
-            }
-            infoDiv.classList.remove('show');
-        }
-
-        // Função que será chamada pelo Flutter com os dados retornados pelo backend (MP API)
-        function populateInstallments(mpResponse) {
             try {
-                const data = (typeof mpResponse === 'string') ? JSON.parse(mpResponse) : mpResponse;
-                const installmentsSelect = document.getElementById('installments');
-                const lista = document.getElementById('parcelasLista');
-                const infoDiv = document.getElementById('parcelamentInfo');
+                const url = `https://api.mercadopago.com/v1/payment_methods/installments?public_key=${encodeURIComponent(PUBLIC_KEY)}&amount=${amount}&bin=${bin}`;
+                console.log('🔍 Buscando parcelas:', { publicKey: PUBLIC_KEY.substring(0, 20) + '...', amount, bin });
+                const res = await fetch(url);
+                if (!res.ok) {
+                    throw new Error(`API retornou ${res.status}: ${res.statusText}`);
+                }
+                const data = await res.json();
+
                 installmentsSelect.innerHTML = '<option value="">Selecione...</option>';
-                if (!data || !Array.isArray(data) || data.length === 0) {
-                    const opt = document.createElement('option');
-                    opt.value = 1;
-                    opt.textContent = `1x de R$ ${((window.amount || VALOR) || 0).toFixed(2).replace('.',',')}`;
-                    installmentsSelect.appendChild(opt);
-                    if (infoDiv) infoDiv.classList.remove('show');
-                    return;
-                }
-                const first = data[0];
                 lista.innerHTML = '';
-                (first.payer_costs || []).forEach(p => {
-                    const total_amount = p.total_amount || (p.installment_amount * p.installments) || 0;
-                    const installmentAmount = p.installment_amount || (total_amount / (p.installments || 1));
-                    const opt = document.createElement('option');
-                    opt.value = p.installments;
-                    opt.textContent = `${p.installments}x de R$ ${installmentAmount.toFixed(2).replace('.',',')} (total R$ ${total_amount.toFixed(2).replace('.',',')})`;
-                    installmentsSelect.appendChild(opt);
-                    const item = document.createElement('div');
-                    item.className = 'parcela-item';
-                    item.innerHTML = `<span>${p.installments}x</span><span class="parcela-preco">R$ ${total_amount.toFixed(2).replace('.',',')}</span>`;
-                    lista.appendChild(item);
-                });
-                if (first.payer_costs && first.payer_costs[0]) {
-                    const tot = first.payer_costs[0].total_amount || (first.payer_costs[0].installment_amount * first.payer_costs[0].installments);
-                    document.getElementById('valorTotal').textContent = new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(tot);
+                showBandeira(null);
+
+                if (data.length > 0) {
+                    const first = data[0];
+                    const pmId = (first.payment_method_id || first.id || '').toString();
+                    LAST_PAYMENT_METHOD_ID = pmId || null;
+                    LAST_ISSUER_ID = first.issuer && first.issuer.id ? first.issuer.id : null;
+                    showBandeira(pmId.toLowerCase());
+                    (first.payer_costs || []).forEach(p => {
+                        const opt = document.createElement('option');
+                        opt.value = p.installments;
+                        opt.textContent = `${p.installments}x de R$ ${(p.installment_amount || 0).toFixed(2).replace('.', ',')}`;
+                        installmentsSelect.appendChild(opt);
+                        const item = document.createElement('div');
+                        item.className = 'parcela-item';
+                        item.innerHTML = `<span>${p.installments}x</span><span class="parcela-preco">R$ ${(p.total_amount || 0).toFixed(2).replace('.', ',')}</span>`;
+                        lista.appendChild(item);
+                    });
+                    infoDiv.classList.add('show');
+                } else {
+                    // Sem dados da API — usar fallback local
+                    console.warn('⚠️ API MP retornou lista vazia. Usando cálculo local de parcelas.');
+                    _preencherParcelasLocais(amount, installmentsSelect, lista, infoDiv);
                 }
-                if (infoDiv) infoDiv.classList.add('show');
-            } catch (e) {
-                console.warn('populateInstallments error', e);
+            } catch (err) {
+                // Fallback local quando a API MP falha (ex: public_key de sandbox não vinculada)
+                console.warn('⚠️ API MP indisponível, usando fallback local de parcelas:', err.message);
+                showBandeira(null);
+                _preencherParcelasLocais(amount, installmentsSelect, lista, infoDiv);
             }
         }
+
+        function _preencherParcelasLocais(amount, select, lista, infoDiv) {
+            const maxParcelas = 12;
+            const taxaMensal = 0.025; // 2,5% ao mês
+            select.innerHTML = '<option value="">Selecione...</option>';
+            lista.innerHTML = '';
+            for (let i = 1; i <= maxParcelas; i++) {
+                const total = i === 1 ? amount : amount * Math.pow(1 + taxaMensal, i);
+                const parcela = total / i;
+                const opt = document.createElement('option');
+                opt.value = i;
+                opt.textContent = i === 1
+                    ? `1x de R$ ${amount.toFixed(2).replace('.', ',')} sem juros`
+                    : `${i}x de R$ ${parcela.toFixed(2).replace('.', ',')}`;
+                select.appendChild(opt);
+                const item = document.createElement('div');
+                item.className = 'parcela-item';
+                item.innerHTML = `<span>${i}x</span><span class="parcela-preco">R$ ${total.toFixed(2).replace('.', ',')}</span>`;
+                lista.appendChild(item);
+            }
+            infoDiv.classList.add('show');
+            // Pré-selecionar 1x
+            select.value = '1';
+            LAST_PAYMENT_METHOD_ID = null;
+            LAST_ISSUER_ID = null;
+        }
+
 
         async function criarCardToken() {
             try {
@@ -626,22 +455,6 @@
             }
         }
 
-        function validateCPF(cpf) {
-            cpf = cpf.replace(/[^\d]+/g, '');
-            if (cpf.length !== 11 || /^(\d)\1+$/.test(cpf)) return false;
-            let add = 0;
-            for (let i = 0; i < 9; i++) add += parseInt(cpf.charAt(i)) * (10 - i);
-            let rev = 11 - (add % 11);
-            if (rev === 10 || rev === 11) rev = 0;
-            if (rev !== parseInt(cpf.charAt(9))) return false;
-            add = 0;
-            for (let i = 0; i < 10; i++) add += parseInt(cpf.charAt(i)) * (11 - i);
-            rev = 11 - (add % 11);
-            if (rev === 10 || rev === 11) rev = 0;
-            if (rev !== parseInt(cpf.charAt(10))) return false;
-            return true;
-        }
-
         function setupFormSubmit() {
             const form = document.getElementById('paymentForm');
             const btn = document.getElementById('payButton');
@@ -650,12 +463,6 @@
                 e.preventDefault();
                 if (!form.checkValidity()) {
                     showError('Preencha todos os campos');
-                    return;
-                }
-
-                const cpfVal = document.getElementById('cardholderIdentification').value;
-                if (!validateCPF(cpfVal)) {
-                    showError('CPF inválido. Verifique o número digitado.');
                     return;
                 }
 
@@ -670,6 +477,8 @@
                     const installments = parseInt(installmentsValue, 10) || 1;
                     const email = document.getElementById('email').value;
                     const saveCard = document.getElementById('saveCard').checked;
+                    // CPF sempre incluído no postMessage para o backend (CORREÇÃO: payer.identification)
+                    const cpf = document.getElementById('cardholderIdentification').value.replace(/\D/g, '');
 
                     if (COLLECT_ONLY) {
                         FlutterChannel.postMessage(JSON.stringify({
@@ -678,6 +487,7 @@
                             installments: installments,
                             email: email,
                             saveCard: saveCard,
+                            cpf: cpf,
                             paymentMethodId: LAST_PAYMENT_METHOD_ID,
                             issuerId: LAST_ISSUER_ID
                         }));
@@ -687,6 +497,7 @@
                             cardToken: cardToken,
                             installments: installments,
                             email: email,
+                            cpf: cpf,
                             paymentMethodId: LAST_PAYMENT_METHOD_ID,
                             issuerId: LAST_ISSUER_ID
                         }));

@@ -55,7 +55,10 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
   }
 
   Future<void> _checkPlanRestriction() async {
-    final canPay = await SubscriptionService.canUseOnlinePayment();
+    // Usa getShopPlan(shopId) — não canUseOnlinePayment() — pois o usuário
+    // logado aqui é o CLIENTE, não o dono da loja.
+    final shopPlan = await SubscriptionService.getShopPlan(widget.shopId);
+    final canPay = SubscriptionService.planSupportsOnlinePayment(shopPlan);
     if (!canPay) {
       if (mounted) setState(() => _planRestricted = true);
       return;
@@ -146,49 +149,18 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
         'pix': paymentOpts['pix'] ??
             config['pagamento_pix'] ??
             readRoot('pagamento_pix') ??
-            true,
+            false, // default off: loja nova precisa habilitar explicitamente
         'credito': paymentOpts['credito'] ??
             config['pagamento_cartao'] ??
             readRoot('pagamento_cartao') ??
-            true,
+            false, // default off
         'presencial': paymentOpts['presencial'] ??
             config['pagamento_dinheiro'] ??
             readRoot('pagamento_dinheiro') ??
-            true,
+            true, // presencial sempre habilitado por padrão
         'credito_config': mergedCredito,
       };
-      // compute installments array for mobile injection
-      try {
-        final double amount = double.tryParse(widget.valor.toString()) ?? 0.0;
-        final int maxP = (mergedCredito['max_parcelas'] is int)
-            ? mergedCredito['max_parcelas'] as int
-            : 1;
-        final bool aceitaP = mergedCredito['aceitar_parcelas'] ?? false;
-        final bool repassa =
-            ((mergedCredito['porcentagem_a_vista'] as num?) ?? 0) > 0;
-        final double pctVista = (mergedCredito['porcentagem_a_vista'] is double)
-            ? mergedCredito['porcentagem_a_vista'] as double
-            : (double.tryParse(
-                    mergedCredito['porcentagem_a_vista']?.toString() ?? '') ??
-                0.0);
-        // parcel percent removed; Mercado Pago API will provide parcel fees
-        final int maxToUse = aceitaP ? maxP.clamp(1, 12) : 1;
-        final List<Map<String, dynamic>> comps = [];
-        for (int p = 1; p <= maxToUse; p++) {
-          final double pct = (p == 1) ? pctVista : 0.0;
-          final double total =
-              repassa ? (amount + (amount * (pct / 100.0))) : amount;
-          final double per = (total / p);
-          comps.add({
-            'installments': p,
-            'total': double.parse(total.toStringAsFixed(2)),
-            'per_installment': double.parse(per.toStringAsFixed(2)),
-            'percent': pct
-          });
-        }
-        _shopPaymentConfig['computed_installments'] = comps;
-      } catch (_) {}
-      // compute installments array to inject (so iframe doesn't need to parse/compute)
+      // Calcula parcelas para injeção no WebView (fallback local; MP API retorna os valores reais)
       try {
         final double amount = double.tryParse(widget.valor.toString()) ?? 0.0;
         final int maxP = (mergedCredito['max_parcelas'] is int)
@@ -326,15 +298,15 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
           'pix': paymentOpts['pix'] ??
               config['pagamento_pix'] ??
               readRoot('pagamento_pix') ??
-              true,
+              false, // default off: loja nova precisa habilitar explicitamente
           'credito': paymentOpts['credito'] ??
               config['pagamento_cartao'] ??
               readRoot('pagamento_cartao') ??
-              true,
+              false, // default off
           'presencial': paymentOpts['presencial'] ??
               config['pagamento_dinheiro'] ??
               readRoot('pagamento_dinheiro') ??
-              true,
+              true, // presencial sempre habilitado por padrão
           'credito_config': mergedCredito,
         };
       } catch (_) {
@@ -536,10 +508,14 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
           .doc(widget.shopId)
           .get();
       final mp = doc.data()?['mercadopago'] as Map<String, dynamic>?;
-      return mp?['public_key'] ??
-          'APP_USR-456aad35-79ef-4f9a-a090-f71c7b1a5765';
+      final key = mp?['public_key'] as String?;
+      if (key == null || key.isEmpty) {
+        throw Exception(
+            'Loja sem Mercado Pago configurado. Acesse Configurações → Pagamentos para conectar sua conta.');
+      }
+      return key;
     } catch (e) {
-      return 'APP_USR-456aad35-79ef-4f9a-a090-f71c7b1a5765';
+      rethrow;
     }
   }
 
@@ -664,6 +640,7 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
           cardToken: data['cardToken'],
           installments: data['installments'],
           email: data['email'],
+          cpf: data['cpf'] ?? '',
           paymentMethodId: data['paymentMethodId'],
           issuerId: data['issuerId'],
         );
@@ -681,6 +658,7 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
     required String cardToken,
     required int installments,
     required String email,
+    String cpf = '',
     String? paymentMethodId,
     dynamic issuerId,
   }) async {
@@ -715,6 +693,8 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
             'orderId': widget.orderId,
             'descricao': "Reserva: ${widget.serviceDoc['nome'] ?? 'Serviço'}",
             'idToken': idToken,
+            // CORREÇÃO 1: CPF incluído para payer.identification no Mercado Pago
+            if (cpf.isNotEmpty) 'cpf': cpf,
             if (paymentMethodId != null) 'paymentMethodId': paymentMethodId,
             if (issuerId != null) 'issuerId': issuerId,
           }
@@ -726,7 +706,7 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
       if (response.statusCode == 200) {
         final result = jsonDecode(response.body);
         if (result['success'] == true) {
-          await _salvarAgendamento(result['paymentId'].toString());
+          await _salvarAgendamento(result['paymentId'].toString(), cpf: cpf);
         } else {
           _showError(result['error'] ?? 'Pagamento recusado');
         }
@@ -761,24 +741,41 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
     }
   }
 
-  Future<void> _salvarAgendamento(String paymentId) async {
+  Future<void> _salvarAgendamento(String paymentId, {String cpf = ''}) async {
     final user = FirebaseAuth.instance.currentUser!;
     final bookingDate = DateTime(widget.date.year, widget.date.month,
         widget.date.day, widget.time.hour, widget.time.minute);
+
+    // CORREÇÃO BUG 5: Usar formatação manual segura em vez de widget.time.format(context)
+    // para evitar erros ao chamar em contexto assíncrono
+    final timeStr =
+        '${widget.time.hour.toString().padLeft(2, '0')}:${widget.time.minute.toString().padLeft(2, '0')}';
+
+    final serviceName = widget.serviceDoc['nome']?.toString() ?? 'Serviço';
+    final profData =
+        widget.professionalDoc.data() as Map<String, dynamic>? ?? {};
+    final professionalName = profData['nome']?.toString() ?? 'Profissional';
+
+    // CORREÇÃO BUG 2: formatar data para exibição
+    final dateStr =
+        '${widget.date.day.toString().padLeft(2, '0')}/${widget.date.month.toString().padLeft(2, '0')}/${widget.date.year}';
 
     await FirebaseFirestore.instance.collection('appointments').add({
       'shopId': widget.shopId,
       'clientId': user.uid,
       'client_nome': user.displayName ?? '',
-      'servico_nome': widget.serviceDoc['nome'] ?? 'Serviço',
+      'servico_nome': serviceName,
       'profissionalId': widget.professionalDoc.id,
+      'profissional_nome': professionalName,
       'valor_total': widget.valor,
       'valor_pago': widget.valor,
       'data_agendamento': Timestamp.fromDate(bookingDate),
-      'horario': widget.time.format(context),
+      'horario': timeStr,
       'status': 'confirmado',
       'metodo_pagamento': 'Cartão de Crédito',
       'payment_id': paymentId,
+      // CORREÇÃO BUG 3: salvar CPF do cliente no agendamento
+      if (cpf.isNotEmpty) 'cpf_cliente': cpf,
       'criado_em': FieldValue.serverTimestamp(),
     });
 
@@ -786,11 +783,12 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(
-            builder: (_) => const BookingSuccessPage(
-                  serviceName: "Serviço",
-                  professionalName: "Profissional",
-                  date: "Data",
-                  time: "Hora",
+            builder: (_) => BookingSuccessPage(
+                  // CORREÇÃO BUG 2: dados reais em vez de hardcoded
+                  serviceName: serviceName,
+                  professionalName: professionalName,
+                  date: dateStr,
+                  time: timeStr,
                   isPaid: true,
                 )),
         (r) => r.isFirst,
@@ -799,6 +797,7 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
   }
 
   void _showError(String message) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(message), backgroundColor: Colors.red));
   }

@@ -1,28 +1,32 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:cloud_firestore/cloud_firestore.dart'; 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../core/theme/app_colors.dart';
-import '../schedule/booking_page.dart'; 
+import '../schedule/booking_page.dart';
+import '../login/login_page.dart';
+import '../../core/services/profile_check_service.dart';
+import 'client_register_page.dart';
 
 class ClientServiceDetailPage extends StatefulWidget {
-  final Map<String, dynamic> serviceData;
-  final String serviceId;
+  final DocumentSnapshot serviceDoc;
 
-  const ClientServiceDetailPage({
-    super.key, 
-    required this.serviceData, 
-    required this.serviceId
-  });
+  const ClientServiceDetailPage({super.key, required this.serviceDoc});
+
+  Map<String, dynamic> get serviceData =>
+      serviceDoc.data() as Map<String, dynamic>;
+  String get serviceId => serviceDoc.id;
 
   @override
-  State<ClientServiceDetailPage> createState() => _ClientServiceDetailPageState();
+  State<ClientServiceDetailPage> createState() =>
+      _ClientServiceDetailPageState();
 }
 
 class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
   int _currentImageIndex = 0;
   late final PageController _pageController;
   Map<String, dynamic>? _selectedVariation;
-  bool _isNavigating = false; 
+  bool _isNavigating = false;
 
   @override
   void initState() {
@@ -37,14 +41,99 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
   }
 
   Future<void> _goToBooking() async {
-    // Validação de variação
+    // 1. Verificar se o usuário está logado (Late Auth)
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      final shouldLogin = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('Login Necessário'),
+          content: const Text(
+            'Para fazer um agendamento, você precisa estar logado.\n\nDeseja fazer login agora?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('VOLTAR'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryPurple,
+              ),
+              child: const Text('FAZER LOGIN'),
+            ),
+          ],
+        ),
+      );
+
+      if (shouldLogin == true && mounted) {
+        // Navegar para login esperando sucesso
+        final success = await Navigator.push<bool>(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const LoginPage(returnOnSuccess: true),
+          ),
+        );
+
+        if (success == true && mounted) {
+          // Após login com sucesso, tenta novamente
+          _goToBooking();
+        }
+      }
+      return;
+    }
+
+    // 1.5 Verificar se o perfil está completo
+    final complete =
+        await ProfileCheckService.isClientProfileComplete(user.uid);
+    if (!complete && mounted) {
+      final go = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Perfil incompleto'),
+          content: const Text(
+            'Seu perfil ainda não foi todo preenchido. Para agendar, complete seus dados (nome, telefone, endereço). Deseja completar agora?',
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Depois')),
+            ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Completar')),
+          ],
+        ),
+      );
+      if (go == true && mounted) {
+        final regOk = await Navigator.push<bool>(
+          context,
+          MaterialPageRoute(
+            builder: (context) => ClientRegisterPage(
+              user: user,
+              isBusinessAdding: false,
+              returnOnSuccess: true,
+            ),
+          ),
+        );
+        if (regOk == true && mounted) {
+          _goToBooking();
+        }
+      }
+      return;
+    }
+
+    // 2. Validação de variação
     final variations = widget.serviceData['variations'] as List?;
-    if (variations != null && variations.isNotEmpty && _selectedVariation == null) {
+    if (variations != null &&
+        variations.isNotEmpty &&
+        _selectedVariation == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text("Por favor, escolha uma opção (Variação) acima."), 
-          backgroundColor: Colors.orange
-        ),
+            content: Text("Por favor, escolha uma opção (Variação) acima."),
+            backgroundColor: Colors.orange),
       );
       return;
     }
@@ -53,14 +142,14 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
 
     try {
       DocumentSnapshot shopDoc;
-      
+
       // Busca dados da loja para passar para o Booking
       if (widget.serviceData['shopId'] != null) {
         shopDoc = await FirebaseFirestore.instance
             .collection('shops')
             .doc(widget.serviceData['shopId'])
             .get();
-            
+
         if (!shopDoc.exists) throw "Loja não encontrada.";
       } else {
         throw "ID da loja não encontrado.";
@@ -74,20 +163,15 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
         MaterialPageRoute(
           builder: (context) => BookingPage(
             shop: shopDoc,
-            serviceId: widget.serviceId,       // OBRIGATÓRIO
-            serviceData: widget.serviceData,   // OBRIGATÓRIO
+            serviceDoc: widget.serviceDoc,
             selectedVariation: _selectedVariation,
           ),
         ),
       );
-
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Erro: $e"), 
-          backgroundColor: Colors.red
-        ),
+        SnackBar(content: Text("Erro: $e"), backgroundColor: Colors.red),
       );
     } finally {
       if (mounted) setState(() => _isNavigating = false);
@@ -119,7 +203,8 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
                       color: Colors.black.withValues(alpha: 0.3),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
+                    child: const Icon(Icons.arrow_back,
+                        color: Colors.white, size: 20),
                   ),
                   onPressed: () => Navigator.pop(context),
                 ),
@@ -128,50 +213,53 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
                     fit: StackFit.expand,
                     children: [
                       hasPhotos
-                        ? PageView.builder(
-                            controller: _pageController,
-                            onPageChanged: (index) {
-                              setState(() => _currentImageIndex = index);
-                            },
-                            itemCount: photos.length,
-                            itemBuilder: (context, index) {
-                              final img = photos[index];
-                              return CachedNetworkImage(
-                                imageUrl: img,
-                                fit: BoxFit.cover,
-                                placeholder: (context, url) => Container(
-                                  color: Colors.grey[200],
-                                  child: const Center(
-                                    child: CircularProgressIndicator(
-                                      color: AppColors.primaryPurple,
+                          ? PageView.builder(
+                              controller: _pageController,
+                              onPageChanged: (index) {
+                                setState(() => _currentImageIndex = index);
+                              },
+                              itemCount: photos.length,
+                              itemBuilder: (context, index) {
+                                final img = photos[index];
+                                return CachedNetworkImage(
+                                  imageUrl: img,
+                                  fit: BoxFit.cover,
+                                  placeholder: (context, url) => Container(
+                                    color: Colors.grey[200],
+                                    child: const Center(
+                                      child: CircularProgressIndicator(
+                                        color: AppColors.primaryPurple,
+                                      ),
                                     ),
                                   ),
+                                  errorWidget: (context, url, error) =>
+                                      Container(
+                                    color: Colors.grey[300],
+                                    child: const Icon(Icons.broken_image,
+                                        size: 80),
+                                  ),
+                                );
+                              },
+                            )
+                          : Container(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    AppColors.primaryPurple,
+                                    AppColors.primaryPurple
+                                        .withValues(alpha: 0.7),
+                                  ],
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
                                 ),
-                                errorWidget: (context, url, error) => Container(
-                                  color: Colors.grey[300],
-                                  child: const Icon(Icons.broken_image, size: 80),
-                                ),
-                              );
-                            },
-                          )
-                        : Container(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [
-                                  AppColors.primaryPurple,
-                                  AppColors.primaryPurple.withValues(alpha: 0.7),
-                                ],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
+                              ),
+                              child: const Icon(
+                                Icons.spa,
+                                size: 120,
+                                color: Colors.white,
                               ),
                             ),
-                            child: const Icon(
-                              Icons.spa,
-                              size: 120,
-                              color: Colors.white,
-                            ),
-                          ),
-                      
+
                       // Indicador de páginas (se houver múltiplas fotos)
                       if (hasPhotos && photos.length > 1)
                         Positioned(
@@ -183,7 +271,8 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
                             children: List.generate(
                               photos.length,
                               (index) => Container(
-                                margin: const EdgeInsets.symmetric(horizontal: 4),
+                                margin:
+                                    const EdgeInsets.symmetric(horizontal: 4),
                                 width: 8,
                                 height: 8,
                                 decoration: BoxDecoration(
@@ -200,7 +289,7 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
                   ),
                 ),
               ),
-              
+
               // Conteúdo do serviço
               SliverToBoxAdapter(
                 child: Padding(
@@ -218,7 +307,7 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      
+
                       // Preço e duração
                       Row(
                         children: [
@@ -247,7 +336,8 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
                               vertical: 8,
                             ),
                             decoration: BoxDecoration(
-                              color: AppColors.primaryPurple.withValues(alpha: 0.1),
+                              color: AppColors.primaryPurple
+                                  .withValues(alpha: 0.1),
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: Row(
@@ -271,10 +361,12 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
                           ),
                         ],
                       ),
-                      
+
                       // Descrição
                       if (widget.serviceData['descricao'] != null &&
-                          widget.serviceData['descricao'].toString().isNotEmpty) ...[
+                          widget.serviceData['descricao']
+                              .toString()
+                              .isNotEmpty) ...[
                         const SizedBox(height: 24),
                         const Text(
                           "Descrição",
@@ -294,7 +386,7 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
                           ),
                         ),
                       ],
-                      
+
                       // Variações
                       if (hasVariations) ...[
                         const SizedBox(height: 24),
@@ -320,8 +412,8 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
                                     "${v['name']}",
                                     style: TextStyle(
                                       fontWeight: FontWeight.w600,
-                                      color: isSelected 
-                                          ? Colors.white 
+                                      color: isSelected
+                                          ? Colors.white
                                           : Colors.black87,
                                     ),
                                   ),
@@ -330,8 +422,8 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
                                     "R\$ ${v['price']}",
                                     style: TextStyle(
                                       fontWeight: FontWeight.bold,
-                                      color: isSelected 
-                                          ? Colors.white 
+                                      color: isSelected
+                                          ? Colors.white
                                           : Colors.green[700],
                                     ),
                                   ),
@@ -341,8 +433,8 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
                               selectedColor: AppColors.primaryPurple,
                               backgroundColor: Colors.white,
                               side: BorderSide(
-                                color: isSelected 
-                                    ? AppColors.primaryPurple 
+                                color: isSelected
+                                    ? AppColors.primaryPurple
                                     : Colors.grey.shade300,
                                 width: isSelected ? 2 : 1,
                               ),
@@ -357,7 +449,7 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
                           }).toList(),
                         ),
                       ],
-                      
+
                       const SizedBox(height: 100), // Espaço para o botão fixo
                     ],
                   ),
@@ -365,7 +457,7 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
               ),
             ],
           ),
-          
+
           // Botão de agendamento fixo na parte inferior
           Positioned(
             bottom: 0,
@@ -396,23 +488,23 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
                       ),
                       elevation: 0,
                     ),
-                    child: _isNavigating 
-                      ? const SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(
-                            color: Colors.white,
-                            strokeWidth: 2.5,
+                    child: _isNavigating
+                        ? const SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2.5,
+                            ),
+                          )
+                        : const Text(
+                            "AGENDAR ESSE SERVIÇO",
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
                           ),
-                        )
-                      : const Text(
-                          "AGENDAR ESSE SERVIÇO",
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
                   ),
                 ),
               ),

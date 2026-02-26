@@ -14,15 +14,33 @@ import '../../modules/business/subscription_plans_page.dart';
 
 class AppRouter {
   static Route<dynamic> generateRoute(RouteSettings settings) {
-    final uri = Uri.parse(settings.name ?? '/');
+    // 1. Determinar o caminho (path) real. No Web, Uri.base é mais confiável para deep links iniciais.
+    String pathName = settings.name ?? '/';
+
+    debugPrint('🚩 AppRouter: settings.name = "$pathName"');
+
+    // Correção para Cold Boot no Web: se o path for '/', verificamos a URL real do browser
+    if (pathName == '/') {
+      final browserPath = Uri.base.path;
+      debugPrint(
+          '🚩 AppRouter: Web cold-boot detectado. Uri.base.path = "$browserPath"');
+      if (browserPath != '/' && browserPath.isNotEmpty) {
+        pathName = browserPath;
+      }
+    }
+
+    final uri = Uri.parse(pathName);
     final path = uri.path;
 
-    // Remover barras extras
-    final cleanPath =
-        path.replaceAll(RegExp(r'^/+'), '').replaceAll(RegExp(r'/+$'), '');
+    // Remover barras extras e normalizar
+    final cleanPath = path
+        .replaceAll(RegExp(r'^/+'), '')
+        .replaceAll(RegExp(r'/+$'), '')
+        .trim();
 
-    // 🆕 Suporte para redirecionamento via query param (evita loops de rewrite no Firebase)
-    // Se a URL for /?s=afroed, tratamos como se fosse /afroed
+    debugPrint('🚩 AppRouter: Final cleanPath = "$cleanPath"');
+
+    // 2. Traduzir query param 's' para slug (fallback/compatibilidade)
     final querySlug = uri.queryParameters['s'];
     if (querySlug != null && querySlug.isNotEmpty) {
       return MaterialPageRoute(
@@ -31,7 +49,7 @@ class AppRouter {
       );
     }
 
-    // Se está vazio, é a home - usar o AuthGate
+    // 3. Rota Raiz (Home)
     if (cleanPath.isEmpty) {
       return MaterialPageRoute(
         builder: (_) => const AuthGate(),
@@ -39,14 +57,13 @@ class AppRouter {
       );
     }
 
-    // Se tem apenas um segmento, pode ser um slug
+    // 4. Tratamento de Slugs Dinâmicos (/:slug)
     final segments = cleanPath.split('/');
     if (segments.length == 1) {
       final slug = segments[0];
 
-      // Verificar se não é uma rota conhecida
+      // Se NÃO for uma rota fixa conhecida da aplicação, tratamos como slug de loja
       if (!_isKnownRoute(slug)) {
-        // Trata como slug de loja
         return MaterialPageRoute(
           builder: (_) => PublicShopPage(slug: slug),
           settings: settings,
@@ -54,8 +71,11 @@ class AppRouter {
       }
     }
 
-    // Rotas fixas conhecidas (admin)
-    if (cleanPath.toLowerCase() == 'inventory') {
+    // 5. Verificar Rotas Conhecidas
+    final baseRoute = cleanPath.split('/')[0].toLowerCase();
+
+    // Rotas Admin/Inventory que NÃO precisam do AuthGate global aqui (já possuem interna ou via switch)
+    if (baseRoute == 'inventory') {
       return MaterialPageRoute(
           builder: (_) => const InventoryHomePage(), settings: settings);
     }
@@ -63,17 +83,24 @@ class AppRouter {
       return MaterialPageRoute(
           builder: (_) => const PlansPage(), settings: settings);
     }
-    if (cleanPath.toLowerCase() == 'subscription_plans') {
-      // Lazy import to avoid circular dependency if possible, or ensure import exists
-      return MaterialPageRoute(
-          builder: (_) => const SubscriptionPlansPage(), settings: settings);
-    }
-    if (cleanPath.toLowerCase() == 'admin') {
+    if (baseRoute == 'admin') {
       return MaterialPageRoute(
           builder: (_) => const AdminPage(), settings: settings);
     }
+    if (baseRoute == 'subscription_plans') {
+      return MaterialPageRoute(
+          builder: (_) => const SubscriptionPlansPage(), settings: settings);
+    }
 
-    // Rota não encontrada
+    // 6. Outras Rotas Conhecidas que devem passar pelo AuthGate (login, home, business, client)
+    if (_isKnownRoute(baseRoute)) {
+      return MaterialPageRoute(
+        builder: (_) => const AuthGate(),
+        settings: settings,
+      );
+    }
+
+    // 7. Rota não encontrada
     return MaterialPageRoute(
       builder: (_) => Scaffold(
         body: Center(
@@ -111,8 +138,6 @@ class AppRouter {
       'settings',
       'profile',
       'checkout',
-      'payment',
-      'success',
       'payment',
       'success',
       'error',

@@ -1,13 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/theme/app_colors.dart';
 import '../../widgets/google_reviews_widget.dart';
-import '../login/login_page.dart';
 import '../clients/client_service_detail_page.dart';
 
 class PublicShopPage extends StatelessWidget {
@@ -18,14 +16,14 @@ class PublicShopPage extends StatelessWidget {
   Future<void> _launchWhatsApp(BuildContext context, String whatsapp) async {
     try {
       final phone = whatsapp.replaceAll(RegExp(r'[^0-9]'), '');
-      
+
       // Tenta abrir o app nativo do WhatsApp primeiro
       final nativeUri = Uri.parse('whatsapp://send?phone=$phone');
       if (await canLaunchUrl(nativeUri)) {
         await launchUrl(nativeUri, mode: LaunchMode.externalApplication);
         return;
       }
-      
+
       // Fallback: abre no navegador
       final webUri = Uri.parse('https://wa.me/$phone');
       if (await canLaunchUrl(webUri)) {
@@ -42,15 +40,18 @@ class PublicShopPage extends StatelessWidget {
 
   Future<void> _launchInstagram(BuildContext context, String instagram) async {
     try {
-      final username = instagram.replaceAll('@', '').replaceAll('instagram.com/', '').replaceAll('/', '');
-      
+      final username = instagram
+          .replaceAll('@', '')
+          .replaceAll('instagram.com/', '')
+          .replaceAll('/', '');
+
       // Tenta abrir o app nativo do Instagram primeiro
       final nativeUri = Uri.parse('instagram://user?username=$username');
       if (await canLaunchUrl(nativeUri)) {
         await launchUrl(nativeUri, mode: LaunchMode.externalApplication);
         return;
       }
-      
+
       // Fallback: abre no navegador
       final webUri = Uri.parse('https://instagram.com/$username');
       if (await canLaunchUrl(webUri)) {
@@ -67,59 +68,15 @@ class PublicShopPage extends StatelessWidget {
 
   Future<void> _handleServiceTap(
     BuildContext context,
-    String serviceId,
-    Map<String, dynamic> serviceData,
-    String shopId,
+    DocumentSnapshot serviceDoc,
   ) async {
-    // Verificar se o usuário está logado
-    final user = FirebaseAuth.instance.currentUser;
-    
-    if (user == null) {
-      // Mostrar dialog explicando que precisa fazer login para agendar
-      final shouldLogin = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Text('Login Necessário'),
-          content: const Text(
-            'Para fazer um agendamento, você precisa ter uma conta.\n\nJá tem cadastro?',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('VOLTAR'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primaryPurple,
-              ),
-              child: const Text('FAZER LOGIN'),
-            ),
-          ],
-        ),
-      );
-
-      if (shouldLogin == true && context.mounted) {
-        // Navegar para login
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => const LoginPage(),
-          ),
-        );
-      }
-      return;
-    }
-
-    // ✅ Se está logado, mostrar detalhes do serviço com carrossel
+    // ✅ Navegar direto para os detalhes do serviço (Antigamente pedia login aqui)
     if (context.mounted) {
       Navigator.push(
         context,
         MaterialPageRoute(
           builder: (context) => ClientServiceDetailPage(
-            serviceData: serviceData,
-            serviceId: serviceId,
+            serviceDoc: serviceDoc,
           ),
         ),
       );
@@ -148,7 +105,8 @@ class PublicShopPage extends StatelessWidget {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Icons.store_mall_directory_outlined, size: 100, color: Colors.grey),
+                  const Icon(Icons.store_mall_directory_outlined,
+                      size: 100, color: Colors.grey),
                   const SizedBox(height: 20),
                   const Text(
                     'Loja não encontrada',
@@ -192,23 +150,40 @@ class PublicShopPage extends StatelessWidget {
                   background: Hero(
                     tag: 'cover_${shopDoc.id}',
                     child: () {
-                      final coverUrl = data['coverUrl']?.toString() ?? data['imageUrl']?.toString() ?? '';
+                      final coverUrl = data['coverUrl']?.toString() ??
+                          data['imageUrl']?.toString() ??
+                          '';
                       if (coverUrl.isNotEmpty) {
                         return CachedNetworkImage(
                           imageUrl: coverUrl,
                           fit: BoxFit.cover,
-                          placeholder: (context, url) => Container(color: AppColors.primaryPurple),
+                          placeholder: (context, url) =>
+                              Container(color: AppColors.primaryPurple),
                           errorWidget: (context, url, error) => Container(
                             decoration: const BoxDecoration(
-                              gradient: LinearGradient(colors: [AppColors.primaryPurple, Color(0xFF4A148C)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+                              gradient: LinearGradient(
+                                  colors: [
+                                    AppColors.primaryPurple,
+                                    Color(0xFF4A148C)
+                                  ],
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight),
                             ),
-                            child: const Center(child: Icon(Icons.store, color: Colors.white70, size: 48)),
+                            child: const Center(
+                                child: Icon(Icons.store,
+                                    color: Colors.white70, size: 48)),
                           ),
                         );
                       }
                       return Container(
                         decoration: const BoxDecoration(
-                          gradient: LinearGradient(colors: [AppColors.primaryPurple, Color(0xFF4A148C)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+                          gradient: LinearGradient(
+                              colors: [
+                                AppColors.primaryPurple,
+                                Color(0xFF4A148C)
+                              ],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight),
                         ),
                       );
                     }(),
@@ -234,10 +209,14 @@ class PublicShopPage extends StatelessWidget {
                               shape: BoxShape.circle,
                               border: Border.all(color: Colors.grey.shade200),
                               image: data['logoUrl'] != null
-                                  ? DecorationImage(image: NetworkImage(data['logoUrl']), fit: BoxFit.cover)
+                                  ? DecorationImage(
+                                      image: NetworkImage(data['logoUrl']),
+                                      fit: BoxFit.cover)
                                   : null,
                             ),
-                            child: data['logoUrl'] == null ? const Icon(Icons.store, size: 36) : null,
+                            child: data['logoUrl'] == null
+                                ? const Icon(Icons.store, size: 36)
+                                : null,
                           ),
                           const SizedBox(width: 16),
                           Expanded(
@@ -246,20 +225,33 @@ class PublicShopPage extends StatelessWidget {
                               children: [
                                 Text(
                                   data['nome'] ?? 'Loja',
-                                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                                  style: const TextStyle(
+                                      fontSize: 22,
+                                      fontWeight: FontWeight.bold),
                                 ),
                                 const SizedBox(height: 6),
                                 // Rating stars and score
                                 Row(
                                   children: [
-                                    if (data['google_business'] != null && data['google_business']['rating'] != null)
-                                      ..._buildStars((data['google_business']['rating'] as num).toDouble()),
+                                    if (data['google_business'] != null &&
+                                        data['google_business']['rating'] !=
+                                            null)
+                                      ..._buildStars((data['google_business']
+                                              ['rating'] as num)
+                                          .toDouble()),
                                     const SizedBox(width: 8),
                                     Text(
-                                      data['google_business'] != null && data['google_business']['user_ratings_total'] != null
+                                      data['google_business'] != null &&
+                                              data['google_business']
+                                                      ['user_ratings_total'] !=
+                                                  null
                                           ? '${data['google_business']['rating']} (${data['google_business']['user_ratings_total']})'
-                                          : (data['rating'] != null ? '${data['rating']}' : ''),
-                                      style: TextStyle(color: Colors.grey[700], fontSize: 13),
+                                          : (data['rating'] != null
+                                              ? '${data['rating']}'
+                                              : ''),
+                                      style: TextStyle(
+                                          color: Colors.grey[700],
+                                          fontSize: 13),
                                     ),
                                   ],
                                 ),
@@ -269,10 +261,12 @@ class PublicShopPage extends StatelessWidget {
                         ],
                       ),
                       const SizedBox(height: 12),
-                      if (data['descricao'] != null && data['descricao'].toString().isNotEmpty) ...[
+                      if (data['descricao'] != null &&
+                          data['descricao'].toString().isNotEmpty) ...[
                         Text(
                           data['descricao'],
-                          style: const TextStyle(fontSize: 14, color: Colors.grey),
+                          style:
+                              const TextStyle(fontSize: 14, color: Colors.grey),
                         ),
                         const SizedBox(height: 16),
                       ],
@@ -284,29 +278,38 @@ class PublicShopPage extends StatelessWidget {
                             if (whatsapp.isNotEmpty)
                               Expanded(
                                 child: ElevatedButton.icon(
-                                  onPressed: () => _launchWhatsApp(context, whatsapp),
-                                  icon: const FaIcon(FontAwesomeIcons.whatsapp, size: 20),
+                                  onPressed: () =>
+                                      _launchWhatsApp(context, whatsapp),
+                                  icon: const FaIcon(FontAwesomeIcons.whatsapp,
+                                      size: 20),
                                   label: const Text("WhatsApp"),
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: const Color(0xFF25D366),
                                     foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(vertical: 12),
-                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 12),
+                                    shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(8)),
                                   ),
                                 ),
                               ),
-                            if (whatsapp.isNotEmpty && instagram.isNotEmpty) const SizedBox(width: 12),
+                            if (whatsapp.isNotEmpty && instagram.isNotEmpty)
+                              const SizedBox(width: 12),
                             if (instagram.isNotEmpty)
                               Expanded(
                                 child: ElevatedButton.icon(
-                                  onPressed: () => _launchInstagram(context, instagram),
-                                  icon: const FaIcon(FontAwesomeIcons.instagram, size: 20),
+                                  onPressed: () =>
+                                      _launchInstagram(context, instagram),
+                                  icon: const FaIcon(FontAwesomeIcons.instagram,
+                                      size: 20),
                                   label: const Text("Instagram"),
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: const Color(0xFFE1306C),
                                     foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(vertical: 12),
-                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 12),
+                                    shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(8)),
                                   ),
                                 ),
                               ),
@@ -327,7 +330,7 @@ class PublicShopPage extends StatelessWidget {
                   ),
                 ),
               ),
-          // Helper: function to build star icons (placed after class content)
+              // Helper: function to build star icons (placed after class content)
 
               // Lista de serviços
               StreamBuilder<QuerySnapshot>(
@@ -363,8 +366,11 @@ class PublicShopPage extends StatelessWidget {
                       (context, index) {
                         final sDoc = services[index];
                         final sData = sDoc.data() as Map<String, dynamic>;
-                        dynamic rawFotos = sData['fotos_urls'] ?? sData['fotos'] ?? sData['imageUrl'] ?? sData['imagens'];
-                        
+                        dynamic rawFotos = sData['fotos_urls'] ??
+                            sData['fotos'] ??
+                            sData['imageUrl'] ??
+                            sData['imagens'];
+
                         String? serviceThumb;
                         if (rawFotos is List && rawFotos.isNotEmpty) {
                           serviceThumb = rawFotos.first.toString();
@@ -373,7 +379,8 @@ class PublicShopPage extends StatelessWidget {
                         }
 
                         return Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 20, vertical: 6),
                           child: Container(
                             decoration: BoxDecoration(
                               color: Colors.white,
@@ -390,7 +397,7 @@ class PublicShopPage extends StatelessWidget {
                               color: Colors.transparent,
                               child: InkWell(
                                 borderRadius: BorderRadius.circular(12),
-                                onTap: () => _handleServiceTap(context, sDoc.id, sData, shopDoc.id),
+                                onTap: () => _handleServiceTap(context, sDoc),
                                 child: Padding(
                                   padding: const EdgeInsets.all(12),
                                   child: Row(
@@ -406,26 +413,33 @@ class PublicShopPage extends StatelessWidget {
                                                   imageUrl: serviceThumb,
                                                   fit: BoxFit.cover,
                                                 )
-                                              : const Icon(Icons.spa, color: Colors.grey),
+                                              : const Icon(Icons.spa,
+                                                  color: Colors.grey),
                                         ),
                                       ),
                                       const SizedBox(width: 15),
                                       Expanded(
                                         child: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
                                           children: [
                                             Text(
                                               sData['nome'] ?? "",
-                                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                                              style: const TextStyle(
+                                                  fontWeight: FontWeight.bold,
+                                                  fontSize: 16),
                                             ),
                                             const SizedBox(height: 4),
                                             Text(
                                               "${sData['tempo_min'] ?? 30} min",
-                                              style: const TextStyle(fontSize: 12, color: Colors.grey),
+                                              style: const TextStyle(
+                                                  fontSize: 12,
+                                                  color: Colors.grey),
                                             ),
                                             const SizedBox(height: 4),
                                             Text(
-                                              currency.format(sData['valor'] ?? 0),
+                                              currency
+                                                  .format(sData['valor'] ?? 0),
                                               style: const TextStyle(
                                                 fontSize: 16,
                                                 fontWeight: FontWeight.bold,
@@ -435,7 +449,8 @@ class PublicShopPage extends StatelessWidget {
                                           ],
                                         ),
                                       ),
-                                      const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
+                                      const Icon(Icons.arrow_forward_ios,
+                                          size: 16, color: Colors.grey),
                                     ],
                                   ),
                                 ),
@@ -451,7 +466,8 @@ class PublicShopPage extends StatelessWidget {
               ),
 
               // Avaliações do Google (Depois dos Serviços)
-              if (data['google_business'] != null && data['google_business']['place_id'] != null)
+              if (data['google_business'] != null &&
+                  data['google_business']['place_id'] != null)
                 SliverToBoxAdapter(
                   child: Padding(
                     padding: const EdgeInsets.only(top: 20),

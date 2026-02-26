@@ -9,23 +9,22 @@ class MercadoPagoService {
   // 1. GERAR PIX (Via Cloud Functions)
   // ===========================================================================
   static Future<Map<String, dynamic>> gerarPix({
-    required String accessToken,
+    required String shopId,
     required double amount,
     required String emailCliente,
     required String description,
   }) async {
     try {
       debugPrint("☁️ [Service] Chamando Cloud Function: createPixPayment");
-      
+
       final result = await _functions.httpsCallable('createPixPayment').call({
-        'accessToken': accessToken,
+        'shopId': shopId, // Token lido no backend; nunca enviado pelo client
         'amount': amount,
         'email': emailCliente,
         'description': description,
       });
 
       return Map<String, dynamic>.from(result.data);
-
     } on FirebaseFunctionsException catch (e) {
       debugPrint("❌ Erro na Cloud Function: ${e.code} - ${e.message}");
       debugPrint("❌ Detalhes: ${e.details}");
@@ -34,7 +33,8 @@ class MercadoPagoService {
       final messageStr = (e.message ?? '').toString().toLowerCase();
       if (messageStr.contains('collector_not_enabled_for_qr') ||
           detailsStr.contains('collector_not_enabled_for_qr') ||
-          (detailsStr.contains('collector user') && detailsStr.contains('qr'))) {
+          (detailsStr.contains('collector user') &&
+              detailsStr.contains('qr'))) {
         throw Exception('collector_not_enabled_for_qr');
       }
       if (messageStr.contains('collector_no_pix_keys') ||
@@ -56,18 +56,17 @@ class MercadoPagoService {
   // 2. VERIFICAR STATUS DO PIX
   // ===========================================================================
   static Future<String> verificarStatusPix({
-    required String accessToken,
+    required String shopId,
     required String paymentId,
   }) async {
     try {
       final result = await _functions.httpsCallable('getPaymentStatus').call({
-        'accessToken': accessToken,
+        'shopId': shopId, // Usado no backend para buscar o access_token
         'paymentId': paymentId,
       });
-      
+
       final data = Map<String, dynamic>.from(result.data);
       return data['status']?.toString() ?? 'pending';
-
     } catch (e) {
       debugPrint("⚠️ Erro ao verificar status: $e");
       return 'unknown';
@@ -106,7 +105,6 @@ class MercadoPagoService {
       });
 
       return Map<String, dynamic>.from(result.data);
-
     } on FirebaseFunctionsException catch (e) {
       debugPrint("❌ Erro Cartão: ${e.message}");
       throw Exception(e.message);
@@ -114,7 +112,6 @@ class MercadoPagoService {
       rethrow;
     }
   }
-
 
   // 8. BUSCAR PARCELAS
   static Future<List<Map<String, dynamic>>> buscarParcelas({
@@ -130,7 +127,7 @@ class MercadoPagoService {
       });
 
       if (result.data == null) return [];
-      
+
       return List<Map<String, dynamic>>.from(result.data);
     } catch (e) {
       debugPrint("⚠️ Erro ao buscar parcelas: $e");
@@ -138,9 +135,8 @@ class MercadoPagoService {
     }
   }
 
- 
   // ===========================================================================
- // 4. COBRAR CARTÃO SALVO
+  // 4. COBRAR CARTÃO SALVO
   static Future<Map<String, dynamic>> cobrarCartaoSalvo({
     required String accessToken,
     required String customerId,
@@ -166,7 +162,6 @@ class MercadoPagoService {
       });
 
       return Map<String, dynamic>.from(result.data);
-
     } catch (e) {
       debugPrint("❌ Erro Cartão Salvo: $e");
       rethrow;

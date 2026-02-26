@@ -49,14 +49,12 @@ class _ClientSearchPageState extends State<ClientSearchPage> {
     super.dispose();
   }
 
-  void _openServiceDetails(
-      {required String serviceId, required Map<String, dynamic> serviceData}) {
+  void _openServiceDetails({required DocumentSnapshot serviceDoc}) {
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => ClientServiceDetailPage(
-          serviceId: serviceId,
-          serviceData: serviceData,
+          serviceDoc: serviceDoc,
         ),
       ),
     );
@@ -220,10 +218,8 @@ class _ClientSearchPageState extends State<ClientSearchPage> {
                           MaterialPageRoute(
                             builder: (_) => ShopProfilePage(
                               shopDoc: shop,
-                              onBookService: (serviceId, serviceData) {
-                                _openServiceDetails(
-                                    serviceId: serviceId,
-                                    serviceData: serviceData);
+                              onBookService: (sDoc) {
+                                _openServiceDetails(serviceDoc: sDoc);
                               },
                             ),
                           ),

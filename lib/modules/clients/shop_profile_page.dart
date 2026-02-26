@@ -10,7 +10,7 @@ import '../../widgets/google_reviews_widget.dart';
 
 class ShopProfilePage extends StatefulWidget {
   final DocumentSnapshot shopDoc;
-  final Function(String, Map<String, dynamic>) onBookService;
+  final Function(DocumentSnapshot) onBookService;
 
   const ShopProfilePage({
     super.key,
@@ -368,7 +368,7 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
                           color: Colors.transparent,
                           child: InkWell(
                             borderRadius: BorderRadius.circular(12),
-                            onTap: () => widget.onBookService(sDoc.id, sData),
+                            onTap: () => widget.onBookService(sDoc),
                             child: Padding(
                               padding: const EdgeInsets.all(12),
                               child: Row(

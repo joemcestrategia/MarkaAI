@@ -18,9 +18,13 @@ import 'client_home_page.dart';
 class ClientRegisterPage extends StatefulWidget {
   final User? user;
   final bool isBusinessAdding;
+  final bool returnOnSuccess;
 
   const ClientRegisterPage(
-      {super.key, this.user, this.isBusinessAdding = false});
+      {super.key,
+      this.user,
+      this.isBusinessAdding = false,
+      this.returnOnSuccess = false});
 
   @override
   State<ClientRegisterPage> createState() => _ClientRegisterPageState();
@@ -231,6 +235,8 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
       if (mounted) {
         if (widget.isBusinessAdding) {
           Navigator.pop(context);
+        } else if (widget.returnOnSuccess) {
+          Navigator.pop(context, true);
         } else {
           Navigator.pushAndRemoveUntil(
             context,

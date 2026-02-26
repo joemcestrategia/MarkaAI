@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -16,7 +17,8 @@ class MyAppointmentsPage extends StatefulWidget {
   State<MyAppointmentsPage> createState() => _MyAppointmentsPageState();
 }
 
-class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTickerProviderStateMixin {
+class _MyAppointmentsPageState extends State<MyAppointmentsPage>
+    with SingleTickerProviderStateMixin {
   final currencyFormat = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
   Timer? _timerPolling;
   late TabController _tabController;
@@ -39,20 +41,26 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
     final status = data['status']?.toString().toLowerCase() ?? '';
     final appointmentDate = (data['data_agendamento'] as Timestamp).toDate();
     final now = DateTime.now();
-    
+
     // Próximos: futuros e não cancelados/concluídos
-    return appointmentDate.isAfter(now) && 
-           !status.contains('cancelado') && 
-           status != 'concluido';
+    return appointmentDate.isAfter(now) &&
+        !status.contains('cancelado') &&
+        status != 'concluido';
   }
 
-  List<DocumentSnapshot> _filterAppointments(List<DocumentSnapshot> appointments, bool upcoming) {
-    return appointments.where((apt) => upcoming ? _isUpcoming(apt) : !_isUpcoming(apt)).toList();
+  List<DocumentSnapshot> _filterAppointments(
+      List<DocumentSnapshot> appointments, bool upcoming) {
+    return appointments
+        .where((apt) => upcoming ? _isUpcoming(apt) : !_isUpcoming(apt))
+        .toList();
   }
 
   Future<Map<String, dynamic>> _getShopData(String shopId) async {
     try {
-      final shopDoc = await FirebaseFirestore.instance.collection('shops').doc(shopId).get();
+      final shopDoc = await FirebaseFirestore.instance
+          .collection('shops')
+          .doc(shopId)
+          .get();
       if (shopDoc.exists) {
         final data = shopDoc.data()!;
         return {
@@ -106,7 +114,8 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
 
     if (valorRestante <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Não há valor pendente para este agendamento.')),
+        const SnackBar(
+            content: Text('Não há valor pendente para este agendamento.')),
       );
       return;
     }
@@ -131,9 +140,14 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
               children: [
                 const Text(
                   "Pagar Valor Restante",
-                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppColors.primaryPurple),
+                  style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.primaryPurple),
                 ),
-                IconButton(onPressed: () => Navigator.pop(ctx), icon: const Icon(Icons.close))
+                IconButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    icon: const Icon(Icons.close))
               ],
             ),
             const SizedBox(height: 10),
@@ -146,16 +160,21 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text("VALOR A PAGAR", style: TextStyle(fontWeight: FontWeight.bold)),
+                  const Text("VALOR A PAGAR",
+                      style: TextStyle(fontWeight: FontWeight.bold)),
                   Text(
                     currencyFormat.format(valorRestante),
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: AppColors.primaryPurple),
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 18,
+                        color: AppColors.primaryPurple),
                   ),
                 ],
               ),
             ),
             const SizedBox(height: 20),
-            const Text("Escolha a forma de pagamento:", style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text("Escolha a forma de pagamento:",
+                style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 15),
             Row(
               children: [
@@ -171,7 +190,8 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
                       backgroundColor: const Color(0xFF25D366),
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
                     ),
                   ),
                 ),
@@ -188,7 +208,8 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
                       backgroundColor: AppColors.primaryPurple,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
                     ),
                   ),
                 ),
@@ -200,33 +221,32 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
     );
   }
 
-  Future<void> _processPixPayment(DocumentSnapshot appointment, double amount) async {
+  Future<void> _processPixPayment(
+      DocumentSnapshot appointment, double amount) async {
     final data = appointment.data() as Map<String, dynamic>;
     final shopId = data['shopId'];
-    
+
     try {
-      // Buscar access token da loja
-      final shopDoc = await FirebaseFirestore.instance.collection('shops').doc(shopId).get();
-      final shopData = shopDoc.data();
-      final accessToken = shopData?['mercadopago']?['access_token'];
-      
-      if (accessToken == null) {
+      if (shopId == null) {
         _showError('Erro ao processar pagamento: loja não configurada');
         return;
       }
-      
+
       final user = FirebaseAuth.instance.currentUser!;
       final result = await MercadoPagoService.gerarPix(
-        accessToken: accessToken,
+        shopId: shopId,
         amount: amount,
         emailCliente: user.email ?? "cliente@app.com",
-        description: "Pagamento restante - ${data['servico_nome'] ?? 'Serviço'}",
+        description:
+            "Pagamento restante - ${data['servico_nome'] ?? 'Serviço'}",
       );
-      
-      final qrCode64 = result['point_of_interaction']['transaction_data']['qr_code_base64'];
-      final copyPaste = result['point_of_interaction']['transaction_data']['qr_code'];
+
+      final qrCode64 =
+          result['point_of_interaction']['transaction_data']['qr_code_base64'];
+      final copyPaste =
+          result['point_of_interaction']['transaction_data']['qr_code'];
       final paymentId = result['id'].toString();
-      
+
       if (mounted) {
         _startPixMonitoring(appointment, paymentId, amount);
         _showPixModal(qrCode64, copyPaste, appointment, amount);
@@ -236,24 +256,23 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
     }
   }
 
-  void _startPixMonitoring(DocumentSnapshot appointment, String paymentId, double amount) {
+  void _startPixMonitoring(
+      DocumentSnapshot appointment, String paymentId, double amount) {
     final data = appointment.data() as Map<String, dynamic>;
     final shopId = data['shopId'];
-    
+
     _timerPolling?.cancel();
     _timerPolling = Timer.periodic(const Duration(seconds: 3), (timer) async {
       try {
-        final shopDoc = await FirebaseFirestore.instance.collection('shops').doc(shopId).get();
-        final accessToken = shopDoc.data()?['mercadopago']?['access_token'];
-        
         final status = await MercadoPagoService.verificarStatusPix(
-          accessToken: accessToken!,
+          shopId: shopId,
           paymentId: paymentId,
         );
-        
+
         if (status == 'approved') {
           timer.cancel();
-          await _updateAppointmentPayment(appointment, amount, 'Pix', paymentId);
+          await _updateAppointmentPayment(
+              appointment, amount, 'Pix', paymentId);
           if (mounted) {
             Navigator.pop(context); // Fecha o modal do PIX
             ScaffoldMessenger.of(context).showSnackBar(
@@ -264,11 +283,14 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
             );
           }
         }
-      } catch (e) {}
+      } catch (e) {
+        debugPrint('Erro ao verificar status PIX: $e');
+      }
     });
   }
 
-  void _showPixModal(String qr64, String copyPaste, DocumentSnapshot appointment, double amount) {
+  void _showPixModal(String qr64, String copyPaste,
+      DocumentSnapshot appointment, double amount) {
     showModalBottomSheet(
       context: context,
       useSafeArea: true,
@@ -282,7 +304,11 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text("Pague via Pix", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppColors.primaryPurple)),
+                const Text("Pague via Pix",
+                    style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primaryPurple)),
                 IconButton(
                   onPressed: () {
                     _timerPolling?.cancel();
@@ -293,14 +319,16 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
               ],
             ),
             const SizedBox(height: 10),
-            Text("Valor: ${currencyFormat.format(amount)}", style: const TextStyle(fontSize: 18)),
+            Text("Valor: ${currencyFormat.format(amount)}",
+                style: const TextStyle(fontSize: 18)),
             const SizedBox(height: 20),
             if (qr64.isNotEmpty)
               Expanded(child: Image.memory(base64Decode(qr64)))
             else
               const Expanded(child: Center(child: Text('Erro ao gerar QR'))),
             const SizedBox(height: 20),
-            const Text("Pix Copia e Cola:", style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text("Pix Copia e Cola:",
+                style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 5),
             Container(
               decoration: BoxDecoration(
@@ -322,7 +350,8 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.copy, color: AppColors.primaryPurple),
+                    icon:
+                        const Icon(Icons.copy, color: AppColors.primaryPurple),
                     onPressed: () {
                       // Copiar para clipboard
                       ScaffoldMessenger.of(context).showSnackBar(
@@ -339,29 +368,36 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
     );
   }
 
-  Future<void> _processCardPayment(DocumentSnapshot appointment, double amount) async {
+  Future<void> _processCardPayment(
+      DocumentSnapshot appointment, double amount) async {
     final data = appointment.data() as Map<String, dynamic>;
     final shopId = data['shopId'];
     final serviceDoc = await FirebaseFirestore.instance
         .collection('services')
         .doc(data['servicoId'])
         .get();
-    
+
     // Buscar shop e professional docs
-    final shopDoc = await FirebaseFirestore.instance.collection('shops').doc(shopId).get();
-    final professionalDoc = data['profissionalId'] != null 
-        ? await FirebaseFirestore.instance.collection('professionals').doc(data['profissionalId']).get()
+    final shopDoc =
+        await FirebaseFirestore.instance.collection('shops').doc(shopId).get();
+    final professionalDoc = data['profissionalId'] != null
+        ? await FirebaseFirestore.instance
+            .collection('professionals')
+            .doc(data['profissionalId'])
+            .get()
         : null;
-    
+
     final appointmentDate = (data['data_agendamento'] as Timestamp).toDate();
-    
+
+    if (!mounted) return;
     final result = await Navigator.push<Map<String, dynamic>>(
       context,
       MaterialPageRoute(
         builder: (context) => CheckoutTransparentePage(
           shopId: shopId,
           valor: amount,
-          orderId: "ORD-REMAINING-${appointment.id}-${DateTime.now().millisecondsSinceEpoch}",
+          orderId:
+              "ORD-REMAINING-${appointment.id}-${DateTime.now().millisecondsSinceEpoch}",
           serviceDoc: serviceDoc,
           professionalDoc: professionalDoc ?? shopDoc,
           date: appointmentDate,
@@ -370,7 +406,7 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
         ),
       ),
     );
-    
+
     if (result != null && result['success'] == true) {
       await _updateAppointmentPayment(
         appointment,
@@ -391,8 +427,11 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
     final currentPaid = (data['valor_pago'] ?? 0).toDouble();
     final newPaid = currentPaid + paidAmount;
     final valorTotal = (data['valor_total'] ?? data['valor'] ?? 0).toDouble();
-    
-    await FirebaseFirestore.instance.collection('appointments').doc(appointment.id).update({
+
+    await FirebaseFirestore.instance
+        .collection('appointments')
+        .doc(appointment.id)
+        .update({
       'valor_pago': newPaid,
       'restante_a_pagar': valorTotal - newPaid,
       'metodo_pagamento': method,
@@ -400,7 +439,7 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
       'status': 'confirmado',
       'pago_em': FieldValue.serverTimestamp(),
     });
-    
+
     if (mounted) {
       setState(() {});
     }
@@ -411,71 +450,35 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
     final status = data['status']?.toString().toLowerCase() ?? '';
     final appointmentDate = (data['data_agendamento'] as Timestamp).toDate();
     final now = DateTime.now();
-    
+
     // Não mostrar ações se já passou, foi cancelado ou concluído
-    return appointmentDate.isAfter(now) && 
-           !status.contains('cancelado') && 
-           status != 'concluido';
+    return appointmentDate.isAfter(now) &&
+        !status.contains('cancelado') &&
+        status != 'concluido';
   }
 
+  // Determina se o cliente pode cancelar (se for gratuito)
   bool _canCancelAppointment(DocumentSnapshot appointment) {
     final data = appointment.data() as Map<String, dynamic>;
     final appointmentDate = (data['data_agendamento'] as Timestamp).toDate();
     final now = DateTime.now();
-    
+
     // Verifica se o agendamento é futuro
     if (!appointmentDate.isAfter(now)) return false;
-    
-    // Não pode cancelar se já pagou algo
-    final valorPago = (data['valor_pago'] ?? 0).toDouble();
-    if (valorPago > 0) return false;
-    
+
     return true;
   }
 
   Future<void> _cancelAppointment(DocumentSnapshot appointment) async {
-    final data = appointment.data() as Map<String, dynamic>;
-    final shopId = data['shopId'];
-    
-    // Buscar configuração do tempo de cancelamento da loja
-    int tempoMinimo = 24; // Padrão 24 horas
-    try {
-      final shopDoc = await FirebaseFirestore.instance.collection('shops').doc(shopId).get();
-      final config = shopDoc.data()?['config'] as Map<String, dynamic>?;
-      tempoMinimo = config?['tempo_cancelamento_horas'] ?? 24;
-    } catch (e) {
-      debugPrint('Erro ao buscar config: $e');
-    }
-    
-    final appointmentDate = (data['data_agendamento'] as Timestamp).toDate();
-    final now = DateTime.now();
-    final horasRestantes = appointmentDate.difference(now).inHours;
-    
-    if (horasRestantes < tempoMinimo) {
-      showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Não é possível cancelar'),
-          content: Text(
-            'O cancelamento deve ser feito com no mínimo $tempoMinimo horas de antecedência.\n\n'
-            'Faltam apenas $horasRestantes horas para o agendamento.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('ENTENDI'),
-            ),
-          ],
-        ),
-      );
-      return;
-    }
-    
+    // Mostramos diretamente um modal de confirmação,
+    // pois a validação de tempo será feita com segurança no backend.
+    if (!mounted) return;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Cancelar Agendamento'),
-        content: const Text('Tem certeza que deseja cancelar este agendamento?'),
+        content:
+            const Text('Tem certeza que deseja cancelar este agendamento?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -489,17 +492,26 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
         ],
       ),
     );
-    
+
     if (confirm != true) return;
-    
+
+    // Loading indicator
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const Center(child: CircularProgressIndicator()),
+    );
+
     try {
-      await FirebaseFirestore.instance.collection('appointments').doc(appointment.id).update({
-        'status': 'cancelado',
-        'cancelado_em': FieldValue.serverTimestamp(),
-        'cancelado_por': 'cliente',
+      final functions = FirebaseFunctions.instance;
+      await functions.httpsCallable('cancelAppointment').call({
+        'appointmentId': appointment.id,
+        'requestRefund':
+            false, // Aqui é só cancelamento sem devolução financeira
       });
-      
+
       if (mounted) {
+        Navigator.pop(context); // close loading
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Agendamento cancelado com sucesso!'),
@@ -508,7 +520,209 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
         );
       }
     } catch (e) {
-      _showError('Erro ao cancelar: $e');
+      if (mounted) Navigator.pop(context); // close loading
+      _showError('Não foi possível cancelar: $e');
+    }
+  }
+
+  // [FASE 7] Solicitação de Reembolso
+  Future<void> _requestRefund(DocumentSnapshot appointment) async {
+    final data = appointment.data() as Map<String, dynamic>;
+    final valorPago = (data['valor_pago'] ?? 0).toDouble();
+
+    // Modal de solicitação
+    final chavePixCtrl = TextEditingController();
+    final motivoCtrl = TextEditingController();
+
+    if (!mounted) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Solicitar Reembolso'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Como você já pagou $currencyFormat.format(valorPago), '
+                'o agendamento será cancelado e uma solicitação de reembolso será enviada para a loja.',
+                style: const TextStyle(fontSize: 14),
+              ),
+              const SizedBox(height: 16),
+              const Text('Sua Chave PIX',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              TextField(
+                controller: chavePixCtrl,
+                decoration: const InputDecoration(
+                  hintText: 'Ex: CPF, E-mail, Celular ou Aleatória',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text('Motivo (Opcional)',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              TextField(
+                controller: motivoCtrl,
+                maxLines: 2,
+                decoration: const InputDecoration(
+                  hintText: 'Por que está cancelando?',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('VOLTAR'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (chavePixCtrl.text.trim().isEmpty) {
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  const SnackBar(
+                      content: Text(
+                          'Por favor, informe sua chave PIX para o estorno.')),
+                );
+                return;
+              }
+              Navigator.pop(ctx, true);
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('SOLICITAR REEMBOLSO'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    // Loading indicator
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final functions = FirebaseFunctions.instance;
+      await functions.httpsCallable('cancelAppointment').call({
+        'appointmentId': appointment.id,
+        'requestRefund': true,
+        'pixKey': chavePixCtrl.text.trim(),
+        'reason': motivoCtrl.text.trim(),
+        'amount': valorPago,
+      });
+
+      if (mounted) {
+        Navigator.pop(context); // close loading
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Solicitação de reembolso enviada com sucesso!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) Navigator.pop(context);
+      _showError('Não foi possível cancelar: $e');
+    }
+  }
+
+  // [FASE 5] Reagendamento
+  Future<void> _rescheduleAppointment(DocumentSnapshot appointment) async {
+    final data = appointment.data() as Map<String, dynamic>;
+
+    final currentDate = (data['data_agendamento'] as Timestamp).toDate();
+
+    if (!mounted) return;
+
+    // Picker de nova data
+    final newDate = await showDatePicker(
+      context: context,
+      initialDate: currentDate.add(const Duration(days: 1)),
+      firstDate: DateTime.now().add(const Duration(hours: 1)),
+      lastDate: DateTime.now().add(const Duration(days: 90)),
+      helpText: 'Escolha a nova data',
+    );
+    if (newDate == null || !mounted) return;
+
+    // Picker de nova hora
+    final newTime = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(currentDate),
+      helpText: 'Escolha o novo horário',
+    );
+    if (newTime == null || !mounted) return;
+
+    final newDateTime = DateTime(
+      newDate.year,
+      newDate.month,
+      newDate.day,
+      newTime.hour,
+      newTime.minute,
+    );
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Confirmar Reagendamento'),
+        content: Text(
+          'Reagendar para:\n'
+          '📅 ${DateFormat('dd/MM/yyyy').format(newDateTime)} '
+          '🕐 ${DateFormat('HH:mm').format(newDateTime)}\n\n'
+          'Deseja confirmar?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryPurple,
+                foregroundColor: Colors.white),
+            child: const Text('Confirmar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    // Loading indicator
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final functions = FirebaseFunctions.instance;
+      await functions.httpsCallable('rescheduleAppointment').call({
+        'appointmentId': appointment.id,
+        'newDateISO': newDateTime.toIso8601String(),
+      });
+
+      if (mounted) {
+        Navigator.pop(context); // close loading
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Reagendamento confirmado! ✅'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) Navigator.pop(context);
+      _showError('Não foi possível reagendar: $e');
     }
   }
 
@@ -523,7 +737,7 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
-    
+
     if (user == null) {
       return Scaffold(
         appBar: AppBar(
@@ -544,7 +758,8 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
           controller: _tabController,
           indicatorColor: Colors.white,
           indicatorWeight: 3,
-          labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          labelStyle:
+              const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
           unselectedLabelStyle: const TextStyle(fontSize: 14),
           tabs: const [
             Tab(text: 'Próximos'),
@@ -571,15 +786,18 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
                 children: [
                   Icon(Icons.event_busy, size: 80, color: Colors.grey),
                   SizedBox(height: 20),
-                  Text('Nenhum agendamento encontrado', style: TextStyle(color: Colors.grey)),
+                  Text('Nenhum agendamento encontrado',
+                      style: TextStyle(color: Colors.grey)),
                 ],
               ),
             );
           }
 
           final allAppointments = snapshot.data!.docs;
-          final upcomingAppointments = _filterAppointments(allAppointments, true);
-          final historyAppointments = _filterAppointments(allAppointments, false);
+          final upcomingAppointments =
+              _filterAppointments(allAppointments, true);
+          final historyAppointments =
+              _filterAppointments(allAppointments, false);
 
           return TabBarView(
             controller: _tabController,
@@ -593,7 +811,8 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
     );
   }
 
-  Widget _buildAppointmentsList(List<DocumentSnapshot> appointments, bool isUpcoming) {
+  Widget _buildAppointmentsList(
+      List<DocumentSnapshot> appointments, bool isUpcoming) {
     if (appointments.isEmpty) {
       return Center(
         child: Column(
@@ -606,9 +825,9 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
             ),
             const SizedBox(height: 20),
             Text(
-              isUpcoming 
-                ? 'Nenhum agendamento futuro' 
-                : 'Nenhum histórico ainda',
+              isUpcoming
+                  ? 'Nenhum agendamento futuro'
+                  : 'Nenhum histórico ainda',
               style: const TextStyle(color: Colors.grey, fontSize: 16),
             ),
           ],
@@ -637,14 +856,16 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
     return FutureBuilder<Map<String, dynamic>>(
       future: _getShopData(shopId),
       builder: (context, shopSnapshot) {
-        final shopData = shopSnapshot.data ?? {'nome': 'Carregando...', 'logo': ''};
+        final shopData =
+            shopSnapshot.data ?? {'nome': 'Carregando...', 'logo': ''};
         final shopName = shopData['nome'] as String;
         final shopLogo = shopData['logo'] as String;
 
         return Card(
           margin: const EdgeInsets.only(bottom: 12),
           elevation: 2,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -668,17 +889,23 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
                                 imageUrl: shopLogo,
                                 fit: BoxFit.cover,
                                 placeholder: (_, __) => Container(
-                                  color: AppColors.primaryPurple.withValues(alpha: 0.1),
-                                  child: const Icon(Icons.store, color: AppColors.primaryPurple),
+                                  color: AppColors.primaryPurple
+                                      .withValues(alpha: 0.1),
+                                  child: const Icon(Icons.store,
+                                      color: AppColors.primaryPurple),
                                 ),
                                 errorWidget: (_, __, ___) => Container(
-                                  color: AppColors.primaryPurple.withValues(alpha: 0.1),
-                                  child: const Icon(Icons.store, color: AppColors.primaryPurple),
+                                  color: AppColors.primaryPurple
+                                      .withValues(alpha: 0.1),
+                                  child: const Icon(Icons.store,
+                                      color: AppColors.primaryPurple),
                                 ),
                               )
                             : Container(
-                                color: AppColors.primaryPurple.withValues(alpha: 0.1),
-                                child: const Icon(Icons.store, color: AppColors.primaryPurple),
+                                color: AppColors.primaryPurple
+                                    .withValues(alpha: 0.1),
+                                child: const Icon(Icons.store,
+                                    color: AppColors.primaryPurple),
                               ),
                       ),
                     ),
@@ -713,9 +940,11 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
                     ),
                     // Status badge
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
-                        color: _getStatusColor(data['status']).withValues(alpha: 0.2),
+                        color: _getStatusColor(data['status'])
+                            .withValues(alpha: 0.2),
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Text(
@@ -733,18 +962,21 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
                 // Data e hora
                 Row(
                   children: [
-                    const Icon(Icons.calendar_today, size: 16, color: Colors.grey),
+                    const Icon(Icons.calendar_today,
+                        size: 16, color: Colors.grey),
                     const SizedBox(width: 8),
                     Text(
                       DateFormat('dd/MM/yyyy').format(appointmentDate),
-                      style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.w500),
+                      style: const TextStyle(
+                          color: Colors.grey, fontWeight: FontWeight.w500),
                     ),
                     const SizedBox(width: 16),
                     const Icon(Icons.access_time, size: 16, color: Colors.grey),
                     const SizedBox(width: 8),
                     Text(
                       DateFormat('HH:mm').format(appointmentDate),
-                      style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.w500),
+                      style: const TextStyle(
+                          color: Colors.grey, fontWeight: FontWeight.w500),
                     ),
                   ],
                 ),
@@ -756,14 +988,18 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Valor Total:', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                        Text(currencyFormat.format(valorTotal), style: const TextStyle(fontWeight: FontWeight.bold)),
+                        const Text('Valor Total:',
+                            style: TextStyle(fontSize: 12, color: Colors.grey)),
+                        Text(currencyFormat.format(valorTotal),
+                            style:
+                                const TextStyle(fontWeight: FontWeight.bold)),
                       ],
                     ),
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Pago:', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                        const Text('Pago:',
+                            style: TextStyle(fontSize: 12, color: Colors.grey)),
                         Text(
                           currencyFormat.format(valorPago),
                           style: TextStyle(
@@ -776,12 +1012,15 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Restante:', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                        const Text('Restante:',
+                            style: TextStyle(fontSize: 12, color: Colors.grey)),
                         Text(
                           currencyFormat.format(valorRestante),
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
-                            color: valorRestante > 0 ? Colors.orange : Colors.green,
+                            color: valorRestante > 0
+                                ? Colors.orange
+                                : Colors.green,
                           ),
                         ),
                       ],
@@ -793,7 +1032,7 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
                   const SizedBox(height: 12),
                   Row(
                     children: [
-                      // Botão Cancelar
+                      // Botão Cancelar (Se não pagou nada)
                       if (valorPago == 0 && _canCancelAppointment(appointment))
                         Expanded(
                           child: OutlinedButton(
@@ -802,13 +1041,56 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
                               foregroundColor: Colors.red,
                               side: const BorderSide(color: Colors.red),
                               padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8)),
                             ),
                             child: const Text('CANCELAR'),
                           ),
                         ),
-                      if (valorPago == 0 && _canCancelAppointment(appointment) && valorRestante > 0)
-                        const SizedBox(width: 12),
+                      // [FASE 7] Botão de Solicitar Reembolso (Se pagou algo)
+                      if (valorPago > 0 && _canCancelAppointment(appointment))
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => _requestRefund(appointment),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.redAccent,
+                              side: const BorderSide(color: Colors.redAccent),
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8)),
+                            ),
+                            child: const Text(
+                              'CANCELAR E REEMBOLSAR',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(fontSize: 11),
+                            ),
+                          ),
+                        ),
+
+                      // Espaçador
+                      if (_canCancelAppointment(appointment))
+                        const SizedBox(width: 8),
+
+                      // [FASE 5] Botão Reagendar
+                      if (_shouldShowActions(appointment))
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () =>
+                                _rescheduleAppointment(appointment),
+                            icon: const Icon(Icons.edit_calendar, size: 15),
+                            label: const Text('REAGENDAR',
+                                style: TextStyle(fontSize: 11)),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AppColors.primaryPurple,
+                              side: const BorderSide(
+                                  color: AppColors.primaryPurple),
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8)),
+                            ),
+                          ),
+                        ),
+                      if (valorRestante > 0) const SizedBox(width: 8),
                       // Botão Pagar
                       if (valorRestante > 0)
                         Expanded(
@@ -818,9 +1100,11 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage> with SingleTick
                               backgroundColor: AppColors.primaryPurple,
                               foregroundColor: Colors.white,
                               padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8)),
                             ),
-                            child: const Text('PAGAR RESTANTE'),
+                            child: const Text('PAGAR RESTANTE',
+                                style: TextStyle(fontSize: 10)),
                           ),
                         ),
                     ],
