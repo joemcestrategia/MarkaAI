@@ -614,7 +614,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
                           Expanded(
                             flex: 2,
                             child: DropdownButtonFormField<String>(
-                              value: _estadoSelecionado,
+                              initialValue: _estadoSelecionado,
                               decoration: InputDecoration(
                                 labelText: 'Estado *',
                                 labelStyle: const TextStyle(fontSize: 13),

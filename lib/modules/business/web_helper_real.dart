@@ -1,6 +1,8 @@
 // ignore_for_file: avoid_web_libraries_in_flutter
 /// Web helper — REAL implementation using dart:html / dart:ui_web.
 /// Conditionally imported only when compiling for the web target.
+library;
+
 import 'dart:async';
 import 'dart:html' as html;
 import 'dart:ui_web' as ui_web;

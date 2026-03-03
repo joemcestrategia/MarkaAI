@@ -71,6 +71,25 @@ service cloud.firestore {
       allow write: if false; // Somente via seedPlans CF
     }
 
+    // ─── AGENDAMENTOS ──────────────────────────────────────────────────────
+    match /appointments/{appointmentId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+      allow delete: if false;
+      allow update: if request.auth != null && (
+        // Se for o cliente atualizando, proibe mudar status, data ou valor pago.
+        // Devem usar as Cloud Functions para reschedules e cancellations.
+        (resource.data.cliente_id == request.auth.uid &&
+         !('status' in request.resource.data.diff(resource.data).affectedKeys()) &&
+         !('data_agendamento' in request.resource.data.diff(resource.data).affectedKeys()) &&
+         !('valor_pago' in request.resource.data.diff(resource.data).affectedKeys()) &&
+         !('reembolso_pendente' in request.resource.data.diff(resource.data).affectedKeys()))
+        ||
+        // Se não for o cliente, confiamos na loja (owner) para editar.
+        (resource.data.cliente_id != request.auth.uid)
+      );
+    }
+
     // ─── DEFAULT: require auth ────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if request.auth != null;

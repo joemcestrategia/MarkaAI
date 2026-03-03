@@ -894,15 +894,12 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                     if (!mounted) return;
                     Navigator.pop(context);
 
-                    setState(() {
-                      // Insert new appointment into cache and list at appropriate position (keep chronological)
-                      _addToCache(newDoc);
-                      // avoid duplicates
-                      if (!_appointments.any((a) => a.id == newDoc.id)) {
-                        _appointments.insert(0, newDoc);
-                      }
+                    // Re-load to ensure correct ordering if date has changed
+                    _loadAppointments();
+                    _loadMonthEvents();
 
-                      // Update events map to show marker on calendar without reloading whole month
+                    setState(() {
+                      // Update events map to show marker on calendar without reloading whole month instantly
                       final dateKey = DateTime(manualDateNormalized.year,
                           manualDateNormalized.month, manualDateNormalized.day);
                       final existing = _events[dateKey] ?? [];
@@ -1317,28 +1314,72 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
   }
 
   Widget _buildStatsSection() {
-    final start = _startFromDate ?? DateTime.now();
+    final startWeek = _startFromDate ?? DateTime.now();
+    // Usa _focusedDay para o mês exibido atualmente
+    final startMonth = _focusedDay;
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
       color: Colors.transparent,
       child: StreamBuilder<double>(
-        stream: _weeklyRevenueStream(start),
-        builder: (context, snap) {
-          final val = snap.data ?? 0.0;
-          return Row(
-            children: [
-              Expanded(
-                child: Text(
-                  "Faturamento da semana: ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(val)}",
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold, fontSize: 16),
-                ),
-              ),
-            ],
+        stream: _weeklyRevenueStream(startWeek),
+        builder: (context, snapWeek) {
+          final valWeek = snapWeek.data ?? 0.0;
+          return StreamBuilder<double>(
+            stream: _monthlyRevenueStream(startMonth),
+            builder: (context, snapMonth) {
+              final valMonth = snapMonth.data ?? 0.0;
+              return Column(
+                crossAxisAlignment:
+                    CrossAxisAlignment.start, // Alinhado à esquerda
+                children: [
+                  Text(
+                    "Faturamento da semana: ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(valWeek)}",
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 16),
+                    textAlign: TextAlign.left,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    "Faturamento do mês: ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(valMonth)}",
+                    style: const TextStyle(
+                        fontWeight: FontWeight.normal, fontSize: 14),
+                    textAlign: TextAlign.left,
+                  ),
+                ],
+              );
+            },
           );
         },
       ),
     );
+  }
+
+  // Stream do faturamento do mês base
+  Stream<double> _monthlyRevenueStream(DateTime dateInMonth) {
+    final start = DateTime(dateInMonth.year, dateInMonth.month, 1, 0, 0, 0);
+    final end = DateTime(dateInMonth.year, dateInMonth.month + 1, 1, 0, 0, 0)
+        .subtract(const Duration(seconds: 1));
+    return FirebaseFirestore.instance
+        .collection('appointments')
+        .where('shopId', isEqualTo: widget.shopId)
+        .where('data_agendamento',
+            isGreaterThanOrEqualTo: Timestamp.fromDate(start))
+        .where('data_agendamento', isLessThanOrEqualTo: Timestamp.fromDate(end))
+        .snapshots()
+        .map((snap) {
+      double sum = 0.0;
+      for (var doc in snap.docs) {
+        final data = doc.data();
+        final status = (data['status'] ?? '').toString().toLowerCase();
+        if (status == 'cancelado') continue;
+        sum += double.tryParse(data['valor_pago']?.toString() ??
+                data['valor_total']?.toString() ??
+                data['valor']?.toString() ??
+                '0') ??
+            0;
+      }
+      return sum;
+    });
   }
 
   // Stream do faturamento da semana com base em startDate (7 dias)

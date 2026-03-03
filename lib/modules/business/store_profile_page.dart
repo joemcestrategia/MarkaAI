@@ -10,8 +10,66 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 
+// Lista fixa das UFs brasileiras
+const List<String> _kStoreUFs = [
+  'AC',
+  'AL',
+  'AP',
+  'AM',
+  'BA',
+  'CE',
+  'DF',
+  'ES',
+  'GO',
+  'MA',
+  'MT',
+  'MS',
+  'MG',
+  'PA',
+  'PB',
+  'PR',
+  'PE',
+  'PI',
+  'RJ',
+  'RN',
+  'RS',
+  'RO',
+  'RR',
+  'SC',
+  'SP',
+  'SE',
+  'TO',
+];
+
+// Nichos/categorias de negócio
+const List<String> _kNichos = [
+  'Salão de Beleza',
+  'Barbearia',
+  'Estética e Spa',
+  'Nail Design / Manicure',
+  'Tatuagem e Piercing',
+  'Academia / Personal Trainer',
+  'Clínica de Saúde',
+  'Psicologia / Terapia',
+  'Nutrição',
+  'Odontologia',
+  'Veterinário / Pet Shop',
+  'Fotografia',
+  'Advocacia',
+  'Contabilidade',
+  'Consultoria',
+  'Educação / Aulas Particulares',
+  'Moda e Vestuário',
+  'Gastronomia / Buffet',
+  'Limpeza e Conservação',
+  'Reforma e Construção',
+  'Tecnologia / TI',
+  'Outros',
+];
+
 class StoreProfilePage extends StatefulWidget {
-  const StoreProfilePage({super.key});
+  final bool highlightLocation;
+  const StoreProfilePage({super.key, this.highlightLocation = false});
 
   @override
   State<StoreProfilePage> createState() => _StoreProfilePageState();
@@ -35,6 +93,17 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
   XFile? _newLogoFile;
   XFile? _newCoverFile;
 
+  // Campos de localização
+  final _cidadeController = TextEditingController();
+  String? _estadoSelecionado;
+
+  // Nicho/Categoria
+  String? _nichoSelecionado;
+  final _nichoOutrosController = TextEditingController();
+
+  // Scroll key para destacar localização
+  final _locationKey = GlobalKey();
+
   bool _isLoading = true;
   bool _isSaving = false;
   String? _shopId;
@@ -43,6 +112,19 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
   void initState() {
     super.initState();
     _loadStoreData();
+    if (widget.highlightLocation) {
+      // Scroll até a seção de localização após o frame ser renderizado
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_locationKey.currentContext != null) {
+          Scrollable.ensureVisible(
+            _locationKey.currentContext!,
+            duration: const Duration(milliseconds: 600),
+            curve: Curves.easeInOut,
+            alignment: 0.1,
+          );
+        }
+      });
+    }
   }
 
   @override
@@ -54,6 +136,8 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
     _slugController.dispose();
     _instagramController.dispose();
     _whatsappController.dispose();
+    _cidadeController.dispose();
+    _nichoOutrosController.dispose();
     super.dispose();
   }
 
@@ -91,8 +175,35 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                 _whatsappController.text = data['whatsapp'] ?? "";
                 _logoUrl = data['logoUrl'];
                 _coverUrl = data['imageUrl'];
+                // Localização
+                _cidadeController.text = data['cidade'] ?? data['city'] ?? '';
+                final estadoRaw =
+                    (data['estado'] ?? '').toString().toUpperCase().trim();
+                _estadoSelecionado =
+                    _kStoreUFs.contains(estadoRaw) ? estadoRaw : null;
+                // Nicho
+                final nichoRaw = data['categoria'] ?? data['nicho'] ?? '';
+                if (nichoRaw.isNotEmpty && _kNichos.contains(nichoRaw)) {
+                  _nichoSelecionado = nichoRaw;
+                } else if (nichoRaw.isNotEmpty) {
+                  _nichoSelecionado = 'Outros';
+                  _nichoOutrosController.text = nichoRaw;
+                }
                 _isLoading = false;
               });
+              // Scroll após carregar os dados se precisar destacar
+              if (widget.highlightLocation) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (_locationKey.currentContext != null) {
+                    Scrollable.ensureVisible(
+                      _locationKey.currentContext!,
+                      duration: const Duration(milliseconds: 700),
+                      curve: Curves.easeInOut,
+                      alignment: 0.1,
+                    );
+                  }
+                });
+              }
             }
           } else {
             if (mounted) {
@@ -205,6 +316,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
       final isAvailable = await _isSlugAvailable(slugNormalizado);
 
       if (!isAvailable) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Este link já está em uso. Escolha outro.'),
@@ -231,6 +343,11 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
         coverDownloadUrl = await _uploadFile(_newCoverFile!, "cover");
       }
 
+      // Determina nicho final
+      final nichoFinal = _nichoSelecionado == 'Outros'
+          ? _nichoOutrosController.text.trim()
+          : (_nichoSelecionado ?? '');
+
       await FirebaseFirestore.instance.collection('shops').doc(_shopId).set({
         'nome': _nameController.text.trim(),
         'descricao': _descController.text.trim(),
@@ -243,6 +360,10 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
         'whatsapp': _whatsappController.text.trim(),
         'logoUrl': logoDownloadUrl,
         'imageUrl': coverDownloadUrl,
+        'cidade': _cidadeController.text.trim(),
+        'estado': _estadoSelecionado ?? '',
+        'categoria': nichoFinal,
+        'nicho': nichoFinal,
         'updated_at': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
@@ -441,7 +562,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                                 ),
                               ),
                               child: Text(
-                                data['nome'] ?? "Serviço",
+                                data['nome'] ?? "Serviço", // Original line 1072
                                 style: const TextStyle(
                                   color: Colors.white,
                                   fontWeight: FontWeight.bold,
@@ -702,6 +823,9 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                                 v!.isEmpty ? "Campo obrigatório" : null,
                           ),
                           const SizedBox(height: 12),
+                          // ── Nicho / Categoria ──────────────────────────
+                          _buildNichoField(),
+                          const SizedBox(height: 12),
                           _buildTextField(
                             controller: _descController,
                             label: "Descrição",
@@ -721,6 +845,9 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                             icon: Icons.phone,
                             keyboardType: TextInputType.phone,
                           ),
+                          const SizedBox(height: 12),
+                          // ── Localização: Cidade + UF ───────────────────
+                          _buildLocationSection(),
                           const SizedBox(height: 16),
 
                           // ── Link Personalizado ──────────────────────────
@@ -776,9 +903,12 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                                     fillColor: Colors.white,
                                   ),
                                   validator: (v) {
-                                    if (v == null || v.isEmpty) return null;
-                                    if (v.length < 3)
+                                    if (v == null || v.isEmpty) {
+                                      return null;
+                                    }
+                                    if (v.length < 3) {
                                       return "Mínimo 3 caracteres";
+                                    }
                                     if (!RegExp(r'^[a-zA-Z0-9-]+$')
                                         .hasMatch(v)) {
                                       return "Apenas letras, números e hífen";
@@ -925,6 +1055,208 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
     );
   }
 
+  // ── Nicho/Categoria field ─────────────────────────────────────────────────
+  Widget _buildNichoField() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.03),
+                blurRadius: 6,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: DropdownButtonFormField<String>(
+            value: _nichoSelecionado,
+            decoration: InputDecoration(
+              labelText: 'Nicho / Ramo de Negócio',
+              prefixIcon: Icon(Icons.storefront,
+                  color: AppColors.primaryPurple.withValues(alpha: 0.7)),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
+              filled: true,
+              fillColor: Colors.white,
+              contentPadding:
+                  const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+            ),
+            hint: const Text('Selecione o ramo do negócio'),
+            isExpanded: true,
+            items: _kNichos
+                .map((n) => DropdownMenuItem(
+                      value: n,
+                      child: Text(n, style: const TextStyle(fontSize: 14)),
+                    ))
+                .toList(),
+            onChanged: (v) => setState(() => _nichoSelecionado = v),
+          ),
+        ),
+        if (_nichoSelecionado == 'Outros') ...[
+          const SizedBox(height: 10),
+          _buildTextField(
+            controller: _nichoOutrosController,
+            label: 'Descreva seu ramo de negócio',
+            icon: Icons.edit,
+            validator: (v) =>
+                (v == null || v.trim().isEmpty) ? 'Campo obrigatório' : null,
+          ),
+        ],
+      ],
+    );
+  }
+
+  // ── Seção Localização: Cidade + UF ────────────────────────────────────────
+  Widget _buildLocationSection() {
+    final bool highlight = widget.highlightLocation &&
+        (_cidadeController.text.trim().isEmpty || _estadoSelecionado == null);
+    final highlightColor =
+        highlight ? Colors.orange.shade700 : AppColors.primaryPurple;
+    final borderColor = highlight ? Colors.orange.shade400 : Colors.transparent;
+
+    return Container(
+      key: _locationKey,
+      decoration: BoxDecoration(
+        color: highlight ? Colors.orange.shade50 : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: highlight ? Colors.orange.shade400 : Colors.grey.shade200,
+          width: highlight ? 2 : 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: highlight
+                ? Colors.orange.withValues(alpha: 0.15)
+                : Colors.black.withValues(alpha: 0.03),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                highlight ? Icons.warning_amber_rounded : Icons.location_on,
+                color: highlightColor,
+                size: 18,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                highlight
+                    ? 'Localização incompleta — Preencha para aparecer nas buscas!'
+                    : 'Cidade e Estado',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                  color: highlightColor,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: TextFormField(
+                  controller: _cidadeController,
+                  style: const TextStyle(fontSize: 14),
+                  decoration: InputDecoration(
+                    labelText: 'Cidade *',
+                    hintText: 'Ex: São Paulo',
+                    prefixIcon: Icon(Icons.location_city,
+                        color: highlightColor.withValues(alpha: 0.8), size: 20),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide(
+                            color: borderColor.withValues(alpha: 0.5))),
+                    enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide(
+                            color: highlight
+                                ? Colors.orange.shade300
+                                : Colors.grey.shade300)),
+                    focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide:
+                            BorderSide(color: highlightColor, width: 2)),
+                    errorBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide:
+                            const BorderSide(color: Colors.red, width: 2)),
+                    filled: true,
+                    fillColor: highlight ? Colors.white : Colors.grey.shade50,
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 12),
+                    isDense: true,
+                  ),
+                  validator: (v) => (v == null || v.trim().isEmpty)
+                      ? 'Cidade é obrigatória'
+                      : null,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 2,
+                child: DropdownButtonFormField<String>(
+                  value: _estadoSelecionado,
+                  decoration: InputDecoration(
+                    labelText: 'Estado *',
+                    labelStyle: const TextStyle(fontSize: 13),
+                    prefixIcon: Icon(Icons.flag,
+                        color: highlightColor.withValues(alpha: 0.8), size: 20),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide.none),
+                    enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide(
+                            color: highlight
+                                ? Colors.orange.shade300
+                                : Colors.grey.shade300)),
+                    focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide:
+                            BorderSide(color: highlightColor, width: 2)),
+                    errorBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide:
+                            const BorderSide(color: Colors.red, width: 2)),
+                    filled: true,
+                    fillColor: highlight ? Colors.white : Colors.grey.shade50,
+                    contentPadding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                    isDense: true,
+                  ),
+                  hint: const Text('UF', style: TextStyle(fontSize: 13)),
+                  items: _kStoreUFs
+                      .map((uf) => DropdownMenuItem(
+                          value: uf,
+                          child:
+                              Text(uf, style: const TextStyle(fontSize: 14))))
+                      .toList(),
+                  onChanged: (v) => setState(() => _estadoSelecionado = v),
+                  validator: (v) =>
+                      (v == null || v.isEmpty) ? 'Obrigatório' : null,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   // Widget auxiliar para TextFields bonitos
   Widget _buildTextField({
     required TextEditingController controller,
@@ -1026,13 +1358,14 @@ class _ImageAdjustmentPageState extends State<_ImageAdjustmentPage> {
               });
             },
             child: ClipRect(
-              child: Transform(
-                transform: Matrix4.identity()
-                  ..translate(_offset.dx, _offset.dy)
-                  ..scale(_scale),
-                child: kIsWeb
-                    ? Image.network(widget.imageFile.path)
-                    : Image.file(File(widget.imageFile.path)),
+              child: Transform.translate(
+                offset: _offset,
+                child: Transform.scale(
+                  scale: _scale,
+                  child: kIsWeb
+                      ? Image.network(widget.imageFile.path)
+                      : Image.file(File(widget.imageFile.path)),
+                ),
               ),
             ),
           ),

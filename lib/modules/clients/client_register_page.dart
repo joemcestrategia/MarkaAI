@@ -246,9 +246,10 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
         }
       }
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text("Erro: $e"), backgroundColor: Colors.red));
+      }
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -316,14 +317,16 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
               (r) => false);
         }
       } else {
-        if (mounted)
+        if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text('Falha ao excluir: ${resp.statusCode}')));
+        }
       }
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('Erro: $e')));
+      }
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }

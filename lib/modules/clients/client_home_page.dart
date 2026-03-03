@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:async';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:intl/intl.dart';
 import 'package:geolocator/geolocator.dart';
@@ -48,7 +49,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
   String _selectedCategory = "Todos";
   double? _userLat;
   double? _userLng;
-  double _selectedRadius = 20.0; // km
+  final double _selectedRadius = 20.0; // km
 
   // 🌍 Cidade selecionada pelo cliente (persiste no SharedPreferences)
   CidadeSelecionada? _cidadeSelecionada;
@@ -82,17 +83,21 @@ class _ClientHomePageState extends State<ClientHomePage> {
     }
   }
 
-  // Abre o modal de seleção de cidade
+  // Abre a tela de seleção de cidade
   void _mostrarSeletorDeCidade() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => SeletorDeCidadeModal(
-        cidadeAtual: _cidadeSelecionada,
-        onCidadeSelecionada: (c) {
-          setState(() => _cidadeSelecionada = c);
-        },
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => SeletorDeCidadePage(
+          cidadeAtual: _cidadeSelecionada,
+          onCidadeSelecionada: (c) {
+            setState(() {
+              _cidadeSelecionada = c;
+              // Sincroniza com o filtro legado de lojas
+              _selectedLocation = c.cidade;
+            });
+          },
+        ),
       ),
     );
   }
@@ -335,9 +340,9 @@ class _ClientHomePageState extends State<ClientHomePage> {
       final idToken = await FirebaseAuth.instance.currentUser?.getIdToken(true);
       if (idToken == null) {
         Navigator.pop(context);
-        if (mounted)
-          ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Erro: usuário não autenticado')));
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Erro: usuário não autenticado')));
         return;
       }
       final url = Uri.parse(
@@ -357,27 +362,23 @@ class _ClientHomePageState extends State<ClientHomePage> {
         } catch (_) {}
         await SessionService.logout();
         await FirebaseAuth.instance.signOut();
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text(
-                  'Conta excluída com sucesso. Limpe o cache do app/telefone manualmente.')));
-          Navigator.pushAndRemoveUntil(
-              context,
-              MaterialPageRoute(builder: (_) => const LoginPage()),
-              (r) => false);
-        }
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text(
+                'Conta excluída com sucesso. Limpe o cache do app/telefone manualmente.')));
+        Navigator.pushAndRemoveUntil(context,
+            MaterialPageRoute(builder: (_) => const LoginPage()), (r) => false);
       } else {
         final body = resp.body;
-        if (mounted)
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content:
-                  Text('Falha ao excluir conta: ${resp.statusCode} $body')));
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('Falha ao excluir conta: ${resp.statusCode} $body')));
       }
     } catch (e) {
       Navigator.pop(context);
-      if (mounted)
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Erro ao excluir conta: $e')));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Erro ao excluir conta: $e')));
     }
   }
 
@@ -761,54 +762,6 @@ class _ClientHomePageState extends State<ClientHomePage> {
           ),
         ),
 
-        // 📏 SELETOR DE RAIO (KM)
-        if (_selectedLocation.isNotEmpty && _userLat != null)
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-              child: Column(
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        "Raio de busca: ${_selectedRadius.toInt()} km",
-                        style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey[600],
-                            fontWeight: FontWeight.w500),
-                      ),
-                      Text(
-                        "Aumentar alcance",
-                        style: TextStyle(
-                            fontSize: 10, color: AppColors.primaryPurple),
-                      ),
-                    ],
-                  ),
-                  SliderTheme(
-                    data: SliderTheme.of(context).copyWith(
-                      trackHeight: 2,
-                      thumbShape:
-                          const RoundSliderThumbShape(enabledThumbRadius: 6),
-                      overlayShape:
-                          const RoundSliderOverlayShape(overlayRadius: 14),
-                    ),
-                    child: Slider(
-                      value: _selectedRadius,
-                      min: 1,
-                      max: 100,
-                      divisions: 99,
-                      activeColor: AppColors.primaryPurple,
-                      inactiveColor:
-                          AppColors.primaryPurple.withValues(alpha: 0.1),
-                      onChanged: (v) => setState(() => _selectedRadius = v),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
         const SliverToBoxAdapter(child: SizedBox(height: 8)),
 
         SliverToBoxAdapter(
@@ -845,281 +798,11 @@ class _ClientHomePageState extends State<ClientHomePage> {
           ),
         ),
 
-        const SliverToBoxAdapter(child: SizedBox(height: 10)),
-
-        // ⭐ SEÇÃO DESTAQUES - Horizontal
+        // ⭐ SEÇÃO DESTAQUES — Banner largo logo abaixo da busca
         SliverToBoxAdapter(
-          child: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance
-                .collection('shops')
-                .where('is_boosted', isEqualTo: true)
-                .limit(20)
-                .snapshots(),
-            builder: (context, snap) {
-              final now = DateTime.now();
-              final docs = (snap.data?.docs ?? []).where((doc) {
-                final d = doc.data() as Map<String, dynamic>;
-                // 📍 Filtro de Cidade
-                final shopCity = (d['endereco'] ?? d['cidade'] ?? '')
-                    .toString()
-                    .toLowerCase();
-                final matchesCity = _selectedLocation.isEmpty ||
-                    shopCity.contains(_selectedLocation.toLowerCase()) ||
-                    _selectedLocation.toLowerCase().contains(shopCity);
-
-                // Filtra lojas com boost expirado
-                final expires = d['boost_expires_at'] as Timestamp?;
-                bool isExpired =
-                    expires == null || expires.toDate().isBefore(now);
-
-                return !isExpired && matchesCity;
-              }).toList();
-              if (docs.isEmpty) return const SizedBox.shrink();
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            gradient: const LinearGradient(
-                              colors: [Color(0xFFFFD700), Color(0xFFFFA000)],
-                            ),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Icon(Icons.rocket_launch,
-                              size: 16, color: Colors.white),
-                        ),
-                        const SizedBox(width: 10),
-                        const Text(
-                          'Destaques',
-                          style: TextStyle(
-                              fontSize: 17,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.black87),
-                        ),
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 2),
-                          decoration: BoxDecoration(
-                            color:
-                                const Color(0xFFFFD700).withValues(alpha: 0.2),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            '${docs.length}',
-                            style: const TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFFB8860B)),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    height: 160,
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      itemCount: docs.length,
-                      itemBuilder: (ctx, i) {
-                        final d = docs[i].data() as Map<String, dynamic>;
-                        final img = d['coverUrl'] ?? d['imageUrl'] ?? '';
-                        final cat = d['categoria']?.toString() ?? '';
-                        Color fallback = Colors.grey[200]!;
-                        IconData fi = Icons.store;
-                        switch (cat.toLowerCase()) {
-                          case 'barbearia':
-                            fallback = const Color(0xFFE3F2FD);
-                            fi = Icons.content_cut;
-                            break;
-                          case 'beleza':
-                          case 'estética':
-                            fallback = const Color(0xFFFCE4EC);
-                            fi = Icons.face;
-                            break;
-                          case 'saúde':
-                            fallback = const Color(0xFFE8F5E9);
-                            fi = Icons.medical_services;
-                            break;
-                          case 'bem-estar':
-                            fallback = const Color(0xFFFFF3E0);
-                            fi = Icons.self_improvement;
-                            break;
-                        }
-                        return GestureDetector(
-                          onTap: () => _openShopProfile(docs[i]),
-                          child: Container(
-                            width: 140,
-                            margin: const EdgeInsets.only(right: 14),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(14),
-                              border: Border.all(
-                                  color: const Color(0xFFFFD700)
-                                      .withValues(alpha: 0.4),
-                                  width: 1.5),
-                              boxShadow: [
-                                BoxShadow(
-                                    color: const Color(0xFFFFD700)
-                                        .withValues(alpha: 0.12),
-                                    blurRadius: 12,
-                                    offset: const Offset(0, 4)),
-                                BoxShadow(
-                                    color: Colors.black.withValues(alpha: 0.05),
-                                    blurRadius: 6,
-                                    offset: const Offset(0, 2)),
-                              ],
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Expanded(
-                                  child: Stack(children: [
-                                    ClipRRect(
-                                      borderRadius: const BorderRadius.vertical(
-                                          top: Radius.circular(13)),
-                                      child: img.isNotEmpty
-                                          ? CachedNetworkImage(
-                                              imageUrl: img,
-                                              fit: BoxFit.cover,
-                                              width: double.infinity,
-                                              height: double.infinity,
-                                              errorWidget: (c, u, e) =>
-                                                  Container(
-                                                      color: fallback,
-                                                      child: Icon(
-                                                          fi,
-                                                          color:
-                                                              Colors.grey[400],
-                                                          size: 36)))
-                                          : Container(
-                                              color: fallback,
-                                              child: Center(
-                                                  child: Icon(fi,
-                                                      color: Colors.grey[400],
-                                                      size: 36))),
-                                    ),
-                                    // 🚀 Badge dourado "DESTAQUE" com foguetinho
-                                    Positioned(
-                                      top: 8,
-                                      right: 8,
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 8, vertical: 4),
-                                        decoration: BoxDecoration(
-                                          gradient: const LinearGradient(
-                                            colors: [
-                                              Color(0xFFFFD700),
-                                              Color(0xFFFFA000)
-                                            ],
-                                          ),
-                                          borderRadius:
-                                              BorderRadius.circular(20),
-                                          boxShadow: [
-                                            BoxShadow(
-                                                color: const Color(0xFFFFD700)
-                                                    .withValues(alpha: 0.4),
-                                                blurRadius: 6,
-                                                offset: const Offset(0, 2)),
-                                          ],
-                                        ),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: const [
-                                            Icon(Icons.rocket_launch,
-                                                size: 10, color: Colors.white),
-                                            SizedBox(width: 3),
-                                            Text('DESTAQUE',
-                                                style: TextStyle(
-                                                    fontSize: 8,
-                                                    fontWeight: FontWeight.bold,
-                                                    color: Colors.white,
-                                                    letterSpacing: 0.5)),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                    // Logo overlay (bottom-left)
-                                    if ((d['logoUrl'] ?? '')
-                                        .toString()
-                                        .isNotEmpty)
-                                      Positioned(
-                                        bottom: 6,
-                                        left: 6,
-                                        child: Container(
-                                          width: 30,
-                                          height: 30,
-                                          decoration: BoxDecoration(
-                                            color: Colors.white,
-                                            shape: BoxShape.circle,
-                                            border: Border.all(
-                                                color: Colors.white, width: 2),
-                                            boxShadow: [
-                                              BoxShadow(
-                                                color: Colors.black
-                                                    .withValues(alpha: 0.1),
-                                                blurRadius: 4,
-                                              ),
-                                            ],
-                                          ),
-                                          child: ClipOval(
-                                            child: CachedNetworkImage(
-                                              imageUrl: d['logoUrl'],
-                                              fit: BoxFit.cover,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                  ]),
-                                ),
-                                Padding(
-                                  padding: const EdgeInsets.all(10),
-                                  child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(d['nome'] ?? '',
-                                            style: const TextStyle(
-                                                fontWeight: FontWeight.bold,
-                                                fontSize: 13),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis),
-                                        const SizedBox(height: 2),
-                                        Row(children: [
-                                          Icon(Icons.category,
-                                              size: 11,
-                                              color: Colors.grey[400]),
-                                          const SizedBox(width: 4),
-                                          Expanded(
-                                            child: Text(cat,
-                                                style: TextStyle(
-                                                    color: Colors.grey[500],
-                                                    fontSize: 11),
-                                                maxLines: 1,
-                                                overflow:
-                                                    TextOverflow.ellipsis),
-                                          ),
-                                        ]),
-                                      ]),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                ],
-              );
-            },
+          child: _BoostBannerCarousel(
+            cidadeSelecionada: _cidadeSelecionada,
+            onShopTap: _openShopProfile,
           ),
         ),
 
@@ -1188,9 +871,10 @@ class _ClientHomePageState extends State<ClientHomePage> {
         StreamBuilder<QuerySnapshot>(
           stream: FirebaseFirestore.instance.collection('shops').snapshots(),
           builder: (context, snapshot) {
-            if (!snapshot.hasData)
+            if (!snapshot.hasData) {
               return const SliverToBoxAdapter(
                   child: Center(child: CircularProgressIndicator()));
+            }
 
             final filtered = snapshot.data!.docs.where((doc) {
               final d = doc.data() as Map<String, dynamic>;
@@ -1260,7 +944,9 @@ class _ClientHomePageState extends State<ClientHomePage> {
                 int s = 0;
                 if ((d['logoUrl'] ?? '').toString().isNotEmpty) s += 10;
                 if ((d['coverUrl'] ?? '').toString().isNotEmpty ||
-                    (d['imageUrl'] ?? '').toString().isNotEmpty) s += 10;
+                    (d['imageUrl'] ?? '').toString().isNotEmpty) {
+                  s += 10;
+                }
                 if (d['is_boosted'] == true) s += 100;
                 return s;
               }
@@ -1962,6 +1648,356 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
           )
         ],
       ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🚀 BOOST BANNER CAROUSEL — banner largo de negócios impulsionados
+// ─────────────────────────────────────────────────────────────────────────────
+class _BoostBannerCarousel extends StatefulWidget {
+  final CidadeSelecionada? cidadeSelecionada;
+  final void Function(DocumentSnapshot) onShopTap;
+
+  const _BoostBannerCarousel({
+    required this.cidadeSelecionada,
+    required this.onShopTap,
+  });
+
+  @override
+  State<_BoostBannerCarousel> createState() => _BoostBannerCarouselState();
+}
+
+class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
+  final PageController _pageCtrl = PageController(viewportFraction: 0.92);
+  int _currentPage = 0;
+  Timer? _autoScrollTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _startAutoScroll();
+  }
+
+  void _startAutoScroll() {
+    _autoScrollTimer = Timer.periodic(const Duration(seconds: 4), (_) {
+      if (!_pageCtrl.hasClients) return;
+      // will be updated after docs are loaded
+    });
+  }
+
+  @override
+  void dispose() {
+    _autoScrollTimer?.cancel();
+    _pageCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('shops')
+          .where('is_boosted', isEqualTo: true)
+          .limit(20)
+          .snapshots(),
+      builder: (context, snap) {
+        final now = DateTime.now();
+        final cidade = widget.cidadeSelecionada?.cidade.toLowerCase() ?? '';
+
+        final docs = (snap.data?.docs ?? []).where((doc) {
+          final d = doc.data() as Map<String, dynamic>;
+          // Filtro de cidade
+          final shopCity =
+              (d['cidade'] ?? d['endereco'] ?? '').toString().toLowerCase();
+          final matchesCity = cidade.isEmpty ||
+              shopCity.contains(cidade) ||
+              cidade.contains(shopCity);
+          // Filtro de boost expirado
+          final expires = d['boost_expires_at'] as Timestamp?;
+          final isExpired = expires == null || expires.toDate().isBefore(now);
+          return !isExpired && matchesCity;
+        }).toList();
+
+        if (docs.isEmpty) return const SizedBox.shrink();
+
+        // Restart auto-scroll when docs change
+        _autoScrollTimer?.cancel();
+        _autoScrollTimer = Timer.periodic(const Duration(seconds: 4), (_) {
+          if (!_pageCtrl.hasClients) return;
+          final next = (_currentPage + 1) % docs.length;
+          _pageCtrl.animateToPage(
+            next,
+            duration: const Duration(milliseconds: 500),
+            curve: Curves.easeInOut,
+          );
+        });
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Título
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+              child: Row(children: [
+                Container(
+                  padding: const EdgeInsets.all(5),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                        colors: [Color(0xFFFFD700), Color(0xFFFFA000)]),
+                    borderRadius: BorderRadius.circular(7),
+                  ),
+                  child: const Icon(Icons.rocket_launch,
+                      size: 15, color: Colors.white),
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  'Destaques',
+                  style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87),
+                ),
+                const SizedBox(width: 6),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFD700).withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text('${docs.length}',
+                      style: const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF9A6F00))),
+                ),
+              ]),
+            ),
+
+            // Carousel de banners largos
+            SizedBox(
+              height: 170,
+              child: PageView.builder(
+                controller: _pageCtrl,
+                itemCount: docs.length,
+                onPageChanged: (p) => setState(() => _currentPage = p),
+                itemBuilder: (ctx, i) {
+                  final d = docs[i].data() as Map<String, dynamic>;
+                  final img = d['coverUrl'] ?? d['imageUrl'] ?? '';
+                  final nome = d['nome'] ?? '';
+                  final cat = d['categoria'] ?? d['nicho'] ?? '';
+                  final logo = d['logoUrl'] ?? '';
+
+                  return GestureDetector(
+                    onTap: () => widget.onShopTap(docs[i]),
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 6),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(18),
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF6A1B9A), Color(0xFF4A148C)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color:
+                                const Color(0xFF6A1B9A).withValues(alpha: 0.25),
+                            blurRadius: 14,
+                            offset: const Offset(0, 6),
+                          ),
+                          BoxShadow(
+                            color:
+                                const Color(0xFFFFD700).withValues(alpha: 0.08),
+                            blurRadius: 20,
+                          ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(18),
+                        child: Stack(fit: StackFit.expand, children: [
+                          // Imagem de capa
+                          if (img.isNotEmpty)
+                            CachedNetworkImage(
+                              imageUrl: img,
+                              fit: BoxFit.cover,
+                              errorWidget: (_, __, ___) =>
+                                  Container(color: const Color(0xFF4A148C)),
+                            ),
+                          // Gradiente escurece o fundo para legibilidade
+                          Container(
+                            decoration: const BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [
+                                  Colors.transparent,
+                                  Color(0xDD1A0033),
+                                ],
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                              ),
+                            ),
+                          ),
+                          // Badge DESTAQUE — topo direito
+                          Positioned(
+                            top: 12,
+                            right: 12,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 5),
+                              decoration: BoxDecoration(
+                                gradient: const LinearGradient(
+                                  colors: [
+                                    Color(0xFFFFD700),
+                                    Color(0xFFFFA000)
+                                  ],
+                                ),
+                                borderRadius: BorderRadius.circular(20),
+                                boxShadow: [
+                                  BoxShadow(
+                                      color: const Color(0xFFFFD700)
+                                          .withValues(alpha: 0.5),
+                                      blurRadius: 8,
+                                      offset: const Offset(0, 2)),
+                                ],
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.rocket_launch,
+                                      size: 11, color: Colors.white),
+                                  SizedBox(width: 4),
+                                  Text('DESTAQUE',
+                                      style: TextStyle(
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.white,
+                                          letterSpacing: 0.6)),
+                                ],
+                              ),
+                            ),
+                          ),
+                          // Conteúdo inferior: logo + nome + categoria
+                          Positioned(
+                            bottom: 12,
+                            left: 12,
+                            right: 12,
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                // Logo circle
+                                if (logo.isNotEmpty)
+                                  Container(
+                                    width: 44,
+                                    height: 44,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                          color: Colors.white, width: 2.5),
+                                      boxShadow: [
+                                        BoxShadow(
+                                            color: Colors.black
+                                                .withValues(alpha: 0.2),
+                                            blurRadius: 6),
+                                      ],
+                                    ),
+                                    child: ClipOval(
+                                      child: CachedNetworkImage(
+                                        imageUrl: logo,
+                                        fit: BoxFit.cover,
+                                      ),
+                                    ),
+                                  ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        nome,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.bold,
+                                          shadows: [
+                                            Shadow(
+                                                blurRadius: 8,
+                                                color: Colors.black45),
+                                          ],
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      if (cat.isNotEmpty)
+                                        Text(
+                                          cat,
+                                          style: TextStyle(
+                                            color: Colors.white
+                                                .withValues(alpha: 0.8),
+                                            fontSize: 12,
+                                          ),
+                                          maxLines: 1,
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                                // Botão Ver Loja
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 6),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.2),
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(
+                                        color: Colors.white
+                                            .withValues(alpha: 0.5)),
+                                  ),
+                                  child: const Text(
+                                    'Ver loja',
+                                    style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ]),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+
+            // Dots indicadores
+            if (docs.length > 1) ...[
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(docs.length, (i) {
+                  final active = i == _currentPage;
+                  return AnimatedContainer(
+                    duration: const Duration(milliseconds: 250),
+                    margin: const EdgeInsets.symmetric(horizontal: 3),
+                    width: active ? 18 : 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color:
+                          active ? AppColors.primaryPurple : Colors.grey[300],
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                  );
+                }),
+              ),
+            ],
+            const SizedBox(height: 12),
+          ],
+        );
+      },
     );
   }
 }

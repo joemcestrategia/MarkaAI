@@ -261,7 +261,7 @@ class _BusinessOnboardingPageState extends State<BusinessOnboardingPage> {
               ),
               const SizedBox(height: 16),
               DropdownButtonFormField<String>(
-                value: _estadoSelecionado,
+                initialValue: _estadoSelecionado,
                 decoration: const InputDecoration(
                   labelText: 'Estado (UF) *',
                   prefixIcon: Icon(Icons.flag),

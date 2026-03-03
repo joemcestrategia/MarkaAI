@@ -276,9 +276,10 @@ class _BookingPageState extends State<BookingPage> {
             ),
           );
         }
-        if (!snapshot.hasData)
+        if (!snapshot.hasData) {
           return const Center(
               child: CircularProgressIndicator(color: AppColors.primaryPurple));
+        }
 
         final profs = snapshot.data!.docs.where((d) {
           final skills =
@@ -813,6 +814,9 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
         List<Map<String, int>> busyIntervals = [];
         for (var d in snapshot.data!.docs) {
           final data = d.data() as Map<String, dynamic>;
+          final status = (data['status'] ?? '').toString().toLowerCase();
+          if (status == 'cancelado' || status == 'recusado') continue;
+
           final dt = (data['data_agendamento'] as Timestamp).toDate();
           int agDuration = data['duracao_min'] ?? duration;
           int startMin = dt.hour * 60 + dt.minute;

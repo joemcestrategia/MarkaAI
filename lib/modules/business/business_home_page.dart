@@ -11,6 +11,7 @@ import 'package:intl/intl.dart';
 import 'dart:math';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'business_history_page.dart';
+import 'package:fl_chart/fl_chart.dart';
 import '../../core/widgets/splash_loading_widget.dart';
 import 'widgets/profile_completion_widget.dart';
 import 'boost_shop_page.dart';
@@ -34,9 +35,7 @@ import '../financial/financial_dashboard_page.dart';
 import 'subscription_plans_page.dart';
 import '../../modules/inventory/inventory_home_page.dart';
 import 'subscription_service.dart';
-
 import '../help/help_guide_page.dart';
-import 'business_profile_page.dart';
 
 class BusinessHomePage extends StatefulWidget {
   const BusinessHomePage({super.key});
@@ -534,16 +533,16 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
               children: [
                 Material(
                   elevation: 2,
-                  color: const Color(0xFFFFF3CD),
+                  color: Colors.red.shade50,
                   child: InkWell(
                     onTap: () {
                       if (shopId == null) return;
-                      setState(
-                          () => _selectedIndex = 0); // volta para dashboard
+                      setState(() => _selectedIndex = 0);
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => BusinessProfilePage(shopId: shopId!),
+                          builder: (_) =>
+                              const StoreProfilePage(highlightLocation: true),
                         ),
                       );
                     },
@@ -552,16 +551,16 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                           horizontal: 16, vertical: 10),
                       child: Row(
                         children: [
-                          const Icon(Icons.warning_amber_rounded,
-                              color: Color(0xFF856404), size: 20),
+                          Icon(Icons.warning_amber_rounded,
+                              color: Colors.red.shade700, size: 20),
                           const SizedBox(width: 10),
-                          const Expanded(
+                          Expanded(
                             child: Text(
                               '⚠️  Sua loja não está visível para os clientes. '
                               'Complete o endereço (cidade e estado) para aparecer nos resultados de busca.',
                               style: TextStyle(
                                   fontSize: 12,
-                                  color: Color(0xFF533F03),
+                                  color: Colors.red.shade800,
                                   fontWeight: FontWeight.w500),
                             ),
                           ),
@@ -570,7 +569,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 10, vertical: 5),
                             decoration: BoxDecoration(
-                              color: const Color(0xFF856404),
+                              color: AppColors.primaryPurple,
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: const Text(
@@ -1726,107 +1725,259 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     required double faturamentoProdutos,
     List<QueryDocumentSnapshot>? appointmentDocs,
   }) {
+    final now = DateTime.now();
+    final hoje = appointmentDocs == null
+        ? 0
+        : appointmentDocs.where((doc) {
+            final d = doc.data() as Map<String, dynamic>;
+            final ts = d['data_agendamento'];
+            if (ts is! Timestamp) return false;
+            final dt = ts.toDate();
+            return dt.year == now.year &&
+                dt.month == now.month &&
+                dt.day == now.day;
+          }).length;
+
+    final fmt = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          // ── Hero Header com gradiente ────────────────────────────────────
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xFF6C3CE2), Color(0xFF9B5CF6)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      isAllYears ? "Geral" : "$_selectedYear",
-                      style: const TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            isAllYears
+                                ? 'Visão Geral • Todos os anos'
+                                : 'Resultados de $_selectedYear',
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            shopName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    const Text(
-                      "Análise de Performance",
-                      style: TextStyle(
-                        color: Colors.grey,
-                        fontSize: 12,
-                      ),
-                    ),
+                    _buildYearDropdown(dark: true),
                   ],
                 ),
-              ),
-              _buildYearDropdown(),
-            ],
+                const SizedBox(height: 20),
+                // Faturamento em destaque no header
+                Text(
+                  fmt.format(faturamentoTotal),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 32,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.5,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                const Text(
+                  'Faturamento total',
+                  style: TextStyle(color: Colors.white60, fontSize: 12),
+                ),
+              ],
+            ),
           ),
-          const SizedBox(height: 20),
-          Row(
-            children: [
-              Expanded(
-                child: _buildMobileMetricCard(
-                  "Faturamento",
+
+          // ── Cards principais sobrepostos ao header ───────────────────────
+          Transform.translate(
+            offset: const Offset(0, -14),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _buildKpiCard(
+                      title: 'Atendimentos',
+                      value: totalAtendimentos.toString(),
+                      subtitle:
+                          isAllYears ? 'total geral' : 'em $_selectedYear',
+                      icon: Icons.people_alt_rounded,
+                      color: const Color(0xFF4F8EF7),
+                      isMoney: false,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildKpiCard(
+                      title: 'Ticket Médio',
+                      value: fmt.format(ticketMedio),
+                      subtitle: 'por atendimento',
+                      icon: Icons.receipt_long_rounded,
+                      color: const Color(0xFF00C9A7),
+                      isMoney: true,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Column(
+              children: [
+                // ── Card Hoje ─────────────────────────────────────────────
+                _buildHojeCard(hoje, appointmentDocs),
+                const SizedBox(height: 12),
+
+                // ── Breakdown Serviços vs Produtos ────────────────────────
+                _buildBreakdownVisual(
+                  faturamentoMaoDeObra,
+                  faturamentoProdutos,
                   faturamentoTotal,
-                  Icons.monetization_on,
-                  Colors.green,
                 ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildMobileMetricCard(
-                  "Atendimentos",
-                  totalAtendimentos.toDouble(),
-                  Icons.people_alt,
-                  Colors.blue,
-                  isMoney: false,
-                ),
-              ),
-            ],
+                const SizedBox(height: 12),
+
+                // ── Gráfico ───────────────────────────────────────────────
+                _buildMobileChart(dataMoney, dataQty, chartLabels, isAllYears),
+
+                if (shopId != null &&
+                    appointmentDocs != null &&
+                    appointmentDocs.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  _buildEquipeComissoesCard(shopId!, appointmentDocs),
+                ],
+                const SizedBox(height: 24),
+              ],
+            ),
           ),
-          const SizedBox(height: 12),
-          _buildMobileMetricCard(
-            "Ticket Médio",
-            ticketMedio,
-            Icons.receipt_long,
-            AppColors.primaryPurple,
-          ),
-          const SizedBox(height: 20),
-          _buildMobileChart(dataMoney, dataQty, chartLabels, isAllYears),
-          const SizedBox(height: 20),
-          _buildMobileBreakdown(
-            faturamentoMaoDeObra,
-            faturamentoProdutos,
-            faturamentoTotal,
-          ),
-          if (shopId != null &&
-              appointmentDocs != null &&
-              appointmentDocs.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            _buildEquipeComissoesCard(shopId!, appointmentDocs),
-          ],
         ],
       ),
     );
   }
 
-  Widget _buildMobileMetricCard(
-    String title,
-    double value,
-    IconData icon,
-    Color color, {
-    bool isMoney = true,
+  Widget _buildKpiCard({
+    required String title,
+    required String value,
+    required String subtitle,
+    required IconData icon,
+    required Color color,
+    required bool isMoney,
   }) {
-    String textVal = isMoney
-        ? NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(value)
-        : value.toInt().toString();
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: 0.18),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      color.withValues(alpha: 0.15),
+                      color.withValues(alpha: 0.05)
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: color, size: 18),
+              ),
+              const Spacer(),
+              Icon(Icons.trending_up_rounded, color: color, size: 14),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            title,
+            style: TextStyle(
+                fontSize: 11,
+                color: Colors.grey[500],
+                fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 3),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              value,
+              style: const TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1A1D2E)),
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(subtitle,
+              style: TextStyle(fontSize: 10, color: Colors.grey[400])),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHojeCard(int hoje, List<QueryDocumentSnapshot>? allDocs) {
+    final now = DateTime.now();
+    // Próximos agendamentos de hoje (somente agendado/confirmado)
+    final proximosHoje = allDocs?.where((doc) {
+          final d = doc.data() as Map<String, dynamic>;
+          final ts = d['data_agendamento'];
+          if (ts is! Timestamp) return false;
+          final dt = ts.toDate();
+          final status = (d['status'] ?? '').toString();
+          return dt.year == now.year &&
+              dt.month == now.month &&
+              dt.day == now.day &&
+              (status == 'agendado' || status == 'confirmado');
+        }).toList() ??
+        [];
 
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFF0EEFF)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 8,
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 12,
             offset: const Offset(0, 2),
           ),
         ],
@@ -1835,38 +1986,204 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Icon(icon, color: color, size: 24),
               Container(
-                padding: const EdgeInsets.all(4),
+                padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(4),
+                  color: const Color(0xFFF3F0FF),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(Icons.trending_up, color: color, size: 12),
+                child: const Icon(Icons.today_rounded,
+                    color: AppColors.primaryPurple, size: 18),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Agenda de Hoje',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 14)),
+                    Text(
+                      proximosHoje.isEmpty
+                          ? 'Nenhum agendamento pendente'
+                          : '${proximosHoje.length} agendamento${proximosHoje.length > 1 ? 's' : ''} pendente${proximosHoje.length > 1 ? 's' : ''}',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: hoje == 0 ? Colors.grey[100] : const Color(0xFFF3F0FF),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  '$hoje realizados',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: hoje == 0 ? Colors.grey : AppColors.primaryPurple,
+                  ),
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          Text(
-            title,
-            style: TextStyle(
-              color: Colors.grey[600],
-              fontSize: 11,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            textVal,
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
+          if (proximosHoje.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            const Divider(height: 1),
+            const SizedBox(height: 10),
+            ...proximosHoje.take(3).map((doc) {
+              final d = doc.data() as Map<String, dynamic>;
+              final ts = d['data_agendamento'] as Timestamp;
+              final hora = TimeOfDay.fromDateTime(ts.toDate()).format(context);
+              final clienteNome =
+                  (d['client_name'] ?? d['clientName'] ?? 'Cliente').toString();
+              final servico = (d['service_name'] ??
+                      d['serviceName'] ??
+                      d['descricao'] ??
+                      '')
+                  .toString();
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF9B5CF6), Color(0xFF6C3CE2)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Center(
+                        child: Text(
+                          hora,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(clienteNome,
+                              style: const TextStyle(
+                                  fontSize: 13, fontWeight: FontWeight.w600)),
+                          if (servico.isNotEmpty)
+                            Text(servico,
+                                style: TextStyle(
+                                    fontSize: 11, color: Colors.grey[500])),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBreakdownVisual(double servico, double produto, double total) {
+    final fmt = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+    final pctServico = total > 0 ? servico / total : 0.0;
+    final pctProduto = total > 0 ? produto / total : 0.0;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFF0EEFF)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 2),
           ),
         ],
       ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.pie_chart_rounded,
+                  color: AppColors.primaryPurple, size: 18),
+              const SizedBox(width: 8),
+              const Text('Composição do Faturamento',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+            ],
+          ),
+          const SizedBox(height: 14),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: SizedBox(
+              height: 10,
+              child: Row(
+                children: [
+                  Flexible(
+                    flex: (pctServico * 100).round(),
+                    child: Container(color: const Color(0xFF6C3CE2)),
+                  ),
+                  Flexible(
+                    flex: (pctProduto * 100).round(),
+                    child: Container(color: const Color(0xFF00C9A7)),
+                  ),
+                  if (pctServico + pctProduto < 0.99)
+                    Flexible(
+                      flex: ((1 - pctServico - pctProduto) * 100).round(),
+                      child: Container(color: Colors.grey[200]),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          _breakdownRow(
+              'Serviços', servico, pctServico, const Color(0xFF6C3CE2), fmt),
+          const SizedBox(height: 8),
+          _breakdownRow(
+              'Produtos', produto, pctProduto, const Color(0xFF00C9A7), fmt),
+        ],
+      ),
+    );
+  }
+
+  Widget _breakdownRow(
+      String label, double value, double pct, Color color, NumberFormat fmt) {
+    return Row(
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 8),
+        Text(label,
+            style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey[700],
+                fontWeight: FontWeight.w500)),
+        const Spacer(),
+        Text(fmt.format(value),
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+        const SizedBox(width: 6),
+        Text('${(pct * 100).toStringAsFixed(0)}%',
+            style: TextStyle(fontSize: 11, color: Colors.grey[400])),
+      ],
     );
   }
 
@@ -1912,61 +2229,131 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
               _legendItem("Atendimentos", AppColors.gold),
             ],
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 30),
           SizedBox(
-            height: 200,
+            height: 220,
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
+              // Start scroll from the end to see the most recent months
+              reverse: true,
               child: SizedBox(
-                width: labels.length * 55.0,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: List.generate(labels.length, (index) {
-                    double moneyH = (moneyData[index] / maxMoney) * 150;
-                    double qtyH = (qtyData[index] / maxQty) * 150;
+                width: max(MediaQuery.of(context).size.width - 60,
+                    labels.length * 60.0),
+                child: BarChart(
+                  BarChartData(
+                    alignment: BarChartAlignment.spaceAround,
+                    maxY: 150,
+                    minY: 0,
+                    barTouchData: BarTouchData(
+                      enabled: true,
+                      touchTooltipData: BarTouchTooltipData(
+                        fitInsideHorizontally: true,
+                        fitInsideVertically: true,
+                        tooltipPadding: const EdgeInsets.all(8),
+                        tooltipMargin: 8,
+                        getTooltipItem: (group, groupIndex, rod, rodIndex) {
+                          String label = labels[groupIndex];
+                          // Money
+                          if (rodIndex == 0) {
+                            final val = moneyData[groupIndex];
+                            final fmt = NumberFormat.currency(
+                                locale: 'pt_BR', symbol: 'R\$');
+                            return BarTooltipItem(
+                              '$label\n${fmt.format(val)}',
+                              const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12),
+                            );
+                          }
+                          // Qty
+                          else {
+                            final val = qtyData[groupIndex].toInt();
+                            return BarTooltipItem(
+                              '$label\n$val atend.',
+                              const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12),
+                            );
+                          }
+                        },
+                      ),
+                    ),
+                    titlesData: FlTitlesData(
+                      show: true,
+                      bottomTitles: AxisTitles(
+                        sideTitles: SideTitles(
+                          showTitles: true,
+                          getTitlesWidget: (double value, TitleMeta meta) {
+                            final i = value.toInt();
+                            if (i < 0 || i >= labels.length) {
+                              return const SizedBox.shrink();
+                            }
+                            return SideTitleWidget(
+                              axisSide: meta.axisSide,
+                              space: 8,
+                              child: Text(
+                                labels[i],
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  color: Colors.grey,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      leftTitles:
+                          AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                      topTitles:
+                          AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                      rightTitles:
+                          AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    ),
+                    gridData: FlGridData(
+                      show: true,
+                      drawVerticalLine: false,
+                      horizontalInterval: 50,
+                      getDrawingHorizontalLine: (value) => FlLine(
+                        color: Colors.grey.withValues(alpha: 0.1),
+                        strokeWidth: 1,
+                        dashArray: [5, 5],
+                      ),
+                    ),
+                    borderData: FlBorderData(show: false),
+                    barGroups: List.generate(labels.length, (i) {
+                      double moneyH = (moneyData[i] / maxMoney) * 150;
+                      double qtyH = (qtyData[i] / maxQty) * 150;
 
-                    return Column(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Container(
-                              width: 22,
-                              height: moneyH.clamp(2.0, 150),
-                              decoration: const BoxDecoration(
-                                color: AppColors.primaryPurple,
-                                borderRadius: BorderRadius.vertical(
-                                  top: Radius.circular(4),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 2),
-                            Container(
-                              width: 22,
-                              height: qtyH.clamp(2.0, 150),
-                              decoration: const BoxDecoration(
-                                color: AppColors.gold,
-                                borderRadius: BorderRadius.vertical(
-                                  top: Radius.circular(4),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          labels[index],
-                          style: const TextStyle(
-                            fontSize: 9,
-                            color: Colors.grey,
-                            fontWeight: FontWeight.bold,
+                      // Min height so empty bars are slightly visible for tooltips
+                      if (moneyH < 2) moneyH = 2;
+                      if (qtyH < 2) qtyH = 2;
+
+                      return BarChartGroupData(
+                        x: i,
+                        barsSpace: 4,
+                        showingTooltipIndicators: [], // Could be used to always show labels
+                        barRods: [
+                          BarChartRodData(
+                            toY: moneyH,
+                            color: AppColors.primaryPurple,
+                            width: 14,
+                            borderRadius: const BorderRadius.vertical(
+                                top: Radius.circular(4)),
                           ),
-                        ),
-                      ],
-                    );
-                  }),
+                          BarChartRodData(
+                            toY: qtyH,
+                            color: AppColors.gold,
+                            width: 14,
+                            borderRadius: const BorderRadius.vertical(
+                                top: Radius.circular(4)),
+                          ),
+                        ],
+                      );
+                    }),
+                  ),
                 ),
               ),
             ),
@@ -1976,90 +2363,16 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     );
   }
 
-  Widget _buildMobileBreakdown(
-    double servico,
-    double produto,
-    double total,
-  ) {
-    double pctS = total > 0 ? servico / total : 0;
-    double pctP = total > 0 ? produto / total : 0;
-
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            "Composição da Receita",
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Container(
-            height: 16,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(8),
-              color: Colors.grey[100],
-            ),
-            child: Row(
-              children: [
-                if (pctS > 0)
-                  Expanded(
-                    flex: (pctS * 100).toInt().clamp(1, 100),
-                    child: Container(
-                      decoration: const BoxDecoration(
-                        color: AppColors.primaryPurple,
-                        borderRadius: BorderRadius.horizontal(
-                          left: Radius.circular(8),
-                        ),
-                      ),
-                    ),
-                  ),
-                if (pctP > 0)
-                  Expanded(
-                    flex: (pctP * 100).toInt().clamp(1, 100),
-                    child: Container(
-                      decoration: const BoxDecoration(
-                        color: AppColors.gold,
-                        borderRadius: BorderRadius.horizontal(
-                          right: Radius.circular(8),
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          _buildLegendItemBreakdown("Serviços", pctS, AppColors.primaryPurple),
-          const SizedBox(height: 8),
-          _buildLegendItemBreakdown("Produtos", pctP, AppColors.gold),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildYearDropdown() {
+  Widget _buildYearDropdown({bool dark = false}) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: dark ? Colors.white.withValues(alpha: 0.15) : Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: AppColors.primaryPurple.withValues(alpha: 0.3),
+          color: dark
+              ? Colors.white.withValues(alpha: 0.4)
+              : AppColors.primaryPurple.withValues(alpha: 0.3),
         ),
       ),
       child: DropdownButtonHideUnderline(
@@ -2067,17 +2380,18 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           value: _availableYears.contains(_selectedYear) || _selectedYear == -1
               ? _selectedYear
               : -1,
-          icon: const Icon(Icons.filter_list,
-              color: AppColors.primaryPurple, size: 18),
+          icon: Icon(Icons.filter_list,
+              color: dark ? Colors.white : AppColors.primaryPurple, size: 18),
+          dropdownColor: dark ? const Color(0xFF6C3CE2) : null,
           isDense: true,
           items: [
-            const DropdownMenuItem<int>(
+            DropdownMenuItem<int>(
               value: -1,
               child: Text(
                 "Todos",
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
-                  color: AppColors.primaryPurple,
+                  color: dark ? Colors.white : AppColors.primaryPurple,
                   fontSize: 13,
                 ),
               ),
@@ -2087,7 +2401,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 value: year,
                 child: Text(
                   year.toString(),
-                  style: const TextStyle(fontSize: 13),
+                  style: TextStyle(
+                      fontSize: 13, color: dark ? Colors.white70 : null),
                 ),
               ),
             )

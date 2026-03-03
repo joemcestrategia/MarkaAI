@@ -3,6 +3,7 @@
 ///
 /// Every function here returns a safe no-op / empty value so that the
 /// code that references it compiles on mobile without pulling in dart:html.
+library;
 
 typedef MessageCallback = void Function(String data);
 

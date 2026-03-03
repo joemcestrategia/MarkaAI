@@ -230,6 +230,8 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
         await Future.delayed(const Duration(milliseconds: 100));
       }
 
+      if (!mounted) return imageFile;
+
       final croppedFile = await ImageCropper().cropImage(
         sourcePath: imageFile.path,
         compressFormat: ImageCompressFormat.jpg,
@@ -238,7 +240,6 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
           AndroidUiSettings(
             toolbarTitle: 'Ajustar Foto',
             toolbarColor: AppColors.primaryPurple,
-            statusBarColor: AppColors.primaryPurple,
             toolbarWidgetColor: Colors.white,
             backgroundColor: Colors.black,
             activeControlsWidgetColor: AppColors.primaryPurple,
@@ -320,6 +321,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
         }
 
         if (addedCount > 0) {
+          if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
                 content: Text("$addedCount foto(s) adicionada(s)!"),
@@ -329,6 +331,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
       }
     } catch (e) {
       debugPrint("❌ Erro ao selecionar: $e");
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
             content: Text("Erro ao selecionar imagens"),
@@ -737,8 +740,11 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                                 labelText: "Nome do Serviço",
                                 isDense: true,
                                 border: OutlineInputBorder()),
-                            validator: (v) =>
-                                v == null || v.isEmpty ? "Obrigatório" : null),
+                            validator: (v) {
+                              return v == null || v.isEmpty
+                                  ? "Obrigatório"
+                                  : null;
+                            }),
 
                         const SizedBox(height: 16),
 
@@ -756,8 +762,9 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                               if (v == null || v.isEmpty) return "Obrigatório";
                               final value =
                                   double.tryParse(v.replaceAll(',', '.'));
-                              if (value == null || value <= 0)
+                              if (value == null || value <= 0) {
                                 return "Preço inválido";
+                              }
                               return null;
                             },
                           )),
@@ -773,8 +780,9 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                             validator: (v) {
                               if (v == null || v.isEmpty) return "Obrigatório";
                               final value = int.tryParse(v);
-                              if (value == null || value <= 0)
+                              if (value == null || value <= 0) {
                                 return "Tempo inválido";
+                              }
                               return null;
                             },
                           )),
@@ -794,8 +802,9 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                             if (v == null || v.isEmpty) return null;
                             final value =
                                 double.tryParse(v.replaceAll(',', '.'));
-                            if (value != null && value < 0)
+                            if (value != null && value < 0) {
                               return "Custo não pode ser negativo";
+                            }
                             return null;
                           },
                         ),

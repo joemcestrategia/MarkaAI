@@ -176,7 +176,9 @@ class _ClientSearchPageState extends State<ClientSearchPage> {
                     int s = 0;
                     if ((d['logoUrl'] ?? '').toString().isNotEmpty) s += 10;
                     if ((d['coverUrl'] ?? '').toString().isNotEmpty ||
-                        (d['imageUrl'] ?? '').toString().isNotEmpty) s += 10;
+                        (d['imageUrl'] ?? '').toString().isNotEmpty) {
+                      s += 10;
+                    }
                     if (d['is_boosted'] == true) s += 100;
                     return s;
                   }

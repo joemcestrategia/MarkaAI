@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/theme/app_colors.dart';
-import '../business_profile_page.dart'; // [NEW] Rota correta
+import '../store_profile_page.dart'; // navegar para Editar Perfil
 
 class ProfileCompletionWidget extends StatefulWidget {
   final String shopId;
@@ -38,6 +38,9 @@ class _ProfileCompletionWidgetState extends State<ProfileCompletionWidget>
     _animController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 800),
+    );
+    _progressAnimation = Tween<double>(begin: 0, end: 0).animate(
+      CurvedAnimation(parent: _animController, curve: Curves.easeInOut),
     );
     _checkDismissed();
     _compute();
@@ -135,14 +138,10 @@ class _ProfileCompletionWidgetState extends State<ProfileCompletionWidget>
   }
 
   void _navigateToProfile() {
-    if (widget.onTap != null) {
-      widget.onTap!();
-      return;
-    }
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => BusinessProfilePage(shopId: widget.shopId),
+        builder: (_) => const StoreProfilePage(highlightLocation: true),
       ),
     );
   }

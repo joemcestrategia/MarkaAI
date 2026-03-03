@@ -419,9 +419,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                           value: 120, child: Text("2 horas")),
                                     ],
                                     onChanged: (val) {
-                                      if (val != null)
+                                      if (val != null) {
                                         setState(() =>
                                             _appointmentIntervalMinutes = val);
+                                      }
                                     },
                                   ),
                                 ),

@@ -130,6 +130,7 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
     if (variations != null &&
         variations.isNotEmpty &&
         _selectedVariation == null) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
             content: Text("Por favor, escolha uma opção (Variação) acima."),

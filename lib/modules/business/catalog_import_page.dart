@@ -1131,14 +1131,13 @@ class _BookmarkletCopyButtonState extends State<_BookmarkletCopyButton> {
 // ── Modelo ────────────────────────────────────────────────────────────────────
 class _CatalogProduct {
   String nome, descricao, preco, imagemUrl;
-  bool selected;
+  bool selected = true;
 
   _CatalogProduct({
     required this.nome,
     required this.descricao,
     required this.preco,
     required this.imagemUrl,
-    this.selected = true,
   });
 
   /// Heurística: detecta itens que parecem ser trechos de conversa

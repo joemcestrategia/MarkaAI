@@ -8,11 +8,8 @@ class NewAppointmentPage extends StatefulWidget {
   final Map<String, dynamic>? preSelectedClient;
   final String? preSelectedClientId;
 
-  const NewAppointmentPage({
-    super.key, 
-    this.preSelectedClient,
-    this.preSelectedClientId
-  });
+  const NewAppointmentPage(
+      {super.key, this.preSelectedClient, this.preSelectedClientId});
 
   @override
   State<NewAppointmentPage> createState() => _NewAppointmentPageState();
@@ -43,20 +40,24 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
   // --- PASSO 1: SERVIÇOS ---
   Widget _buildServiceStep() {
     if (shopId == null) return const Center(child: CircularProgressIndicator());
-    
+
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance.collection('services')
+      stream: FirebaseFirestore.instance
+          .collection('services')
           .where('shopId', isEqualTo: shopId)
-          .where('ativo', isEqualTo: true) 
+          .where('ativo', isEqualTo: true)
           .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          return Center(child: Text("Erro: ${snapshot.error}", style: const TextStyle(color: Colors.red)));
+          return Center(
+              child: Text("Erro: ${snapshot.error}",
+                  style: const TextStyle(color: Colors.red)));
         }
         if (!snapshot.hasData) return const CircularProgressIndicator();
         final docs = snapshot.data!.docs;
-        
-        if (docs.isEmpty) return const Center(child: Text("Nenhum serviço ativo encontrado."));
+
+        if (docs.isEmpty)
+          return const Center(child: Text("Nenhum serviço ativo encontrado."));
 
         return ListView.builder(
           shrinkWrap: true,
@@ -66,18 +67,28 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
             final serviceDoc = docs[index];
             final data = serviceDoc.data() as Map<String, dynamic>;
             final isSelected = _selectedService?.id == serviceDoc.id;
-            
+
             String precoDisplay = data['preco']?.toString() ?? "0.00";
             // ✅ CORREÇÃO: Agora busca 'tempo_min' do Firestore
             String duracao = data['tempo_min']?.toString() ?? "30";
 
             return Card(
-              color: isSelected ? AppColors.primaryPurple.withValues(alpha: 0.1) : Colors.white,
+              color: isSelected
+                  ? AppColors.primaryPurple.withValues(alpha: 0.1)
+                  : Colors.white,
               elevation: 1,
               child: ListTile(
-                title: Text(data['nome'] ?? "Serviço", style: TextStyle(fontWeight: FontWeight.bold, color: isSelected ? AppColors.primaryPurple : Colors.black)),
+                title: Text(data['nome'] ?? "Serviço",
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: isSelected
+                            ? AppColors.primaryPurple
+                            : Colors.black)),
                 subtitle: Text("R\$ $precoDisplay • $duracao min"),
-                trailing: isSelected ? const Icon(Icons.check_circle, color: AppColors.primaryPurple) : const Icon(Icons.circle_outlined),
+                trailing: isSelected
+                    ? const Icon(Icons.check_circle,
+                        color: AppColors.primaryPurple)
+                    : const Icon(Icons.circle_outlined),
                 onTap: () {
                   setState(() {
                     _selectedService = serviceDoc;
@@ -97,7 +108,7 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
   // --- PASSO 2: PROFISSIONAL ---
   Widget _buildProfessionalStep() {
     if (shopId == null) return const CircularProgressIndicator();
-    
+
     // ✅ VALIDAÇÃO: Precisa ter um serviço selecionado primeiro
     if (_selectedService == null) {
       return const Center(
@@ -112,12 +123,15 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
     }
 
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance.collection('employees') 
+      stream: FirebaseFirestore.instance
+          .collection('employees')
           .where('shopId', isEqualTo: shopId)
           .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-           return const Center(child: Text("Erro ao carregar profissionais.", style: TextStyle(color: Colors.red)));
+          return const Center(
+              child: Text("Erro ao carregar profissionais.",
+                  style: TextStyle(color: Colors.red)));
         }
         if (!snapshot.hasData) return const CircularProgressIndicator();
         final allDocs = snapshot.data!.docs;
@@ -148,25 +162,40 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
           itemCount: filteredDocs.length,
           itemBuilder: (context, index) {
             final data = filteredDocs[index].data() as Map<String, dynamic>;
-            final isSelected = _selectedProfessional?.id == filteredDocs[index].id;
-            
+            final isSelected =
+                _selectedProfessional?.id == filteredDocs[index].id;
+
             String nome = data['nome'] ?? "Profissional";
             String tipo = data['tipo'] ?? "funcionario";
 
             return Card(
-              color: isSelected ? AppColors.primaryPurple.withValues(alpha: 0.1) : Colors.white,
+              color: isSelected
+                  ? AppColors.primaryPurple.withValues(alpha: 0.1)
+                  : Colors.white,
               child: ListTile(
                 leading: CircleAvatar(
-                  backgroundColor: AppColors.primaryPurple.withValues(alpha: 0.2),
-                  child: Text(nome.isNotEmpty ? nome.substring(0,1).toUpperCase() : "?", style: const TextStyle(color: AppColors.primaryPurple, fontWeight: FontWeight.bold)),
+                  backgroundColor:
+                      AppColors.primaryPurple.withValues(alpha: 0.2),
+                  child: Text(
+                      nome.isNotEmpty
+                          ? nome.substring(0, 1).toUpperCase()
+                          : "?",
+                      style: const TextStyle(
+                          color: AppColors.primaryPurple,
+                          fontWeight: FontWeight.bold)),
                 ),
-                title: Text(nome, style: const TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: Text(tipo.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey)),
-                trailing: isSelected ? const Icon(Icons.check_circle, color: AppColors.primaryPurple) : null,
+                title: Text(nome,
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Text(tipo.toUpperCase(),
+                    style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                trailing: isSelected
+                    ? const Icon(Icons.check_circle,
+                        color: AppColors.primaryPurple)
+                    : null,
                 onTap: () {
                   setState(() {
                     _selectedProfessional = filteredDocs[index];
-                    _selectedTime = null; 
+                    _selectedTime = null;
                   });
                 },
               ),
@@ -185,14 +214,17 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
           initialDate: _selectedDate ?? DateTime.now(),
           firstDate: DateTime.now(),
           lastDate: DateTime.now().add(const Duration(days: 30)),
-          onDateChanged: (date) => setState(() { _selectedDate = date; _selectedTime = null; }),
+          onDateChanged: (date) => setState(() {
+            _selectedDate = date;
+            _selectedTime = null;
+          }),
         ),
-        
         if (_selectedDate != null) ...[
           const Divider(),
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 10),
-            child: Text("Horários Disponíveis:", style: TextStyle(fontWeight: FontWeight.bold)),
+            child: Text("Horários Disponíveis:",
+                style: TextStyle(fontWeight: FontWeight.bold)),
           ),
           _buildRealTimeSlots(),
         ]
@@ -201,90 +233,111 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
   }
 
   Widget _buildRealTimeSlots() {
-    if (_selectedProfessional == null || shopId == null || _selectedService == null) {
-        return const Text("Selecione serviço e profissional.");
+    if (_selectedProfessional == null ||
+        shopId == null ||
+        _selectedService == null) {
+      return const Text("Selecione serviço e profissional.");
     }
 
     final profData = _selectedProfessional!.data() as Map<String, dynamic>;
     final servData = _selectedService!.data() as Map<String, dynamic>;
-    
-    int duracaoServico = int.tryParse(servData['tempo_min']?.toString() ?? "30") ?? 30;
+
+    int duracaoServico =
+        int.tryParse(servData['tempo_min']?.toString() ?? "30") ?? 30;
     List<dynamic> workDays = profData['dias_trabalho'] ?? [1, 2, 3, 4, 5, 6];
-    
+
     if (!workDays.contains(_selectedDate!.weekday)) {
-       return Container(
-         padding: const EdgeInsets.all(16),
-         decoration: BoxDecoration(color: Colors.red[50], borderRadius: BorderRadius.circular(8)),
-         child: Row(
-           mainAxisAlignment: MainAxisAlignment.center,
-           children: const [
-             Icon(Icons.block, color: Colors.red, size: 20),
-             SizedBox(width: 8),
-             Text("Este profissional não atende neste dia.", style: TextStyle(color: Colors.red)),
-           ],
-         ),
-       );
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+            color: Colors.red[50], borderRadius: BorderRadius.circular(8)),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: const [
+            Icon(Icons.block, color: Colors.red, size: 20),
+            SizedBox(width: 8),
+            Text("Este profissional não atende neste dia.",
+                style: TextStyle(color: Colors.red)),
+          ],
+        ),
+      );
     }
 
     String startStr = profData['horario_inicio'] ?? "08:00";
     String endStr = profData['horario_fim'] ?? "19:00";
 
-    DateTime startOfDay = DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day, 0, 0);
-    DateTime endOfDay = DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day, 23, 59);
+    DateTime startOfDay = DateTime(
+        _selectedDate!.year, _selectedDate!.month, _selectedDate!.day, 0, 0);
+    DateTime endOfDay = DateTime(
+        _selectedDate!.year, _selectedDate!.month, _selectedDate!.day, 23, 59);
 
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance.collection('appointments')
+      stream: FirebaseFirestore.instance
+          .collection('appointments')
           .where('shopId', isEqualTo: shopId)
           .where('profissionalId', isEqualTo: _selectedProfessional!.id)
           .where('data_agendamento', isGreaterThanOrEqualTo: startOfDay)
           .where('data_agendamento', isLessThanOrEqualTo: endOfDay)
           .snapshots(),
       builder: (context, snapshot) {
-        
         if (snapshot.hasError) {
           return const Padding(
-             padding: EdgeInsets.all(10),
-             child: Text("Erro de conexão ou índice.", style: TextStyle(color: Colors.red, fontSize: 12)),
+            padding: EdgeInsets.all(10),
+            child: Text("Erro de conexão ou índice.",
+                style: TextStyle(color: Colors.red, fontSize: 12)),
           );
         }
 
-        if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+        if (!snapshot.hasData)
+          return const Center(child: CircularProgressIndicator());
 
         List<String> busyTimes = [];
         for (var doc in snapshot.data!.docs) {
-           final data = doc.data() as Map<String, dynamic>;
-           if (data['data_agendamento'] != null) {
-              DateTime dt = (data['data_agendamento'] as Timestamp).toDate();
-              String timeStr = _formatTime(dt.hour, dt.minute);
-              busyTimes.add(timeStr);
-           }
+          final data = doc.data() as Map<String, dynamic>;
+          final status = (data['status'] ?? '').toString().toLowerCase();
+          if (status == 'cancelado' || status == 'recusado') continue;
+
+          if (data['data_agendamento'] != null) {
+            DateTime dt = (data['data_agendamento'] as Timestamp).toDate();
+            String timeStr = _formatTime(dt.hour, dt.minute);
+            busyTimes.add(timeStr);
+          }
         }
 
-        final slots = _generateProfessionalSlotsWithDuration(startStr, endStr, duracaoServico);
-        
-        if (slots.isEmpty) return const Text("Sem horários que caibam o serviço hoje.");
+        final slots = _generateProfessionalSlotsWithDuration(
+            startStr, endStr, duracaoServico);
+
+        if (slots.isEmpty)
+          return const Text("Sem horários que caibam o serviço hoje.");
 
         return Wrap(
           spacing: 10,
           runSpacing: 10,
           children: slots.map((timeStr) {
             bool isBusy = busyTimes.contains(timeStr);
-            bool isSelected = _selectedTime != null && _formatTimeOfDay(_selectedTime!) == timeStr;
+            bool isSelected = _selectedTime != null &&
+                _formatTimeOfDay(_selectedTime!) == timeStr;
 
             return ChoiceChip(
-              label: Text(timeStr, style: TextStyle(
-                color: isBusy ? Colors.grey : (isSelected ? Colors.white : Colors.black),
-                decoration: isBusy ? TextDecoration.lineThrough : null
-              )),
+              label: Text(timeStr,
+                  style: TextStyle(
+                      color: isBusy
+                          ? Colors.grey
+                          : (isSelected ? Colors.white : Colors.black),
+                      decoration: isBusy ? TextDecoration.lineThrough : null)),
               selected: isSelected,
               selectedColor: AppColors.primaryPurple,
               disabledColor: Colors.grey[200],
-              onSelected: isBusy ? null : (selected) {
-                  setState(() {
-                    final parts = timeStr.split(':');
-                    _selectedTime = TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
-                  });
-              },
+              onSelected: isBusy
+                  ? null
+                  : (selected) {
+                      setState(() {
+                        final parts = timeStr.split(':');
+                        _selectedTime = TimeOfDay(
+                            hour: int.parse(parts[0]),
+                            minute: int.parse(parts[1]));
+                      });
+                    },
             );
           }).toList(),
         );
@@ -293,7 +346,8 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
   }
 
   // --- CÁLCULO DE SLOTS COM DURAÇÃO ---
-  List<String> _generateProfessionalSlotsWithDuration(String start, String end, int durationMin) {
+  List<String> _generateProfessionalSlotsWithDuration(
+      String start, String end, int durationMin) {
     List<String> slots = [];
     int startH = int.parse(start.split(':')[0]);
     int startM = int.parse(start.split(':')[1]);
@@ -313,7 +367,8 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
     return slots;
   }
 
-  String _formatTime(int h, int m) => "${h.toString().padLeft(2,'0')}:${m.toString().padLeft(2,'0')}";
+  String _formatTime(int h, int m) =>
+      "${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}";
   String _formatTimeOfDay(TimeOfDay t) => _formatTime(t.hour, t.minute);
 
   // --- CONFIRMAR E SALVAR ---
@@ -325,7 +380,8 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
       String finalClientName;
       String finalClientPhone;
 
-      if (widget.preSelectedClientId != null && widget.preSelectedClient != null) {
+      if (widget.preSelectedClientId != null &&
+          widget.preSelectedClient != null) {
         finalClientId = widget.preSelectedClientId!;
         finalClientName = widget.preSelectedClient!['nome'];
         finalClientPhone = widget.preSelectedClient!['telefone'] ?? "";
@@ -333,13 +389,15 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
         if (user == null) return;
         finalClientId = user.uid;
         finalClientName = user.displayName ?? "Cliente App";
-        finalClientPhone = ""; 
+        finalClientPhone = "";
       }
 
       final DateTime fullDate = DateTime(
-        _selectedDate!.year, _selectedDate!.month, _selectedDate!.day,
-        _selectedTime!.hour, _selectedTime!.minute
-      );
+          _selectedDate!.year,
+          _selectedDate!.month,
+          _selectedDate!.day,
+          _selectedTime!.hour,
+          _selectedTime!.minute);
 
       final servicoData = _selectedService!.data() as Map<String, dynamic>;
       double valor = double.tryParse(servicoData['preco'].toString()) ?? 0.0;
@@ -357,19 +415,23 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
         'valor': valor,
         'data_agendamento': Timestamp.fromDate(fullDate),
         'status': 'agendado',
-        'metodo_pagamento': 'No Local', 
+        'metodo_pagamento': 'No Local',
         'criado_em': FieldValue.serverTimestamp(),
         'criado_por': widget.preSelectedClientId != null ? 'dono' : 'cliente',
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Agendamento confirmado!"), backgroundColor: Colors.green));
-        Navigator.pop(context); 
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text("Agendamento confirmado!"),
+            backgroundColor: Colors.green));
+        Navigator.pop(context);
       }
     } catch (e) {
-      if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Erro: $e")));
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text("Erro: $e")));
     } finally {
-      if(mounted) setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -388,16 +450,20 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
         currentStep: _currentStep,
         onStepContinue: () {
           if (_currentStep == 0 && _selectedService == null) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Selecione um serviço.")));
+            ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Selecione um serviço.")));
             return;
           }
           if (_currentStep == 1 && _selectedProfessional == null) {
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Selecione um profissional.")));
-              return;
+            ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Selecione um profissional.")));
+            return;
           }
-          if (_currentStep == 2 && (_selectedDate == null || _selectedTime == null)) {
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Selecione data e hora.")));
-              return;
+          if (_currentStep == 2 &&
+              (_selectedDate == null || _selectedTime == null)) {
+            ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Selecione data e hora.")));
+            return;
           }
           if (_currentStep < 2) {
             setState(() => _currentStep++);
@@ -416,15 +482,23 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
                 Expanded(
                   child: ElevatedButton(
                     onPressed: details.onStepContinue,
-                    style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryPurple),
-                    child: _isLoading 
-                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white))
-                      : Text(_currentStep == 2 ? "CONFIRMAR" : "PRÓXIMO", style: const TextStyle(color: Colors.white)),
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryPurple),
+                    child: _isLoading
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child:
+                                CircularProgressIndicator(color: Colors.white))
+                        : Text(_currentStep == 2 ? "CONFIRMAR" : "PRÓXIMO",
+                            style: const TextStyle(color: Colors.white)),
                   ),
                 ),
                 if (_currentStep > 0) ...[
                   const SizedBox(width: 10),
-                  TextButton(onPressed: details.onStepCancel, child: const Text("VOLTAR")),
+                  TextButton(
+                      onPressed: details.onStepCancel,
+                      child: const Text("VOLTAR")),
                 ]
               ],
             ),
@@ -435,19 +509,25 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
             title: const Text("Serviço"),
             content: _buildServiceStep(),
             isActive: _currentStep >= 0,
-            state: _selectedService != null ? StepState.complete : StepState.editing,
+            state: _selectedService != null
+                ? StepState.complete
+                : StepState.editing,
           ),
           Step(
             title: const Text("Equipe"),
             content: _buildProfessionalStep(),
             isActive: _currentStep >= 1,
-            state: _selectedProfessional != null ? StepState.complete : StepState.editing,
+            state: _selectedProfessional != null
+                ? StepState.complete
+                : StepState.editing,
           ),
           Step(
             title: const Text("Data"),
             content: _buildTimeStep(),
             isActive: _currentStep >= 2,
-            state: _selectedDate != null && _selectedTime != null ? StepState.complete : StepState.editing,
+            state: _selectedDate != null && _selectedTime != null
+                ? StepState.complete
+                : StepState.editing,
           ),
         ],
       ),

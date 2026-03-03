@@ -354,6 +354,7 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
                         const Icon(Icons.copy, color: AppColors.primaryPurple),
                     onPressed: () {
                       // Copiar para clipboard
+                      if (!mounted) return;
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(content: Text("Código copiado!")),
                       );
@@ -510,17 +511,17 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
             false, // Aqui é só cancelamento sem devolução financeira
       });
 
-      if (mounted) {
-        Navigator.pop(context); // close loading
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Agendamento cancelado com sucesso!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
+      if (!mounted) return;
+      Navigator.pop(context); // close loading
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Agendamento cancelado com sucesso!'),
+          backgroundColor: Colors.green,
+        ),
+      );
     } catch (e) {
-      if (mounted) Navigator.pop(context); // close loading
+      if (!mounted) return;
+      if (Navigator.canPop(context)) Navigator.pop(context);
       _showError('Não foi possível cancelar: $e');
     }
   }
@@ -603,7 +604,6 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
 
     if (confirm != true) return;
 
-    // Loading indicator
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -620,17 +620,15 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
         'amount': valorPago,
       });
 
-      if (mounted) {
-        Navigator.pop(context); // close loading
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Solicitação de reembolso enviada com sucesso!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
+      if (!mounted) return;
+      Navigator.pop(context); // close loading
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Solicitação de reembolso enviada com sucesso!'),
+          backgroundColor: Colors.green,
+        ),
+      );
     } catch (e) {
-      if (mounted) Navigator.pop(context);
       _showError('Não foi possível cancelar: $e');
     }
   }
@@ -697,7 +695,6 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
 
     if (confirm != true) return;
 
-    // Loading indicator
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -711,17 +708,15 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
         'newDateISO': newDateTime.toIso8601String(),
       });
 
-      if (mounted) {
-        Navigator.pop(context); // close loading
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Reagendamento confirmado! ✅'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
+      if (!mounted) return;
+      Navigator.pop(context); // close loading
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Reagendamento confirmado! ✅'),
+          backgroundColor: Colors.green,
+        ),
+      );
     } catch (e) {
-      if (mounted) Navigator.pop(context);
       _showError('Não foi possível reagendar: $e');
     }
   }
@@ -1118,3 +1113,4 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
     );
   }
 }
+

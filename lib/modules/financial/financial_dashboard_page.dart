@@ -519,13 +519,15 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
       String bankName = "Banco";
       if (filename.contains("ton")) {
         bankName = "Ton";
-      } else if (filename.contains("nubank"))
+      } else if (filename.contains("nubank")) {
         bankName = "Nubank";
-      else if (filename.contains("inter"))
+      } else if (filename.contains("inter")) {
         bankName = "Banco Inter";
-      else if (filename.contains("itau"))
+      } else if (filename.contains("itau")) {
         bankName = "Itaú";
-      else if (filename.contains("bradesco")) bankName = "Bradesco";
+      } else if (filename.contains("bradesco")) {
+        bankName = "Bradesco";
+      }
 
       final ownerDisplay = "Excel";
       final pending = <Map<String, dynamic>>[];
@@ -631,9 +633,9 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
       if (amount == null) {
         if (val is double) {
           amount = val;
-        } else if (val is int)
+        } else if (val is int) {
           amount = val.toDouble();
-        else if (val is String && val.contains(RegExp(r'[0-9]'))) {
+        } else if (val is String && val.contains(RegExp(r'[0-9]'))) {
           final clean = val
               .replaceAll('R\$', '')
               .replaceAll(' ', '')
@@ -780,18 +782,23 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
 
   String _getBankLogoUrl(String bankName) {
     final clean = _normalize(bankName);
-    if (clean.contains('inter'))
+    if (clean.contains('inter')) {
       return 'https://logo.clearbit.com/bancointer.com.br';
+    }
     if (clean.contains('nu')) return 'https://logo.clearbit.com/nubank.com.br';
     if (clean.contains('itau')) return 'https://logo.clearbit.com/itau.com.br';
-    if (clean.contains('bradesco'))
+    if (clean.contains('bradesco')) {
       return 'https://logo.clearbit.com/bradesco.com.br';
-    if (clean.contains('brasil') || clean.contains('bb'))
+    }
+    if (clean.contains('brasil') || clean.contains('bb')) {
       return 'https://logo.clearbit.com/bb.com.br';
-    if (clean.contains('santander'))
+    }
+    if (clean.contains('santander')) {
       return 'https://logo.clearbit.com/santander.com.br';
-    if (clean.contains('caixa'))
+    }
+    if (clean.contains('caixa')) {
       return 'https://logo.clearbit.com/caixa.gov.br';
+    }
     return 'https://logo.clearbit.com/$clean.com.br';
   }
 
@@ -1111,7 +1118,7 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
   }
 
   Widget _buildGraph() {
-    if (_transactions.isEmpty)
+    if (_transactions.isEmpty) {
       return Center(
           child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -1120,6 +1127,7 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
             SizedBox(height: 16),
             Text('Sem dados para o gráfico')
           ]));
+    }
 
     final isMonth = _selectedMonth != null;
     final data = <int, double>{};
@@ -1145,8 +1153,9 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
         .map((e) => FlSpot(e.key.toDouble(), e.value))
         .toList()
       ..sort((a, b) => a.x.compareTo(b.x));
-    if (spots.every((s) => s.y == 0))
+    if (spots.every((s) => s.y == 0)) {
       return const Center(child: Text('Sem movimentação'));
+    }
 
     final minY = spots.map((s) => s.y).reduce(math.min);
     final maxY = spots.map((s) => s.y).reduce(math.max);
@@ -1169,12 +1178,14 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
                         showTitles: true,
                         getTitlesWidget: (v, _) {
                           final i = v.toInt();
-                          if (isMonth && i % 3 == 0 && i <= 31)
+                          if (isMonth && i % 3 == 0 && i <= 31) {
                             return Text(i.toString(),
                                 style: const TextStyle(fontSize: 9));
-                          if (!isMonth && i >= 1 && i <= 12)
+                          }
+                          if (!isMonth && i >= 1 && i <= 12) {
                             return Text(_months[i - 1],
                                 style: const TextStyle(fontSize: 9));
+                          }
                           return const SizedBox();
                         })),
                 leftTitles: AxisTitles(
@@ -1202,7 +1213,7 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
   }
 
   Widget _buildTransactionList() {
-    if (_transactions.isEmpty && !_isLoadingMore)
+    if (_transactions.isEmpty && !_isLoadingMore) {
       return Center(
           child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
         Icon(Icons.receipt_long, size: 60, color: Colors.grey.shade300),
@@ -1213,16 +1224,18 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
             icon: const Icon(Icons.upload_file),
             label: const Text('Importar'))
       ]));
+    }
     return ListView.builder(
         padding: const EdgeInsets.all(8),
         itemCount: _transactions.length + (_hasMore ? 1 : 0),
         itemBuilder: (context, i) {
-          if (i == _transactions.length)
+          if (i == _transactions.length) {
             return const Center(
                 child: Padding(
                     padding: EdgeInsets.all(16),
                     child: CircularProgressIndicator(
                         color: AppColors.primaryPurple)));
+          }
           final d = _transactions[i].data() as Map<String, dynamic>;
           final val = (d['valor'] as num?)?.toDouble() ?? 0;
           final ts = d['data'] as Timestamp?;
@@ -1266,14 +1279,16 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
             .where('shopId', isEqualTo: _shopId)
             .get(),
         builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting)
+          if (snap.connectionState == ConnectionState.waiting) {
             return const Center(
                 child:
                     CircularProgressIndicator(color: AppColors.primaryPurple));
-          if (!snap.hasData || snap.data!.docs.isEmpty)
+          }
+          if (!snap.hasData || snap.data!.docs.isEmpty) {
             return Center(
                 child: Text('Nenhum banco',
                     style: TextStyle(color: Colors.grey.shade600)));
+          }
           return ListView.separated(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(vertical: 8),
@@ -1438,11 +1453,12 @@ class _DeleteManagerDialogState extends State<_DeleteManagerDialog> {
           .collection('bank_accounts')
           .where('shopId', isEqualTo: widget.shopId)
           .get();
-      if (mounted)
+      if (mounted) {
         setState(() {
           _banks = snap.docs;
           _loading = false;
         });
+      }
     } catch (e) {
       if (mounted) setState(() => _loading = false);
     }
@@ -1528,8 +1544,9 @@ class _DeleteManagerDialogState extends State<_DeleteManagerDialog> {
       for (final id in _sel) {
         final clean = norm((_names[id] ?? '').split('(')[0]);
         for (final t in trans.docs) {
-          if (norm(t.data()['banco_origem'] as String? ?? '').contains(clean))
+          if (norm(t.data()['banco_origem'] as String? ?? '').contains(clean)) {
             batch.delete(t.reference);
+          }
         }
         batch.delete(
             FirebaseFirestore.instance.collection('bank_accounts').doc(id));
