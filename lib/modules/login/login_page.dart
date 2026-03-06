@@ -31,7 +31,9 @@ class ViaCepService {
 
 class LoginPage extends StatefulWidget {
   final bool returnOnSuccess;
-  const LoginPage({super.key, this.returnOnSuccess = false});
+  final String? contextMessage;
+  const LoginPage(
+      {super.key, this.returnOnSuccess = false, this.contextMessage});
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -44,6 +46,8 @@ class _LoginPageState extends State<LoginPage>
   bool _isRegistering = false;
   bool _obscurePassword = true;
   bool _obscurePasswordConfirm = true;
+  bool _acceptedTerms = false;
+  bool _acceptedPrivacy = false;
   String? _selectedRole;
   int _currentStep =
       0; // 0: Credenciais, 1: Perfil, 2: Dados Pessoais, 3: Endereço
@@ -276,6 +280,12 @@ class _LoginPageState extends State<LoginPage>
       return;
     }
 
+    if (!_acceptedTerms || !_acceptedPrivacy) {
+      _showError(
+          "Você precisa aceitar os Termos e a Política de Privacidade para continuar.");
+      return;
+    }
+
     setState(() => _isLoading = true);
 
     try {
@@ -289,14 +299,25 @@ class _LoginPageState extends State<LoginPage>
         user = res.user;
       }
 
+      // Null check explícito para evitar crash
+      if (user == null) {
+        _showError("Falha ao criar a conta. Tente novamente.");
+        setState(() => _isLoading = false);
+        return;
+      }
+
       // Salva dados no Firestore
+      final uid = user.uid;
       Map<String, dynamic> data = {
-        'uid': user!.uid,
+        'uid': uid,
         'nome': _nameCtrl.text.trim(),
         'email': _emailCtrl.text.trim(),
-        'telefone': _phoneCtrl.text,
+        'telefone': _phoneCtrl.text.replaceAll(RegExp(r'\D'), ''),
         'tipo': _selectedRole,
         'verified': true,
+        // Campos raiz para facilitar queries
+        'bairro': _bairroCtrl.text,
+        'cidade': _cidadeCtrl.text,
         'criado_em': FieldValue.serverTimestamp(),
         'endereco': {
           'cep': _cepCtrl.text,
@@ -311,18 +332,16 @@ class _LoginPageState extends State<LoginPage>
         data['aniversario'] = _birthCtrl.text;
       } else {
         data['nome_negocio'] = _bizCtrl.text;
-        data['shopId'] = user.uid;
+        data['shopId'] = uid;
       }
 
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .set(data);
+      await FirebaseFirestore.instance.collection('users').doc(uid).set(data);
       await _routeUser(user);
     } on FirebaseAuthException catch (e) {
       _handleFirebaseError(e);
-    } catch (e) {
-      _showError("Ocorreu um erro inesperado.");
+    } catch (e, st) {
+      print('[SIGNUP-ERR] ${e.runtimeType}: $e\n$st');
+      _showError('[${e.runtimeType}] ${e.toString()}');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -1024,6 +1043,101 @@ class _LoginPageState extends State<LoginPage>
               ),
             ),
           ],
+        ),
+        const SizedBox(height: 20),
+        // --- Termos e Política de Privacidade ---
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.grey[50],
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.grey[200]!),
+          ),
+          child: Column(
+            children: [
+              InkWell(
+                onTap: () => setState(() => _acceptedTerms = !_acceptedTerms),
+                borderRadius: BorderRadius.circular(8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Checkbox(
+                      value: _acceptedTerms,
+                      onChanged: (v) =>
+                          setState(() => _acceptedTerms = v ?? false),
+                      activeColor: AppColors.primaryPurple,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 12),
+                        child: RichText(
+                          text: const TextSpan(
+                            style:
+                                TextStyle(fontSize: 13, color: Colors.black87),
+                            children: [
+                              TextSpan(text: "Li e aceito os "),
+                              TextSpan(
+                                text: "Termos de Uso",
+                                style: TextStyle(
+                                  color: AppColors.primaryPurple,
+                                  fontWeight: FontWeight.bold,
+                                  decoration: TextDecoration.underline,
+                                ),
+                              ),
+                              TextSpan(text: " da plataforma"),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 4),
+              InkWell(
+                onTap: () =>
+                    setState(() => _acceptedPrivacy = !_acceptedPrivacy),
+                borderRadius: BorderRadius.circular(8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Checkbox(
+                      value: _acceptedPrivacy,
+                      onChanged: (v) =>
+                          setState(() => _acceptedPrivacy = v ?? false),
+                      activeColor: AppColors.primaryPurple,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 12),
+                        child: RichText(
+                          text: const TextSpan(
+                            style:
+                                TextStyle(fontSize: 13, color: Colors.black87),
+                            children: [
+                              TextSpan(text: "Li e aceito a "),
+                              TextSpan(
+                                text: "Política de Privacidade",
+                                style: TextStyle(
+                                  color: AppColors.primaryPurple,
+                                  fontWeight: FontWeight.bold,
+                                  decoration: TextDecoration.underline,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ],
     );

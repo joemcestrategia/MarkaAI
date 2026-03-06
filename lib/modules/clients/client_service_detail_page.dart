@@ -7,6 +7,7 @@ import '../schedule/booking_page.dart';
 import '../login/login_page.dart';
 import '../../core/services/profile_check_service.dart';
 import 'client_register_page.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class ClientServiceDetailPage extends StatefulWidget {
   final DocumentSnapshot serviceDoc;
@@ -28,10 +29,36 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
   Map<String, dynamic>? _selectedVariation;
   bool _isNavigating = false;
 
+  DocumentSnapshot? _shopDoc;
+  bool _isLoadingShop = true;
+  bool _isOnlineBookingActive = true;
+
   @override
   void initState() {
     super.initState();
     _pageController = PageController(initialPage: _currentImageIndex);
+    _loadShopConfig();
+  }
+
+  Future<void> _loadShopConfig() async {
+    try {
+      final shopId = widget.serviceData['shopId'];
+      if (shopId != null) {
+        final doc = await FirebaseFirestore.instance
+            .collection('shops')
+            .doc(shopId)
+            .get();
+        if (doc.exists) {
+          _shopDoc = doc;
+          final config = doc.data()?['config'] as Map<String, dynamic>?;
+          _isOnlineBookingActive = config?['agendamento_online_ativo'] ?? true;
+        }
+      }
+    } catch (e) {
+      debugPrint("Erro ao carregar loja: $e");
+    } finally {
+      if (mounted) setState(() => _isLoadingShop = false);
+    }
   }
 
   @override
@@ -41,50 +68,65 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
   }
 
   Future<void> _goToBooking() async {
-    // 1. Verificar se o usuário está logado (Late Auth)
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      final shouldLogin = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Text('Login Necessário'),
-          content: const Text(
-            'Para fazer um agendamento, você precisa estar logado.\n\nDeseja fazer login agora?',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('VOLTAR'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primaryPurple,
-              ),
-              child: const Text('FAZER LOGIN'),
-            ),
-          ],
-        ),
-      );
+    if (!_isOnlineBookingActive && _shopDoc != null) {
+      _agendarViaWhatsApp();
+      return;
+    }
 
-      if (shouldLogin == true && mounted) {
-        // Navegar para login esperando sucesso
+    setState(() => _isNavigating = true);
+
+    DocumentSnapshot? shopDoc = _shopDoc;
+    try {
+      if (shopDoc == null) {
+        if (widget.serviceData['shopId'] != null) {
+          shopDoc = await FirebaseFirestore.instance
+              .collection('shops')
+              .doc(widget.serviceData['shopId'])
+              .get();
+          if (!shopDoc.exists) throw "Loja não encontrada.";
+          _shopDoc = shopDoc;
+        } else {
+          throw "ID da loja não encontrado.";
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isNavigating = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Erro: $e"), backgroundColor: Colors.red),
+        );
+      }
+      return;
+    }
+
+    // 1. Verificar se o usuário está logado (Late Auth) com Double Check para Anonymous State
+    final userState = await FirebaseAuth.instance.authStateChanges().first;
+    if (userState == null || userState.isAnonymous) {
+      if (mounted) setState(() => _isNavigating = false);
+
+      final serviceName = widget.serviceData['nome'] ?? 'o serviço';
+      final shopData = shopDoc.data() as Map<String, dynamic>? ?? {};
+      final shopName = shopData['nome'] ?? 'nossa loja';
+
+      if (mounted) {
         final success = await Navigator.push<bool>(
           context,
           MaterialPageRoute(
-            builder: (context) => const LoginPage(returnOnSuccess: true),
+            builder: (context) => LoginPage(
+              returnOnSuccess: true,
+              contextMessage:
+                  "Para agendar $serviceName na $shopName, faça login ou crie sua conta.",
+            ),
           ),
         );
 
         if (success == true && mounted) {
-          // Após login com sucesso, tenta novamente
           _goToBooking();
         }
       }
-      return;
+      return; // ⛔ TRAVA DEFINITIVA: Impede qualquer execução adicional se não estava logado quando clicou
     }
+    final user = userState;
 
     // 1.5 Verificar se o perfil está completo
     final complete =
@@ -130,32 +172,20 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
     if (variations != null &&
         variations.isNotEmpty &&
         _selectedVariation == null) {
-      if (!mounted) return;
+      if (!mounted) {
+        setState(() => _isNavigating = false);
+        return;
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
             content: Text("Por favor, escolha uma opção (Variação) acima."),
             backgroundColor: Colors.orange),
       );
+      setState(() => _isNavigating = false);
       return;
     }
 
-    setState(() => _isNavigating = true);
-
     try {
-      DocumentSnapshot shopDoc;
-
-      // Busca dados da loja para passar para o Booking
-      if (widget.serviceData['shopId'] != null) {
-        shopDoc = await FirebaseFirestore.instance
-            .collection('shops')
-            .doc(widget.serviceData['shopId'])
-            .get();
-
-        if (!shopDoc.exists) throw "Loja não encontrada.";
-      } else {
-        throw "ID da loja não encontrado.";
-      }
-
       if (!mounted) return;
 
       // Navega para o BookingPage OBRIGANDO a passar o serviço
@@ -163,7 +193,7 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
         context,
         MaterialPageRoute(
           builder: (context) => BookingPage(
-            shop: shopDoc,
+            shop: shopDoc!,
             serviceDoc: widget.serviceDoc,
             selectedVariation: _selectedVariation,
           ),
@@ -176,6 +206,44 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
       );
     } finally {
       if (mounted) setState(() => _isNavigating = false);
+    }
+  }
+
+  void _agendarViaWhatsApp() async {
+    final shopData = _shopDoc!.data() as Map<String, dynamic>;
+    final phone = shopData['telefone'] ?? shopData['whatsapp'];
+    if (phone == null || phone.toString().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text("Loja não possui número de WhatsApp cadastrado.")),
+      );
+      return;
+    }
+
+    String cleanPhone = phone.toString().replaceAll(RegExp(r'\D'), '');
+    if (!cleanPhone.startsWith('55')) {
+      cleanPhone = '55$cleanPhone';
+    }
+
+    final String serviceName = widget.serviceData['nome'] ?? 'Serviço';
+    final String shopName = shopData['nome'] ?? 'loja';
+    final String message =
+        "Olá, vim pelo App MarkaAI e gostaria de agendar o serviço $serviceName na $shopName.";
+
+    final Uri url = Uri.parse(
+        "https://wa.me/$cleanPhone?text=${Uri.encodeComponent(message)}");
+
+    try {
+      if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
+        throw 'Cannot launch url';
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text("Erro ao abrir o WhatsApp. Tente novamente.")),
+        );
+      }
     }
   }
 
@@ -480,16 +548,19 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
                 child: SizedBox(
                   height: 56,
                   child: ElevatedButton(
-                    onPressed: _isNavigating ? null : _goToBooking,
+                    onPressed:
+                        _isLoadingShop || _isNavigating ? null : _goToBooking,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primaryPurple,
+                      backgroundColor: _isOnlineBookingActive
+                          ? AppColors.primaryPurple
+                          : Colors.green[600],
                       disabledBackgroundColor: Colors.grey[300],
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
                       elevation: 0,
                     ),
-                    child: _isNavigating
+                    child: _isLoadingShop || _isNavigating
                         ? const SizedBox(
                             width: 24,
                             height: 24,
@@ -498,13 +569,25 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
                               strokeWidth: 2.5,
                             ),
                           )
-                        : const Text(
-                            "AGENDAR ESSE SERVIÇO",
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
+                        : Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              if (!_isOnlineBookingActive) ...[
+                                const Icon(Icons.chat,
+                                    color: Colors.white, size: 20),
+                                const SizedBox(width: 8),
+                              ],
+                              Text(
+                                _isOnlineBookingActive
+                                    ? "AGENDAR ESSE SERVIÇO"
+                                    : "AGENDAR PELO WHATSAPP",
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ],
                           ),
                   ),
                 ),

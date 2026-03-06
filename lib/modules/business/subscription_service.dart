@@ -3,16 +3,17 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import '../../core/services/session_service.dart';
+import 'trial_service.dart';
 
-enum SubscriptionPlan { free, starter, pro, vip }
+enum SubscriptionPlan { start, flex, plus, prime, elite }
 
 class SubscriptionService {
   static const String _collection = 'shops';
 
   // Definição dos Planos
   static final Map<SubscriptionPlan, Map<String, dynamic>> _plans = {
-    SubscriptionPlan.free: {
-      'name': 'Free',
+    SubscriptionPlan.start: {
+      'name': 'Start',
       'price': 0.00,
       'employeeLimit': 1,
       'clientLimit': 50,
@@ -27,42 +28,26 @@ class SubscriptionService {
       'features': ['scheduling', 'custom_link', 'ads'],
       'description': 'Ideal para começar.',
     },
-    SubscriptionPlan.starter: {
-      'name': 'Starter',
+    SubscriptionPlan.flex: {
+      'name': 'Flex',
       'price': 29.90,
       'employeeLimit': 3,
-      'clientLimit': 100,
-      'adEnabled': false,
-      'onlinePayment': true,
-      'financialModule': false,
-      'commissionModule': false,
-      'inventoryModule': false,
-      'customLink': true,
-      'maxServicePhotos': 5,
-      'advancedScheduling': true,
-      'features': ['online_payment', 'custom_link', 'no_ads'],
-      'description': 'Mais recursos e equipe pequena.',
-    },
-    SubscriptionPlan.pro: {
-      'name': 'Pro',
-      'price': 59.90,
-      'employeeLimit': 5,
-      'clientLimit': 999999,
+      'clientLimit': 500,
       'adEnabled': false,
       'onlinePayment': true,
       'financialModule': true,
-      'commissionModule': true,
-      'inventoryModule': false,
+      'commissionModule': false,
+      'inventoryModule': true,
       'customLink': true,
-      'maxServicePhotos': 5,
+      'maxServicePhotos': 3,
       'advancedScheduling': true,
-      'features': ['all'],
-      'description': 'Gestão completa com Financeiro.',
+      'features': ['scheduling', 'financial', 'custom_link'],
+      'description': 'Essencial para autônomos.',
     },
-    SubscriptionPlan.vip: {
-      'name': 'VIP',
-      'price': 99.90,
-      'employeeLimit': 10,
+    SubscriptionPlan.plus: {
+      'name': 'Plus',
+      'price': 59.90,
+      'employeeLimit': 5,
       'clientLimit': 999999,
       'adEnabled': false,
       'onlinePayment': true,
@@ -72,8 +57,40 @@ class SubscriptionService {
       'customLink': true,
       'maxServicePhotos': 5,
       'advancedScheduling': true,
+      'features': ['scheduling', 'financial', 'commissions'],
+      'description': 'Gestão completa com comissões.',
+    },
+    SubscriptionPlan.prime: {
+      'name': 'Prime',
+      'price': 99.90,
+      'employeeLimit': 10,
+      'clientLimit': 999999,
+      'adEnabled': false,
+      'onlinePayment': true,
+      'financialModule': true,
+      'commissionModule': true,
+      'inventoryModule': true,
+      'customLink': true,
+      'maxServicePhotos': 10,
+      'advancedScheduling': true,
       'features': ['all'],
       'description': 'Para grandes equipes. Até 10 profissionais.',
+    },
+    SubscriptionPlan.elite: {
+      'name': 'Elite',
+      'price': 149.90,
+      'employeeLimit': 999999,
+      'clientLimit': 999999,
+      'adEnabled': false,
+      'onlinePayment': true,
+      'financialModule': true,
+      'commissionModule': true,
+      'inventoryModule': true,
+      'customLink': true,
+      'maxServicePhotos': 15,
+      'advancedScheduling': true,
+      'features': ['all'],
+      'description': 'Recursos ilimitados para o seu negócio.',
     },
   };
 
@@ -100,31 +117,41 @@ class SubscriptionService {
         }
       }
 
-      if (shopId == null) return SubscriptionPlan.free;
+      if (shopId == null) return SubscriptionPlan.start;
 
       final doc = await FirebaseFirestore.instance
           .collection(_collection)
           .doc(shopId)
           .get();
-      if (!doc.exists) return SubscriptionPlan.free;
+      if (!doc.exists) return SubscriptionPlan.start;
 
       final data = doc.data();
       final sub = data?['subscription'] as Map<String, dynamic>?;
 
-      if (sub == null) return SubscriptionPlan.free;
+      if (sub == null) {
+        // Se a assinatura não existe, verifica o novo Sistema de Trial
+        final trialStatus = await TrialService.getTrialStatus();
+        if (trialStatus['trialActive'] == true) {
+          return _parsePlanId(trialStatus['trialPlan']);
+        }
+        if (trialStatus['trialExpired'] == true) {
+          await TrialService.checkAndDeactivateExpiredTrial(); // Lazy check
+        }
+        return SubscriptionPlan.start;
+      }
 
-      // Verifica Trial
+      // Verifica Trial Clássico (legado)
       if (sub['status'] == 'trial') {
         final end = (sub['trial_ends_at'] as Timestamp?)?.toDate();
         if (end != null && end.isAfter(DateTime.now())) {
-          return SubscriptionPlan.vip; // Trial dá acesso total
+          return SubscriptionPlan.prime; // Trial dá acesso total
         }
       }
 
       final planId = sub['plan_id'] as String?;
       return _parsePlanId(planId);
     } catch (e) {
-      return SubscriptionPlan.free;
+      return SubscriptionPlan.start;
     }
   }
 
@@ -132,30 +159,33 @@ class SubscriptionService {
     switch (id) {
       // IDs legados (antigos)
       case 'starter':
-        return SubscriptionPlan.starter;
+        return SubscriptionPlan.flex;
       case 'pro':
-        return SubscriptionPlan.pro;
+        return SubscriptionPlan.plus;
       case 'vip':
-        return SubscriptionPlan.vip;
+        return SubscriptionPlan.prime;
       // IDs Firestore (seedados via seedPlans: start/flex/plus/prime)
       case 'start':
-        return SubscriptionPlan.starter;
+        return SubscriptionPlan.start;
       case 'flex':
-        return SubscriptionPlan.starter;
+        return SubscriptionPlan.flex;
       case 'plus':
-        return SubscriptionPlan.pro;
+        return SubscriptionPlan.plus;
       case 'prime':
-        return SubscriptionPlan.vip;
+        return SubscriptionPlan.prime;
+      case 'elite':
+        return SubscriptionPlan.elite;
       default:
-        return SubscriptionPlan.free;
+        return SubscriptionPlan.start;
     }
   }
 
   static String _getPlanId(SubscriptionPlan plan) {
-    if (plan == SubscriptionPlan.starter) return 'starter';
-    if (plan == SubscriptionPlan.pro) return 'pro';
-    if (plan == SubscriptionPlan.vip) return 'vip';
-    return 'free';
+    if (plan == SubscriptionPlan.flex) return 'flex';
+    if (plan == SubscriptionPlan.plus) return 'plus';
+    if (plan == SubscriptionPlan.prime) return 'prime';
+    if (plan == SubscriptionPlan.elite) return 'elite';
+    return 'start';
   }
 
   /// Verifica se pode adicionar mais funcionários
@@ -210,20 +240,62 @@ class SubscriptionService {
           .collection(_collection)
           .doc(shopId)
           .get();
-      if (!doc.exists) return SubscriptionPlan.free;
+      if (!doc.exists) return SubscriptionPlan.start;
       final data = doc.data();
       final sub = data?['subscription'] as Map<String, dynamic>?;
-      if (sub == null) return SubscriptionPlan.free;
+
+      if (sub == null) {
+        // Se a assinatura não existe, verifica o novo Sistema de Trial
+        final trialActive = data?['trial_active'] == true;
+        if (trialActive) {
+          Timestamp? end = data?['trial_end_date'];
+          if (end != null && end.toDate().isAfter(DateTime.now())) {
+            return _parsePlanId(data?['trial_plan'] as String?);
+          } else if (end != null) {
+            // Expirou
+            await TrialService.checkAndDeactivateExpiredTrial();
+          }
+        }
+        // Fallback: verifica campos plan/plan_id na raiz do documento
+        // (salvos por upgradeSubscription e reactivateSubscription)
+        final rootPlanId =
+            (data?['plan'] as String?) ?? (data?['plan_id'] as String?);
+        if (rootPlanId != null && rootPlanId != 'free') {
+          return _parsePlanId(rootPlanId);
+        }
+        return SubscriptionPlan.start;
+      }
+
+      // Legado: trial clássico
       if (sub['status'] == 'trial') {
         final end = (sub['trial_ends_at'] as Timestamp?)?.toDate();
         if (end != null && end.isAfter(DateTime.now())) {
-          return SubscriptionPlan.vip;
+          return SubscriptionPlan.prime;
         }
       }
-      return _parsePlanId(sub['plan_id'] as String?);
+
+      // Assinatura cancelada: verificar se ainda está dentro do período de acesso
+      if (sub['status'] == 'canceled' || sub['status'] == 'cancelled') {
+        final accessUntil = (sub['access_until'] as Timestamp?)?.toDate();
+        if (accessUntil != null && accessUntil.isAfter(DateTime.now())) {
+          // Ainda tem acesso — retorna plano salvo
+          return _parsePlanId(sub['plan_id'] as String?);
+        }
+        // Acesso expirado após cancelamento
+        return SubscriptionPlan.start;
+      }
+
+      // Plano ativo: usa plan_id do subscription, com fallback para raiz do documento
+      final planFromSub = _parsePlanId(sub['plan_id'] as String?);
+      if (planFromSub != SubscriptionPlan.start) return planFromSub;
+
+      // Fallback final: campo plan/plan_id na raiz (set por algunas Cloud Functions)
+      final rootPlanId =
+          (data?['plan'] as String?) ?? (data?['plan_id'] as String?);
+      return _parsePlanId(rootPlanId);
     } catch (e) {
       debugPrint('getShopPlan error: $e');
-      return SubscriptionPlan.free;
+      return SubscriptionPlan.start;
     }
   }
 

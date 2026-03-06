@@ -11,7 +11,8 @@ Widget buildWebView({
   Map<String, String>? initialData,
 }) {
   final String viewId = 'mp-checkout-${DateTime.now().millisecondsSinceEpoch}';
-  final String baseUrl = assetPath.startsWith('assets/') ? assetPath : 'assets/$assetPath';
+  final String baseUrl =
+      assetPath.startsWith('assets/') ? assetPath : 'assets/$assetPath';
   final String query = (initialData != null && initialData.isNotEmpty)
       ? '?${initialData.entries.map((e) => '${e.key}=${Uri.encodeComponent(e.value)}').join('&')}'
       : '';
@@ -24,6 +25,17 @@ Widget buildWebView({
       ..style.width = '100%';
   });
 
-  // Na Web não há WebViewController nativo; onControllerCreated é ignorado (comunicação via postMessage no HTML).
+  // Na Web não há WebViewController nativo; onControllerCreated é ignorado.
+  // Escutamos os eventos do IFrame via window postMessage.
+  html.window.onMessage.listen((html.MessageEvent event) {
+    if (event.data != null) {
+      final String payload = event.data.toString();
+      // Filtramos mensagens que não são do nosso checkout (evitar plugins sujos da página)
+      if (payload.contains('"action"') || payload.contains("'action'")) {
+        onMessage(payload);
+      }
+    }
+  });
+
   return HtmlElementView(viewType: viewId);
 }

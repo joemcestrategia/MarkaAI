@@ -216,23 +216,16 @@ class _AuthRedirectState extends State<AuthRedirect> {
         }
       } catch (_) {}
 
-      // Se a rota atual não for a raiz, não redirecionamos automaticamente.
-      // Usar Uri.base.path (funciona no web) como fonte mais confiável do caminho atual.
-      final browserPath = Uri.base.path; // ex: '/afroed' ou '/'
-      if (browserPath == '/' || browserPath.isEmpty) {
-        // Garantir que o widget ainda está montado após possíveis 'await's acima
-        if (!mounted) return;
-        if (tipo == 'dono' || tipo == 'business') {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => const BusinessHomePage()),
-          );
-        } else {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => const ClientHomePage()),
-          );
-        }
+      // Forçar redirecionamento para Home do perfil logado (Desativado restrição de URI para não hang up em deep links conhecidos)
+      if (!mounted) return;
+      if (tipo == 'dono' || tipo == 'business') {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const BusinessHomePage()),
+        );
       } else {
-        // Não forçar redirecionamento: respeitar URL atual (ex: /{slug})
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const ClientHomePage()),
+        );
       }
     } catch (_) {
       if (mounted) {

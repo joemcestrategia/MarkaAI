@@ -381,7 +381,7 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
             } catch (e) { shopCfg = null; }
             if (shopCfg) {
               const cfg = shopCfg.credito_config || shopCfg.config || shopCfg || {};
-              try { if (typeof FlutterChannel !== 'undefined') FlutterChannel.postMessage(JSON.stringify({ action: 'debug_shopcfg', cfg: cfg, shopCfg: shopCfg, amount: amount })); } catch(e){}
+              try { const msgType = { action: 'debug_shopcfg', cfg: cfg, shopCfg: shopCfg, amount: amount }; if (typeof postMessageToFlutter === 'function') postMessageToFlutter(msgType); else if (typeof window.postMessageToApp === 'function') window.postMessageToApp(msgType); else if (typeof FlutterChannel !== 'undefined') FlutterChannel.postMessage(JSON.stringify(msgType)); else if (window.parent) window.parent.postMessage(JSON.stringify(msgType), '*'); } catch(e){}
               const maxParc = (cfg.max_parcelas != null) ? parseInt(cfg.max_parcelas) : (shopCfg.max_parcelas || cfg.max_parcelas || 1);
               const aceitaParcelas = (cfg.aceitar_parcelas === true) || (shopCfg.aceitar_parcelas === true) || (cfg.aceitar === true);
               // tolerant numeric parsing
@@ -435,7 +435,7 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
                     const perc = (p === 1) ? percVista : percParcelado;
                     const total = repassa ? (amount + (amount*(perc/100))) : amount;
                     updateDisplayedTotal(total);
-                    try { if (typeof FlutterChannel !== 'undefined') FlutterChannel.postMessage(JSON.stringify({action:'computed_totals', installments: p, total: total})); } catch(e){}
+                    try { const msgTot = {action:'computed_totals', installments: p, total: total}; if (typeof postMessageToFlutter === 'function') postMessageToFlutter(msgTot); else if (typeof window.postMessageToApp === 'function') window.postMessageToApp(msgTot); else if (typeof FlutterChannel !== 'undefined') FlutterChannel.postMessage(JSON.stringify(msgTot)); else if (window.parent) window.parent.postMessage(JSON.stringify(msgTot), '*'); } catch(e){}
                   } catch(e) {}
                 });
               } catch(e) {}
@@ -546,7 +546,13 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
   void _handleRawMessage(String message) async {
     debugPrint('📩 WebView -> Flutter raw: $message');
     try {
-      final data = jsonDecode(message) as Map<String, dynamic>;
+      // Limpeza segura para payloads vindos do html.window.postMessageWeb
+      String cleanMessage = message;
+      if (cleanMessage.startsWith('"{') && cleanMessage.endsWith('}"')) {
+        cleanMessage =
+            jsonDecode(cleanMessage).toString(); // remove 1 layer of stringify
+      }
+      final data = jsonDecode(cleanMessage) as Map<String, dynamic>;
       debugPrint(
           '📩 WebView parsed action: ${data['action'] ?? '(no action)'}');
       // Suporte para requisição de parcelas via WebView (HTML envia bin)
@@ -638,6 +644,8 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
         if (widget.collectOnly) return;
         await _processarPagamento(
           cardToken: data['cardToken'],
+          saveToken: data['saveToken'],
+          saveCard: data['saveCard'] ?? false,
           installments: data['installments'],
           email: data['email'],
           cpf: data['cpf'] ?? '',
@@ -656,6 +664,8 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
 
   Future<void> _processarPagamento({
     required String cardToken,
+    String? saveToken,
+    bool saveCard = false,
     required int installments,
     required String email,
     String cpf = '',
@@ -667,6 +677,8 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
       // Debug: log outgoing payment payload
       final payloadDebug = {
         'cardToken': cardToken,
+        'saveToken': saveToken,
+        'saveCard': saveCard,
         'installments': installments,
         'email': email,
         'valor': widget.valor,
@@ -686,6 +698,8 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
         body: jsonEncode({
           'data': {
             'cardToken': cardToken,
+            'saveToken': saveToken,
+            'saveCard': saveCard,
             'email': email,
             'installments': installments,
             'valor': widget.valor,

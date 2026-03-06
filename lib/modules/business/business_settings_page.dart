@@ -1,12 +1,10 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
-import 'package:google_sign_in/google_sign_in.dart';
+
 import '../../core/theme/app_colors.dart';
+import '../../pages/privacy_settings_page.dart';
 import '../../core/services/session_service.dart';
-import '../../core/services/notification_service.dart';
 import 'link_google_business_page.dart';
 import '../backup/calendar_backup_page.dart';
 import 'payment_settings_page.dart';
@@ -48,9 +46,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   double _cancelValue = 2.0;
 
   // Financeiro
-  bool _acceptPix = true;
-  bool _acceptCard = true;
-  bool _acceptCash = true;
+  bool _cartaoOnline = false;
+  bool _debitoPresencial = false;
+  bool _pagarPessoalmente = true;
   bool _requireDeposit = false;
   double _depositPercent = 30.0;
   // Pagamento com cartão - única taxa configurável pelo lojista (aplicada no crédito)
@@ -126,9 +124,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   _cancelValue = dbHours.toDouble().clamp(1, 24);
                 }
 
-                _acceptPix = config['pagamento_pix'] ?? true;
-                _acceptCard = config['pagamento_cartao'] ?? true;
-                _acceptCash = config['pagamento_dinheiro'] ?? true;
+                _cartaoOnline = config['cartao_online'] ??
+                    config['pagamento_cartao'] ??
+                    false;
+                _debitoPresencial = config['debito_presencial'] ?? false;
+                _pagarPessoalmente = config['pagar_pessoalmente'] ??
+                    config['pagamento_dinheiro'] ??
+                    config['pagamento_pix'] ??
+                    true;
                 _requireDeposit = config['exigir_sinal'] ?? false;
                 _depositPercent = (config['percentual_sinal'] ?? 30).toDouble();
                 // cartão: ler única taxa de crédito (0..20%)
@@ -177,19 +180,19 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
 
       if (!canUseOnline) {
         // Free plan: force cash only
-        _acceptPix = false;
-        _acceptCard = false;
+        _cartaoOnline = false;
+        _debitoPresencial = false;
         _requireDeposit = false;
-        _acceptCash = true;
+        _pagarPessoalmente = true;
         _creditTaxPercent = 0.0; // ← [FIX] não salvar taxa para plano free
         _acceptInstallments =
             false; // ← [FIX] não salvar parcelamento para plano free
       } else {
-        // Paid Plan Validation: Ensure at least one payment method is enabled (pix, card or cash)
-        if (!(_acceptPix || _acceptCard || _acceptCash)) {
+        // Paid Plan Validation: Ensure at least one payment method is enabled
+        if (!(_cartaoOnline || _debitoPresencial || _pagarPessoalmente)) {
           if (mounted) {
             _showSnack(
-                "Ao menos uma forma de pagamento deve estar ativa (PIX, Cartão ou Dinheiro).",
+                "É necessário ter pelo menos um método de pagamento ativo para que seus clientes possam finalizar agendamentos.",
                 isError: true);
           }
           setState(() => _isLoading = false);
@@ -210,9 +213,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           'limite_minimo_agendamento_horas':
               _minAdvanceHours.round(), // â° Salva limite mínimo
           'tempo_cancelamento_horas': finalCancelHours,
-          'pagamento_pix': _acceptPix,
-          'pagamento_cartao': _acceptCard,
-          'pagamento_dinheiro': _acceptCash,
+          'cartao_online': _cartaoOnline,
+          'debito_presencial': _debitoPresencial,
+          'pagar_pessoalmente': _pagarPessoalmente,
+          // Legacy fallbacks for older app versions
+          'pagamento_cartao': _cartaoOnline,
+          'pagamento_dinheiro': _pagarPessoalmente,
+          'pagamento_pix': _pagarPessoalmente,
           'exigir_sinal': _requireDeposit,
           'percentual_sinal': _depositPercent.round(),
           // única taxa aplicada ao crédito (aplicada quando cliente escolher cartão)
@@ -906,42 +913,81 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                               fontSize: 14, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 8),
 
-                      // PIX
+                      // Cartão Online
                       Opacity(
                         opacity: isPremium ? 1.0 : 0.6,
                         child: _buildSwitchTile(
-                          "PIX",
-                          "Pagamento instantâneo via QR",
-                          isPremium ? _acceptPix : false,
+                          "Cartão de Crédito/Débito (Online)",
+                          "Necessário plugar Mercado Pago na aba Integrações",
+                          isPremium ? _cartaoOnline : false,
                           isPremium
-                              ? (v) => setState(() => _acceptPix = v)
+                              ? (v) {
+                                  int active = (v ? 1 : 0) +
+                                      (_debitoPresencial ? 1 : 0) +
+                                      (_pagarPessoalmente ? 1 : 0);
+                                  if (!v && active == 0) {
+                                    _showSnack(
+                                        "Você precisa ter ao menos um método de pagamento ativo.",
+                                        isError: true);
+                                    return;
+                                  }
+                                  setState(() => _cartaoOnline = v);
+                                }
                               : (v) => _showUpgradeDialog(),
                           trailing: !isPremium ? _buildPremiumBadge() : null,
                         ),
                       ),
 
-                      // Cartão
+                      // Débito Presencial
                       Opacity(
                         opacity: isPremium ? 1.0 : 0.6,
                         child: _buildSwitchTile(
-                          "Cartão",
-                          "Pagamento com cartão via gateway",
-                          isPremium ? _acceptCard : false,
+                          "Débito (Presencial - Maquininha)",
+                          "Use sua própria maquininha na loja",
+                          isPremium ? _debitoPresencial : false,
                           isPremium
-                              ? (v) => setState(() => _acceptCard = v)
+                              ? (v) {
+                                  int active = (_cartaoOnline ? 1 : 0) +
+                                      (v ? 1 : 0) +
+                                      (_pagarPessoalmente ? 1 : 0);
+                                  if (!v && active == 0) {
+                                    _showSnack(
+                                        "Você precisa ter ao menos um método de pagamento ativo.",
+                                        isError: true);
+                                    return;
+                                  }
+                                  setState(() => _debitoPresencial = v);
+                                }
                               : (v) => _showUpgradeDialog(),
                           trailing: !isPremium ? _buildPremiumBadge() : null,
                         ),
                       ),
 
-                      // Dinheiro (sempre)
+                      // Pagar Pessoalmente (Espécie / Pix Loja)
                       _buildSwitchTile(
-                        "Presencial",
-                        "Pagamento no local (dinheiro/cartão)",
-                        !isPremium ? true : _acceptCash,
+                        "Pagar Pessoalmente",
+                        "Dinheiro ou PIX direto na loja",
+                        !isPremium ? true : _pagarPessoalmente,
                         !isPremium
-                            ? (v) {}
-                            : (v) => setState(() => _acceptCash = v),
+                            ? (v) {
+                                if (!v) {
+                                  _showSnack(
+                                      "Plano Gratuito permite apenas pagamento presencial.",
+                                      isError: true);
+                                }
+                              }
+                            : (v) {
+                                int active = (_cartaoOnline ? 1 : 0) +
+                                    (_debitoPresencial ? 1 : 0) +
+                                    (v ? 1 : 0);
+                                if (!v && active == 0) {
+                                  _showSnack(
+                                      "Você precisa ter ao menos um método de pagamento ativo.",
+                                      isError: true);
+                                  return;
+                                }
+                                setState(() => _pagarPessoalmente = v);
+                              },
                       ),
                     ]),
               ),
@@ -949,7 +995,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               const Divider(height: 1),
               // CONFIGURAÇÕES DE CARTÃO — bloqueado para plano free
               PlanGateWidget(
-                requiredPlan: SubscriptionPlan.starter,
+                requiredPlan: SubscriptionPlan.flex,
                 featureLabel: 'Taxa de Cartão e Parcelamento',
                 onUpgradeTap: () async {
                   await Navigator.push(
@@ -1204,25 +1250,26 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         leading: Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
-            color: Colors.red.shade50,
+            color: AppColors.primaryPurple.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(10),
           ),
-          child: const Icon(Icons.delete_forever, color: Colors.red, size: 24),
+          child: const Icon(Icons.privacy_tip_outlined,
+              color: AppColors.primaryPurple, size: 24),
         ),
         title: const Text(
-          "Excluir Conta (Irreversível)",
-          style: TextStyle(
-              fontSize: 14, fontWeight: FontWeight.bold, color: Colors.red),
+          "Privacidade e Segurança",
+          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
         ),
         subtitle: const Text(
-          "Remove usuário e marca perfil como excluído. Esta ação NÃO pode ser desfeita.",
+          "Gerencie seus dados, exportação e políticas (LGPD)",
           style: TextStyle(fontSize: 12),
         ),
-        onTap: () async {
-          final confirmed = await _confirmAndDeleteAccount();
-          if (confirmed == true) {
-            // nothing further here; the delete flow manages navigation
-          }
+        trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const PrivacySettingsPage()),
+          );
         },
       ),
     ]);
@@ -1235,7 +1282,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         final canPay = canPaySnapshot.data ?? false;
         return _buildSettingCard([
           PlanGateWidget(
-            requiredPlan: SubscriptionPlan.starter,
+            requiredPlan: SubscriptionPlan.flex,
             featureLabel: 'Conexão com Mercado Pago',
             onUpgradeTap: () async {
               await Navigator.push(
@@ -1288,98 +1335,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         ]);
       },
     );
-  }
-
-  Future<bool?> _confirmAndDeleteAccount() async {
-    final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (ctx) {
-          bool checked = false;
-          return StatefulBuilder(builder: (ctx2, setS) {
-            return AlertDialog(
-              title: const Text('Excluir Conta - Irreversível'),
-              content: Column(mainAxisSize: MainAxisSize.min, children: [
-                const Text(
-                    'Esta ação excluirá o usuário do Firebase Auth e marcará o perfil como excluído no Firestore. Ã‰ IRRECUPERÃVEL.'),
-                const SizedBox(height: 12),
-                Row(children: [
-                  Checkbox(
-                      value: checked,
-                      onChanged: (v) => setS(() => checked = v ?? false)),
-                  const Expanded(
-                      child: Text(
-                          'Estou ciente e desejo excluir permanentemente esta conta')),
-                ]),
-              ]),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(ctx2, false),
-                    child: const Text('Cancelar')),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                  onPressed: checked ? () => Navigator.pop(ctx2, true) : null,
-                  child: const Text('Excluir'),
-                ),
-              ],
-            );
-          });
-        });
-
-    if (confirmed == true) {
-      if (!mounted) return confirmed;
-      // perform deletion
-      showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (ctx) => const Center(child: CircularProgressIndicator()));
-      try {
-        final user = FirebaseAuth.instance.currentUser;
-        if (user == null) throw 'Usuário não autenticado';
-        final idToken = await user.getIdToken(true);
-        final url = Uri.parse(
-            'https://us-central1-wismart-118c3.cloudfunctions.net/deleteUserAccount');
-        final resp = await http.post(url,
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer $idToken'
-            },
-            body: jsonEncode({'confirm': true}));
-        if (mounted) Navigator.pop(context); // remove progress
-        if (resp.statusCode == 200) {
-          try {
-            await GoogleSignIn().signOut();
-            await GoogleSignIn().disconnect();
-          } catch (_) {}
-          try {
-            await NotificationService.removeToken();
-          } catch (_) {}
-          await SessionService.logout();
-          await FirebaseAuth.instance.signOut();
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                content: Text(
-                    'Conta excluída com sucesso. Limpe o cache do app/telefone para evitar reentrar.')));
-            Navigator.pushAndRemoveUntil(
-                context,
-                MaterialPageRoute(builder: (_) => const SizedBox()),
-                (r) => false);
-          }
-        } else {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                content: Text(
-                    'Falha ao excluir conta: ${resp.statusCode} ${resp.body}')));
-          }
-        }
-      } catch (e) {
-        if (mounted) Navigator.pop(context);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Erro ao excluir conta: $e')));
-        }
-      }
-    }
-    return confirmed;
   }
 
   Widget _buildHelpTopic(String title, String desc) {

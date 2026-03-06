@@ -8,7 +8,7 @@ import '../../modules/business/subscription_service.dart';
 /// ```dart
 /// PlanGateWidget(
 ///   feature: 'creditCard',
-///   requiredPlan: SubscriptionPlan.starter,
+///   requiredPlan: SubscriptionPlan.flex,
 ///   child: MyCreditCardSection(),
 /// )
 /// ```
@@ -53,11 +53,11 @@ class _PlanGateWidgetState extends State<PlanGateWidget> {
 
   String _planName(SubscriptionPlan p) {
     switch (p) {
-      case SubscriptionPlan.starter:
+      case SubscriptionPlan.flex:
         return 'Starter';
-      case SubscriptionPlan.pro:
+      case SubscriptionPlan.plus:
         return 'Pro';
-      case SubscriptionPlan.vip:
+      case SubscriptionPlan.prime:
         return 'VIP';
       default:
         return 'Pago';

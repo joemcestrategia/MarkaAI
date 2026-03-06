@@ -8,9 +8,6 @@ import 'package:intl/intl.dart';
 import 'package:image_picker/image_picker.dart'; // NECESSÁRIO PARA FOTO
 import 'dart:io'; // NECESSÁRIO PARA FOTO
 import '../../core/theme/app_colors.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
-import '../login/login_page.dart' as login_page;
 import '../../core/services/viacep_service.dart';
 import '../../core/services/session_service.dart'; // NECESSÁRIO PARA PEGAR ID DA LOJA
 import 'client_home_page.dart';
@@ -46,7 +43,7 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
   bool _isLoadingCep = false;
   bool _isSaving = false;
 
-  final phoneMask = MaskTextInputFormatter(
+  var phoneMask = MaskTextInputFormatter(
       mask: '(##) #####-####', filter: {"#": RegExp(r'[0-9]')});
   final cepMask = MaskTextInputFormatter(
       mask: '#####-###', filter: {"#": RegExp(r'[0-9]')});
@@ -162,6 +159,22 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
 
   Future<void> _salvarCliente() async {
     if (!_formKey.currentState!.validate()) return;
+
+    // Validar e Extrair Telefone Clean
+    String rawPhone = phoneMask.getUnmaskedText();
+    if (rawPhone.isEmpty) {
+      rawPhone = _phoneController.text.replaceAll(RegExp(r'\D'), '');
+    }
+    if (rawPhone.length < 10) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text(
+                "O telefone deve ter formato de celular (11) ou fixo (10) dígitos."),
+            backgroundColor: Colors.red),
+      );
+      return;
+    }
+
     setState(() => _isSaving = true);
 
     try {
@@ -187,7 +200,16 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
 
       Map<String, dynamic> clientData = {
         'nome': _nameController.text.trim(),
-        'telefone': _phoneController.text,
+        'nome_normalizado': _nameController.text
+            .trim()
+            .toLowerCase()
+            .replaceAll(RegExp(r'[áàãâä]'), 'a')
+            .replaceAll(RegExp(r'[éèêë]'), 'e')
+            .replaceAll(RegExp(r'[íìîï]'), 'i')
+            .replaceAll(RegExp(r'[óòõôö]'), 'o')
+            .replaceAll(RegExp(r'[úùûü]'), 'u')
+            .replaceAll(RegExp(r'[ç]'), 'c'),
+        'telefone': rawPhone,
         'tipo': 'cliente',
         'aniversario': _birthDate != null
             ? DateFormat('dd/MM/yyyy').format(_birthDate!)
@@ -249,83 +271,6 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text("Erro: $e"), backgroundColor: Colors.red));
-      }
-    } finally {
-      if (mounted) setState(() => _isSaving = false);
-    }
-  }
-
-  Future<void> _confirmDeleteFromRegister() async {
-    final ok = await showDialog<bool>(
-        context: context,
-        builder: (ctx) {
-          bool checked = false;
-          return StatefulBuilder(builder: (ctx2, setS) {
-            return AlertDialog(
-              title: const Text('Excluir Conta - Irreversível'),
-              content: Column(mainAxisSize: MainAxisSize.min, children: [
-                const Text(
-                    'Esta ação removerá sua conta do Firebase Auth e marcará seu perfil como excluído. É irreversível.'),
-                Row(children: [
-                  Checkbox(
-                      value: checked,
-                      onChanged: (v) => setS(() => checked = v ?? false)),
-                  const Expanded(child: Text('Estou ciente'))
-                ])
-              ]),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(ctx2, false),
-                    child: const Text('Cancelar')),
-                ElevatedButton(
-                    style:
-                        ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                    onPressed: checked ? () => Navigator.pop(ctx2, true) : null,
-                    child: const Text('Excluir')),
-              ],
-            );
-          });
-        });
-    if (ok == true) {
-      await _performDeleteFromRegister();
-    }
-  }
-
-  Future<void> _performDeleteFromRegister() async {
-    setState(() => _isSaving = true);
-    try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) throw 'Usuário não autenticado';
-      final idToken = await user.getIdToken(true);
-      final url = Uri.parse(
-          'https://us-central1-wismart-118c3.cloudfunctions.net/deleteUserAccount');
-      final resp = await http.post(url,
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $idToken'
-          },
-          body: jsonEncode({'confirm': true}));
-      if (resp.statusCode == 200) {
-        await SessionService.logout();
-        await FirebaseAuth.instance.signOut();
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Conta excluída com sucesso.')));
-          Navigator.pushAndRemoveUntil(
-              context,
-              MaterialPageRoute(builder: (c) => const login_page.LoginPage()),
-              (r) => false);
-        }
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Falha ao excluir: ${resp.statusCode}')));
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Erro: $e')));
       }
     } finally {
       if (mounted) setState(() => _isSaving = false);
@@ -403,8 +348,30 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
                     controller: _phoneController,
                     inputFormatters: [phoneMask],
                     keyboardType: TextInputType.phone,
-                    decoration: _deco("WhatsApp", Icons.phone),
-                    validator: (v) => v!.length < 14 ? "Inválido" : null),
+                    decoration: _deco("WhatsApp ou Fixo", Icons.phone),
+                    onChanged: (val) {
+                      String unmasked = phoneMask.getUnmaskedText();
+                      if (unmasked.length <= 10 &&
+                          phoneMask.getMask() != '(##) ####-####') {
+                        setState(() {
+                          phoneMask.updateMask(mask: '(##) ####-####');
+                        });
+                      } else if (unmasked.length > 10 &&
+                          phoneMask.getMask() != '(##) #####-####') {
+                        setState(() {
+                          phoneMask.updateMask(mask: '(##) #####-####');
+                        });
+                      }
+                    },
+                    validator: (v) {
+                      String unmasked = phoneMask.getUnmaskedText();
+                      if (unmasked.isEmpty) {
+                        unmasked = v!.replaceAll(RegExp(r'\D'), '');
+                      }
+                      return unmasked.length < 10
+                          ? "Telefone incompleto"
+                          : null;
+                    }),
                 const SizedBox(height: 16),
 
                 InkWell(
@@ -478,40 +445,6 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
                                 color: Colors.white,
                                 fontWeight: FontWeight.bold)),
                   ),
-                ),
-                const SizedBox(height: 12),
-                // Hidden advanced options for power users (e.g., convert to owner)
-                ExpansionTile(
-                  title: const Text('Opções Avançadas',
-                      style:
-                          TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                      child: Column(children: [
-                        Align(
-                            alignment: Alignment.centerLeft,
-                            child: Text(
-                                'Atenção: opções avançadas podem alterar sua conta.',
-                                style: TextStyle(
-                                    color: Colors.grey[600], fontSize: 12))),
-                        const SizedBox(height: 8),
-                        const SizedBox(height: 8),
-                        SizedBox(
-                          width: double.infinity,
-                          child: OutlinedButton(
-                            style: OutlinedButton.styleFrom(
-                                foregroundColor: Colors.red),
-                            onPressed: _confirmDeleteFromRegister,
-                            child: const Text(
-                                'Excluir Minha Conta (Irreversível)',
-                                style: TextStyle(color: Colors.red)),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                      ]),
-                    )
-                  ],
                 ),
               ],
             ),

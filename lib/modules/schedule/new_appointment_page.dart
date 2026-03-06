@@ -107,7 +107,9 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
 
   // --- PASSO 2: PROFISSIONAL ---
   Widget _buildProfessionalStep() {
-    if (shopId == null) return const CircularProgressIndicator();
+    if (shopId == null) {
+      return const CircularProgressIndicator();
+    }
 
     // ✅ VALIDAÇÃO: Precisa ter um serviço selecionado primeiro
     if (_selectedService == null) {
@@ -133,7 +135,9 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
               child: Text("Erro ao carregar profissionais.",
                   style: TextStyle(color: Colors.red)));
         }
-        if (!snapshot.hasData) return const CircularProgressIndicator();
+        if (!snapshot.hasData) {
+          return const CircularProgressIndicator();
+        }
         final allDocs = snapshot.data!.docs;
 
         // ✅ FILTRO: Mostra apenas profissionais que fazem este serviço
@@ -288,14 +292,17 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
           );
         }
 
-        if (!snapshot.hasData)
+        if (!snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
+        }
 
         List<String> busyTimes = [];
         for (var doc in snapshot.data!.docs) {
           final data = doc.data() as Map<String, dynamic>;
           final status = (data['status'] ?? '').toString().toLowerCase();
-          if (status == 'cancelado' || status == 'recusado') continue;
+          if (status == 'cancelado' || status == 'recusado') {
+            continue;
+          }
 
           if (data['data_agendamento'] != null) {
             DateTime dt = (data['data_agendamento'] as Timestamp).toDate();
@@ -307,8 +314,9 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
         final slots = _generateProfessionalSlotsWithDuration(
             startStr, endStr, duracaoServico);
 
-        if (slots.isEmpty)
+        if (slots.isEmpty) {
           return const Text("Sem horários que caibam o serviço hoje.");
+        }
 
         return Wrap(
           spacing: 10,
@@ -386,7 +394,9 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
         finalClientName = widget.preSelectedClient!['nome'];
         finalClientPhone = widget.preSelectedClient!['telefone'] ?? "";
       } else {
-        if (user == null) return;
+        if (user == null) {
+          return;
+        }
         finalClientId = user.uid;
         finalClientName = user.displayName ?? "Cliente App";
         finalClientPhone = "";
@@ -427,11 +437,14 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
         Navigator.pop(context);
       }
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text("Erro: $e")));
+      }
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -472,7 +485,9 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
           }
         },
         onStepCancel: () {
-          if (_currentStep > 0) setState(() => _currentStep--);
+          if (_currentStep > 0) {
+            setState(() => _currentStep--);
+          }
         },
         controlsBuilder: (context, details) {
           return Padding(

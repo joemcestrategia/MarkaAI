@@ -20,16 +20,18 @@ import '../admin/admin_dashboard_page.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 import '../../core/services/notification_service.dart';
+import '../../core/widgets/trial_banner_widget.dart';
+import '../../core/widgets/paywall_modal_widget.dart';
 import '../../core/widgets/banner_ad_widget.dart';
 import '../login/login_page.dart';
 
-// --- MÃ“DULOS ---
+// --- MÓDULOS ---
 import '../services/services_management_page.dart';
 import '../team/team_management_page.dart';
 import 'business_settings_page.dart';
 import 'business_schedule_page.dart';
 import 'business_clients_page.dart';
-// import '../settings/excel_import_page.dart'; // Import removed â€” recurso 'Importar Dados' descontinuado
+// import '../settings/excel_import_page.dart'; // Import removed — recurso 'Importar Dados' descontinuado
 import '../financial/financial_dashboard_page.dart';
 
 import 'subscription_plans_page.dart';
@@ -374,34 +376,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   }
 
   void _showUpgradeDialog(String feature) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Recurso Premium 🔒"),
-        content: Text(
-            "O módulo de $feature está disponível apenas nos planos pagos.\n\nFaça um upgrade para desbloquear controle financeiro, estoque e muito mais!"),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text("Cancelar")),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => const SubscriptionPlansPage()));
-              if (mounted) setState(() {});
-            },
-            style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primaryPurple),
-            child: const Text("Ver Planos",
-                style: TextStyle(
-                    color: Colors.white, fontWeight: FontWeight.bold)),
-          )
-        ],
-      ),
-    );
+    PaywallModalWidget.show(context: context, featureName: feature);
   }
 
   void _confirmLogout() {
@@ -1086,8 +1061,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           FutureBuilder<SubscriptionPlan>(
             future: SubscriptionService.getCurrentPlan(),
             builder: (context, snapshot) {
-              final plan = snapshot.data ?? SubscriptionPlan.free;
-              final isFree = plan == SubscriptionPlan.free;
+              final plan = snapshot.data ?? SubscriptionPlan.start;
+              final isFree = plan == SubscriptionPlan.start;
 
               return SafeArea(
                 top: false,
@@ -1813,7 +1788,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
             ),
           ),
 
-          // ── Cards principais sobrepostos ao header ───────────────────────
+          // --- CARDS PRINCIPAIS ----------------------------------------
+          const TrialBannerWidget(),
           Transform.translate(
             offset: const Offset(0, -14),
             child: Padding(

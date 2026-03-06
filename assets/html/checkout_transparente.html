@@ -1,13 +1,20 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Checkout Transparente - MarkaAI</title>
     <script src="https://sdk.mercadopago.com/js/v2" async></script>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        html, body {
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             background: #f5f5f5;
             min-height: 100vh;
@@ -17,6 +24,7 @@
             padding-right: env(safe-area-inset-right);
             padding-bottom: env(safe-area-inset-bottom);
         }
+
         .container {
             background: white;
             min-height: 100vh;
@@ -25,8 +33,20 @@
             max-width: 500px;
             margin: 0 auto;
         }
-        h1 { font-size: 24px; color: #333; margin-bottom: 10px; font-weight: 600; }
-        .subtitle { color: #666; font-size: 14px; margin-bottom: 30px; }
+
+        h1 {
+            font-size: 24px;
+            color: #333;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 30px;
+        }
+
         .valor-container {
             background: #f5f5f5;
             padding: 15px;
@@ -36,43 +56,166 @@
             justify-content: space-between;
             align-items: center;
         }
-        .valor-label { font-size: 14px; color: #666; }
-        .valor-amount { font-size: 24px; font-weight: 700; color: #667eea; }
-        .form-group { margin-bottom: 20px; }
-        label { display: block; font-weight: 600; color: #333; margin-bottom: 8px; font-size: 14px; }
-        input, select {
-            width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px;
-            font-size: 14px; font-family: inherit; transition: border-color 0.3s;
+
+        .valor-label {
+            font-size: 14px;
+            color: #666;
         }
-        input:focus, select:focus { outline: none; border-color: #667eea; }
-        .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+        .valor-amount {
+            font-size: 24px;
+            font-weight: 700;
+            color: #667eea;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        input,
+        select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: inherit;
+            transition: border-color 0.3s;
+        }
+
+        input:focus,
+        select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
         .parcelamento-info {
-            background: #f0f7ff; border: 2px solid #e3f2fd; border-radius: 8px;
-            padding: 15px; margin-bottom: 20px; display: none;
+            background: #f0f7ff;
+            border: 2px solid #e3f2fd;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            display: none;
         }
-        .parcelamento-info.show { display: block; }
-        .parcelamento-info h3 { font-size: 12px; color: #1976d2; margin-bottom: 10px; text-transform: uppercase; }
-        .parcela-item { padding: 8px 0; border-bottom: 1px solid #e3f2fd; font-size: 13px; display: flex; justify-content: space-between; }
-        .parcela-preco { font-weight: 600; color: #1976d2; }
-        .loading { display: none; text-align: center; color: #666; font-size: 14px; margin-bottom: 15px; }
-        .loading.show { display: block; }
+
+        .parcelamento-info.show {
+            display: block;
+        }
+
+        .parcelamento-info h3 {
+            font-size: 12px;
+            color: #1976d2;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+        }
+
+        .parcela-item {
+            padding: 8px 0;
+            border-bottom: 1px solid #e3f2fd;
+            font-size: 13px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .parcela-preco {
+            font-weight: 600;
+            color: #1976d2;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 15px;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
         .error-message {
-            background: #ffebee; color: #c62828; padding: 12px; border-radius: 8px;
-            margin-bottom: 15px; font-size: 13px; display: none; border-left: 4px solid #c62828;
+            background: #ffebee;
+            color: #c62828;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            font-size: 13px;
+            display: none;
+            border-left: 4px solid #c62828;
         }
-        .error-message.show { display: block; }
+
+        .error-message.show {
+            display: block;
+        }
+
         button {
-            width: 100%; padding: 14px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white; border: none; border-radius: 8px; font-weight: 600; font-size: 16px; cursor: pointer;
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 16px;
+            cursor: pointer;
         }
-        button:disabled { opacity: 0.6; cursor: not-allowed; }
-        .footer { text-align: center; font-size: 11px; color: #999; margin-top: 15px; }
-        .checkbox-label { display: flex; align-items: center; gap: 10px; cursor: pointer; font-weight: 500; color: #333; }
-        .checkbox-label input[type="checkbox"] { width: 20px; height: 20px; accent-color: #667eea; }
-        .card-brand { font-size: 12px; color: #667eea; font-weight: 600; margin-top: 4px; display: none; }
-        .card-brand.show { display: block; }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .footer {
+            text-align: center;
+            font-size: 11px;
+            color: #999;
+            margin-top: 15px;
+        }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            font-weight: 500;
+            color: #333;
+        }
+
+        .checkbox-label input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            accent-color: #667eea;
+        }
+
+        .card-brand {
+            font-size: 12px;
+            color: #667eea;
+            font-weight: 600;
+            margin-top: 4px;
+            display: none;
+        }
+
+        .card-brand.show {
+            display: block;
+        }
     </style>
 </head>
+
 <body>
     <div class="container">
         <h1>Finalizar Pagamento</h1>
@@ -104,19 +247,22 @@
 
             <div class="form-group">
                 <label for="cardholderName">Nome no cartão</label>
-                <input type="text" id="cardholderName" data-checkout="cardholderName" placeholder="Como aparece no cartão" required>
+                <input type="text" id="cardholderName" data-checkout="cardholderName"
+                    placeholder="Como aparece no cartão" required>
             </div>
 
             <div class="form-group">
                 <label for="cardNumber">Número do cartão</label>
-                <input type="text" id="cardNumber" data-checkout="cardNumber" placeholder="0000 0000 0000 0000" maxlength="19" required>
+                <input type="text" id="cardNumber" data-checkout="cardNumber" placeholder="0000 0000 0000 0000"
+                    maxlength="19" required>
                 <div class="card-brand" id="cardBrand"></div>
             </div>
 
             <div class="row">
                 <div class="form-group">
                     <label for="cardExpirationDate">Vencimento</label>
-                    <input type="text" id="cardExpirationDate" data-checkout="cardExpirationDate" placeholder="MM/AA" maxlength="5" required>
+                    <input type="text" id="cardExpirationDate" data-checkout="cardExpirationDate" placeholder="MM/AA"
+                        maxlength="5" required>
                 </div>
                 <div class="form-group">
                     <label for="cardCvv">CVV</label>
@@ -126,7 +272,8 @@
 
             <div class="form-group">
                 <label for="cardholderIdentification">CPF do titular</label>
-                <input type="text" id="cardholderIdentification" data-checkout="cardholderIdentification" placeholder="000.000.000-00" maxlength="14" required>
+                <input type="text" id="cardholderIdentification" data-checkout="cardholderIdentification"
+                    placeholder="000.000.000-00" maxlength="14" required>
             </div>
 
             <div class="form-group" id="saveCardGroup">
@@ -150,6 +297,23 @@
 
     <script>
         // ==================== VARIÁVEIS DO FLUTTER / URL ====================
+        function postMessageToFlutter(dataObj) {
+            const msgStr = JSON.stringify(dataObj);
+            try {
+                if (typeof window.postMessageToApp === 'function') {
+                    window.postMessageToApp(dataObj);
+                } else if (typeof FlutterChannel !== 'undefined') {
+                    FlutterChannel.postMessage(msgStr);
+                } else if (window.parent) {
+                    window.parent.postMessage(msgStr, '*');
+                } else {
+                    console.log("No Flutter channel found for:", msgStr);
+                }
+            } catch (e) {
+                console.error("postMessage error:", e);
+            }
+        }
+
         function getUrlParams() {
             const s = (typeof window.location !== 'undefined' && window.location.search) ? window.location.search : '';
             const p = {};
@@ -166,7 +330,7 @@
         let VALOR = window.amount != null ? Number(window.amount) : (urlParams.amount ? parseFloat(urlParams.amount) : 0);
         let ORDER_ID = window.orderId || urlParams.orderId || '';
         let COLLECT_ONLY = (urlParams.collectOnly === '1') || (window.collectOnly === true);
-        
+
         // Pre-fill client data from URL params (Web)
         if (urlParams.clientEmail) window.clientEmail = urlParams.clientEmail;
         if (urlParams.clientName) window.clientName = urlParams.clientName;
@@ -176,7 +340,7 @@
         let LAST_PAYMENT_METHOD_ID = null;
         let LAST_ISSUER_ID = null;
 
-        window.updateCheckoutValues = function() {
+        window.updateCheckoutValues = function () {
             const amount = (window.amount != null ? Number(window.amount) : VALOR) || 0;
             VALOR = amount;
             const formatter = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -184,7 +348,7 @@
             updatePayButtonLabel(amount);
         };
 
-        window.setPublicKey = function(pk) {
+        window.setPublicKey = function (pk) {
             if (!pk) return;
             PUBLIC_KEY = pk;
             try {
@@ -202,12 +366,12 @@
             btn.textContent = COLLECT_ONLY ? 'Confirmar e ir para revisão' : ('Pagar ' + formatter.format(amount));
         }
 
-        window.setCollectOnly = function(mode) {
+        window.setCollectOnly = function (mode) {
             COLLECT_ONLY = !!mode;
             updatePayButtonLabel(VALOR);
         };
 
-        window.applyClientPrefill = function() {
+        window.applyClientPrefill = function () {
             if (window.clientEmail) document.getElementById('email').value = window.clientEmail;
             if (window.clientName) document.getElementById('cardholderName').value = window.clientName;
             if (window.clientCpf) document.getElementById('cardholderIdentification').value = window.clientCpf;
@@ -262,9 +426,7 @@
                     + 'Esta loja ainda não configurou os meios de pagamento online.'
                     + '<br>Entre em contato com o estabelecimento.</p>';
                 document.getElementById('errorMessage').style.display = 'none';
-                if (typeof FlutterChannel !== 'undefined') {
-                    FlutterChannel.postMessage(JSON.stringify({ action: 'error', message: 'Loja sem public_key do Mercado Pago configurada.' }));
-                }
+                postMessageToFlutter({ action: 'error', message: 'Loja sem public_key do Mercado Pago configurada.' });
                 return;
             }
 
@@ -274,9 +436,7 @@
                     setupFormListeners();
                     setupFormSubmit();
                     applyClientPrefill();
-                    if (typeof FlutterChannel !== 'undefined') {
-                        FlutterChannel.postMessage(JSON.stringify({ action: 'loaded' }));
-                    }
+                    postMessageToFlutter({ action: 'loaded' });
                 })
                 .catch((e) => {
                     console.error('Erro SDK:', e);
@@ -316,7 +476,7 @@
             const cpf = document.getElementById('cardholderIdentification');
             cpf.addEventListener('input', (e) => {
                 let v = e.target.value.replace(/\D/g, '');
-                if (v.length > 11) v = v.substring(0,11);
+                if (v.length > 11) v = v.substring(0, 11);
                 e.target.value = v.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
             });
         }
@@ -326,7 +486,7 @@
             const infoDiv = document.getElementById('parcelamentInfo');
             const lista = document.getElementById('parcelasLista');
             const amount = (VALOR && VALOR > 0) ? VALOR : (window.amount ? Number(window.amount) : 0);
-            
+
             if (!PUBLIC_KEY) {
                 console.warn('⚠️ Public Key não configurada. Verifique shops/{shopId}.mercadopago.public_key');
             }
@@ -470,37 +630,92 @@
                 document.getElementById('loading').classList.add('show');
 
                 try {
-                    const cardToken = await criarCardToken();
-                    if (!cardToken) throw new Error('Falha no token');
+                    if (!mp) {
+                        throw new Error('SDK do Mercado Pago não carregado');
+                    }
+
+                    const exp = document.getElementById('cardExpirationDate').value.split('/');
+                    const cardExpirationMonth = exp[0];
+                    const cardExpirationYear = exp[1] ? ('20' + exp[1]) : '';
+
+                    const mpTokenPayload = {
+                        cardNumber: document.getElementById('cardNumber').value.replace(/\s/g, ''),
+                        cardholderName: document.getElementById('cardholderName').value,
+                        cardExpirationMonth: cardExpirationMonth,
+                        cardExpirationYear: cardExpirationYear,
+                        securityCode: document.getElementById('cardCvv').value,
+                        cardholderIdentification: {
+                            type: 'CPF',
+                            number: document.getElementById('cardholderIdentification').value.replace(/\D/g, '')
+                        }
+                    };
+
+                    // Check for SDK v2 createCardToken method
+                    let cardToken = null;
+                    if (typeof mp.createCardToken === 'function') {
+                        const cardTokenResp = await mp.createCardToken(mpTokenPayload);
+                        cardToken = cardTokenResp.id;
+                    } else if (mp.card && typeof mp.card.createToken === 'function') { // Fallback for older SDK v2 syntax
+                        const cardTokenResp = await mp.card.createToken({
+                            ...mpTokenPayload,
+                            identificationType: mpTokenPayload.cardholderIdentification.type,
+                            identificationNumber: mpTokenPayload.cardholderIdentification.number
+                        });
+                        cardToken = cardTokenResp.id;
+                    } else {
+                        throw new Error('Método de tokenização não disponível no SDK');
+                    }
+
+                    if (!cardToken) throw new Error('Falha ao gerar token do cartão');
+
+                    let saveToken = null;
+                    const saveCard = document.getElementById('saveCard').checked;
+                    if (saveCard) {
+                        // Generate a second token for saving the card
+                        if (typeof mp.createCardToken === 'function') {
+                            const saveTokenResp = await mp.createCardToken(mpTokenPayload);
+                            saveToken = saveTokenResp.id;
+                        } else if (mp.card && typeof mp.card.createToken === 'function') {
+                            const saveTokenResp = await mp.card.createToken({
+                                ...mpTokenPayload,
+                                identificationType: mpTokenPayload.cardholderIdentification.type,
+                                identificationNumber: mpTokenPayload.cardholderIdentification.number
+                            });
+                            saveToken = saveTokenResp.id;
+                        }
+                        if (!saveToken) console.warn('Falha ao gerar token para salvar cartão.');
+                    }
 
                     const installmentsValue = document.getElementById('installments').value;
                     const installments = parseInt(installmentsValue, 10) || 1;
                     const email = document.getElementById('email').value;
-                    const saveCard = document.getElementById('saveCard').checked;
                     // CPF sempre incluído no postMessage para o backend (CORREÇÃO: payer.identification)
                     const cpf = document.getElementById('cardholderIdentification').value.replace(/\D/g, '');
 
                     if (COLLECT_ONLY) {
-                        FlutterChannel.postMessage(JSON.stringify({
+                        postMessageToFlutter({
                             action: 'card_data_confirmed',
                             cardToken: cardToken,
+                            saveToken: saveToken,
                             installments: installments,
                             email: email,
                             saveCard: saveCard,
                             cpf: cpf,
                             paymentMethodId: LAST_PAYMENT_METHOD_ID,
                             issuerId: LAST_ISSUER_ID
-                        }));
+                        });
                     } else {
-                        FlutterChannel.postMessage(JSON.stringify({
+                        postMessageToFlutter({
                             action: 'process_payment',
                             cardToken: cardToken,
+                            saveToken: saveToken,
                             installments: installments,
                             email: email,
+                            saveCard: saveCard,
                             cpf: cpf,
                             paymentMethodId: LAST_PAYMENT_METHOD_ID,
                             issuerId: LAST_ISSUER_ID
-                        }));
+                        });
                     }
                 } catch (err) {
                     showError(err.message || 'Erro inesperado');
@@ -519,4 +734,5 @@
         }
     </script>
 </body>
+
 </html>

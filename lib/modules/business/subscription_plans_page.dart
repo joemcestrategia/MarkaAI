@@ -10,7 +10,7 @@ class SubscriptionPlansPage extends StatefulWidget {
 }
 
 class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
-  SubscriptionPlan _currentPlan = SubscriptionPlan.free;
+  SubscriptionPlan _currentPlan = SubscriptionPlan.start;
   bool _isLoading = true;
 
   @override
@@ -47,14 +47,14 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
               children: [
                 _buildHeader(),
                 const SizedBox(height: 30),
-                _buildPlanCard(SubscriptionPlan.free,
-                    isCurrent: _currentPlan == SubscriptionPlan.free),
-                _buildPlanCard(SubscriptionPlan.starter,
-                    isCurrent: _currentPlan == SubscriptionPlan.starter),
-                _buildPlanCard(SubscriptionPlan.pro,
-                    isCurrent: _currentPlan == SubscriptionPlan.pro),
-                _buildPlanCard(SubscriptionPlan.vip,
-                    isCurrent: _currentPlan == SubscriptionPlan.vip),
+                _buildPlanCard(SubscriptionPlan.start,
+                    isCurrent: _currentPlan == SubscriptionPlan.start),
+                _buildPlanCard(SubscriptionPlan.flex,
+                    isCurrent: _currentPlan == SubscriptionPlan.flex),
+                _buildPlanCard(SubscriptionPlan.plus,
+                    isCurrent: _currentPlan == SubscriptionPlan.plus),
+                _buildPlanCard(SubscriptionPlan.prime,
+                    isCurrent: _currentPlan == SubscriptionPlan.prime),
                 const SizedBox(height: 40),
                 const Text(
                   "Dúvidas? Entre em contato com o suporte.",
@@ -192,17 +192,17 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
 
                 // Fotos
                 _buildFeatureItem(
-                    plan == SubscriptionPlan.free
+                    plan == SubscriptionPlan.start
                         ? "1 Foto por Serviço"
                         : "Até 5 Fotos por Serviço",
                     isCheck: true),
 
                 // Ads
                 _buildFeatureItem(
-                    plan == SubscriptionPlan.free
+                    plan == SubscriptionPlan.start
                         ? "Exibe Publicidade"
                         : "Sem Anúncios",
-                    isCheck: plan != SubscriptionPlan.free),
+                    isCheck: plan != SubscriptionPlan.start),
 
                 _buildFeatureItem(
                     details['onlinePayment']
@@ -212,17 +212,17 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
 
                 // Agenda Avançada
                 _buildFeatureItem(
-                    plan == SubscriptionPlan.free
+                    plan == SubscriptionPlan.start
                         ? "Agenda Simples"
                         : "Agenda Otimizada",
-                    isCheck: plan != SubscriptionPlan.free),
+                    isCheck: plan != SubscriptionPlan.start),
 
                 // Features Específicas
-                if (plan == SubscriptionPlan.pro ||
-                    plan == SubscriptionPlan.vip)
+                if (plan == SubscriptionPlan.plus ||
+                    plan == SubscriptionPlan.prime)
                   _buildFeatureItem("Gestão Financeira & Comissões",
                       isCheck: true),
-                if (plan == SubscriptionPlan.vip)
+                if (plan == SubscriptionPlan.prime)
                   _buildFeatureItem("Controle de Estoque", isCheck: true),
                 const SizedBox(height: 24),
                 SizedBox(

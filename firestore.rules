@@ -10,7 +10,17 @@ service cloud.firestore {
       allow create, update: if request.auth != null
         // Impede que o cliente altere diretamente campos sensíveis de pagamento/assinatura
         && !('mercadopago' in request.resource.data.diff(resource.data).affectedKeys())
-        && !('subscription' in request.resource.data.diff(resource.data).affectedKeys());
+        && !('subscription' in request.resource.data.diff(resource.data).affectedKeys())
+        // FASE 8: Rejeita com "Permissão Negada" updates onde todos os métodos fiquem falsos
+        && (
+          !('config' in request.resource.data.diff(resource.data).affectedKeys()) ||
+          request.resource.data.config.get('cartao_online', false) == true ||
+          request.resource.data.config.get('debito_presencial', false) == true ||
+          request.resource.data.config.get('pagar_pessoalmente', false) == true ||
+          request.resource.data.config.get('pagamento_dinheiro', false) == true ||
+          request.resource.data.config.get('pagamento_pix', false) == true ||
+          request.resource.data.config.get('pagamento_cartao', false) == true
+        );
       allow delete: if false; // Nunca delete lojas diretamente
     }
 
@@ -88,6 +98,12 @@ service cloud.firestore {
         // Se não for o cliente, confiamos na loja (owner) para editar.
         (resource.data.cliente_id != request.auth.uid)
       );
+    }
+
+    // ─── USER PROVIDERS (Fase 7 - Identidades Vinculadas) ────────────────
+    match /user_providers/{docId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && docId != null;
     }
 
     // ─── DEFAULT: require auth ────────────────────────────────────────────

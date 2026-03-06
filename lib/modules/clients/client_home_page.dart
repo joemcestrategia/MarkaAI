@@ -9,6 +9,7 @@ import 'dart:async';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:intl/intl.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
 import '../../core/theme/app_colors.dart';
@@ -1461,6 +1462,77 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
   final currencyFormat = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
   int _currentImageIndex = 0;
 
+  DocumentSnapshot? _shopDoc;
+  bool _isLoadingShop = true;
+  bool _isOnlineBookingActive = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadShopConfig();
+  }
+
+  Future<void> _loadShopConfig() async {
+    try {
+      final shopId = widget.serviceData['shopId'];
+      if (shopId != null) {
+        final doc = await FirebaseFirestore.instance
+            .collection('shops')
+            .doc(shopId)
+            .get();
+        if (doc.exists) {
+          _shopDoc = doc;
+          final config = doc.data()?['config'] as Map<String, dynamic>?;
+          _isOnlineBookingActive = config?['agendamento_online_ativo'] ?? true;
+        }
+      }
+    } catch (e) {
+      debugPrint("Erro ao carregar loja: $e");
+    } finally {
+      if (mounted) setState(() => _isLoadingShop = false);
+    }
+  }
+
+  void _agendarViaWhatsApp() async {
+    if (_shopDoc == null) return;
+
+    final shopData = _shopDoc!.data() as Map<String, dynamic>;
+    final phone = shopData['telefone'] ?? shopData['whatsapp'];
+    if (phone == null || phone.toString().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text("Loja não possui número de WhatsApp cadastrado.")),
+      );
+      return;
+    }
+
+    String cleanPhone = phone.toString().replaceAll(RegExp(r'\D'), '');
+    if (!cleanPhone.startsWith('55')) {
+      cleanPhone = '55$cleanPhone';
+    }
+
+    final String serviceName = widget.serviceData['nome'] ?? 'Serviço';
+    final String shopName = shopData['nome'] ?? 'loja';
+    final String message =
+        "Olá, vim pelo App MarkaAI e gostaria de agendar o serviço $serviceName na $shopName.";
+
+    final Uri url = Uri.parse(
+        "https://wa.me/$cleanPhone?text=${Uri.encodeComponent(message)}");
+
+    try {
+      if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
+        throw 'Cannot launch url';
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text("Erro ao abrir o WhatsApp. Tente novamente.")),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final sData = widget.serviceData;
@@ -1627,20 +1699,48 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
                 child: SizedBox(
                   height: 54,
                   child: ElevatedButton(
-                    onPressed: widget.onBookPressed,
+                    onPressed: _isLoadingShop
+                        ? null
+                        : (!_isOnlineBookingActive
+                            ? _agendarViaWhatsApp
+                            : widget.onBookPressed),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primaryPurple,
+                      backgroundColor: _isOnlineBookingActive
+                          ? AppColors.primaryPurple
+                          : Colors.green[600],
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12)),
                       elevation: 0,
                     ),
-                    child: const Text(
-                      "AGENDAR AGORA",
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold),
-                    ),
+                    child: _isLoadingShop
+                        ? const SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2.5,
+                            ),
+                          )
+                        : Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              if (!_isOnlineBookingActive) ...[
+                                const Icon(Icons.chat,
+                                    color: Colors.white, size: 20),
+                                const SizedBox(width: 8),
+                              ],
+                              Text(
+                                _isOnlineBookingActive
+                                    ? "AGENDAR AGORA"
+                                    : "AGENDAR PELO WHATSAPP",
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
                   ),
                 ),
               ),

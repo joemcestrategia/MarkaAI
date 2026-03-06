@@ -787,25 +787,39 @@ exports.criarPagamento = onRequest({ cors: true }, async (req, res) => {
       try {
         const shopDocCheck = await admin.firestore().collection('shops').doc(shopId).get();
         if (shopDocCheck.exists) {
-          const sub = shopDocCheck.data()?.subscription || {};
-          // Planos que NÃO suportam pagamento online (mapeamento idêntico ao SubscriptionService do Flutter)
-          const ONLINE_PAYMENT_PLANS = ['starter', 'pro', 'vip'];
-          let planId = (sub.plan_id || '').toLowerCase();
+          const shopData = shopDocCheck.data() || {};
+          const sub = shopData.subscription || {};
+          // Planos que NÃO SUPORTAM pagamento online (apenas o gratuito 'start')
+          let planId = (sub.plan_id || shopData.plan || shopData.plan_id || '').toLowerCase();
 
-          // Trial ativo conta como VIP (suporta pagamento online)
-          if (sub.status === 'trial') {
-            const trialEndsAt = sub.trial_ends_at?.toDate ? sub.trial_ends_at.toDate() : null;
+          let isTrial = false;
+
+          // Trial ativo (novo sistema)
+          if (shopData.trial_active === true) {
+            const trialEndsAt = shopData.trial_end_date?.toDate ? shopData.trial_end_date.toDate() : null;
             if (trialEndsAt && trialEndsAt > new Date()) {
-              planId = 'vip';
+              isTrial = true;
             }
           }
 
-          const allowsOnlinePayment = ONLINE_PAYMENT_PLANS.includes(planId);
-          if (!allowsOnlinePayment) {
+          // Trial ativo (legado)
+          if (sub.status === 'trial') {
+            const trialEndsAt = sub.trial_ends_at?.toDate ? sub.trial_ends_at.toDate() : null;
+            if (trialEndsAt && trialEndsAt > new Date()) {
+              isTrial = true;
+            }
+          }
+
+          if (isTrial) {
+            planId = 'flex'; // Trial dá acesso total
+          }
+
+          // Se o plano for explicitamente 'start' e não estiver em trial, bloqueia.
+          if (planId === 'start' && !isTrial) {
             console.warn(`Pagamento bloqueado: loja ${shopId} está no plano '${planId}' (pagamento online não permitido)`);
             return res.status(403).json({
               success: false,
-              error: 'Esta loja não possui um plano que habilite pagamento online. Utilize pagamento presencial.'
+              error: 'Esta loja está no plano Start, que não permite pagamentos online. Solicite o agendamento via WhatsApp ou pagamento presencial.'
             });
           }
         }

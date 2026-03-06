@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../core/theme/app_colors.dart';
 import '../../pages/checkout_page.dart';
 
@@ -481,6 +482,17 @@ class _BookingTimePageState extends State<BookingTimePage> {
     super.initState();
     debugPrint(
         '🚀 BookingPage: initState | shopId: ${widget.shop.id} | serviceId: ${widget.serviceDoc.id}');
+
+    // Proteção de Rota Direta (Web Bypass Prevention)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null || user.isAnonymous) {
+        if (mounted) {
+          Navigator.of(context).pushReplacementNamed('/');
+        }
+      }
+    });
+
     _bookingWindowDays = widget.shopConfig['janela_agendamento_dias'] ?? 90;
     _autoSelectFirstAvailableDate(widget.professionalDoc);
   }
@@ -511,6 +523,16 @@ class _BookingTimePageState extends State<BookingTimePage> {
     final svcName = widget.serviceData['nome'] ?? 'Serviço';
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
+
+    // Calcula a data mínima real permitida baseado em _minAdvanceHours (regra de 3 dias etc)
+    final minAdvanceDateRaw = now.add(Duration(hours: widget.minAdvanceHours));
+    final minAllowedDate = DateTime(
+        minAdvanceDateRaw.year, minAdvanceDateRaw.month, minAdvanceDateRaw.day);
+
+    // firstDate precisa ser no minimo hoje (por conta do componente), mas usaremos a trava real na validacao visual.
+    final firstDateBound =
+        minAllowedDate.isAfter(today) ? minAllowedDate : today;
+
     final lastAllowedDay = today.add(Duration(days: _bookingWindowDays));
     final profData = widget.professionalDoc.data() as Map<String, dynamic>;
     List<dynamic> rawWorkDays = profData['dias_trabalho'] ?? [1, 2, 3, 4, 5, 6];
@@ -554,12 +576,15 @@ class _BookingTimePageState extends State<BookingTimePage> {
                       const SizedBox(height: 16),
                       // ✅ CalendarDatePicker - RÁPIDO E RESPONSIVO
                       CalendarDatePicker(
-                        initialDate: _selectedDate ?? today,
-                        firstDate: today,
+                        initialDate:
+                            _selectedDate?.isBefore(firstDateBound) == true
+                                ? firstDateBound
+                                : (_selectedDate ?? firstDateBound),
+                        firstDate: firstDateBound,
                         lastDate: lastAllowedDay,
                         selectableDayPredicate: (day) {
-                          // Comparação com a data de hoje à meia-noite para permitir selecionar o dia atual
-                          if (day.isBefore(today)) return false;
+                          // Comparação real para bloquear dias proibidos (muito proximos)
+                          if (day.isBefore(minAllowedDate)) return false;
                           if (day.isAfter(lastAllowedDay)) return false;
                           return workDays.contains(day.weekday);
                         },

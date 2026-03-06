@@ -497,6 +497,7 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
     if (confirm != true) return;
 
     // Loading indicator
+    if (!mounted) return;
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -511,8 +512,8 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
             false, // Aqui é só cancelamento sem devolução financeira
       });
 
-      if (!mounted) return;
       Navigator.pop(context); // close loading
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Agendamento cancelado com sucesso!'),
@@ -604,6 +605,7 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
 
     if (confirm != true) return;
 
+    if (!mounted) return;
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -695,6 +697,7 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
 
     if (confirm != true) return;
 
+    if (!mounted) return;
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -1113,4 +1116,3 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
     );
   }
 }
-

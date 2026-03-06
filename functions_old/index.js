@@ -299,10 +299,16 @@ exports.createPixPayment = onCall(async (request) => {
   const auth = request.auth;
   console.log("📦 Payload:", JSON.stringify(data));
 
-  const accessToken = data.accessToken || data.access_token || (data.data ? data.data.accessToken : null);
+  let accessToken = data.accessToken || data.access_token || (data.data ? data.data.accessToken : null);
+  const shopId = data.shopId;
   const amount = parseFloat(data.amount);
   const email = data.email || data.emailCliente || 'cliente@app.com';
   const description = data.description || 'Pagamento App';
+
+  if (!accessToken && shopId) {
+    const shopDoc = await admin.firestore().collection('shops').doc(shopId).get();
+    accessToken = shopDoc.data()?.mercadopago?.access_token;
+  }
 
   if (!accessToken) {
     throw new functions.https.HttpsError('invalid-argument', 'TOKEN SUMIU (Backend)');
@@ -392,7 +398,11 @@ exports.createPixPayment = onCall(async (request) => {
 
 // 2. VERIFICAR STATUS
 exports.getPaymentStatus = onCall(async (request) => {
-  const { accessToken, paymentId } = request.data;
+  let { accessToken, paymentId, shopId } = request.data;
+  if (!accessToken && shopId) {
+    const shopDoc = await admin.firestore().collection('shops').doc(shopId).get();
+    accessToken = shopDoc.data()?.mercadopago?.access_token;
+  }
 
   try {
     const baseUrl = (accessToken && accessToken.startsWith && accessToken.startsWith('TEST-'))

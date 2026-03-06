@@ -438,8 +438,11 @@ class PublicShopPage extends StatelessWidget {
                                             ),
                                             const SizedBox(height: 4),
                                             Text(
-                                              currency
-                                                  .format(sData['valor'] ?? 0),
+                                              currency.format(double.tryParse(
+                                                      sData['preco']
+                                                              ?.toString() ??
+                                                          '0') ??
+                                                  0),
                                               style: const TextStyle(
                                                 fontSize: 16,
                                                 fontWeight: FontWeight.bold,

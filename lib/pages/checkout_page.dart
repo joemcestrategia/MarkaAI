@@ -63,6 +63,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
   bool exigeSinal = false;
   bool aceitaPix = false;
   bool aceitaCartao = false;
+  bool aceitaDinheiro = true;
   String? shopAccessToken;
 
   Timer? _timerPolling;
@@ -128,13 +129,17 @@ class _CheckoutPageState extends State<CheckoutPage> {
         // Habilita cartão apenas se o plano da loja suporta online E a loja ativou explicitamente.
         aceitaCartao =
             planAllowsOnline && (config['pagamento_cartao'] ?? false);
+
+        aceitaDinheiro = config['pagamento_dinheiro'] ?? true;
         exigeSinal = config['exigir_sinal'] ?? false;
         percentualSinalInt = percentualFinal;
 
         if (exigeSinal && (aceitaPix || aceitaCartao)) {
           _selectedPaymentType = 'sinal';
-        } else {
+        } else if (aceitaDinheiro) {
           _selectedPaymentType = 'local';
+        } else {
+          _selectedPaymentType = 'total';
         }
         _paymentConfigLoaded = true;
       });
@@ -178,36 +183,94 @@ class _CheckoutPageState extends State<CheckoutPage> {
         }
         // If no online methods are available, silently fallback to "local" payment.
         if (_selectedPaymentType != 'local' && !aceitaPix && !aceitaCartao) {
-          setState(() {
-            _selectedPaymentType = 'local';
-            _recalculateTotals();
-            _currentStep = 2;
-          });
+          if (aceitaDinheiro) {
+            setState(() {
+              _selectedPaymentType = 'local';
+              _recalculateTotals();
+              _currentStep = 2;
+            });
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text("A loja não possui meios de pagamento ativos.")));
+          }
           break;
         }
         if (_selectedMethod == 'card' && _selectedPaymentType != 'local') {
           double valorParaCobrar =
               (_selectedPaymentType == 'sinal') ? valorSinal : valorTotal;
-          final result = await Navigator.push<Map<String, dynamic>>(
-            context,
-            MaterialPageRoute(
-              builder: (context) => CheckoutTransparentePage(
-                shopId: widget.shopId,
-                valor: valorParaCobrar,
-                orderId: "ORD-${DateTime.now().millisecondsSinceEpoch}",
-                serviceDoc: widget.serviceDoc,
-                professionalDoc: widget.professionalDoc,
-                date: widget.date,
-                time: widget.time,
-                collectOnly: true,
-              ),
-            ),
-          );
-          if (result != null && mounted) {
-            setState(() {
-              _storedCardData = result;
-              _currentStep = 2;
-            });
+
+          setState(() => _isLoading = true);
+          final user = FirebaseAuth.instance.currentUser;
+          if (user == null) {
+            setState(() => _isLoading = false);
+            return;
+          }
+
+          try {
+            final savedCardsSnap = await FirebaseFirestore.instance
+                .collection('users')
+                .doc(user.uid)
+                .collection('saved_cards')
+                .where('shopId', isEqualTo: widget.shopId)
+                .get();
+
+            setState(() => _isLoading = false);
+
+            if (savedCardsSnap.docs.isNotEmpty) {
+              final sheetResult = await showModalBottomSheet<dynamic>(
+                context: context,
+                isScrollControlled: true,
+                shape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                ),
+                builder: (context) {
+                  return _SavedCardsSheet(
+                    shopId: widget.shopId,
+                    valor: valorParaCobrar,
+                    onAddNewCard: () => Navigator.pop(context, 'NEW_CARD'),
+                    onCardSelected: (cardData, cvv, installments) {
+                      Navigator.pop(context, {
+                        'useSavedCard': true,
+                        'cardId': cardData['cardId'],
+                        'customerId': cardData['customerId'],
+                        'cvv': cvv,
+                        'installments': installments,
+                        'paymentMethodId': cardData['paymentMethodId'],
+                      });
+                    },
+                  );
+                },
+              );
+
+              if (sheetResult == null)
+                return; // User closed bottom sheet without selecting
+
+              if (sheetResult == 'NEW_CARD') {
+                final result = await _pushCheckoutTransparente(valorParaCobrar);
+                if (result != null && mounted) {
+                  setState(() {
+                    _storedCardData = result;
+                    _currentStep = 2;
+                  });
+                }
+              } else if (sheetResult is Map<String, dynamic>) {
+                setState(() {
+                  _storedCardData = sheetResult;
+                  _currentStep = 2;
+                });
+              }
+            } else {
+              final result = await _pushCheckoutTransparente(valorParaCobrar);
+              if (result != null && mounted) {
+                setState(() {
+                  _storedCardData = result;
+                  _currentStep = 2;
+                });
+              }
+            }
+          } catch (e) {
+            setState(() => _isLoading = false);
+            _showError('Erro ao buscar cartões salvos: $e');
           }
         } else {
           setState(() => _currentStep = 2);
@@ -218,6 +281,25 @@ class _CheckoutPageState extends State<CheckoutPage> {
         _showConfirmationModal();
         break;
     }
+  }
+
+  Future<Map<String, dynamic>?> _pushCheckoutTransparente(
+      double valorParaCobrar) async {
+    return await Navigator.push<Map<String, dynamic>>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => CheckoutTransparentePage(
+          shopId: widget.shopId,
+          valor: valorParaCobrar,
+          orderId: "ORD-${DateTime.now().millisecondsSinceEpoch}",
+          serviceDoc: widget.serviceDoc,
+          professionalDoc: widget.professionalDoc,
+          date: widget.date,
+          time: widget.time,
+          collectOnly: true,
+        ),
+      ),
+    );
   }
 
   void _handlePreviousStep() {
@@ -366,14 +448,27 @@ class _CheckoutPageState extends State<CheckoutPage> {
       double valorParaCobrar =
           (_selectedPaymentType == 'sinal') ? valorSinal : valorTotal;
       if (_storedCardData != null) {
-        await _processarPagamentoComCartaoArmazenado(
-          valor: valorParaCobrar,
-          cardToken: _storedCardData!['cardToken'] as String,
-          installments: _storedCardData!['installments'] as int,
-          email: _storedCardData!['email'] as String,
-          paymentMethodId: _storedCardData!['paymentMethodId'] as String?,
-          issuerId: _storedCardData!['issuerId'],
-        );
+        if (_storedCardData!['useSavedCard'] == true) {
+          final fUser = FirebaseAuth.instance.currentUser;
+          await _processarPagamentoCartaoSalvo(
+            valor: valorParaCobrar,
+            cardId: _storedCardData!['cardId'] as String,
+            customerId: _storedCardData!['customerId'] as String,
+            securityCode: _storedCardData!['cvv'] as String,
+            installments: _storedCardData!['installments'] as int,
+            email: fUser?.email ?? '',
+            paymentMethodId: _storedCardData!['paymentMethodId'] as String?,
+          );
+        } else {
+          await _processarPagamentoComCartaoArmazenado(
+            valor: valorParaCobrar,
+            cardToken: _storedCardData!['cardToken'] as String,
+            installments: _storedCardData!['installments'] as int,
+            email: _storedCardData!['email'] as String,
+            paymentMethodId: _storedCardData!['paymentMethodId'] as String?,
+            issuerId: _storedCardData!['issuerId'],
+          );
+        }
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -435,6 +530,68 @@ class _CheckoutPageState extends State<CheckoutPage> {
       }
     } catch (e) {
       _showError('Erro ao processar pagamento: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _processarPagamentoCartaoSalvo({
+    required double valor,
+    required String cardId,
+    required String customerId,
+    required String securityCode,
+    required int installments,
+    required String email,
+    String? paymentMethodId,
+  }) async {
+    setState(() => _isLoading = true);
+    try {
+      final idToken = await _getPaymentIdToken();
+      if (idToken == null) return;
+
+      final response = await http.post(
+        Uri.parse(
+            'https://us-central1-wismart-118c3.cloudfunctions.net/cobrarCartaoSalvo'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'data': {
+            'cardId': cardId,
+            'customerId': customerId,
+            'securityCode': securityCode,
+            'email': email,
+            'installments': installments,
+            'amount': valor,
+            'shopId': widget.shopId,
+            'description': "Reserva: ${widget.serviceDoc['nome'] ?? 'Serviço'}",
+            'idToken':
+                idToken, // Required for Auth validation in our onCall function
+          }
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final result = jsonDecode(response.body);
+        if (result['result'] != null &&
+            result['result']['status'] == 'approved') {
+          await _saveBooking(
+            metodo: "Cartão Salvo",
+            status: "confirmado",
+            valorPago: valor,
+            paymentId: result['result']['id'].toString(),
+          );
+        } else if (result['result'] != null &&
+            result['result']['status'] == 'pending') {
+          _showError(
+              'Seu pagamento está em análise. Tente novamente mais tarde.');
+        } else {
+          _showError(result['error']?.toString() ?? 'Pagamento recusado.');
+        }
+      } else {
+        final error = jsonDecode(response.body);
+        _showError(error['error']?.toString() ?? 'Erro no pagamento');
+      }
+    } catch (e) {
+      _showError('Erro ao processar pagamento com cartão salvo: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -616,14 +773,15 @@ class _CheckoutPageState extends State<CheckoutPage> {
             badgeColor: Colors.green,
           ),
         const SizedBox(height: 12),
-        _buildPaymentTypeCard(
-          value: 'local',
-          title: "🏪 Pagar Pessoalmente",
-          subtitle: "Dinheiro ou cartão na hora",
-          amount: valorTotal,
-          badge: "LOCAL",
-          badgeColor: Colors.blue,
-        ),
+        if (aceitaDinheiro)
+          _buildPaymentTypeCard(
+            value: 'local',
+            title: "🏪 Pagar Pessoalmente",
+            subtitle: "Dinheiro ou cartão na hora",
+            amount: valorTotal,
+            badge: "LOCAL",
+            badgeColor: Colors.blue,
+          ),
       ],
     );
   }
@@ -757,6 +915,29 @@ class _CheckoutPageState extends State<CheckoutPage> {
       );
     }
 
+    // Guard: if neither PIX nor card is available, show informative message
+    if (!aceitaPix && !aceitaCartao) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.orange[50],
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.orange[200]!),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.info_outline, color: Colors.orange[700]),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Esta loja aceita apenas pagamento pessoalmente. Retorne e selecione "Pagar Pessoalmente".',
+                style: TextStyle(fontSize: 13),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1007,7 +1188,12 @@ class _CheckoutPageState extends State<CheckoutPage> {
   }
 
   Future<void> _generatePix(double amount, String desc) async {
-    if (shopAccessToken == null) return;
+    if (shopAccessToken == null) {
+      _showError(
+          'Esta loja não configurou os meios de pagamento online ainda.');
+      return;
+    }
+    bool _pixShown = false; // Tracks if QR Code page was successfully opened
     // show full-screen loading
     if (mounted) {
       Navigator.push(
@@ -1025,25 +1211,36 @@ class _CheckoutPageState extends State<CheckoutPage> {
         emailCliente: user.email ?? "cliente@app.com",
         description: desc,
       );
-      final qrCode64 =
-          result['point_of_interaction']['transaction_data']['qr_code_base64'];
+      // O MercadoPagoService.gerarPix já retorna Map<String, dynamic>.from(result.data)
+      final qrCode64 = result['point_of_interaction']?['transaction_data']
+          ?['qr_code_base64'];
       final copyPaste =
-          result['point_of_interaction']['transaction_data']['qr_code'];
-      final paymentId = result['id'].toString();
+          result['point_of_interaction']?['transaction_data']?['qr_code'];
+      final paymentId = result['id']?.toString() ?? '';
+
+      if (qrCode64 == null || copyPaste == null || paymentId.isEmpty) {
+        throw Exception("Dados do PIX incompletos na resposta do servidor.");
+      }
+
       if (mounted) {
         _startPixMonitoring(paymentId, amount);
-        // close loading
+        // close loading page
         Navigator.pop(context);
+        // Mark as shown BEFORE pushing so the finally block won't close it
+        _pixShown = true;
         _showPixModal(qrCode64, copyPaste, paymentId, amount);
       }
     } catch (e) {
       _showError("Erro ao gerar PIX: $e");
     } finally {
       if (mounted) {
-        // ensure loading is closed if still open
-        try {
-          Navigator.pop(context);
-        } catch (_) {}
+        if (!_pixShown) {
+          // Only pop the loading page if PIX screen was NOT shown
+          // (i.e., an error occurred before we could show the QR code)
+          try {
+            Navigator.pop(context);
+          } catch (_) {}
+        }
         setState(() => _isLoading = false);
       }
     }
@@ -1078,7 +1275,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
   void _showPixModal(
       String qr64, String copyPaste, String paymentId, double valorPago) {
-    // Abre tela full-screen dedicada para o QR code (melhor experiência)
+    // Abre tela full-screen dedicada para o QR code
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -1087,13 +1284,31 @@ class _CheckoutPageState extends State<CheckoutPage> {
           copyPaste: copyPaste,
           paymentId: paymentId,
           amount: valorPago,
+          onManualCheck: () async {
+            // Verifica o status do PIX na hora que o usuário clica no botão
+            try {
+              final status = await MercadoPagoService.verificarStatusPix(
+                shopId: widget.shopId,
+                paymentId: paymentId,
+              );
+              if (status == 'approved') {
+                return true;
+              }
+              return false;
+            } catch (e) {
+              debugPrint('Erro na verificação manual PIX: $e');
+              return false;
+            }
+          },
           onPaid: () {
+            // Cancelar o polling automático se o manual confirmou
+            _timerPolling?.cancel();
             // Ao confirmar que pagou, fecha a tela e salva o agendamento
             Navigator.pop(c);
             Navigator.pop(context);
             _saveBooking(
                 metodo: "Pix",
-                status: "pendente_verificacao",
+                status: "confirmado",
                 valorPago: valorPago,
                 paymentId: paymentId);
           },
@@ -1178,7 +1393,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
       await FirebaseFirestore.instance.collection('appointments').add({
         'shopId': widget.shopId,
         'clientId': user.uid,
-        'client_nome': user.displayName,
+        'client_nome': user.displayName ?? user.email ?? 'Cliente',
         'servico_nome': widget.serviceNameOverride ?? widget.serviceDoc['nome'],
         'profissionalId': widget.professionalDoc.id,
         'servicoId': widget.serviceDoc.id,
@@ -1205,6 +1420,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
         final dateStr = DateFormat('dd/MM/yyyy').format(widget.date);
         final timeStr = horarioStr;
         final paidFlag = (valorPago > 0);
+        // Close the loading page first, then navigate to success
+        try {
+          Navigator.pop(context);
+        } catch (_) {}
         Navigator.pushAndRemoveUntil(
           context,
           MaterialPageRoute(
@@ -1218,10 +1437,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
           ),
           (r) => r.isFirst,
         );
-        // close loading if present
-        try {
-          Navigator.pop(context);
-        } catch (_) {}
       }
     } catch (e) {
       // close loading if present then show error
@@ -1303,11 +1518,13 @@ class _CheckoutPageState extends State<CheckoutPage> {
 }
 
 // Página full-screen para exibir QR Code PIX com estilo aprimorado
-class PixPaymentPage extends StatelessWidget {
+// Página full-screen para exibir QR Code PIX com estilo aprimorado
+class PixPaymentPage extends StatefulWidget {
   final String qrBase64;
   final String copyPaste;
   final String paymentId;
   final double amount;
+  final Future<bool> Function() onManualCheck;
   final VoidCallback onPaid;
 
   const PixPaymentPage({
@@ -1316,8 +1533,37 @@ class PixPaymentPage extends StatelessWidget {
     required this.copyPaste,
     required this.paymentId,
     required this.amount,
+    required this.onManualCheck,
     required this.onPaid,
   });
+
+  @override
+  State<PixPaymentPage> createState() => _PixPaymentPageState();
+}
+
+class _PixPaymentPageState extends State<PixPaymentPage> {
+  bool _isVerifying = false;
+
+  Future<void> _handleManualVerification() async {
+    setState(() => _isVerifying = true);
+    final isApproved = await widget.onManualCheck();
+    setState(() => _isVerifying = false);
+
+    if (isApproved) {
+      widget.onPaid();
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+                "Pagamento ainda não identificado. Aguarde uns instantes ou realize o PIX primeiro."),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 4),
+          ),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1336,7 +1582,7 @@ class PixPaymentPage extends StatelessWidget {
           children: [
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
               decoration: BoxDecoration(
                 gradient: LinearGradient(colors: [
                   AppColors.primaryPurple,
@@ -1349,107 +1595,309 @@ class PixPaymentPage extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Valor',
+                  const Text('Valor a pagar',
                       style: TextStyle(color: Colors.white70, fontSize: 12)),
-                  const SizedBox(height: 6),
-                  Text(currency.format(amount),
+                  const SizedBox(height: 4),
+                  Text(currency.format(widget.amount),
                       style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 22,
+                          fontSize: 20,
                           fontWeight: FontWeight.bold)),
                 ],
               ),
             ),
-            const SizedBox(height: 18),
             Expanded(
-              child: Center(
-                child: qrBase64.isNotEmpty
-                    ? Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(12),
-                            boxShadow: [
-                              BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.05),
-                                  blurRadius: 12)
-                            ]),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            // Logo roxo centralizado acima do QR
-                            Image.asset('assets/images/logo_purple.png',
-                                height: 56),
-                            const SizedBox(height: 12),
-                            Image.memory(base64Decode(qrBase64)),
-                          ],
-                        ),
-                      )
-                    : Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: const [
-                            Icon(Icons.qr_code, size: 80, color: Colors.grey),
-                            SizedBox(height: 12),
-                            Text('Erro ao gerar QR')
-                          ]),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Text('Pix Copia e Cola',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 10),
-                    decoration: BoxDecoration(
-                        color: Colors.grey[100],
-                        borderRadius: BorderRadius.circular(10)),
-                    child: Row(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    // QR Code Section
+                    widget.qrBase64.isNotEmpty
+                        ? Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(12),
+                                boxShadow: [
+                                  BoxShadow(
+                                      color:
+                                          Colors.black.withValues(alpha: 0.05),
+                                      blurRadius: 8)
+                                ]),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Image.asset('assets/images/logo_purple.png',
+                                    height: 32),
+                                const SizedBox(height: 8),
+                                Image.memory(base64Decode(widget.qrBase64),
+                                    height: 160),
+                              ],
+                            ),
+                          )
+                        : const Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                                Icon(Icons.qr_code,
+                                    size: 60, color: Colors.grey),
+                                SizedBox(height: 8),
+                                Text('Erro ao gerar QR')
+                              ]),
+
+                    // Pix Copia e Cola Section
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Expanded(
-                            child: Text(copyPaste,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style:
-                                    const TextStyle(fontFamily: 'monospace'))),
-                        IconButton(
-                          icon: const Icon(Icons.copy,
-                              color: AppColors.primaryPurple),
-                          onPressed: () {
-                            Clipboard.setData(ClipboardData(text: copyPaste));
-                            ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                    content: Text("Código copiado!")));
-                          },
-                        )
+                        const Text('Pix Copia e Cola',
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 14)),
+                        const SizedBox(height: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 8),
+                          decoration: BoxDecoration(
+                              color: Colors.grey[100],
+                              borderRadius: BorderRadius.circular(8)),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                  child: Text(widget.copyPaste,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                          fontFamily: 'monospace',
+                                          fontSize: 12))),
+                              IconButton(
+                                constraints: const BoxConstraints(),
+                                padding: EdgeInsets.zero,
+                                icon: const Icon(Icons.copy,
+                                    color: AppColors.primaryPurple, size: 20),
+                                onPressed: () {
+                                  Clipboard.setData(
+                                      ClipboardData(text: widget.copyPaste));
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                          content: Text("Código copiado!")));
+                                },
+                              )
+                            ],
+                          ),
+                        ),
                       ],
                     ),
-                  ),
-                  const SizedBox(height: 14),
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primaryPurple,
-                        minimumSize: const Size(double.infinity, 52)),
-                    onPressed: onPaid,
-                    child: const Text('JÁ REALIZEI O PAGAMENTO',
-                        style: TextStyle(
-                            color: Colors.white, fontWeight: FontWeight.bold)),
-                  ),
-                  const SizedBox(height: 12),
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Voltar',
-                        style: TextStyle(color: Colors.black54)),
-                  ),
-                ],
+
+                    // Buttons Section
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primaryPurple,
+                              minimumSize: const Size(double.infinity, 48)),
+                          onPressed:
+                              _isVerifying ? null : _handleManualVerification,
+                          child: _isVerifying
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                      color: Colors.white, strokeWidth: 2))
+                              : const Text('JÁ REALIZEI O PAGAMENTO',
+                                  style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13)),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('Voltar',
+                              style: TextStyle(
+                                  color: Colors.black54, fontSize: 13)),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _SavedCardsSheet extends StatefulWidget {
+  final String shopId;
+  final double valor;
+  final VoidCallback onAddNewCard;
+  final Function(Map<String, dynamic> cardData, String cvv, int installments)
+      onCardSelected;
+
+  const _SavedCardsSheet({
+    Key? key,
+    required this.shopId,
+    required this.valor,
+    required this.onAddNewCard,
+    required this.onCardSelected,
+  }) : super(key: key);
+
+  @override
+  State<_SavedCardsSheet> createState() => _SavedCardsSheetState();
+}
+
+class _SavedCardsSheetState extends State<_SavedCardsSheet> {
+  String? _selectedCardId;
+  final _cvvController = TextEditingController();
+  final int _installments = 1;
+
+  @override
+  Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return const SizedBox.shrink();
+
+    return Padding(
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+        left: 20,
+        right: 20,
+        top: 20,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text("Meus Cartões",
+              style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.primaryPurple)),
+          const SizedBox(height: 15),
+          StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance
+                .collection('users')
+                .doc(user.uid)
+                .collection('saved_cards')
+                .where('shopId', isEqualTo: widget.shopId)
+                .orderBy('createdAt', descending: true)
+                .snapshots(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData)
+                return const Center(
+                    child: Padding(
+                        padding: EdgeInsets.all(20),
+                        child: CircularProgressIndicator()));
+              final docs = snapshot.data!.docs;
+              if (docs.isEmpty) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  widget.onAddNewCard();
+                });
+                return const SizedBox.shrink();
+              }
+              return ListView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: docs.length,
+                itemBuilder: (context, index) {
+                  final data = docs[index].data() as Map<String, dynamic>;
+                  final isSelected = _selectedCardId == docs[index].id;
+                  return InkWell(
+                    onTap: () =>
+                        setState(() => _selectedCardId = docs[index].id),
+                    child: Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                            color: isSelected
+                                ? AppColors.primaryPurple
+                                : Colors.grey.shade300,
+                            width: isSelected ? 2 : 1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              if (data['thumbnail'] != null &&
+                                  data['thumbnail'].isNotEmpty)
+                                Image.network(data['thumbnail'],
+                                    width: 40,
+                                    height: 25,
+                                    errorBuilder: (_, __, ___) =>
+                                        const Icon(Icons.credit_card)),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                  child: Text(
+                                      "•••• ${data['lastFourDigits']} - ${data['paymentMethodName'] ?? 'Cartão'}",
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.bold))),
+                              if (isSelected)
+                                const Icon(Icons.check_circle,
+                                    color: AppColors.primaryPurple),
+                            ],
+                          ),
+                          if (isSelected) ...[
+                            const SizedBox(height: 15),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: TextField(
+                                    controller: _cvvController,
+                                    keyboardType: TextInputType.number,
+                                    maxLength: 4,
+                                    obscureText: true,
+                                    decoration: const InputDecoration(
+                                      labelText: "CVV",
+                                      counterText: "",
+                                      border: OutlineInputBorder(),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 15),
+                                Expanded(
+                                  child: ElevatedButton(
+                                    style: ElevatedButton.styleFrom(
+                                        backgroundColor:
+                                            AppColors.primaryPurple,
+                                        padding: const EdgeInsets.symmetric(
+                                            vertical: 15)),
+                                    onPressed: () {
+                                      if (_cvvController.text.length < 3) {
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(const SnackBar(
+                                                content:
+                                                    Text('CVV inválido.')));
+                                        return;
+                                      }
+                                      widget.onCardSelected(data,
+                                          _cvvController.text, _installments);
+                                    },
+                                    child: const Text("Usar Cartão",
+                                        style: TextStyle(color: Colors.white)),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            icon: const Icon(Icons.add),
+            label: const Text("Pagar com um novo cartão"),
+            onPressed: widget.onAddNewCard,
+          ),
+          const SizedBox(height: 20),
+        ],
       ),
     );
   }
