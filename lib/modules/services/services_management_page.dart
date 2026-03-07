@@ -102,8 +102,7 @@ class ServiceDetailsPage extends StatelessWidget {
                                     padding: const EdgeInsets.symmetric(
                                         horizontal: 6, vertical: 2),
                                     decoration: BoxDecoration(
-                                      color:
-                                          Colors.black.withValues(alpha: 0.5),
+                                      color: Colors.black.withOpacity(0.5),
                                       borderRadius: BorderRadius.circular(8),
                                     ),
                                     child: Text(
@@ -532,13 +531,10 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
         Padding(
           padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              const Text(
-                "Serviços",
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-              ),
-              // No Desktop, o botão de novo serviço fica aqui
+              // No Mobile, o botão de novo serviço é um FAB.
+              // No Desktop, ele fica no topo à direita.
               if (!isMobile)
                 ElevatedButton.icon(
                   onPressed: () => _handleCreateTap(context, isMobile),
@@ -655,7 +651,6 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
                     color: ativo ? Colors.black87 : Colors.grey,
                     decoration: ativo ? null : TextDecoration.lineThrough,
                   ),
-                  maxLines: 1,
                 ),
                 const SizedBox(height: 6),
                 Row(
@@ -739,36 +734,135 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
   }
 
   void _showOptions(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    final String nome = data['nome'] ?? "Serviço";
+
     showModalBottomSheet(
       context: context,
-      useSafeArea: true,
-      builder: (context) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ListTile(
-            leading: const Icon(Icons.edit, color: AppColors.primaryPurple),
-            title: const Text("Editar"),
-            onTap: () {
-              Navigator.pop(context);
-              // Lógica Responsiva de Edição
-              bool isMobile = MediaQuery.of(context).size.width < 850;
-              if (isMobile) {
-                _handleCreateTap(context, true, docToEdit: doc);
-              } else {
-                _openEditModeDesktop(doc);
-              }
-            },
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(24),
+            topRight: Radius.circular(24),
           ),
-          ListTile(
-            leading: const Icon(Icons.delete, color: Colors.red),
-            title: const Text("Excluir"),
-            onTap: () {
-              Navigator.pop(context);
-              _confirmDelete(doc.id);
-            },
-          ),
-        ],
+        ),
+        padding: const EdgeInsets.only(top: 12, bottom: 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Handle bar
+            Container(
+              width: 40,
+              height: 5,
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // Header/Service Preview
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Row(
+                children: [
+                  const Icon(Icons.settings_outlined,
+                      color: AppColors.primaryPurple, size: 24),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          "Gerenciar Serviço",
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        Text(
+                          nome,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Divider(),
+            const SizedBox(height: 12),
+
+            // Options
+            _buildModalItem(
+              icon: Icons.edit_outlined,
+              label: "Editar Informações",
+              color: Colors.black87,
+              onTap: () {
+                Navigator.pop(context);
+                bool isMobile = MediaQuery.of(context).size.width < 850;
+                if (isMobile) {
+                  _handleCreateTap(context, true, docToEdit: doc);
+                } else {
+                  _openEditModeDesktop(doc);
+                }
+              },
+            ),
+
+            _buildModalItem(
+              icon: Icons.delete_outline,
+              label: "Excluir Serviço",
+              color: Colors.redAccent,
+              onTap: () {
+                Navigator.pop(context);
+                _confirmDelete(doc.id);
+              },
+            ),
+          ],
+        ),
       ),
+    );
+  }
+
+  Widget _buildModalItem({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return ListTile(
+      onTap: onTap,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
+      leading: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(icon, color: color, size: 22),
+      ),
+      title: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 15,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      trailing:
+          Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey[400]),
     );
   }
 

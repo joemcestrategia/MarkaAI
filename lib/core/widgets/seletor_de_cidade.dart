@@ -6,6 +6,8 @@ import 'package:http/http.dart' as http;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
+import 'package:flutter_typeahead/flutter_typeahead.dart';
+import '../../core/utils/string_utils.dart';
 import '../../core/theme/app_colors.dart';
 
 const String _kCidadePrefsKey = 'app_cidade_selecionada';
@@ -78,9 +80,17 @@ class CidadePrefs {
   static Future<void> salvar(CidadeSelecionada cidade) async {
     // Salva na lista e também mantém chave legada
     final list = await carregarLista();
-    // Remove se já existia
-    list.removeWhere(
-        (c) => c.cidade == cidade.cidade && c.estado == cidade.estado);
+
+    // Normalização para comparação (remove acentos e deixa em minúsculo)
+    String normalize(String s) =>
+        StringUtils.removeDiacritics(s).toLowerCase().trim();
+    final normCidade = normalize(cidade.cidade);
+    final normEstado = normalize(cidade.estado);
+
+    // Remove se já existia uma entrada similar (evita "São Paulo" vs "Sao Paulo")
+    list.removeWhere((c) =>
+        normalize(c.cidade) == normCidade && normalize(c.estado) == normEstado);
+
     // Adiciona no início
     list.insert(0, cidade);
     if (list.length > _kMaxCidades) list.removeLast();
@@ -204,13 +214,75 @@ class SeletorDeCidadeModal extends StatefulWidget {
     this.cidadeAtual,
   });
 
+  static Future<List<CidadeOpcao>> getCitySuggestions(String query) async {
+    try {
+      // Pega um volume maior para garantir diversidade de cidades
+      Query q = FirebaseFirestore.instance.collection('shops').limit(500);
+
+      final snap = await q.get();
+      final Map<String, CidadeOpcao> seen = {};
+
+      for (final doc in snap.docs) {
+        final d = doc.data() as Map<String, dynamic>;
+
+        String getVal(List<String> keys) {
+          for (var k in keys) {
+            if (d[k] != null && d[k].toString().trim().isNotEmpty)
+              return d[k].toString().trim();
+          }
+          if (d['endereco'] is Map) {
+            final m = d['endereco'] as Map;
+            for (var k in keys) {
+              if (m[k] != null && m[k].toString().trim().isNotEmpty)
+                return m[k].toString().trim();
+            }
+          }
+          return '';
+        }
+
+        final c = getVal(['cidade', 'city']);
+        final e = getVal(['estado', 'uf', 'state']).toUpperCase();
+
+        if (c.isEmpty) continue;
+        final key = '${c.toLowerCase()}|${e.toLowerCase()}';
+
+        if (!seen.containsKey(key)) {
+          seen[key] = CidadeOpcao(cidade: c, estado: e, count: 0);
+        }
+        seen[key] = CidadeOpcao(
+          cidade: seen[key]!.cidade,
+          estado: seen[key]!.estado,
+          count: seen[key]!.count + 1,
+        );
+      }
+      var result = seen.values.toList()
+        ..sort((a, b) => b.count.compareTo(a.count));
+      if (query.isNotEmpty) {
+        final q2 = StringUtils.removeDiacritics(query).toLowerCase();
+        result = result.where((c) {
+          final cityName = StringUtils.removeDiacritics(c.cidade).toLowerCase();
+          final stateName =
+              StringUtils.removeDiacritics(c.estado).toLowerCase();
+          final combined = "$cityName $stateName";
+          return cityName.contains(q2) ||
+              stateName.contains(q2) ||
+              combined.contains(q2);
+        }).toList();
+      }
+      return result;
+    } catch (e) {
+      debugPrint('[SeletorDeCidade] Error fetching suggestions: $e');
+      return [];
+    }
+  }
+
   @override
   State<SeletorDeCidadeModal> createState() => _SeletorDeCidadeModalState();
 }
 
 class _SeletorDeCidadeModalState extends State<SeletorDeCidadeModal> {
   final _searchCtrl = TextEditingController();
-  List<_CidadeOpcao> _sugestoes = [];
+  List<CidadeOpcao> _sugestoes = [];
   List<CidadeSelecionada> _cidadesSalvas = [];
   bool _loading = false;
   bool _firstLoad = true;
@@ -218,15 +290,13 @@ class _SeletorDeCidadeModalState extends State<SeletorDeCidadeModal> {
   Timer? _debounce;
 
   // Etapa: null = busca, cidade selecionada = escolher raio
-  _CidadeOpcao? _cidadeEscolhida;
+  CidadeOpcao? _cidadeEscolhida;
   int? _raioSelecionado;
 
   @override
   void initState() {
     super.initState();
     _loadCidadesSalvas();
-    _buscarCidades('');
-    _searchCtrl.addListener(_onSearchChanged);
     if (widget.cidadeAtual != null) {
       _raioSelecionado = widget.cidadeAtual!.raioKm;
     }
@@ -234,9 +304,6 @@ class _SeletorDeCidadeModalState extends State<SeletorDeCidadeModal> {
 
   @override
   void dispose() {
-    _debounce?.cancel();
-    _searchCtrl.removeListener(_onSearchChanged);
-    _searchCtrl.dispose();
     super.dispose();
   }
 
@@ -245,54 +312,7 @@ class _SeletorDeCidadeModalState extends State<SeletorDeCidadeModal> {
     if (mounted) setState(() => _cidadesSalvas = list);
   }
 
-  void _onSearchChanged() {
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 350), () {
-      _buscarCidades(_searchCtrl.text.trim());
-    });
-  }
-
-  Future<void> _buscarCidades(String query) async {
-    setState(() => _loading = true);
-    try {
-      // Busca diretamente no Firestore (cidades únicas de lojas cadastradas)
-      Query q = FirebaseFirestore.instance
-          .collection('shops')
-          .where('cidade', isGreaterThan: '')
-          .limit(200);
-
-      final snap = await q.get();
-      final Map<String, _CidadeOpcao> seen = {};
-      for (final doc in snap.docs) {
-        final d = doc.data() as Map<String, dynamic>;
-        final c = (d['cidade'] ?? '').toString().trim();
-        final e = (d['estado'] ?? '').toString().trim().toUpperCase();
-        if (c.isEmpty) continue;
-        final key = '$c|$e';
-        seen[key] ??= _CidadeOpcao(cidade: c, estado: e, count: 0);
-        seen[key] =
-            _CidadeOpcao(cidade: c, estado: e, count: seen[key]!.count + 1);
-      }
-      var result = seen.values.toList()
-        ..sort((a, b) => b.count.compareTo(a.count));
-      if (query.isNotEmpty) {
-        final q2 = query.toLowerCase();
-        result =
-            result.where((c) => c.cidade.toLowerCase().contains(q2)).toList();
-      }
-      if (mounted) {
-        setState(() {
-          _sugestoes = result;
-          _loading = false;
-          _firstLoad = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  void _selecionarCidade(_CidadeOpcao opcao) {
+  void _selecionarCidade(CidadeOpcao opcao) {
     setState(() {
       _cidadeEscolhida = opcao;
       _raioSelecionado = null;
@@ -479,31 +499,76 @@ class _SeletorDeCidadeModalState extends State<SeletorDeCidadeModal> {
             // â”€â”€ Campo de busca â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              child: TextField(
-                controller: _searchCtrl,
-                autofocus: false,
-                decoration: InputDecoration(
-                  hintText: 'Buscar cidade...',
-                  prefixIcon:
-                      const Icon(Icons.search, color: AppColors.primaryPurple),
-                  suffixIcon: _loading
-                      ? const Padding(
-                          padding: EdgeInsets.all(12),
-                          child: SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: AppColors.primaryPurple),
+              child: TypeAheadField<CidadeOpcao>(
+                builder: (context, controller, focusNode) {
+                  return TextField(
+                    controller: controller,
+                    focusNode: focusNode,
+                    autofocus: false,
+                    decoration: InputDecoration(
+                      hintText: 'Buscar cidade...',
+                      prefixIcon: const Icon(Icons.search,
+                          color: AppColors.primaryPurple),
+                      suffixIcon: _loading
+                          ? const Padding(
+                              padding: EdgeInsets.all(12),
+                              child: SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: AppColors.primaryPurple),
+                              ),
+                            )
+                          : null,
+                      filled: true,
+                      fillColor: Colors.grey[100],
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  );
+                },
+                suggestionsCallback: (pattern) async {
+                  return await SeletorDeCidadeModal.getCitySuggestions(pattern);
+                },
+                itemBuilder: (context, suggestion) {
+                  return ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.location_city,
+                        size: 18, color: Colors.grey),
+                    title: RichText(
+                      text: TextSpan(
+                        style: const TextStyle(
+                            color: Colors.black87, fontSize: 14),
+                        children: [
+                          TextSpan(
+                            text: suggestion.cidade,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
                           ),
-                        )
-                      : null,
-                  filled: true,
-                  fillColor: Colors.grey[100],
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
-                  ),
+                          TextSpan(
+                            text: ' â€” ${suggestion.estado}',
+                            style: TextStyle(color: Colors.grey[600]),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+                onSelected: (suggestion) {
+                  _selecionarCidade(suggestion);
+                },
+                loadingBuilder: (context) => const Padding(
+                  padding: EdgeInsets.all(16.0),
+                  child:
+                      Center(child: CircularProgressIndicator(strokeWidth: 2)),
                 ),
+                emptyBuilder: (context) => const Padding(
+                  padding: EdgeInsets.all(16.0),
+                  child: Text('Nenhuma cidade encontrada'),
+                ),
+                debounceDuration: const Duration(milliseconds: 300),
               ),
             ),
 
@@ -611,90 +676,6 @@ class _SeletorDeCidadeModalState extends State<SeletorDeCidadeModal> {
                     style: TextStyle(fontSize: 10, color: Colors.grey[400])),
               ),
             ],
-
-            // â”€â”€ Lista de sugestões â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-            ConstrainedBox(
-              constraints: BoxConstraints(
-                maxHeight: _cidadesSalvas.isEmpty ? 380 : 300,
-              ),
-              child: _firstLoad
-                  ? const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(32),
-                        child: CircularProgressIndicator(
-                            color: AppColors.primaryPurple),
-                      ),
-                    )
-                  : _sugestoes.isEmpty
-                      ? Padding(
-                          padding: const EdgeInsets.all(32),
-                          child: Column(children: [
-                            Icon(Icons.location_off,
-                                size: 40, color: Colors.grey[300]),
-                            const SizedBox(height: 12),
-                            Text('Nenhuma cidade encontrada.',
-                                style: TextStyle(color: Colors.grey[500])),
-                          ]),
-                        )
-                      : ListView.builder(
-                          shrinkWrap: true,
-                          itemCount: _sugestoes.length,
-                          itemBuilder: (context, i) {
-                            final c = _sugestoes[i];
-                            final isSelected =
-                                widget.cidadeAtual?.cidade == c.cidade &&
-                                    widget.cidadeAtual?.estado == c.estado;
-                            return ListTile(
-                              dense: true,
-                              leading: Icon(
-                                Icons.location_on,
-                                size: 18,
-                                color: isSelected
-                                    ? AppColors.primaryPurple
-                                    : Colors.grey[400],
-                              ),
-                              title: Text(
-                                c.cidade,
-                                style: TextStyle(
-                                  fontWeight: isSelected
-                                      ? FontWeight.bold
-                                      : FontWeight.normal,
-                                  color: isSelected
-                                      ? AppColors.primaryPurple
-                                      : Colors.black87,
-                                ),
-                              ),
-                              trailing: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(c.estado,
-                                      style: TextStyle(
-                                          fontSize: 12,
-                                          color: Colors.grey[500])),
-                                  if (c.count > 0) ...[
-                                    const SizedBox(width: 6),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: AppColors.primaryPurple
-                                            .withValues(alpha: 0.08),
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
-                                      child: Text('${c.count}',
-                                          style: const TextStyle(
-                                              fontSize: 10,
-                                              color: AppColors.primaryPurple,
-                                              fontWeight: FontWeight.bold)),
-                                    ),
-                                  ],
-                                ],
-                              ),
-                              onTap: () => _selecionarCidade(c),
-                            );
-                          },
-                        ),
-            ),
           ] else ...[
             // â”€â”€ Seleção de Raio â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             Padding(
@@ -774,13 +755,13 @@ class SeletorDeCidadePage extends StatefulWidget {
 
 class _SeletorDeCidadePageState extends State<SeletorDeCidadePage> {
   final _searchCtrl = TextEditingController();
-  List<_CidadeOpcao> _sugestoes = [];
+  List<CidadeOpcao> _sugestoes = [];
   List<CidadeSelecionada> _cidadesSalvas = [];
   bool _loading = false;
   bool _firstLoad = true;
   bool _gpsLoading = false;
   Timer? _debounce;
-  _CidadeOpcao? _cidadeEscolhida;
+  CidadeOpcao? _cidadeEscolhida;
   int? _raioSelecionado;
 
   /// Mapa cidade_lowercase -> contagem de lojas cadastradas (carregado uma vez)
@@ -855,7 +836,7 @@ class _SeletorDeCidadePageState extends State<SeletorDeCidadePage> {
       if (mounted) {
         setState(() {
           _sugestoes = comLojas
-              .map((e) => _CidadeOpcao(
+              .map((e) => CidadeOpcao(
                   cidade: _capitalize(e.key), estado: '', count: e.value))
               .toList();
           _firstLoad = false;
@@ -883,7 +864,7 @@ class _SeletorDeCidadePageState extends State<SeletorDeCidadePage> {
         final uf = (m['microrregiao']?['mesorregiao']?['UF']?['sigla'] ?? '')
             .toString();
         final count = _shopCountByCity[nome.toLowerCase()] ?? 0;
-        return _CidadeOpcao(cidade: nome, estado: uf, count: count);
+        return CidadeOpcao(cidade: nome, estado: uf, count: count);
       }).toList();
 
       // Ordena: cidades com lojas primeiro (por contagem), depois alfabético
@@ -924,7 +905,7 @@ class _SeletorDeCidadePageState extends State<SeletorDeCidadePage> {
     return result;
   }
 
-  void _selecionarCidade(_CidadeOpcao opcao) {
+  void _selecionarCidade(CidadeOpcao opcao) {
     setState(() {
       _cidadeEscolhida = opcao;
       _raioSelecionado = null;
@@ -1303,11 +1284,11 @@ class _SeletorDeCidadePageState extends State<SeletorDeCidadePage> {
   }
 }
 
-class _CidadeOpcao {
+class CidadeOpcao {
   final String cidade;
   final String estado;
   final int count;
-  const _CidadeOpcao(
+  const CidadeOpcao(
       {required this.cidade, required this.estado, required this.count});
 }
 

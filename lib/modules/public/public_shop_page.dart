@@ -459,6 +459,7 @@ class _PublicShopPageState extends State<PublicShopPage> {
                                               style: const TextStyle(
                                                   fontWeight: FontWeight.bold,
                                                   fontSize: 16),
+                                              softWrap: true,
                                             ),
                                             const SizedBox(height: 4),
                                             Text(

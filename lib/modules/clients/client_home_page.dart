@@ -12,6 +12,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:geocoding/geocoding.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 import '../../core/services/profile_check_service.dart';
@@ -25,6 +26,7 @@ import 'client_service_detail_page.dart';
 import 'address_selector_page.dart';
 import 'client_search_page.dart';
 import '../../core/widgets/seletor_de_cidade.dart';
+import '../../core/utils/string_utils.dart';
 
 class ClientHomePage extends StatefulWidget {
   final int initialTabIndex;
@@ -81,8 +83,71 @@ class _ClientHomePageState extends State<ClientHomePage> {
   // Carrega cidade salva no SharedPreferences
   Future<void> _loadCidadeSalva() async {
     final cidade = await CidadePrefs.carregar();
-    if (mounted && cidade != null) {
-      setState(() => _cidadeSelecionada = cidade);
+    if (mounted) {
+      if (cidade != null) {
+        setState(() => _cidadeSelecionada = cidade);
+      } else {
+        // Primeira vez: tenta detectar automaticamente
+        _detectLocationAndSetCity();
+      }
+    }
+  }
+
+  Future<void> _detectLocationAndSetCity() async {
+    try {
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) return;
+      }
+      if (permission == LocationPermission.deniedForever) return;
+
+      final Position pos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.low,
+        timeLimit: const Duration(seconds: 5),
+      );
+
+      final List<Placemark> placemarks =
+          await placemarkFromCoordinates(pos.latitude, pos.longitude);
+
+      if (placemarks.isNotEmpty && mounted) {
+        final p = placemarks.first;
+        final String detectedCity =
+            (p.subAdministrativeArea ?? p.locality ?? '').trim();
+        final String detectedState = (p.administrativeArea ?? '').trim();
+
+        if (detectedCity.isNotEmpty) {
+          // Tenta "encaixar" no que temos no banco (case insensitive)
+          final suggestions =
+              await SeletorDeCidadeModal.getCitySuggestions(detectedCity);
+          CidadeSelecionada? finalCidade;
+
+          if (suggestions.isNotEmpty) {
+            final best = suggestions.first;
+            finalCidade = CidadeSelecionada(
+              cidade: best.cidade,
+              estado: best.estado,
+              definidoEm: DateTime.now(),
+            );
+          } else {
+            // Se não achou no banco, usa o que o GPS deu (fallback)
+            finalCidade = CidadeSelecionada(
+              cidade: detectedCity,
+              estado: detectedState.length > 2
+                  ? detectedState.substring(0, 2).toUpperCase()
+                  : detectedState.toUpperCase(),
+              definidoEm: DateTime.now(),
+            );
+          }
+
+          setState(() => _cidadeSelecionada = finalCidade);
+          await CidadePrefs.salvar(finalCidade);
+          debugPrint(
+              '📍 Localização automática: ${finalCidade.cidade}/${finalCidade.estado}');
+        }
+      }
+    } catch (e) {
+      debugPrint('Erro ao detectar localização: $e');
     }
   }
 
@@ -111,9 +176,9 @@ class _ClientHomePageState extends State<ClientHomePage> {
       case 'barbearia':
         return const Color(0xFFE3F2FD); // Azul claro
       case 'beleza':
-      case 'esttica':
+      case 'estética':
         return const Color(0xFFFCE4EC); // Rosa claro
-      case 'sade':
+      case 'saúde':
         return const Color(0xFFE8F5E9); // Verde claro
       case 'bem-estar':
         return const Color(0xFFFFF3E0); // Laranja claro
@@ -127,9 +192,9 @@ class _ClientHomePageState extends State<ClientHomePage> {
       case 'barbearia':
         return Icons.content_cut;
       case 'beleza':
-      case 'esttica':
+      case 'estética':
         return Icons.face;
-      case 'sade':
+      case 'saúde':
         return Icons.medical_services;
       case 'bem-estar':
         return Icons.self_improvement;
@@ -139,7 +204,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
   }
 
   void _setupNotifications() {
-    // Notificações quando app est em foreground
+    // Notificações quando app está em foreground
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       final appointmentId = message.data['appointmentId'];
       final type = message.data['type'];
@@ -183,7 +248,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
           _userEmail = user.email ?? "";
           _userPhotoUrl = user.photoURL;
           _userTipo = data?['tipo'] ?? data?['role'] ?? 'cliente';
-          // Restaurar ltima localização salva
+          // Restaurar última localização salva
           final lastLoc = data?['last_location'] as Map<String, dynamic>?;
           if (lastLoc != null) {
             _selectedLocation = lastLoc['label'] ?? '';
@@ -215,7 +280,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
         _userLng =
             result['lng'] != null ? (result['lng'] as num).toDouble() : null;
       });
-      // Persistir ltima localização no Firestore
+      // Persistir última localização no Firestore
       final uid = FirebaseAuth.instance.currentUser?.uid;
       if (uid != null) {
         FirebaseFirestore.instance.collection('users').doc(uid).set({
@@ -535,10 +600,10 @@ class _ClientHomePageState extends State<ClientHomePage> {
           bool checked = false;
           return StatefulBuilder(builder: (ctx2, setS) {
             return AlertDialog(
-              title: const Text('Excluir Conta - Irreversvel'),
+              title: const Text('Excluir Conta - Irreversível'),
               content: Column(mainAxisSize: MainAxisSize.min, children: [
                 const Text(
-                    'Esta ao remover TODOS os dados ligados a esta conta (agendamentos, perfil, etc.) e  IRRECUPERVEL. Aps a excluso, limpe o cache do telefone para evitar reentrar com dados antigos.'),
+                    'Esta ação removerá TODOS os dados ligados a esta conta (agendamentos, perfil, etc.) e é IRRECUPERÁVEL. Após a exclusão, limpe o cache do telefone para evitar reentrar com dados antigos.'),
                 const SizedBox(height: 12),
                 Row(children: [
                   Checkbox(
@@ -574,7 +639,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
         Navigator.pop(context);
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Erro: usurio no autenticado')));
+            const SnackBar(content: Text('Erro: usuário não autenticado')));
         return;
       }
       final url = Uri.parse(
@@ -597,7 +662,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             content: Text(
-                'Conta excluda com sucesso. Limpe o cache do app/telefone manualmente.')));
+                'Conta excluída com sucesso. Limpe o cache do app/telefone manualmente.')));
         Navigator.pushAndRemoveUntil(context,
             MaterialPageRoute(builder: (_) => const LoginPage()), (r) => false);
       } else {
@@ -636,7 +701,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
         builder: (context) => ShopProfilePage(
           shopDoc: shop,
           onBookService: (sDoc) {
-            // ?? Navega para a pgina de detalhes do servio PRIMEIRO
+            // ✅ Navega para a página de detalhes do serviço PRIMEIRO
             _openServiceDetails(serviceDoc: sDoc);
           },
         ),
@@ -668,7 +733,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
         builder: (ctx) => AlertDialog(
           title: const Text('Perfil incompleto'),
           content: const Text(
-            'Seu perfil ainda no foi todo preenchido. Para agendar, complete seus dados (nome, telefone, endereço). Deseja completar agora?',
+            'Seu perfil ainda não foi todo preenchido. Para agendar, complete seus dados (nome, telefone, endereço). Deseja completar agora?',
           ),
           actions: [
             TextButton(
@@ -917,6 +982,14 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
                   const Spacer(),
 
+                  // Seletor de Cidade (Pequeno no topo)
+                  SeletorDeCidadeButton(
+                    cidadeSelecionada: _cidadeSelecionada,
+                    onTap: _mostrarSeletorDeCidade,
+                  ),
+
+                  const SizedBox(width: 8),
+
                   // Perfil Mini com PopupMenu
                   PopupMenuButton<String>(
                     onSelected: _handleProfileMenu,
@@ -924,28 +997,6 @@ class _ClientHomePageState extends State<ClientHomePage> {
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12)),
                     itemBuilder: (_) => [
-                      PopupMenuItem<String>(
-                        enabled: false,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _userName,
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                  color: Colors.black87),
-                            ),
-                            if (_userEmail.isNotEmpty)
-                              Text(
-                                _userEmail,
-                                style: TextStyle(
-                                    fontSize: 13, color: Colors.grey[600]),
-                              ),
-                          ],
-                        ),
-                      ),
-                      const PopupMenuDivider(),
                       PopupMenuItem(
                         value: 'edit',
                         child: Row(children: const [
@@ -1000,62 +1051,39 @@ class _ClientHomePageState extends State<ClientHomePage> {
             ),
           ),
 
-        // ?? SELETOR DE CIDADE  exibe a cidade atual ou convida o usurio a escolher
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                SeletorDeCidadeButton(
-                  cidadeSelecionada: _cidadeSelecionada,
-                  onTap: _mostrarSeletorDeCidade,
-                ),
-                if (_cidadeSelecionada != null) ...[
-                  const SizedBox(width: 6),
-                  GestureDetector(
-                    onTap: () async {
-                      await CidadePrefs.limpar();
-                      setState(() => _cidadeSelecionada = null);
-                    },
-                    child: Icon(Icons.close, size: 15, color: Colors.grey[400]),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-
-        const SliverToBoxAdapter(child: SizedBox(height: 8)),
-
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
             child: Container(
-              height: 44,
+              height: 48,
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(30), // Mais arredondado
+                borderRadius: BorderRadius.circular(30),
                 boxShadow: [
                   BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.05),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4))
+                    color: Colors.black.withValues(alpha: 0.05),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  )
                 ],
               ),
               child: TextField(
                 onChanged: (v) => setState(() => _searchText = v),
-                onSubmitted: (v) {
-                  if (v.trim().isNotEmpty) {
-                    _navigateToSearch(v.trim());
-                  }
-                },
-                decoration: const InputDecoration(
-                  hintText: "O que voc procura hoje?",
-                  prefixIcon: Icon(Icons.search, color: Colors.grey),
+                decoration: InputDecoration(
+                  hintText: "O que você procura hoje?",
+                  prefixIcon:
+                      const Icon(Icons.search, color: AppColors.primaryPurple),
+                  suffixIcon: _searchText.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.close, size: 20),
+                          onPressed: () {
+                            setState(() => _searchText = "");
+                          },
+                        )
+                      : null,
                   border: InputBorder.none,
                   contentPadding:
-                      EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+                      const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                 ),
               ),
             ),
@@ -1119,7 +1147,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
             child: Text(
               _searchText.isEmpty
-                  ? "Recomendados para voc"
+                  ? "Recomendados para você"
                   : "Resultados da busca",
               style: const TextStyle(
                   fontSize: 18,
@@ -1133,24 +1161,101 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
         // GRID DE LOJAS
         StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance.collection('shops').snapshots(),
+          stream: _cidadeSelecionada == null
+              ? const Stream.empty()
+              : FirebaseFirestore.instance
+                  .collection('shops')
+                  .where('cidade', isEqualTo: _cidadeSelecionada!.cidade)
+                  // Nota: se quisermos filtrar por estado também, precisamos de índice composto
+                  .snapshots(),
           builder: (context, snapshot) {
-            if (!snapshot.hasData) {
+            if (_cidadeSelecionada == null) {
+              return SliverFillRemaining(
+                hasScrollBody: false,
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.search, size: 60, color: Colors.grey[300]),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Digite uma cidade para encontrar\nserviços próximos a você.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.grey[600], fontSize: 16),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
+
+            if (snapshot.connectionState == ConnectionState.waiting) {
               return const SliverToBoxAdapter(
-                  child: Center(child: CircularProgressIndicator()));
+                child: Padding(
+                  padding: EdgeInsets.only(top: 100),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+              );
+            }
+
+            if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+              return SliverToBoxAdapter(
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 40, vertical: 80),
+                  child: Center(
+                    child: Column(
+                      children: [
+                        Icon(Icons.location_off_outlined,
+                            size: 60, color: Colors.grey[300]),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Nenhuma loja encontrada em ${_cidadeSelecionada!.cidade}.\nTente outra cidade.',
+                          textAlign: TextAlign.center,
+                          style:
+                              TextStyle(color: Colors.grey[600], fontSize: 16),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
             }
 
             final filtered = snapshot.data!.docs.where((doc) {
               final d = doc.data() as Map<String, dynamic>;
-
-              // ?? CORREO: Lojas sem o campo 'ativo' so consideradas ATIVAS
               final bool isActive = d['ativo'] ?? true;
 
-              final matchesText = (d['nome'] ?? "")
-                  .toString()
-                  .toLowerCase()
-                  .contains(_searchText.toLowerCase());
-              // Suporte a mltiplas categorias separadas por ponto e vrgula
+              // Filtro adicional por estado se houver ambiguidade (opcional)
+              if (_cidadeSelecionada!.estado.isNotEmpty) {
+                final String shopEstado = (d['estado'] ??
+                        d['endereco']?['estado'] ??
+                        d['uf'] ??
+                        d['endereco']?['uf'] ??
+                        '')
+                    .toString()
+                    .toUpperCase();
+                if (shopEstado.isNotEmpty &&
+                    !shopEstado
+                        .contains(_cidadeSelecionada!.estado.toUpperCase()) &&
+                    !_cidadeSelecionada!.estado
+                        .toUpperCase()
+                        .contains(shopEstado)) {
+                  return false;
+                }
+              }
+
+              // Filtro por texto (busca por nome da loja)
+              final String searchLower = _searchText.isEmpty
+                  ? ""
+                  : StringUtils.removeDiacritics(_searchText).toLowerCase();
+              final matchesText = searchLower.isEmpty ||
+                  StringUtils.removeDiacritics(d['nome'] ?? '')
+                      .toLowerCase()
+                      .contains(searchLower);
+
+              if (!matchesText) return false;
+
               final matchesCat = _selectedCategory == "Todos" ||
                   (() {
                     final cats = (d['categoria'] ?? '')
@@ -1160,46 +1265,10 @@ class _ClientHomePageState extends State<ClientHomePage> {
                     return cats.any((c) => c.contains(_selectedCategory));
                   })();
 
-              // ?? Filtro por cidade/estado (SeletorDeCidade)
-              bool matchesCity = true;
-              if (_cidadeSelecionada != null) {
-                final shopCidade =
-                    (d['cidade'] ?? '').toString().trim().toLowerCase();
-                final shopEstado =
-                    (d['estado'] ?? '').toString().trim().toUpperCase();
-                final selCidade = _cidadeSelecionada!.cidade.toLowerCase();
-                final selEstado = _cidadeSelecionada!.estado.toUpperCase();
-                matchesCity =
-                    shopCidade == selCidade && shopEstado == selEstado;
-              } else if (_selectedLocation.isNotEmpty) {
-                // Fallback: filtro legado por _selectedLocation (do AddressSelector)
-                final shopCity = (d['endereco'] ?? d['cidade'] ?? '')
-                    .toString()
-                    .toLowerCase();
-                matchesCity =
-                    shopCity.contains(_selectedLocation.toLowerCase()) ||
-                        _selectedLocation.toLowerCase().contains(shopCity);
-
-                // ??? Raio por coordenadas (se disponvel)
-                if (_userLat != null &&
-                    _userLng != null &&
-                    d['lat'] != null &&
-                    d['lng'] != null) {
-                  final double distance = Geolocator.distanceBetween(
-                        _userLat!,
-                        _userLng!,
-                        (d['lat'] as num).toDouble(),
-                        (d['lng'] as num).toDouble(),
-                      ) /
-                      1000.0;
-                  matchesCity = distance <= _selectedRadius;
-                }
-              }
-
-              return matchesText && matchesCat && matchesCity && isActive;
+              return matchesCat && isActive;
             }).toList();
 
-            // ?? Ordenao por Qualidade do Perfil (Media)
+            // 🏆 Ordenação por Qualidade do Perfil (Media)
             filtered.sort((a, b) {
               final da = a.data() as Map<String, dynamic>;
               final db = b.data() as Map<String, dynamic>;
@@ -1345,23 +1414,6 @@ class _ClientHomePageState extends State<ClientHomePage> {
             onSelected: _handleProfileMenu,
             child: Row(
               children: [
-                Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      _userName,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                      ),
-                    ),
-                    Text(
-                      "MarkaAI",
-                      style: const TextStyle(fontSize: 10, color: Colors.grey),
-                    ),
-                  ],
-                ),
                 const SizedBox(width: 10),
                 CircleAvatar(
                   radius: 18,

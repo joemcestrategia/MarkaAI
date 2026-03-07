@@ -400,6 +400,7 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
                                           style: const TextStyle(
                                               fontWeight: FontWeight.bold,
                                               fontSize: 16),
+                                          softWrap: true,
                                         ),
                                         const SizedBox(height: 4),
                                         Text(

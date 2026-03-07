@@ -5,6 +5,7 @@ import 'package:geolocator/geolocator.dart';
 import '../../core/theme/app_colors.dart';
 import 'shop_profile_page.dart';
 import 'client_service_detail_page.dart';
+import '../../core/utils/string_utils.dart';
 
 class ClientSearchPage extends StatefulWidget {
   final String initialQuery;
@@ -79,6 +80,7 @@ class _ClientSearchPageState extends State<ClientSearchPage> {
           ),
           child: TextField(
             controller: _searchCtrl,
+            onChanged: (v) => setState(() {}),
             onSubmitted: (v) => setState(() {}),
             decoration: const InputDecoration(
               hintText: "O que você procura?",
@@ -137,30 +139,56 @@ class _ClientSearchPageState extends State<ClientSearchPage> {
                   final name = (d['nome'] ?? "").toString().toLowerCase();
                   final category =
                       (d['categoria'] ?? "").toString().toLowerCase();
-                  // endereco é um Map no Firestore → extrai o campo 'cidade'
-                  final enderecoRaw = d['endereco'];
-                  String shopCity;
-                  if (enderecoRaw is Map) {
-                    shopCity = (enderecoRaw['cidade'] ??
-                            enderecoRaw['city'] ??
-                            d['cidade'] ??
-                            '')
-                        .toString()
-                        .toLowerCase();
-                  } else {
-                    shopCity = (enderecoRaw?.toString() ??
-                            d['cidade']?.toString() ??
-                            '')
-                        .toLowerCase();
+                  // 📍 Recupera cidade e estado com fallbacks (raiz e 'endereco')
+                  String getLocField(String key, List<String> fallbacks) {
+                    if (d[key] != null && d[key].toString().trim().isNotEmpty)
+                      return d[key].toString().trim();
+                    if (d['endereco'] is Map) {
+                      final map = d['endereco'] as Map;
+                      if (map[key] != null &&
+                          map[key].toString().trim().isNotEmpty)
+                        return map[key].toString().trim();
+                      for (var fb in fallbacks) {
+                        if (map[fb] != null &&
+                            map[fb].toString().trim().isNotEmpty)
+                          return map[fb].toString().trim();
+                      }
+                    }
+                    for (var fb in fallbacks) {
+                      if (d[fb] != null && d[fb].toString().trim().isNotEmpty)
+                        return d[fb].toString().trim();
+                    }
+                    return '';
                   }
 
-                  final matchesText = query.isEmpty ||
-                      name.contains(query) ||
-                      category.contains(query);
+                  final String shopCidadeRaw = getLocField('cidade', ['city']);
+                  final String shopEstadoRaw =
+                      getLocField('estado', ['uf', 'state']);
 
-                  bool matchesLoc = city.isEmpty ||
-                      shopCity.contains(city) ||
-                      city.contains(shopCity);
+                  if (shopCidadeRaw.isEmpty) {
+                    return false;
+                  }
+
+                  // Normalização para comparação robusta
+                  final String shopCidade =
+                      StringUtils.removeDiacritics(shopCidadeRaw).toLowerCase();
+                  final String shopEstado = shopEstadoRaw.toLowerCase();
+                  final String fullLocation = "$shopCidade $shopEstado";
+                  final String searchLower =
+                      StringUtils.removeDiacritics(query).toLowerCase();
+
+                  final matchesText = searchLower.isEmpty ||
+                      name.contains(searchLower) ||
+                      category.contains(searchLower) ||
+                      fullLocation.contains(searchLower);
+
+                  bool matchesLoc = true;
+                  if (city.isNotEmpty) {
+                    final normalizedSearchCity =
+                        StringUtils.removeDiacritics(city).toLowerCase();
+                    // Rigorosamente a cidade correta
+                    matchesLoc = shopCidade == normalizedSearchCity;
+                  }
 
                   // ðŸ›°ï¸ Filtro por Raio (se disponível)
                   if (_userLat != null &&

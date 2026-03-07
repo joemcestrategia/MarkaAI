@@ -127,6 +127,19 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
     );
   }
 
+  String _formatDuration(int minutes) {
+    if (minutes < 60) return "$minutes min";
+    final int hours = minutes ~/ 60;
+    final int mins = minutes % 60;
+
+    if (mins == 0) {
+      return hours == 1 ? "1 hora" : "$hours horas";
+    }
+
+    final String hourLabel = hours == 1 ? "1 hora" : "$hours horas";
+    return "$hourLabel e $mins min";
+  }
+
   void _scrollLeft() {
     if (_scrollController.hasClients) {
       _scrollController.animateTo(
@@ -750,6 +763,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
 
                         const SizedBox(height: 16),
 
+                        // PREÇO E CUSTO NA MESMA LINHA
                         Row(children: [
                           Expanded(
                               child: TextFormField(
@@ -773,42 +787,71 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                           const SizedBox(width: 12),
                           Expanded(
                               child: TextFormField(
-                            controller: _timeController,
+                            controller: _custoController,
                             decoration: const InputDecoration(
-                                labelText: "Tempo (min)",
+                                labelText: "Custo (R\$)",
                                 isDense: true,
                                 border: OutlineInputBorder()),
-                            keyboardType: TextInputType.number,
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
                             validator: (v) {
-                              if (v == null || v.isEmpty) return "Obrigatório";
-                              final value = int.tryParse(v);
-                              if (value == null || value <= 0) {
-                                return "Tempo inválido";
+                              if (v == null || v.isEmpty) return null;
+                              final value =
+                                  double.tryParse(v.replaceAll(',', '.'));
+                              if (value != null && value < 0) {
+                                return "Custo não pode ser negativo";
                               }
                               return null;
                             },
                           )),
                         ]),
-                        const SizedBox(height: 12),
-                        TextFormField(
-                          controller: _custoController,
-                          decoration: const InputDecoration(
-                            labelText:
-                                "Custo do serviço (R\$) - para cálculo de margem de lucro",
-                            isDense: true,
-                            border: OutlineInputBorder(),
-                          ),
-                          keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true),
-                          validator: (v) {
-                            if (v == null || v.isEmpty) return null;
-                            final value =
-                                double.tryParse(v.replaceAll(',', '.'));
-                            if (value != null && value < 0) {
-                              return "Custo não pode ser negativo";
-                            }
-                            return null;
-                          },
+
+                        const SizedBox(height: 20),
+
+                        // DURAÇÃO EM LINHA SOZINHA
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text(
+                                  "Duração do Serviço",
+                                  style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.grey),
+                                ),
+                                Text(
+                                  _formatDuration(
+                                      int.tryParse(_timeController.text) ?? 30),
+                                  style: const TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.bold,
+                                    color: AppColors.primaryPurple,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Slider(
+                              value: (int.tryParse(_timeController.text) ?? 30)
+                                  .toDouble()
+                                  .clamp(5, 480),
+                              min: 5,
+                              max: 480,
+                              divisions: 95, // (480-5)/5
+                              activeColor: AppColors.primaryPurple,
+                              inactiveColor:
+                                  AppColors.primaryPurple.withOpacity(0.1),
+                              onChanged: (double value) {
+                                setState(() {
+                                  _timeController.text =
+                                      value.round().toString();
+                                });
+                              },
+                            ),
+                          ],
                         ),
                         const SizedBox(height: 12),
                         Row(children: [
@@ -972,11 +1015,9 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                           controller: _descriptionController,
                           maxLines: 4,
                           decoration: const InputDecoration(
-                              labelText: "Descrição Detalhada",
+                              labelText: "Descrição (Opcional)",
                               alignLabelWithHint: true,
                               border: OutlineInputBorder()),
-                          validator: (v) =>
-                              v == null || v.isEmpty ? "Obrigatório" : null,
                         ),
                       ],
                     ),
