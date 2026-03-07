@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 import 'subscription_service.dart';
 
@@ -35,8 +35,8 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
       appBar: AppBar(
         title: const Text('Planos e Assinaturas',
             style: TextStyle(fontWeight: FontWeight.bold)),
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
+        backgroundColor: AppColors.primaryPurple,
+        foregroundColor: Colors.white,
         elevation: 0,
       ),
       backgroundColor: Colors.grey[50], // Fundo levemente cinza

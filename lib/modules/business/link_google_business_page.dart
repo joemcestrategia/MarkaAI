@@ -36,8 +36,9 @@ class _LinkGoogleBusinessPageState extends State<LinkGoogleBusinessPage> {
 
       if (shopDoc.exists) {
         final data = shopDoc.data();
-        final googleBusiness = data?['google_business'] as Map<String, dynamic>?;
-        
+        final googleBusiness =
+            data?['google_business'] as Map<String, dynamic>?;
+
         if (googleBusiness != null && googleBusiness['place_id'] != null) {
           setState(() {
             _linkedPlaceId = googleBusiness['place_id'];
@@ -52,7 +53,7 @@ class _LinkGoogleBusinessPageState extends State<LinkGoogleBusinessPage> {
 
   Future<void> _searchBusiness() async {
     final query = _searchController.text.trim();
-    
+
     if (query.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Digite o nome do seu negócio')),
@@ -68,14 +69,15 @@ class _LinkGoogleBusinessPageState extends State<LinkGoogleBusinessPage> {
 
     try {
       final response = await http.post(
-        Uri.parse('https://us-central1-wismart-118c3.cloudfunctions.net/searchGoogleBusiness'),
+        Uri.parse(
+            'https://us-central1-wismart-118c3.cloudfunctions.net/searchGoogleBusiness'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'query': query}),
       );
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        
+
         if (data['success'] == true) {
           setState(() {
             _searchResults = List<Map<String, dynamic>>.from(data['results']);
@@ -103,7 +105,8 @@ class _LinkGoogleBusinessPageState extends State<LinkGoogleBusinessPage> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Este é o seu negócio?', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text('Este é o seu negócio?',
+                style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Text(place['name'], style: const TextStyle(fontSize: 16)),
             const SizedBox(height: 4),
@@ -133,8 +136,9 @@ class _LinkGoogleBusinessPageState extends State<LinkGoogleBusinessPage> {
             onPressed: () => Navigator.pop(ctx, true),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primaryPurple,
+              foregroundColor: Colors.white,
             ),
-            child: const Text('SIM, Ã‰ MEU NEGÃ“CIO'),
+            child: const Text('SIM, É MEU NEGÃ“CIO'),
           ),
         ],
       ),
@@ -182,7 +186,8 @@ class _LinkGoogleBusinessPageState extends State<LinkGoogleBusinessPage> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Desvincular Google Business'),
-        content: const Text('Tem certeza que deseja desvincular seu Google Business?'),
+        content: const Text(
+            'Tem certeza que deseja desvincular seu Google Business?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -237,7 +242,10 @@ class _LinkGoogleBusinessPageState extends State<LinkGoogleBusinessPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Google Meu Negócio'),
+        title: const Text('Google Meu Negócio',
+            style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+        centerTitle: true,
+        elevation: 0,
         backgroundColor: AppColors.primaryPurple,
         foregroundColor: Colors.white,
       ),
@@ -294,7 +302,8 @@ class _LinkGoogleBusinessPageState extends State<LinkGoogleBusinessPage> {
                               color: Colors.green.shade50,
                               borderRadius: BorderRadius.circular(8),
                             ),
-                            child: Icon(Icons.check_circle, color: Colors.green.shade700, size: 32),
+                            child: Icon(Icons.check_circle,
+                                color: Colors.green.shade700, size: 32),
                           ),
                           const SizedBox(width: 12),
                           Expanded(
@@ -325,11 +334,13 @@ class _LinkGoogleBusinessPageState extends State<LinkGoogleBusinessPage> {
                         const SizedBox(height: 12),
                         Row(
                           children: [
-                            const Icon(Icons.star, color: Colors.orange, size: 20),
+                            const Icon(Icons.star,
+                                color: Colors.orange, size: 20),
                             const SizedBox(width: 4),
                             Text(
                               '${_linkedPlace!['rating']} (${_linkedPlace!['user_ratings_total']} avaliações)',
-                              style: const TextStyle(fontWeight: FontWeight.bold),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.bold),
                             ),
                           ],
                         ),
@@ -415,57 +426,58 @@ class _LinkGoogleBusinessPageState extends State<LinkGoogleBusinessPage> {
               ],
 
               ..._searchResults.map((place) => Card(
-                margin: const EdgeInsets.only(bottom: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: ListTile(
-                  leading: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: AppColors.primaryPurple.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(8),
+                    margin: const EdgeInsets.only(bottom: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                    child: const Icon(
-                      Icons.store,
-                      color: AppColors.primaryPurple,
-                    ),
-                  ),
-                  title: Text(
-                    place['name'],
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  subtitle: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (place['address'] != null)
-                        Text(
-                          place['address'],
-                          style: const TextStyle(fontSize: 12),
+                    child: ListTile(
+                      leading: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: AppColors.primaryPurple.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(8),
                         ),
-                      const SizedBox(height: 4),
-                      Row(
+                        child: const Icon(
+                          Icons.store,
+                          color: AppColors.primaryPurple,
+                        ),
+                      ),
+                      title: Text(
+                        place['name'],
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Icon(Icons.star, color: Colors.orange, size: 14),
-                          const SizedBox(width: 4),
-                          Text(
-                            '${place['rating']} (${place['user_ratings_total']} avaliações)',
-                            style: const TextStyle(fontSize: 12),
+                          if (place['address'] != null)
+                            Text(
+                              place['address'],
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              const Icon(Icons.star,
+                                  color: Colors.orange, size: 14),
+                              const SizedBox(width: 4),
+                              Text(
+                                '${place['rating']} (${place['user_ratings_total']} avaliações)',
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ],
                           ),
                         ],
                       ),
-                    ],
-                  ),
-                  trailing: ElevatedButton(
-                    onPressed: () => _linkBusiness(place),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primaryPurple,
-                      foregroundColor: Colors.white,
+                      trailing: ElevatedButton(
+                        onPressed: () => _linkBusiness(place),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primaryPurple,
+                          foregroundColor: Colors.white,
+                        ),
+                        child: const Text('VINCULAR'),
+                      ),
                     ),
-                    child: const Text('VINCULAR'),
-                  ),
-                ),
-              )),
+                  )),
             ],
           ],
         ),
@@ -479,5 +491,3 @@ class _LinkGoogleBusinessPageState extends State<LinkGoogleBusinessPage> {
     super.dispose();
   }
 }
-
-

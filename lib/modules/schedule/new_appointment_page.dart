@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../core/theme/app_colors.dart';
@@ -56,8 +56,9 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
         if (!snapshot.hasData) return const CircularProgressIndicator();
         final docs = snapshot.data!.docs;
 
-        if (docs.isEmpty)
+        if (docs.isEmpty) {
           return const Center(child: Text("Nenhum serviço ativo encontrado."));
+        }
 
         return ListView.builder(
           shrinkWrap: true,
@@ -69,7 +70,7 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
             final isSelected = _selectedService?.id == serviceDoc.id;
 
             String precoDisplay = data['preco']?.toString() ?? "0.00";
-            // ✅ CORREÇÃO: Agora busca 'tempo_min' do Firestore
+            // âœ… CORREÇÃO: Agora busca 'tempo_min' do Firestore
             String duracao = data['tempo_min']?.toString() ?? "30";
 
             return Card(
@@ -84,7 +85,7 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
                         color: isSelected
                             ? AppColors.primaryPurple
                             : Colors.black)),
-                subtitle: Text("R\$ $precoDisplay • $duracao min"),
+                subtitle: Text("R\$ $precoDisplay â€¢ $duracao min"),
                 trailing: isSelected
                     ? const Icon(Icons.check_circle,
                         color: AppColors.primaryPurple)
@@ -92,7 +93,7 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
                 onTap: () {
                   setState(() {
                     _selectedService = serviceDoc;
-                    // ✅ IMPORTANTE: Reseta profissional e horário quando muda o serviço
+                    // âœ… IMPORTANTE: Reseta profissional e horário quando muda o serviço
                     _selectedProfessional = null;
                     _selectedTime = null;
                   });
@@ -111,7 +112,7 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
       return const CircularProgressIndicator();
     }
 
-    // ✅ VALIDAÇÃO: Precisa ter um serviço selecionado primeiro
+    // âœ… VALIDAÇÃO: Precisa ter um serviço selecionado primeiro
     if (_selectedService == null) {
       return const Center(
         child: Padding(
@@ -140,7 +141,7 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
         }
         final allDocs = snapshot.data!.docs;
 
-        // ✅ FILTRO: Mostra apenas profissionais que fazem este serviço
+        // âœ… FILTRO: Mostra apenas profissionais que fazem este serviço
         final filteredDocs = allDocs.where((doc) {
           final data = doc.data() as Map<String, dynamic>;
           List<dynamic> servicosHabilitados = data['servicos_habilidade'] ?? [];
@@ -353,7 +354,7 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
     );
   }
 
-  // --- CÁLCULO DE SLOTS COM DURAÇÃO ---
+  // --- CÃLCULO DE SLOTS COM DURAÇÃO ---
   List<String> _generateProfessionalSlotsWithDuration(
       String start, String end, int durationMin) {
     List<String> slots = [];
@@ -365,12 +366,13 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
     int totalEndMinutes = (endH * 60) + endM;
     int currentMinutes = (startH * 60) + startM;
 
-    // ✅ CORREÇÃO: Agora incrementa com a duração real do serviço
+    // âœ… CORREÇÃO: Agora incrementa com a duração real do serviço
     while (currentMinutes + durationMin <= totalEndMinutes) {
       int h = currentMinutes ~/ 60;
       int m = currentMinutes % 60;
       slots.add(_formatTime(h, m));
-      currentMinutes += durationMin; // ⚡ Usa a duração real em vez de 30 fixo
+      currentMinutes +=
+          durationMin; // âš¡ Usa a duração real em vez de 30 fixo
     }
     return slots;
   }
@@ -498,14 +500,16 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
                   child: ElevatedButton(
                     onPressed: details.onStepContinue,
                     style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primaryPurple),
+                      backgroundColor: AppColors.primaryPurple,
+                      foregroundColor: Colors.white,
+                    ),
                     child: _isLoading
                         ? const SizedBox(
                             width: 20,
                             height: 20,
                             child:
                                 CircularProgressIndicator(color: Colors.white))
-                        : Text(_currentStep == 2 ? "CONFIRMAR" : "PRÓXIMO",
+                        : Text(_currentStep == 2 ? "CONFIRMAR" : "PRÃ“XIMO",
                             style: const TextStyle(color: Colors.white)),
                   ),
                 ),

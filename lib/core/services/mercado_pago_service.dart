@@ -1,4 +1,4 @@
-import 'package:cloud_functions/cloud_functions.dart';
+﻿import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
 class MercadoPagoService {
@@ -15,7 +15,7 @@ class MercadoPagoService {
     required String description,
   }) async {
     try {
-      debugPrint("☁️ [Service] Chamando Cloud Function: createPixPayment");
+      debugPrint("â˜ï¸ [Service] Chamando Cloud Function: createPixPayment");
 
       final result = await _functions.httpsCallable('createPixPayment').call({
         'shopId': shopId, // Token lido no backend; nunca enviado pelo client
@@ -26,8 +26,8 @@ class MercadoPagoService {
 
       return Map<String, dynamic>.from(result.data);
     } on FirebaseFunctionsException catch (e) {
-      debugPrint("❌ Erro na Cloud Function: ${e.code} - ${e.message}");
-      debugPrint("❌ Detalhes: ${e.details}");
+      debugPrint("âŒ Erro na Cloud Function: ${e.code} - ${e.message}");
+      debugPrint("âŒ Detalhes: ${e.details}");
       // Detect specific backend error for collector not enabled for PIX QR
       final detailsStr = (e.details ?? '').toString().toLowerCase();
       final messageStr = (e.message ?? '').toString().toLowerCase();
@@ -47,7 +47,7 @@ class MercadoPagoService {
       }
       throw Exception(e.message ?? "Erro ao processar PIX no servidor.");
     } catch (e) {
-      debugPrint("❌ Erro local: $e");
+      debugPrint("âŒ Erro local: $e");
       rethrow;
     }
   }
@@ -68,7 +68,7 @@ class MercadoPagoService {
       final data = Map<String, dynamic>.from(result.data);
       return data['status']?.toString() ?? 'pending';
     } catch (e) {
-      debugPrint("⚠️ Erro ao verificar status: $e");
+      debugPrint("âš ï¸ Erro ao verificar status: $e");
       return 'unknown';
     }
   }
@@ -89,7 +89,7 @@ class MercadoPagoService {
     required String description,
   }) async {
     try {
-      debugPrint("☁️ [Service] Chamando Cloud Function: cobrarCartao");
+      debugPrint("â˜ï¸ [Service] Chamando Cloud Function: cobrarCartao");
 
       final result = await _functions.httpsCallable('cobrarCartao').call({
         'accessToken': accessToken,
@@ -106,7 +106,7 @@ class MercadoPagoService {
 
       return Map<String, dynamic>.from(result.data);
     } on FirebaseFunctionsException catch (e) {
-      debugPrint("❌ Erro Cartão: ${e.message}");
+      debugPrint("âŒ Erro Cartão: ${e.message}");
       throw Exception(e.message);
     } catch (e) {
       rethrow;
@@ -130,7 +130,7 @@ class MercadoPagoService {
 
       return List<Map<String, dynamic>>.from(result.data);
     } catch (e) {
-      debugPrint("⚠️ Erro ao buscar parcelas: $e");
+      debugPrint("âš ï¸ Erro ao buscar parcelas: $e");
       return [];
     }
   }
@@ -145,10 +145,10 @@ class MercadoPagoService {
     required int installments,
     required String emailCliente,
     required String description,
-    required String securityCode, // 🔥 ADICIONADO: Agora aceita o CVV
+    required String securityCode, // ðŸ”¥ ADICIONADO: Agora aceita o CVV
   }) async {
     try {
-      debugPrint("☁️ Chamando Cloud Function: cobrarCartaoSalvo");
+      debugPrint("â˜ï¸ Chamando Cloud Function: cobrarCartaoSalvo");
 
       final result = await _functions.httpsCallable('cobrarCartaoSalvo').call({
         'accessToken': accessToken,
@@ -158,12 +158,12 @@ class MercadoPagoService {
         'installments': installments,
         'email': emailCliente,
         'description': description,
-        'securityCode': securityCode, // 🔥 ENVIA O CVV PRO BACKEND
+        'securityCode': securityCode, // ðŸ”¥ ENVIA O CVV PRO BACKEND
       });
 
       return Map<String, dynamic>.from(result.data);
     } catch (e) {
-      debugPrint("❌ Erro Cartão Salvo: $e");
+      debugPrint("âŒ Erro Cartão Salvo: $e");
       rethrow;
     }
   }

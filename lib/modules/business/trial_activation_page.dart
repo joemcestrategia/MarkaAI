@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 import 'subscription_service.dart';
 import 'trial_service.dart';
@@ -61,7 +61,7 @@ class _TrialActivationPageState extends State<TrialActivationPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-                "🎉 Parabéns! Trial ativado com sucesso. Aproveite seus 90 dias!"),
+                "ðŸŽ‰ Parabéns! Trial ativado com sucesso. Aproveite seus 90 dias!"),
             backgroundColor: Colors.green,
           ),
         );
@@ -85,7 +85,9 @@ class _TrialActivationPageState extends State<TrialActivationPage> {
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FD),
       appBar: AppBar(
-        title: const Text("Teste Grátis por 90 Dias"),
+        title: const Text("Teste Grátis por 90 Dias",
+            style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+        centerTitle: true,
         backgroundColor: AppColors.primaryPurple,
         foregroundColor: Colors.white,
         elevation: 0,
@@ -201,6 +203,7 @@ class _TrialActivationPageState extends State<TrialActivationPage> {
                     onPressed: _selectedPlan == null ? null : _activateTrial,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primaryPurple,
+                      foregroundColor: Colors.white,
                       disabledBackgroundColor: Colors.grey.shade300,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(

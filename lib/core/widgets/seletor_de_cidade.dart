@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'dart:async';
@@ -58,7 +58,7 @@ class CidadeSelecionada {
 
 /// Serviço de persistência local da cidade selecionada.
 class CidadePrefs {
-  // ── Cidade ativa (compatibilidade legada) ───────────────────────────────
+  // â”€â”€ Cidade ativa (compatibilidade legada) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   static Future<CidadeSelecionada?> carregar() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -95,7 +95,7 @@ class CidadePrefs {
     await prefs.remove(_kCidadesListKey);
   }
 
-  // ── Lista de cidades salvas ─────────────────────────────────────────────
+  // â”€â”€ Lista de cidades salvas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   static Future<List<CidadeSelecionada>> carregarLista() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -142,7 +142,7 @@ class SeletorDeCidadeButton extends StatelessWidget {
     final hasCity = cidadeSelecionada != null;
     final cityLabel = hasCity ? cidadeSelecionada!.cidade : 'Escolher cidade';
     final raioLabel = (hasCity && cidadeSelecionada!.raioKm != null)
-        ? ' · ${cidadeSelecionada!.raioKm}km'
+        ? ' Â· ${cidadeSelecionada!.raioKm}km'
         : '';
     final label = '$cityLabel$raioLabel';
 
@@ -476,7 +476,7 @@ class _SeletorDeCidadeModalState extends State<SeletorDeCidadeModal> {
           ),
 
           if (_cidadeEscolhida == null) ...[
-            // ── Campo de busca ─────────────────────────────────────────────
+            // â”€â”€ Campo de busca â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
               child: TextField(
@@ -507,7 +507,7 @@ class _SeletorDeCidadeModalState extends State<SeletorDeCidadeModal> {
               ),
             ),
 
-            // ── Botão GPS ──────────────────────────────────────────────────
+            // â”€â”€ Botão GPS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
               child: SizedBox(
@@ -545,7 +545,7 @@ class _SeletorDeCidadeModalState extends State<SeletorDeCidadeModal> {
               ),
             ),
 
-            // ── Cidades salvas (chips) ─────────────────────────────────────
+            // â”€â”€ Cidades salvas (chips) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             if (_cidadesSalvas.isNotEmpty) ...[
               Padding(
                 padding:
@@ -579,7 +579,7 @@ class _SeletorDeCidadeModalState extends State<SeletorDeCidadeModal> {
                         ),
                         label: Text(
                           cs.raioKm != null
-                              ? '${cs.cidade} · ${cs.raioKm}km'
+                              ? '${cs.cidade} Â· ${cs.raioKm}km'
                               : cs.cidade,
                           style: TextStyle(
                             fontSize: 12,
@@ -612,7 +612,7 @@ class _SeletorDeCidadeModalState extends State<SeletorDeCidadeModal> {
               ),
             ],
 
-            // ── Lista de sugestões ─────────────────────────────────────────
+            // â”€â”€ Lista de sugestões â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             ConstrainedBox(
               constraints: BoxConstraints(
                 maxHeight: _cidadesSalvas.isEmpty ? 380 : 300,
@@ -696,7 +696,7 @@ class _SeletorDeCidadeModalState extends State<SeletorDeCidadeModal> {
                         ),
             ),
           ] else ...[
-            // ── Seleção de Raio ────────────────────────────────────────────
+            // â”€â”€ Seleção de Raio â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
               child: Text(
@@ -736,7 +736,7 @@ class _SeletorDeCidadeModalState extends State<SeletorDeCidadeModal> {
                   icon: const Icon(Icons.check_circle, size: 18),
                   label: Text(
                     _raioSelecionado != null
-                        ? 'Buscar em ${_cidadeEscolhida!.cidade} · ${_raioSelecionado}km'
+                        ? 'Buscar em ${_cidadeEscolhida!.cidade} Â· ${_raioSelecionado}km'
                         : 'Buscar em toda ${_cidadeEscolhida!.cidade}',
                   ),
                   style: ElevatedButton.styleFrom(
@@ -756,7 +756,7 @@ class _SeletorDeCidadeModalState extends State<SeletorDeCidadeModal> {
   }
 }
 
-/// Tela cheia para seleção de cidade — use Navigator.push para navegar a ela.
+/// Tela cheia para seleção de cidade â€” use Navigator.push para navegar a ela.
 /// Equivalente ao [SeletorDeCidadeModal] mas ocupa a tela inteira.
 class SeletorDeCidadePage extends StatefulWidget {
   final void Function(CidadeSelecionada cidade) onCidadeSelecionada;
@@ -914,7 +914,8 @@ class _SeletorDeCidadePageState extends State<SeletorDeCidadePage> {
 
   /// Remove acentos para busca sem diacríticos
   String _normalize(String s) {
-    const from = 'àáâãäåæçèéêëìíîïðñòóôõöùúûüýÿÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖÙÚÛÜÝ';
+    const from =
+        'Ã áâãäÃ¥Ã¦çèéêëìíîïÃ°ñòóôõöùúûüÃ½Ã¿Ã€ÃÂÃÄÃ…Ã†ÇÈÉÊËÃŒÃÃŽÃÃÃ‘Ã’Ã“Ã”ÕÖÙÚÛÜÃ';
     const to = 'aaaaaaaceeeeiiiidnoooooouuuuyy AAAAAAACEEEEIIIIDNOOOOOOUUUUY';
     var result = s.toLowerCase();
     for (var i = 0; i < from.length; i++) {
@@ -1145,7 +1146,7 @@ class _SeletorDeCidadePageState extends State<SeletorDeCidadePage> {
                                 : AppColors.primaryPurple),
                         label: Text(
                           cs.raioKm != null
-                              ? '${cs.cidade} · ${cs.raioKm}km'
+                              ? '${cs.cidade} Â· ${cs.raioKm}km'
                               : cs.cidade,
                           style: TextStyle(
                               fontSize: 12,
@@ -1176,7 +1177,7 @@ class _SeletorDeCidadePageState extends State<SeletorDeCidadePage> {
               ),
             ],
             const Divider(height: 16),
-            // Lista de sugestões — Expanded para preencher o restante da tela
+            // Lista de sugestões â€” Expanded para preencher o restante da tela
             Expanded(
               child: _firstLoad
                   ? const Center(
@@ -1282,7 +1283,7 @@ class _SeletorDeCidadePageState extends State<SeletorDeCidadePage> {
                   icon: const Icon(Icons.check_circle, size: 20),
                   label: Text(
                       _raioSelecionado != null
-                          ? 'Buscar em ${_cidadeEscolhida!.cidade} · ${_raioSelecionado}km'
+                          ? 'Buscar em ${_cidadeEscolhida!.cidade} Â· ${_raioSelecionado}km'
                           : 'Buscar em toda ${_cidadeEscolhida!.cidade}',
                       style: const TextStyle(fontSize: 15)),
                   style: ElevatedButton.styleFrom(

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:excel/excel.dart' hide Border;
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -152,17 +152,17 @@ class _ExcelImportPageState extends State<ExcelImportPage> {
       setState(() {
         _isLoading = false;
         _progress = 1.0;
-        _logs += "\n\n✅ SUCESSO! $importedCount registros importados.";
+        _logs += "\n\nâœ… SUCESSO! $importedCount registros importados.";
       });
     } catch (e) {
       setState(() {
         _isLoading = false;
-        _logs += "\n❌ ERRO: $e";
+        _logs += "\nâŒ ERRO: $e";
       });
     }
   }
 
-  // --- 🗑️ FUNÇÃO DE LIMPEZA (NOVA) ---
+  // --- ðŸ—‘ï¸ FUNÇÃO DE LIMPEZA (NOVA) ---
   Future<void> _deleteImportedHistory() async {
     // Confirmação de Segurança
     bool confirm = await showDialog(
@@ -240,7 +240,7 @@ class _ExcelImportPageState extends State<ExcelImportPage> {
       setState(() {
         _isLoading = false;
         _logs +=
-            "\n\n🗑️ LIMPEZA CONCLUÍDA!\n$deletedCount registros apagados.";
+            "\n\nðŸ—‘ï¸ LIMPEZA CONCLUÃDA!\n$deletedCount registros apagados.";
       });
 
       if (!mounted) return;
@@ -250,7 +250,7 @@ class _ExcelImportPageState extends State<ExcelImportPage> {
     } catch (e) {
       setState(() {
         _isLoading = false;
-        _logs += "\n❌ ERRO AO APAGAR: $e";
+        _logs += "\nâŒ ERRO AO APAGAR: $e";
       });
     }
   }
@@ -259,8 +259,10 @@ class _ExcelImportPageState extends State<ExcelImportPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-          title: const Text("Gestão de Histórico"),
-          backgroundColor: AppColors.primaryPurple),
+        title: const Text("Gestão de Histórico"),
+        backgroundColor: AppColors.primaryPurple,
+        foregroundColor: Colors.white,
+      ),
       body: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -297,13 +299,15 @@ class _ExcelImportPageState extends State<ExcelImportPage> {
                       label: Text(
                           _isLoading ? "PROCESSANDO..." : "CARREGAR PLANILHA"),
                       style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primaryPurple),
+                        backgroundColor: AppColors.primaryPurple,
+                        foregroundColor: Colors.white,
+                      ),
                     ),
                   ),
 
                   const SizedBox(height: 15),
 
-                  // 🗑️ BOTÃO DE APAGAR (NOVO)
+                  // ðŸ—‘ï¸ BOTÃO DE APAGAR (NOVO)
                   SizedBox(
                     width: double.infinity,
                     height: 45,

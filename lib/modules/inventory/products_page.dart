@@ -1,4 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+﻿import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
@@ -849,6 +849,7 @@ class _NewFieldFormState extends State<_NewFieldForm> {
         ElevatedButton(
           style: ElevatedButton.styleFrom(
             backgroundColor: AppColors.primaryPurple,
+            foregroundColor: Colors.white,
             padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),

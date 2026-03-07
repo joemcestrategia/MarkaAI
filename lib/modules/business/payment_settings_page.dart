@@ -92,7 +92,7 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
                 // Mostra notificação de sucesso
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('✅ Conectado com sucesso ao Mercado Pago!'),
+                    content: Text('? Conectado com sucesso ao Mercado Pago!'),
                     backgroundColor: Colors.green,
                     duration: Duration(seconds: 3),
                   ),
@@ -102,7 +102,7 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
           }
         },
         onError: (error) {
-          debugPrint("❌ Erro no listener realtime: $error");
+          debugPrint("? Erro no listener realtime: $error");
         },
       );
     });
@@ -114,7 +114,7 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
       String? id = await SessionService.getShopId();
 
       if ((id == null || id.isEmpty) && user != null) {
-        debugPrint("🔍 [Pagamentos] Buscando ID no servidor...");
+        debugPrint("?? [Pagamentos] Buscando ID no servidor...");
         final userDoc = await FirebaseFirestore.instance
             .collection('users')
             .doc(user.uid)
@@ -392,6 +392,7 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
             style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
         centerTitle: true,
         backgroundColor: AppColors.primaryPurple,
+        foregroundColor: Colors.white,
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.close, color: Colors.white),
@@ -734,7 +735,7 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
     );
   }
 
-  // ðŸ“– CONTEÃšDO DE AJUDA (MELHORADO)
+  // ðŸ“– CONTEÚDO DE AJUDA (MELHORADO)
   Widget _buildHelpContent() {
     final isMobile = MediaQuery.of(context).size.width < 600;
 
@@ -921,7 +922,7 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text("Recurso Premium ⭐"),
+        title: const Text("Recurso Premium ?"),
         content: const Text(
             "Receber pagamentos online via PIX e Cartão é exclusivo dos planos pagos.\n\nAssine agora para liberar!"),
         actions: [

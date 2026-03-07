@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -231,7 +231,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
     }
   }
 
-  // 🎨 FUNÇÃO CORRIGIDA: Abrir editor de imagem
+  // ðŸŽ¨ FUNÇÃO CORRIGIDA: Abrir editor de imagem
   Future<void> _pickAndEditImage({required bool isCover}) async {
     final ImagePicker picker = ImagePicker();
     final XFile? image = await picker.pickImage(
@@ -297,7 +297,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
   String _normalizeSlug(String input) {
     // Remove espaços, acentos e caracteres especiais
     String slug = input.toLowerCase().trim();
-    slug = slug.replaceAll(RegExp(r'[áàâãä]'), 'a');
+    slug = slug.replaceAll(RegExp(r'[áÃ âãä]'), 'a');
     slug = slug.replaceAll(RegExp(r'[éèêë]'), 'e');
     slug = slug.replaceAll(RegExp(r'[íìîï]'), 'i');
     slug = slug.replaceAll(RegExp(r'[óòôõö]'), 'o');
@@ -562,7 +562,8 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                                 ),
                               ),
                               child: Text(
-                                data['nome'] ?? "Serviço", // Original line 1072
+                                data['nome'] ??
+                                    "Serviço", // Original line 1072
                                 style: const TextStyle(
                                   color: Colors.white,
                                   fontWeight: FontWeight.bold,
@@ -609,6 +610,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
               onPressed: _isSaving ? null : _saveProfile,
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primaryPurple,
+                foregroundColor: Colors.white,
                 disabledBackgroundColor:
                     AppColors.primaryPurple.withValues(alpha: 0.6),
                 shape: RoundedRectangleBorder(
@@ -638,11 +640,12 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
               child: CircularProgressIndicator(color: AppColors.primaryPurple))
           : CustomScrollView(
               slivers: [
-                // ─── APP BAR com CAPA e LOGO embutido ────────────────────
+                // â”€â”€â”€ APP BAR com CAPA e LOGO embutido â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 SliverAppBar(
                   expandedHeight: 200.0,
                   pinned: true,
                   backgroundColor: AppColors.primaryPurple,
+                  foregroundColor: Colors.white,
                   title: Text(
                     _isSaving ? "Salvando..." : "Editar Perfil",
                     style: const TextStyle(
@@ -654,7 +657,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                     background: Stack(
                       fit: StackFit.expand,
                       children: [
-                        // ── Imagem da Capa ──────────────────────────────
+                        // â”€â”€ Imagem da Capa â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                         GestureDetector(
                           onTap: () => _pickAndEditImage(isCover: true),
                           child: _newCoverFile != null
@@ -706,7 +709,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                             ),
                           ),
                         ),
-                        // ── Logo circular na esquerda inferior ──────────
+                        // â”€â”€ Logo circular na esquerda inferior â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                         Positioned(
                           left: 16,
                           bottom: 12,
@@ -773,7 +776,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                             ),
                           ),
                         ),
-                        // ── Botão editar capa (direita inferior) ────────
+                        // â”€â”€ Botão editar capa (direita inferior) â”€â”€â”€â”€â”€â”€â”€â”€
                         Positioned(
                           right: 14,
                           bottom: 14,
@@ -806,7 +809,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                   ),
                 ),
 
-                // ─── FORMULÁRIO ───────────────────────────────────────────
+                // â”€â”€â”€ FORMULÃRIO â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 SliverToBoxAdapter(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
@@ -823,7 +826,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                                 v!.isEmpty ? "Campo obrigatório" : null,
                           ),
                           const SizedBox(height: 12),
-                          // ── Nicho / Categoria ──────────────────────────
+                          // â”€â”€ Nicho / Categoria â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                           _buildNichoField(),
                           const SizedBox(height: 12),
                           _buildTextField(
@@ -846,11 +849,11 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                             keyboardType: TextInputType.phone,
                           ),
                           const SizedBox(height: 12),
-                          // ── Localização: Cidade + UF ───────────────────
+                          // â”€â”€ Localização: Cidade + UF â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                           _buildLocationSection(),
                           const SizedBox(height: 16),
 
-                          // ── Link Personalizado ──────────────────────────
+                          // â”€â”€ Link Personalizado â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                           Container(
                             padding: const EdgeInsets.all(14),
                             decoration: BoxDecoration(
@@ -985,7 +988,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
 
                           const SizedBox(height: 14),
 
-                          // ── Redes Sociais ────────────────────────────────
+                          // â”€â”€ Redes Sociais â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                           Container(
                             padding: const EdgeInsets.all(14),
                             decoration: BoxDecoration(
@@ -1041,7 +1044,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                   ),
                 ),
 
-                // ── Vitrine de Serviços ─────────────────────────────────
+                // â”€â”€ Vitrine de Serviços â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 SliverToBoxAdapter(
                   child: Container(
                     color: Colors.white,
@@ -1055,7 +1058,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
     );
   }
 
-  // ── Nicho/Categoria field ─────────────────────────────────────────────────
+  // â”€â”€ Nicho/Categoria field â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Widget _buildNichoField() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1073,7 +1076,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
             ],
           ),
           child: DropdownButtonFormField<String>(
-            value: _nichoSelecionado,
+            initialValue: _nichoSelecionado,
             decoration: InputDecoration(
               labelText: 'Nicho / Ramo de Negócio',
               prefixIcon: Icon(Icons.storefront,
@@ -1112,7 +1115,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
     );
   }
 
-  // ── Seção Localização: Cidade + UF ────────────────────────────────────────
+  // â”€â”€ Seção Localização: Cidade + UF â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Widget _buildLocationSection() {
     final bool highlight = widget.highlightLocation &&
         (_cidadeController.text.trim().isEmpty || _estadoSelecionado == null);
@@ -1153,7 +1156,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
               const SizedBox(width: 8),
               Text(
                 highlight
-                    ? 'Localização incompleta — Preencha para aparecer nas buscas!'
+                    ? 'Localização incompleta â€” Preencha para aparecer nas buscas!'
                     : 'Cidade e Estado',
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
@@ -1209,7 +1212,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
               Expanded(
                 flex: 2,
                 child: DropdownButtonFormField<String>(
-                  value: _estadoSelecionado,
+                  initialValue: _estadoSelecionado,
                   decoration: InputDecoration(
                     labelText: 'Estado *',
                     labelStyle: const TextStyle(fontSize: 13),
@@ -1301,7 +1304,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
   }
 }
 
-// 🎨 WIDGET DE AJUSTE DE IMAGEM (Mantido 100% igual)
+// ðŸŽ¨ WIDGET DE AJUSTE DE IMAGEM (Mantido 100% igual)
 class _ImageAdjustmentPage extends StatefulWidget {
   final XFile imageFile;
   final double aspectRatio;
@@ -1403,7 +1406,7 @@ class _ImageAdjustmentPageState extends State<_ImageAdjustmentPage> {
               ),
               const SizedBox(height: 6),
               const Text(
-                "Arraste para reposicionar • Pinçar para zoom",
+                "Arraste para reposicionar â€¢ Pinçar para zoom",
                 style: TextStyle(color: Colors.white70, fontSize: 12),
               ),
             ],

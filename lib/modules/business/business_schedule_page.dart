@@ -3,9 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:table_calendar/table_calendar.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'dart:async';
 import '../../core/theme/app_colors.dart';
 import 'appointment_details_page.dart';
+import '../clients/client_details_page.dart';
 
 class BusinessSchedulePage extends StatefulWidget {
   final String shopId;
@@ -44,7 +46,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
   DocumentSnapshot? _firstDocument;
   final int _perPage = 20;
 
-  // --- LÃ“GICA DE VISUALIZAÃ‡ÃO ---
+  // --- LÃ“GICA DE VISUALIZAÇÃO ---
   bool _showOnlySelectedDay = true;
   DocumentSnapshot? _selectedAppointment;
   // Quando true, a lista abaixo do calendário começa a partir de _startFromDate (inclusive)
@@ -326,7 +328,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     return status != 'cancelado';
   }
 
-  // ðŸŽ¯ AÃ‡ÃO: IR PARA HOJE
+  // ðŸŽ¯ AÇÃO: IR PARA HOJE
   void _jumpToToday() {
     setState(() {
       _selectedDay = DateTime.now();
@@ -694,6 +696,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primaryPurple,
+                    foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8)),
                   ),
@@ -708,7 +711,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     );
   }
 
-  // âž• MODAL DE LANÃ‡AMENTO
+  // âž• MODAL DE LANÇAMENTO
   void _showManualEntryDialog({DateTime? initialDate}) {
     final TextEditingController nameController = TextEditingController();
     final TextEditingController serviceController = TextEditingController();
@@ -911,6 +914,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primaryPurple,
+                    foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8)),
                   ),
@@ -938,6 +942,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
               : FloatingActionButton(
                   onPressed: _showManualEntryDialog,
                   backgroundColor: AppColors.primaryPurple,
+                  foregroundColor: Colors.white,
                   child: const Icon(Icons.add, color: Colors.white),
                 ),
           body: isDesktop ? _buildDesktopLayout() : _buildMobileLayout(),
@@ -1579,7 +1584,6 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     });
   }
 
-  // ðŸ’Ž CARD DE AGENDAMENTO (com botão de edição)
   Widget _buildAppointmentCard(DocumentSnapshot doc,
       {required bool isDesktop}) {
     Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
@@ -1598,6 +1602,45 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
         isCanceled ? "CANCELADO" : (quitado ? "PAGO" : "PENDENTE");
 
     bool isSelected = isDesktop && _selectedAppointment?.id == doc.id;
+
+    // Dados para abrir perfil do cliente
+    final clientId = data['clientId'] ?? data['clienteId'] ?? doc.id;
+    final clientNome = data['client_nome'] ?? data['cliente_nome'] ?? 'Cliente';
+    final String clientInitial =
+        clientNome.isNotEmpty ? clientNome[0].toUpperCase() : '?';
+
+    void openClientProfile() {
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (ctx) => DraggableScrollableSheet(
+          initialChildSize: 0.85,
+          maxChildSize: 0.95,
+          minChildSize: 0.5,
+          builder: (_, controller) => ClipRRect(
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            child: Scaffold(
+              body: ClientDetailsPage(
+                clientData: {
+                  'nome': clientNome,
+                  'telefone': data['client_phone'] ??
+                      data['telefone'] ??
+                      'Não informado',
+                  'email': data['client_email'] ?? '',
+                  'origem': data['tipo'] == 'manual' ? 'manual' : 'app',
+                  'totalGasto': total,
+                  'visitas': 1,
+                },
+                clientId: clientId.toString(),
+                shopIdOverride: widget.shopId,
+                onClose: () => Navigator.pop(ctx),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
 
     return GestureDetector(
       onTap: () async {
@@ -1683,21 +1726,23 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Text(
-                              data['client_nome'] ??
-                                  data['cliente_nome'] ??
-                                  "Cliente",
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 15,
-                                decoration: isCanceled
-                                    ? TextDecoration.lineThrough
-                                    : null,
-                                color:
-                                    isCanceled ? Colors.grey : Colors.black87,
+                            GestureDetector(
+                              onTap: openClientProfile,
+                              child: Text(
+                                clientNome,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 15,
+                                  decoration: isCanceled
+                                      ? TextDecoration.lineThrough
+                                      : TextDecoration.underline,
+                                  color: isCanceled
+                                      ? Colors.grey
+                                      : AppColors.primaryPurple,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                               ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
                             ),
                             const SizedBox(height: 4),
                             Text(
@@ -1736,10 +1781,77 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                               ),
                             ),
                           ),
+                          if (data['client_phone'] != null ||
+                              data['telefone'] != null) ...[
+                            const SizedBox(height: 6),
+                            GestureDetector(
+                              onTap: () async {
+                                final phone =
+                                    (data['client_phone'] ?? data['telefone'])
+                                        .toString()
+                                        .replaceAll(RegExp(r'\D'), '');
+                                final url = 'https://wa.me/$phone';
+                                if (await canLaunchUrl(Uri.parse(url))) {
+                                  await launchUrl(Uri.parse(url));
+                                } else {
+                                  if (!context.mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                        content: Text(
+                                            'Não foi possível abrir o WhatsApp')),
+                                  );
+                                }
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: Colors.green.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.chat_rounded,
+                                        color: Colors.green, size: 10),
+                                    SizedBox(width: 3),
+                                    Text('WhatsApp',
+                                        style: TextStyle(
+                                            color: Colors.green,
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.w800)),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
                         ],
                       ),
 
-                      // Ações (editar/excluir) estão disponíveis na página de detalhes.
+                      // Botão de perfil do cliente
+                      const SizedBox(width: 8),
+                      GestureDetector(
+                        onTap: openClientProfile,
+                        child: Container(
+                          width: 34,
+                          height: 34,
+                          decoration: BoxDecoration(
+                            color:
+                                AppColors.primaryPurple.withValues(alpha: 0.1),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Center(
+                            child: Text(
+                              clientInitial,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.primaryPurple,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 ),

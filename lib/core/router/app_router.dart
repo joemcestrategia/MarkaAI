@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -17,13 +17,13 @@ class AppRouter {
     // 1. Determinar o caminho (path) real. No Web, Uri.base é mais confiável para deep links iniciais.
     String pathName = settings.name ?? '/';
 
-    debugPrint('🚩 AppRouter: settings.name = "$pathName"');
+    debugPrint('ðŸš© AppRouter: settings.name = "$pathName"');
 
     // Correção para Cold Boot no Web: se o path for '/', verificamos a URL real do browser
     if (pathName == '/') {
       final browserPath = Uri.base.path;
       debugPrint(
-          '🚩 AppRouter: Web cold-boot detectado. Uri.base.path = "$browserPath"');
+          'ðŸš© AppRouter: Web cold-boot detectado. Uri.base.path = "$browserPath"');
       if (browserPath != '/' && browserPath.isNotEmpty) {
         pathName = browserPath;
       }
@@ -38,7 +38,7 @@ class AppRouter {
         .replaceAll(RegExp(r'/+$'), '')
         .trim();
 
-    debugPrint('🚩 AppRouter: Final cleanPath = "$cleanPath"');
+    debugPrint('ðŸš© AppRouter: Final cleanPath = "$cleanPath"');
 
     // 2. Traduzir query param 's' para slug (fallback/compatibilidade)
     final querySlug = uri.queryParameters['s'];
@@ -200,8 +200,26 @@ class _AuthRedirectState extends State<AuthRedirect> {
 
       if (!mounted) return;
 
+      if (!doc.exists) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const LoginPage()),
+        );
+        return;
+      }
+
       final data = doc.data();
-      final tipo = data?['tipo']?.toString() ?? 'cliente';
+      final tipo = data?['tipo']?.toString();
+      final telefone = data?['telefone']?.toString();
+
+      if (tipo == null ||
+          tipo.isEmpty ||
+          telefone == null ||
+          telefone.isEmpty) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const LoginPage()),
+        );
+        return;
+      }
 
       // Registrar token FCM do dispositivo para notificações (se disponível)
       try {
@@ -216,7 +234,7 @@ class _AuthRedirectState extends State<AuthRedirect> {
         }
       } catch (_) {}
 
-      // Forçar redirecionamento para Home do perfil logado (Desativado restrição de URI para não hang up em deep links conhecidos)
+      // Forçar redirecionamento para Home do perfil logado
       if (!mounted) return;
       if (tipo == 'dono' || tipo == 'business') {
         Navigator.of(context).pushReplacement(

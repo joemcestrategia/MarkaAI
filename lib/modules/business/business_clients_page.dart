@@ -52,20 +52,20 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
     }
   }
 
-  // 🧠 LÓGICA INTELIGENTE DE NAVEGAÇÃO
+  // ?? LÓGICA INTELIGENTE DE NAVEGAÇÃO
   void _handleClientTap(BuildContext context, Map<String, dynamic> client,
       String id, bool isMobile) {
     if (isMobile) {
-      // 📱 MODO CELULAR: Navega para nova tela
+      // ?? MODO CELULAR: Navega para nova tela
       Navigator.push(
         context,
         MaterialPageRoute(
           builder: (context) => Scaffold(
             appBar: AppBar(
                 title: Text(client['nome']),
-                backgroundColor: Colors.white,
-                foregroundColor: Colors.black,
-                elevation: 1),
+                backgroundColor: AppColors.primaryPurple,
+                foregroundColor: Colors.white,
+                elevation: 0),
             body: ClientDetailsPage(
               clientData: client,
               clientId: id,
@@ -75,7 +75,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
         ),
       );
     } else {
-      // 💻 MODO PC: Abre na lateral
+      // ?? MODO PC: Abre na lateral
       setState(() {
         _showAddPanel = false;
         _selectedClientData = client;
@@ -85,7 +85,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
   }
 
   void _handleNewClientTap(bool isMobile) async {
-    // 🔒 GATING: Verifica se o plano permite adicionar mais clientes
+    // ?? GATING: Verifica se o plano permite adicionar mais clientes
 
     // Nota: Isso conta agendamentos, o que é um proxy ruim para "clientes únicos".
     // Mas como a arquitetura atual não tem uma coleção 'clients' isolada para o business,
@@ -123,22 +123,22 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
     if (!mounted) return;
 
     if (isMobile) {
-      // 📱 MODO CELULAR: Navega para nova tela
+      // ?? MODO CELULAR: Navega para nova tela
       Navigator.push(
         context,
         MaterialPageRoute(
           builder: (context) => Scaffold(
             appBar: AppBar(
                 title: const Text("Novo Cliente"),
-                backgroundColor: Colors.white,
-                foregroundColor: Colors.black,
-                elevation: 1),
+                backgroundColor: AppColors.primaryPurple,
+                foregroundColor: Colors.white,
+                elevation: 0),
             body: const ClientRegisterPage(isBusinessAdding: true),
           ),
         ),
       );
     } else {
-      // 💻 MODO PC: Abre na lateral
+      // ?? MODO PC: Abre na lateral
       setState(() {
         _selectedClientData = null;
         _selectedClientId = null;
@@ -200,7 +200,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
   Widget build(BuildContext context) {
     if (_isLoadingId) return const Center(child: CircularProgressIndicator());
 
-    // 🛡️ O GUARDIÃO DO LAYOUT: Verifica a largura da tela
+    // ??? O GUARDIÃO DO LAYOUT: Verifica a largura da tela
     return LayoutBuilder(
       builder: (context, constraints) {
         // Se a largura for menor que 850px, consideramos "Mobile/Tablet Pequeno"
@@ -249,7 +249,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
     );
   }
 
-  // 🧩 WIDGET EXTRAÍDO: Conteúdo da Lista (Reusável)
+  // ?? WIDGET EXTRAÍDO: Conteúdo da Lista (Reusável)
   Widget _buildListContent(bool isMobile) {
     return Column(
       children: [
@@ -322,9 +322,9 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
             scrollDirection: Axis.horizontal,
             child: Row(
               children: [
-                _buildTabButton(0, "📱 Pelo App", Icons.smartphone),
+                _buildTabButton(0, "Pelo App", Icons.smartphone),
                 const SizedBox(width: 15),
-                _buildTabButton(1, "📝 Manuais", Icons.edit_note),
+                _buildTabButton(1, "Manuais", Icons.edit_note),
               ],
             ),
           ),
@@ -545,7 +545,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
 
     return {
       'app': allApps,
-      // 🧹 FILTRO DE LIMPEZA: Remove clientes manuais sem telefone (provavelmente apenas agendamentos rápidos)
+      // ?? FILTRO DE LIMPEZA: Remove clientes manuais sem telefone (provavelmente apenas agendamentos rápidos)
       // O usuário solicitou não mostrar esses registros pois não tem dados relevantes para CRM.
       'manual': manualClientsMap.values
           .where((c) =>

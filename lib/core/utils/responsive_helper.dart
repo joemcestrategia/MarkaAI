@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 
 /// Helper para gerenciar responsividade e adaptar layouts
 class ResponsiveHelper {
@@ -94,7 +94,7 @@ class ResponsiveHelper {
       // Desktop/Tablet: bottom sheet
       return showModalBottomSheet<T>(
         context: context,
-      useSafeArea: true,
+        useSafeArea: true,
         isDismissible: isDismissible,
         isScrollControlled: true,
         shape: const RoundedRectangleBorder(
@@ -173,7 +173,8 @@ class ResponsiveHelper {
   }
 
   /// Retorna tamanho de fonte responsivo
-  static double getResponsiveFontSize(BuildContext context, double baseFontSize) {
+  static double getResponsiveFontSize(
+      BuildContext context, double baseFontSize) {
     if (isMobile(context)) {
       return baseFontSize;
     } else if (isTablet(context)) {

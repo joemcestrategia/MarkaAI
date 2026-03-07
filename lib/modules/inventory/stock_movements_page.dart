@@ -1,6 +1,7 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../core/services/session_service.dart';
+import '../../core/theme/app_colors.dart';
 
 class StockMovementsPage extends StatefulWidget {
   const StockMovementsPage({super.key});
@@ -48,8 +49,8 @@ class _StockMovementsPageState extends State<StockMovementsPage> {
       appBar: AppBar(
         title: const Text('Histórico de Estoque',
             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black87,
+        backgroundColor: AppColors.primaryPurple,
+        foregroundColor: Colors.white,
         elevation: 0,
         centerTitle: false,
       ),

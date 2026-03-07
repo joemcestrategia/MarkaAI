@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -16,7 +16,7 @@ class TeamManagementPage extends StatefulWidget {
 class _TeamManagementPageState extends State<TeamManagementPage> {
   String? shopId;
   bool _isLoading = true;
-  
+
   // Controle do Painel Lateral (Apenas Desktop)
   bool _showPanel = false;
   DocumentSnapshot? _employeeToEdit;
@@ -27,13 +27,16 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
     _loadShopId();
   }
 
-  // 🛡️ CARREGAMENTO DE ID BLINDADO
+  // ðŸ›¡ï¸ CARREGAMENTO DE ID BLINDADO
   Future<void> _loadShopId() async {
     String? id = await SessionService.getShopId();
     if (id == null || id.isEmpty) {
       final user = FirebaseAuth.instance.currentUser;
       if (user != null) {
-        final doc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+        final doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
         if (doc.exists) {
           id = doc.data()?['shopId'];
         }
@@ -48,19 +51,20 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
     }
   }
 
-  // 🧠 NAVEGAÇÃO INTELIGENTE (O Segredo da Responsividade)
-  void _handleMemberTap(BuildContext context, DocumentSnapshot? doc, bool isMobile) {
+  // ðŸ§  NAVEGAÇÃO INTELIGENTE (O Segredo da Responsividade)
+  void _handleMemberTap(
+      BuildContext context, DocumentSnapshot? doc, bool isMobile) {
     if (isMobile) {
-      // 📱 MODO CELULAR: Navega para nova tela
+      // ðŸ“± MODO CELULAR: Navega para nova tela
       Navigator.push(
         context,
         MaterialPageRoute(
           builder: (context) => Scaffold(
             appBar: AppBar(
               title: Text(doc == null ? "Novo Membro" : "Editar Membro"),
-              backgroundColor: Colors.white,
-              foregroundColor: Colors.black,
-              elevation: 1,
+              backgroundColor: AppColors.primaryPurple,
+              foregroundColor: Colors.white,
+              elevation: 0,
             ),
             body: EmployeeRegisterPage(
               key: ValueKey(doc?.id ?? 'novo'), // Força recriação
@@ -71,13 +75,15 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
         ),
       );
     } else {
-      // 💻 MODO PC: Abre painel lateral
+      // ðŸ’» MODO PC: Abre painel lateral
       _openPanelDesktop(doc);
     }
   }
 
   void _openPanelDesktop(DocumentSnapshot? doc) {
-    setState(() { _showPanel = false; }); // Reseta para forçar rebuild
+    setState(() {
+      _showPanel = false;
+    }); // Reseta para forçar rebuild
     Future.delayed(const Duration(milliseconds: 50), () {
       if (mounted) {
         setState(() {
@@ -99,10 +105,15 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) return const Center(child: CircularProgressIndicator(color: AppColors.primaryPurple));
-    if (shopId == null) return const Center(child: Text("Erro: Loja não identificada."));
+    if (_isLoading) {
+      return const Center(
+          child: CircularProgressIndicator(color: AppColors.primaryPurple));
+    }
+    if (shopId == null) {
+      return const Center(child: Text("Erro: Loja não identificada."));
+    }
 
-    // 🛡️ O GUARDIÃO DO LAYOUT
+    // ðŸ›¡ï¸ O GUARDIÃO DO LAYOUT
     return LayoutBuilder(
       builder: (context, constraints) {
         bool isMobile = constraints.maxWidth < 850;
@@ -147,7 +158,7 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
     );
   }
 
-  // 🧩 CONTEÚDO DA LISTA (REUSÁVEL)
+  // ðŸ§© CONTEÚDO DA LISTA (REUSÃVEL)
   Widget _buildListContent(bool isMobile) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -158,16 +169,20 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text("Membros da Equipe", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const Text("Membros da Equipe",
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
               ElevatedButton.icon(
-                onPressed: () => _handleMemberTap(context, null, isMobile), // Novo Membro
+                onPressed: () =>
+                    _handleMemberTap(context, null, isMobile), // Novo Membro
                 icon: const Icon(Icons.add, size: 18),
                 label: Text(isMobile ? "NOVO" : "NOVO MEMBRO"),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primaryPurple,
                   foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 ),
               ),
             ],
@@ -182,22 +197,29 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
                 .where('shopId', isEqualTo: shopId)
                 .snapshots(),
             builder: (context, snapshot) {
-              if (snapshot.hasError) return Center(child: Text("Erro: ${snapshot.error}"));
-              if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+              if (snapshot.hasError) {
+                return Center(child: Text("Erro: ${snapshot.error}"));
+              }
+              if (!snapshot.hasData) {
+                return const Center(child: CircularProgressIndicator());
+              }
               if (snapshot.data!.docs.isEmpty) return _buildEmptyState();
 
               return ListView.separated(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
                 itemCount: snapshot.data!.docs.length,
                 separatorBuilder: (_, __) => const SizedBox(height: 12),
                 itemBuilder: (context, index) {
                   var doc = snapshot.data!.docs[index];
                   var data = doc.data() as Map<String, dynamic>;
                   // No desktop, destaca o selecionado. No mobile, ninguém fica selecionado visualmente.
-                  bool isSelected = !isMobile && _showPanel && _employeeToEdit?.id == doc.id;
+                  bool isSelected =
+                      !isMobile && _showPanel && _employeeToEdit?.id == doc.id;
 
                   return GestureDetector(
-                    onTap: () => _handleMemberTap(context, doc, isMobile), // Editar Membro
+                    onTap: () => _handleMemberTap(
+                        context, doc, isMobile), // Editar Membro
                     child: _buildEmployeeCard(data, isSelected),
                   );
                 },
@@ -212,10 +234,19 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
   Widget _buildEmployeeCard(Map<String, dynamic> data, bool isSelected) {
     return Container(
       decoration: BoxDecoration(
-        color: isSelected ? AppColors.primaryPurple.withValues(alpha: 0.05) : Colors.white,
+        color: isSelected
+            ? AppColors.primaryPurple.withValues(alpha: 0.05)
+            : Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: isSelected ? Border.all(color: AppColors.primaryPurple, width: 2) : Border.all(color: Colors.transparent, width: 2),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4))],
+        border: isSelected
+            ? Border.all(color: AppColors.primaryPurple, width: 2)
+            : Border.all(color: Colors.transparent, width: 2),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 10,
+              offset: const Offset(0, 4))
+        ],
       ),
       padding: const EdgeInsets.all(12),
       child: Row(
@@ -223,9 +254,10 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
           CircleAvatar(
             radius: 28,
             backgroundColor: AppColors.primaryPurple.withValues(alpha: 0.1),
-            backgroundImage: (data['foto_url'] != null && data['foto_url'].isNotEmpty)
-                ? CachedNetworkImageProvider(data['foto_url'])
-                : null,
+            backgroundImage:
+                (data['foto_url'] != null && data['foto_url'].isNotEmpty)
+                    ? CachedNetworkImageProvider(data['foto_url'])
+                    : null,
             child: (data['foto_url'] == null || data['foto_url'].isEmpty)
                 ? const Icon(Icons.person, color: AppColors.primaryPurple)
                 : null,
@@ -235,10 +267,12 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(data['nome'] ?? "Sem nome", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                Text(data['nome'] ?? "Sem nome",
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 15)),
                 const SizedBox(height: 4),
                 Text(
-                  "🕒 ${data['horario_inicio'] ?? '--:--'} às ${data['horario_fim'] ?? '--:--'}",
+                  "ðŸ•’ ${data['horario_inicio'] ?? '--:--'} Ã s ${data['horario_fim'] ?? '--:--'}",
                   style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                 ),
               ],
@@ -273,7 +307,8 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
         children: [
           Icon(Icons.people_outline, size: 64, color: Colors.grey[300]),
           const SizedBox(height: 16),
-          Text("Nenhum membro cadastrado", style: TextStyle(color: Colors.grey[600])),
+          Text("Nenhum membro cadastrado",
+              style: TextStyle(color: Colors.grey[600])),
         ],
       ),
     );

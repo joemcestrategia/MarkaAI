@@ -27,7 +27,8 @@ import 'client_search_page.dart';
 import '../../core/widgets/seletor_de_cidade.dart';
 
 class ClientHomePage extends StatefulWidget {
-  const ClientHomePage({super.key});
+  final int initialTabIndex;
+  const ClientHomePage({super.key, this.initialTabIndex = 0});
 
   @override
   State<ClientHomePage> createState() => _ClientHomePageState();
@@ -52,7 +53,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
   double? _userLng;
   final double _selectedRadius = 20.0; // km
 
-  // 🌍 Cidade selecionada pelo cliente (persiste no SharedPreferences)
+  // ?? Cidade selecionada pelo cliente (persiste no SharedPreferences)
   CidadeSelecionada? _cidadeSelecionada;
 
   final List<Map<String, dynamic>> _categories = [
@@ -71,6 +72,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
   @override
   void initState() {
     super.initState();
+    _selectedIndex = widget.initialTabIndex;
     _loadUserData();
     _setupNotifications();
     _loadCidadeSalva();
@@ -109,9 +111,9 @@ class _ClientHomePageState extends State<ClientHomePage> {
       case 'barbearia':
         return const Color(0xFFE3F2FD); // Azul claro
       case 'beleza':
-      case 'estética':
+      case 'esttica':
         return const Color(0xFFFCE4EC); // Rosa claro
-      case 'saúde':
+      case 'sade':
         return const Color(0xFFE8F5E9); // Verde claro
       case 'bem-estar':
         return const Color(0xFFFFF3E0); // Laranja claro
@@ -125,9 +127,9 @@ class _ClientHomePageState extends State<ClientHomePage> {
       case 'barbearia':
         return Icons.content_cut;
       case 'beleza':
-      case 'estética':
+      case 'esttica':
         return Icons.face;
-      case 'saúde':
+      case 'sade':
         return Icons.medical_services;
       case 'bem-estar':
         return Icons.self_improvement;
@@ -137,7 +139,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
   }
 
   void _setupNotifications() {
-    // Notificações quando app está em foreground
+    // Notificações quando app est em foreground
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       final appointmentId = message.data['appointmentId'];
       final type = message.data['type'];
@@ -181,7 +183,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
           _userEmail = user.email ?? "";
           _userPhotoUrl = user.photoURL;
           _userTipo = data?['tipo'] ?? data?['role'] ?? 'cliente';
-          // Restaurar última localização salva
+          // Restaurar ltima localização salva
           final lastLoc = data?['last_location'] as Map<String, dynamic>?;
           if (lastLoc != null) {
             _selectedLocation = lastLoc['label'] ?? '';
@@ -213,7 +215,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
         _userLng =
             result['lng'] != null ? (result['lng'] as num).toDouble() : null;
       });
-      // Persistir última localização no Firestore
+      // Persistir ltima localização no Firestore
       final uid = FirebaseAuth.instance.currentUser?.uid;
       if (uid != null) {
         FirebaseFirestore.instance.collection('users').doc(uid).set({
@@ -230,28 +232,104 @@ class _ClientHomePageState extends State<ClientHomePage> {
   }
 
   void _confirmLogout() {
-    showDialog(
+    showModalBottomSheet(
       context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text("Sair da Conta"),
-        content: const Text("Deseja realmente sair do App?"),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text("Cancelar")),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8))),
-            onPressed: () {
-              Navigator.pop(context);
-              _handleLogout();
-            },
-            child: const Text("Sair", style: TextStyle(color: Colors.white)),
-          ),
-        ],
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        padding: EdgeInsets.fromLTRB(
+            24, 16, 24, MediaQuery.of(ctx).viewInsets.bottom + 24),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Handle
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // Linha com ícone + título
+            Row(
+              children: [
+                Icon(Icons.logout_rounded,
+                    color: Colors.red.shade600, size: 22),
+                const SizedBox(width: 10),
+                Text(
+                  "Sair da Conta",
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.red.shade700,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+
+            Text(
+              "Tem certeza que deseja sair?\nVocê precisará fazer login novamente.",
+              textAlign: TextAlign.left,
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.grey[600],
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // Botão Sair
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.logout_rounded, size: 18),
+                label: const Text("Confirmar Saída",
+                    style:
+                        TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red.shade600,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  elevation: 0,
+                ),
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _handleLogout();
+                },
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            // Botão Cancelar
+            SizedBox(
+              width: double.infinity,
+              height: 44,
+              child: TextButton(
+                style: TextButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  foregroundColor: Colors.grey[700],
+                ),
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text("Cancelar",
+                    style:
+                        TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -270,10 +348,163 @@ class _ClientHomePageState extends State<ClientHomePage> {
           ),
         );
         break;
+      case 'privacy':
+        _showPrivacySheet();
+        break;
+      case 'delete':
+        _deleteAccount();
+        break;
       case 'logout':
         _confirmLogout();
         break;
     }
+  }
+
+  void _showPrivacySheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.85,
+        maxChildSize: 0.95,
+        minChildSize: 0.5,
+        builder: (_, controller) => Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: Column(
+            children: [
+              const SizedBox(height: 12),
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  children: [
+                    const Icon(Icons.privacy_tip_outlined,
+                        color: AppColors.primaryPurple),
+                    const SizedBox(width: 10),
+                    const Text('Privacidade & Dados',
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold)),
+                    const Spacer(),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(),
+              Expanded(
+                child: SingleChildScrollView(
+                  controller: controller,
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _privacySection('📋 Dados Coletados',
+                          'Coletamos: nome, e-mail, telefone, localização aproximada e histórico de agendamentos para proporcionar a melhor experiência no app.'),
+                      _privacySection('🔐 Uso dos Dados',
+                          'Seus dados são usados exclusivamente para identificar sua conta, exibir estabelecimentos próximos e registrar seus agendamentos. Não compartilhamos dados com terceiros para fins publicitários.'),
+                      _privacySection('📍 Localização',
+                          'A localização é usada apenas para filtrar estabelecimentos próximos. Você pode desativar a permissão de localização a qualquer momento nas configurações do seu dispositivo.'),
+                      _privacySection('🗑️ Seus Direitos (LGPD)',
+                          'De acordo com a Lei Geral de Proteção de Dados (Lei nº 13.709/2018), você tem direito a: acessar, corrigir, exportar e excluir seus dados pessoais a qualquer momento.'),
+                      _privacySection('📧 Contato',
+                          'Para exercer seus direitos ou esclarecer dúvidas sobre privacidade, entre em contato: privacidade@markaai.com.br'),
+                      const SizedBox(height: 20),
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.red.shade50,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.red.shade200),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Row(
+                              children: [
+                                Icon(Icons.warning_amber_rounded,
+                                    color: Colors.red, size: 20),
+                                SizedBox(width: 8),
+                                Text('Excluir Conta',
+                                    style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.red,
+                                        fontSize: 15)),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'A exclusão da conta remove permanentemente todos os seus dados, agendamentos e histórico. Esta ação é irreversível.',
+                              style: TextStyle(
+                                  fontSize: 13, color: Colors.black87),
+                            ),
+                            const SizedBox(height: 12),
+                            SizedBox(
+                              width: double.infinity,
+                              child: OutlinedButton.icon(
+                                icon: const Icon(Icons.delete_forever,
+                                    color: Colors.red, size: 18),
+                                label: const Text('Excluir minha conta',
+                                    style: TextStyle(
+                                        color: Colors.red,
+                                        fontWeight: FontWeight.bold)),
+                                style: OutlinedButton.styleFrom(
+                                  side: const BorderSide(color: Colors.red),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10)),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 12),
+                                ),
+                                onPressed: () {
+                                  Navigator.pop(ctx);
+                                  _deleteAccount();
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _privacySection(String title, String body) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title,
+              style:
+                  const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+          const SizedBox(height: 6),
+          Text(body,
+              style: const TextStyle(
+                  fontSize: 13, color: Colors.black54, height: 1.5)),
+        ],
+      ),
+    );
   }
 
   void _navigateToSearch(String query) {
@@ -304,10 +535,10 @@ class _ClientHomePageState extends State<ClientHomePage> {
           bool checked = false;
           return StatefulBuilder(builder: (ctx2, setS) {
             return AlertDialog(
-              title: const Text('Excluir Conta - Irreversível'),
+              title: const Text('Excluir Conta - Irreversvel'),
               content: Column(mainAxisSize: MainAxisSize.min, children: [
                 const Text(
-                    'Esta ação removerá TODOS os dados ligados a esta conta (agendamentos, perfil, etc.) e é IRRECUPERÁVEL. Após a exclusão, limpe o cache do telefone para evitar reentrar com dados antigos.'),
+                    'Esta ao remover TODOS os dados ligados a esta conta (agendamentos, perfil, etc.) e  IRRECUPERVEL. Aps a excluso, limpe o cache do telefone para evitar reentrar com dados antigos.'),
                 const SizedBox(height: 12),
                 Row(children: [
                   Checkbox(
@@ -343,7 +574,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
         Navigator.pop(context);
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Erro: usuário não autenticado')));
+            const SnackBar(content: Text('Erro: usurio no autenticado')));
         return;
       }
       final url = Uri.parse(
@@ -366,7 +597,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             content: Text(
-                'Conta excluída com sucesso. Limpe o cache do app/telefone manualmente.')));
+                'Conta excluda com sucesso. Limpe o cache do app/telefone manualmente.')));
         Navigator.pushAndRemoveUntil(context,
             MaterialPageRoute(builder: (_) => const LoginPage()), (r) => false);
       } else {
@@ -405,7 +636,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
         builder: (context) => ShopProfilePage(
           shopDoc: shop,
           onBookService: (sDoc) {
-            // 🔥 Navega para a página de detalhes do serviço PRIMEIRO
+            // ?? Navega para a pgina de detalhes do servio PRIMEIRO
             _openServiceDetails(serviceDoc: sDoc);
           },
         ),
@@ -437,7 +668,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
         builder: (ctx) => AlertDialog(
           title: const Text('Perfil incompleto'),
           content: const Text(
-            'Seu perfil ainda não foi todo preenchido. Para agendar, complete seus dados (nome, telefone, endereço). Deseja completar agora?',
+            'Seu perfil ainda no foi todo preenchido. Para agendar, complete seus dados (nome, telefone, endereço). Deseja completar agora?',
           ),
           actions: [
             TextButton(
@@ -546,7 +777,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
   Widget _buildFavoritesView({required bool isDesktop}) {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) {
-      return const Center(child: Text('Faça login para ver seus favoritos'));
+      return const Center(child: Text('Faa login para ver seus favoritos'));
     }
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
@@ -573,7 +804,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
                         fontWeight: FontWeight.w600,
                         color: Colors.grey[500])),
                 const SizedBox(height: 8),
-                Text('Toque no ❤️ nas lojas para adicioná-las aqui',
+                Text('Toque no ?? nas lojas para adicion-las aqui',
                     style: TextStyle(fontSize: 13, color: Colors.grey[400])),
               ],
             ),
@@ -681,7 +912,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Row(
                 children: [
-                  // Apenas o logo (já contém o nome do app)
+                  // Apenas o logo (j contm o nome do app)
                   Image.asset('assets/images/logo_purple.png', height: 36),
 
                   const Spacer(),
@@ -693,6 +924,28 @@ class _ClientHomePageState extends State<ClientHomePage> {
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12)),
                     itemBuilder: (_) => [
+                      PopupMenuItem<String>(
+                        enabled: false,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _userName,
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                  color: Colors.black87),
+                            ),
+                            if (_userEmail.isNotEmpty)
+                              Text(
+                                _userEmail,
+                                style: TextStyle(
+                                    fontSize: 13, color: Colors.grey[600]),
+                              ),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuDivider(),
                       PopupMenuItem(
                         value: 'edit',
                         child: Row(children: const [
@@ -700,6 +953,16 @@ class _ClientHomePageState extends State<ClientHomePage> {
                               size: 20, color: AppColors.primaryPurple),
                           SizedBox(width: 10),
                           Text('Editar Perfil'),
+                        ]),
+                      ),
+                      const PopupMenuDivider(),
+                      PopupMenuItem(
+                        value: 'privacy',
+                        child: Row(children: const [
+                          Icon(Icons.privacy_tip_outlined,
+                              size: 20, color: Colors.blueGrey),
+                          SizedBox(width: 10),
+                          Text('Privacidade & Dados'),
                         ]),
                       ),
                       const PopupMenuDivider(),
@@ -737,7 +1000,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
             ),
           ),
 
-        // 🌍 SELETOR DE CIDADE — exibe a cidade atual ou convida o usuário a escolher
+        // ?? SELETOR DE CIDADE  exibe a cidade atual ou convida o usurio a escolher
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
@@ -788,7 +1051,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
                   }
                 },
                 decoration: const InputDecoration(
-                  hintText: "O que você procura hoje?",
+                  hintText: "O que voc procura hoje?",
                   prefixIcon: Icon(Icons.search, color: Colors.grey),
                   border: InputBorder.none,
                   contentPadding:
@@ -799,7 +1062,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
           ),
         ),
 
-        // ⭐ SEÇÃO DESTAQUES — Banner largo logo abaixo da busca
+        // ? SEO DESTAQUES  Banner largo logo abaixo da busca
         SliverToBoxAdapter(
           child: _BoostBannerCarousel(
             cidadeSelecionada: _cidadeSelecionada,
@@ -856,7 +1119,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
             child: Text(
               _searchText.isEmpty
-                  ? "Recomendados para você"
+                  ? "Recomendados para voc"
                   : "Resultados da busca",
               style: const TextStyle(
                   fontSize: 18,
@@ -880,14 +1143,14 @@ class _ClientHomePageState extends State<ClientHomePage> {
             final filtered = snapshot.data!.docs.where((doc) {
               final d = doc.data() as Map<String, dynamic>;
 
-              // 🔥 CORREÇÃO: Lojas sem o campo 'ativo' são consideradas ATIVAS
+              // ?? CORREO: Lojas sem o campo 'ativo' so consideradas ATIVAS
               final bool isActive = d['ativo'] ?? true;
 
               final matchesText = (d['nome'] ?? "")
                   .toString()
                   .toLowerCase()
                   .contains(_searchText.toLowerCase());
-              // Suporte a múltiplas categorias separadas por ponto e vírgula
+              // Suporte a mltiplas categorias separadas por ponto e vrgula
               final matchesCat = _selectedCategory == "Todos" ||
                   (() {
                     final cats = (d['categoria'] ?? '')
@@ -897,7 +1160,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
                     return cats.any((c) => c.contains(_selectedCategory));
                   })();
 
-              // 📍 Filtro por cidade/estado (SeletorDeCidade)
+              // ?? Filtro por cidade/estado (SeletorDeCidade)
               bool matchesCity = true;
               if (_cidadeSelecionada != null) {
                 final shopCidade =
@@ -917,7 +1180,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
                     shopCity.contains(_selectedLocation.toLowerCase()) ||
                         _selectedLocation.toLowerCase().contains(shopCity);
 
-                // 🛠️ Raio por coordenadas (se disponível)
+                // ??? Raio por coordenadas (se disponvel)
                 if (_userLat != null &&
                     _userLng != null &&
                     d['lat'] != null &&
@@ -936,7 +1199,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
               return matchesText && matchesCat && matchesCity && isActive;
             }).toList();
 
-            // 🔀 Ordenação por Qualidade do Perfil (Media)
+            // ?? Ordenao por Qualidade do Perfil (Media)
             filtered.sort((a, b) {
               final da = a.data() as Map<String, dynamic>;
               final db = b.data() as Map<String, dynamic>;
@@ -1070,7 +1333,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
                     style: const TextStyle(
                         fontSize: 28, fontWeight: FontWeight.bold)),
                 if (_selectedIndex == 0)
-                  const Text("Encontre os melhores serviços perto de você.",
+                  const Text("Encontre os melhores servios perto de voc.",
                       style: TextStyle(color: Colors.grey)),
               ],
             ),
@@ -1141,7 +1404,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
 }
 
 // =============================================================================
-// 🏰 COMPONENTES VISUAIS (DESIGN SYSTEM)
+// ?? COMPONENTES VISUAIS (DESIGN SYSTEM)
 // =============================================================================
 
 class _ShopCard extends StatefulWidget {
@@ -1219,9 +1482,9 @@ class _ShopCardState extends State<_ShopCard> {
         case 'barbearia':
           return const Color(0xFFE3F2FD);
         case 'beleza':
-        case 'estética':
+        case 'esttica':
           return const Color(0xFFFCE4EC);
-        case 'saúde':
+        case 'sade':
           return const Color(0xFFE8F5E9);
         case 'bem-estar':
           return const Color(0xFFFFF3E0);
@@ -1235,9 +1498,9 @@ class _ShopCardState extends State<_ShopCard> {
         case 'barbearia':
           return Icons.content_cut;
         case 'beleza':
-        case 'estética':
+        case 'esttica':
           return Icons.face;
-        case 'saúde':
+        case 'sade':
           return Icons.medical_services;
         case 'bem-estar':
           return Icons.self_improvement;
@@ -1327,7 +1590,7 @@ class _ShopCardState extends State<_ShopCard> {
                       ),
                     )
                   else
-                    // AVALIAÇÃO (Top Right se não for destaque)
+                    // AVALIAO (Top Right se no for destaque)
                     Positioned(
                       top: 6,
                       right: 6,
@@ -1441,7 +1704,7 @@ class _ShopCardState extends State<_ShopCard> {
   }
 }
 
-// 📖 PÁGINA RESTAURADA: DETALHES DO SERVIÇO
+// ?? PGINA RESTAURADA: DETALHES DO SERVIO
 class ServiceDetailsPage extends StatefulWidget {
   final String serviceId;
   final Map<String, dynamic> serviceData;
@@ -1501,7 +1764,7 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
     if (phone == null || phone.toString().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text("Loja não possui número de WhatsApp cadastrado.")),
+            content: Text("Loja no possui nmero de WhatsApp cadastrado.")),
       );
       return;
     }
@@ -1511,10 +1774,10 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
       cleanPhone = '55$cleanPhone';
     }
 
-    final String serviceName = widget.serviceData['nome'] ?? 'Serviço';
+    final String serviceName = widget.serviceData['nome'] ?? 'Servio';
     final String shopName = shopData['nome'] ?? 'loja';
     final String message =
-        "Olá, vim pelo App MarkaAI e gostaria de agendar o serviço $serviceName na $shopName.";
+        "Ol, vim pelo App MarkaAI e gostaria de agendar o servio $serviceName na $shopName.";
 
     final Uri url = Uri.parse(
         "https://wa.me/$cleanPhone?text=${Uri.encodeComponent(message)}");
@@ -1633,7 +1896,7 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
                         children: [
                           Expanded(
                             child: Text(
-                              sData['nome'] ?? "Serviço",
+                              sData['nome'] ?? "Servio",
                               style: const TextStyle(
                                   fontSize: 26,
                                   fontWeight: FontWeight.bold,
@@ -1663,13 +1926,13 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
                       const SizedBox(height: 20),
                       const Divider(),
                       const SizedBox(height: 20),
-                      const Text("Sobre o serviço",
+                      const Text("Sobre o servio",
                           style: TextStyle(
                               fontSize: 18, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 10),
                       Text(
                         sData['descricao'] ??
-                            "Sem descrição disponível para este serviço.",
+                            "Sem descrio disponvel para este servio.",
                         style: TextStyle(
                             color: Colors.grey[700], fontSize: 16, height: 1.6),
                       ),
@@ -1752,9 +2015,9 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 🚀 BOOST BANNER CAROUSEL — banner largo de negócios impulsionados
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
+// ?? BOOST BANNER CAROUSEL  banner largo de negócios impulsionados
+// -----------------------------------------------------------------------------
 class _BoostBannerCarousel extends StatefulWidget {
   final CidadeSelecionada? cidadeSelecionada;
   final void Function(DocumentSnapshot) onShopTap;
@@ -1836,7 +2099,7 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Título
+            // Ttulo
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
               child: Row(children: [
@@ -1938,7 +2201,7 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
                               ),
                             ),
                           ),
-                          // Badge DESTAQUE — topo direito
+                          // Badge DESTAQUE  topo direito
                           Positioned(
                             top: 12,
                             right: 12,
@@ -1977,7 +2240,7 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
                               ),
                             ),
                           ),
-                          // Conteúdo inferior: logo + nome + categoria
+                          // Contedo inferior: logo + nome + categoria
                           Positioned(
                             bottom: 12,
                             left: 12,
@@ -2043,7 +2306,7 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
                                     ],
                                   ),
                                 ),
-                                // Botão Ver Loja
+                                // Boto Ver Loja
                                 Container(
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 12, vertical: 6),

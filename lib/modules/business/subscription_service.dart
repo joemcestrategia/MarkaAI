@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -278,7 +278,7 @@ class SubscriptionService {
       if (sub['status'] == 'canceled' || sub['status'] == 'cancelled') {
         final accessUntil = (sub['access_until'] as Timestamp?)?.toDate();
         if (accessUntil != null && accessUntil.isAfter(DateTime.now())) {
-          // Ainda tem acesso — retorna plano salvo
+          // Ainda tem acesso â€” retorna plano salvo
           return _parsePlanId(sub['plan_id'] as String?);
         }
         // Acesso expirado após cancelamento
@@ -460,7 +460,7 @@ class SubscriptionService {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text("Plano $planName ativado com sucesso! 🚀"),
+              content: Text("Plano $planName ativado com sucesso! ðŸš€"),
               backgroundColor: Colors.green,
             ),
           );
@@ -530,7 +530,7 @@ class SubscriptionService {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("Plano $planName ativado! 🎉"),
+            content: Text("Plano $planName ativado! ðŸŽ‰"),
             backgroundColor: Colors.green,
           ),
         );
@@ -548,7 +548,7 @@ class SubscriptionService {
     }
   }
 
-  /// TESTE 12 — Cancela a assinatura. Acesso mantido até fim do período atual.
+  /// TESTE 12 â€” Cancela a assinatura. Acesso mantido até fim do período atual.
   static Future<bool> cancelSubscription({
     required BuildContext context,
     required String shopId,
@@ -584,7 +584,7 @@ class SubscriptionService {
     }
   }
 
-  /// TESTE 10 — Faz upgrade de plano com crédito pro-rata calculado pelo backend.
+  /// TESTE 10 â€” Faz upgrade de plano com crédito pro-rata calculado pelo backend.
   static Future<bool> upgradeSubscription({
     required BuildContext context,
     required String shopId,
@@ -628,7 +628,7 @@ class SubscriptionService {
     }
   }
 
-  /// TESTE 11 — Agenda downgrade de plano para o próximo ciclo de cobrança.
+  /// TESTE 11 â€” Agenda downgrade de plano para o próximo ciclo de cobrança.
   static Future<bool> scheduleDowngrade({
     required BuildContext context,
     required String shopId,
@@ -670,7 +670,7 @@ class SubscriptionService {
     }
   }
 
-  /// TESTE 13 — Reativa assinatura cancelada ou com downgrade pendente.
+  /// TESTE 13 â€” Reativa assinatura cancelada ou com downgrade pendente.
   static Future<bool> reactivateSubscription({
     required BuildContext context,
     required String shopId,
@@ -690,7 +690,7 @@ class SubscriptionService {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content:
-                Text(result.data?['message'] ?? 'Assinatura reativada! 🚀'),
+                Text(result.data?['message'] ?? 'Assinatura reativada! ðŸš€'),
             backgroundColor: Colors.green,
           ),
         );

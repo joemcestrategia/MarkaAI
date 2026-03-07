@@ -1,7 +1,9 @@
 ﻿import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../core/theme/app_colors.dart';
+import '../clients/client_details_page.dart';
 
 class BusinessHistoryPage extends StatelessWidget {
   final String shopId;
@@ -70,9 +72,9 @@ class BusinessHistoryPage extends StatelessWidget {
       appBar: AppBar(
         title: const Text("Histórico de Atividades",
             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
-        elevation: 0.5,
+        backgroundColor: AppColors.primaryPurple,
+        foregroundColor: Colors.white,
+        elevation: 0,
         centerTitle: false,
       ),
       body: FutureBuilder<List<Map<String, dynamic>>>(
@@ -123,7 +125,7 @@ class BusinessHistoryPage extends StatelessWidget {
                 children: [
                   _buildDateHeader(day),
                   const SizedBox(height: 10),
-                  ...items.map((e) => _buildEventCard(e)),
+                  ...items.map((e) => _buildEventCard(e, context)),
                   const SizedBox(height: 20),
                 ],
               );
@@ -165,16 +167,17 @@ class BusinessHistoryPage extends StatelessWidget {
     );
   }
 
-  Widget _buildEventCard(Map<String, dynamic> event) {
+  Widget _buildEventCard(Map<String, dynamic> event, BuildContext context) {
     if (event['type'] == 'agendamento') {
-      return _buildAppointmentCard(event);
+      return _buildAppointmentCard(event, context);
     } else if (event['type'] == 'pagamento') {
       return _buildPaymentCard(event);
     }
     return const SizedBox.shrink();
   }
 
-  Widget _buildAppointmentCard(Map<String, dynamic> event) {
+  Widget _buildAppointmentCard(
+      Map<String, dynamic> event, BuildContext context) {
     final payload = event['payload'] as Map<String, dynamic>;
     final when = event['when'] as DateTime?;
     final time = when != null ? DateFormat('HH:mm').format(when) : '--:--';
@@ -182,6 +185,8 @@ class BusinessHistoryPage extends StatelessWidget {
     final status = (payload['status'] ?? 'agendado').toString().toLowerCase();
     final clientName =
         payload['client_nome'] ?? payload['cliente_nome'] ?? 'Cliente';
+    final clientId = payload['clientId'];
+    final clientPhone = payload['client_phone'] ?? payload['cliente_telefone'];
     final serviceName = payload['servico_nome'] ?? 'Serviço';
     final val = double.tryParse(payload['valor_total']?.toString() ?? '0') ?? 0;
 
@@ -250,9 +255,35 @@ class BusinessHistoryPage extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(clientName,
-                          style: const TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 15)),
+                      GestureDetector(
+                        onTap: clientId != null && clientId.isNotEmpty
+                            ? () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => ClientDetailsPage(
+                                      clientId: clientId,
+                                      clientData: const {},
+                                      onClose: () => Navigator.pop(context),
+                                    ),
+                                  ),
+                                );
+                              }
+                            : null,
+                        child: Text(
+                          clientName,
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                            decoration: clientId != null && clientId.isNotEmpty
+                                ? TextDecoration.underline
+                                : null,
+                            color: clientId != null && clientId.isNotEmpty
+                                ? AppColors.primaryPurple
+                                : Colors.black,
+                          ),
+                        ),
+                      ),
                       const SizedBox(height: 4),
                       Text(serviceName,
                           style:
@@ -275,6 +306,49 @@ class BusinessHistoryPage extends StatelessWidget {
                                   fontWeight: FontWeight.bold),
                             ),
                           ),
+                          if (clientPhone != null && clientPhone.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(left: 8.0),
+                              child: InkWell(
+                                onTap: () async {
+                                  final url =
+                                      'https://wa.me/${clientPhone.replaceAll(RegExp(r'\D'), '')}';
+                                  if (await canLaunchUrl(Uri.parse(url))) {
+                                    await launchUrl(Uri.parse(url));
+                                  } else {
+                                    if (!context.mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                          content: Text(
+                                              'Não foi possível abrir o WhatsApp para $clientPhone')),
+                                    );
+                                  }
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.green.withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.chat_rounded,
+                                          color: Colors.green, size: 12),
+                                      SizedBox(width: 4),
+                                      Text(
+                                        'WhatsApp',
+                                        style: TextStyle(
+                                            color: Colors.green,
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
                         ],
                       ),
                     ],

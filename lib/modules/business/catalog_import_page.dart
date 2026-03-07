@@ -1,4 +1,4 @@
-// ignore_for_file: use_build_context_synchronously, avoid_web_libraries_in_flutter
+﻿// ignore_for_file: use_build_context_synchronously, avoid_web_libraries_in_flutter
 import 'dart:async';
 import 'dart:convert';
 import 'web_helper_stub.dart' if (dart.library.html) 'web_helper_real.dart'
@@ -11,7 +11,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 
-/// Importação de catálogo WhatsApp — apenas Web/PC.
+/// Importação de catálogo WhatsApp â€” apenas Web/PC.
 /// Fluxo automático via bookmarklet + postMessage.
 class CatalogImportPage extends StatefulWidget {
   const CatalogImportPage({super.key});
@@ -31,7 +31,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
   String _importStatus = '';
   int _importedCount = 0;
 
-  // ── Script do bookmarklet ─────────────────────────────────────────────────
+  // â”€â”€ Script do bookmarklet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // Usa window.opener (quando aberto pelo MarkaAI) OU postMessage via origem
   // Se ambos falharem, copia o JSON pro clipboard como último recurso.
   //
@@ -42,7 +42,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
 (async () => {
   const delay = ms => new Promise(r => setTimeout(r, ms));
 
-  // ── Helpers ──────────────────────────────────────────────────────────────
+  // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // Extrai preço numérico de um texto (suporta BRL, R$, valores puros)
   function extractPrice(text) {
     if (!text) return null;
@@ -83,7 +83,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
     return '';
   }
 
-  // ── Rola o catálogo para carregar tudo ────────────────────────────────────
+  // â”€â”€ Rola o catálogo para carregar tudo â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const panel = document.querySelector('[role="list"]');
   if (panel) {
     panel.scrollTop = 0; await delay(400);
@@ -96,7 +96,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
     panel.scrollTop = 0; await delay(700);
   }
 
-  // ── Extração dos produtos ────────────────────────────────────────────────
+  // â”€â”€ Extração dos produtos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const produtos = [];
 
   // Estratégia A: Buscar por itens de lista no catálogo via [role="list"] > items
@@ -197,7 +197,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
   produtos.forEach(p => { if (!uniqueMap.has(p.nome)) uniqueMap.set(p.nome, p); });
   const uniqueProdutos = [...uniqueMap.values()];
 
-  if (!uniqueProdutos.length) { alert('⚠️ Nenhum produto encontrado. Abra uma conversa com o catálogo visível.'); return; }
+  if (!uniqueProdutos.length) { alert('âš ï¸ Nenhum produto encontrado. Abra uma conversa com o catálogo visível.'); return; }
 
   const payload = JSON.stringify({ type: 'markaai_catalog', produtos: uniqueProdutos });
   
@@ -205,7 +205,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
   if (window.opener && !window.opener.closed) {
     try { window.opener.postMessage(payload, '""" +
       targetOrigin +
-      r"""'); alert('✅ ' + uniqueProdutos.length + ' produtos enviados para o MarkaAI!'); return; } catch(e) {}
+      r"""'); alert('âœ… ' + uniqueProdutos.length + ' produtos enviados para o MarkaAI!'); return; } catch(e) {}
   }
 
   // Fallback: tenta abrir o MarkaAI com dados na URL hash
@@ -215,15 +215,15 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
     window.open('""" +
       targetOrigin +
       r"""/#catalog=' + encoded, '_blank');
-    alert('✅ ' + uniqueProdutos.length + ' produtos! A aba do MarkaAI vai receber os dados.');
+    alert('âœ… ' + uniqueProdutos.length + ' produtos! A aba do MarkaAI vai receber os dados.');
   } else {
     // Muitos dados: copia JSON pro clipboard
-    try { await navigator.clipboard.writeText(payload); alert('✅ ' + uniqueProdutos.length + ' produtos copiados! Cole no MarkaAI.'); }
+    try { await navigator.clipboard.writeText(payload); alert('âœ… ' + uniqueProdutos.length + ' produtos copiados! Cole no MarkaAI.'); }
     catch(e) {
       const ta = document.createElement('textarea');
       ta.value = payload; document.body.appendChild(ta);
       ta.select(); document.execCommand('copy'); ta.remove();
-      alert('✅ ' + uniqueProdutos.length + ' produtos copiados! Cole no MarkaAI.');
+      alert('âœ… ' + uniqueProdutos.length + ' produtos copiados! Cole no MarkaAI.');
     }
   }
 })();
@@ -300,7 +300,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
     super.dispose();
   }
 
-  // ── Formata número e abre WhatsApp Web ───────────────────────────────────
+  // â”€â”€ Formata número e abre WhatsApp Web â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   void _openCatalog() {
     // Abre web.whatsapp.com diretamente para evitar que o Windows intercepte
     // o link wa.me e abra o app do WhatsApp Desktop.
@@ -347,7 +347,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
         behavior: SnackBarBehavior.floating));
   }
 
-  // ── Helpers de seleção ────────────────────────────────────────────────────
+  // â”€â”€ Helpers de seleção â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   int get _selectedCount => _products.where((p) => p.selected).length;
 
   void _toggleAll(bool val) {
@@ -362,7 +362,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
     setState(() => _products.removeAt(index));
   }
 
-  // ── Importação Firestore + Storage ───────────────────────────────────────
+  // â”€â”€ Importação Firestore + Storage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Future<void> _startImport() async {
     if (_shopId == null) {
       _snack('ID da loja não encontrado.', Colors.red);
@@ -374,7 +374,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
       return;
     }
 
-    debugPrint('🚀 Importação: shopId=$_shopId, ${toImport.length} itens');
+    debugPrint('ðŸš€ Importação: shopId=$_shopId, ${toImport.length} itens');
 
     setState(() {
       _step = 4;
@@ -397,7 +397,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
             FirebaseFirestore.instance.collection('services').doc().id;
 
         debugPrint(
-            '  → Salvando "${p.nome}" (R\$ $preco) em services/$docId [shopId=$_shopId]');
+            '  â†’ Salvando "${p.nome}" (R\$ $preco) em services/$docId [shopId=$_shopId]');
 
         // Salva na coleção TOP-LEVEL 'services' com shopId como campo
         // (mesmo padrão do service_register_page.dart)
@@ -418,9 +418,9 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
         });
         success++;
         setState(() => _importedCount = success);
-        debugPrint('  ✅ "${p.nome}" importado com sucesso');
+        debugPrint('  âœ… "${p.nome}" importado com sucesso');
       } catch (e) {
-        debugPrint('  ❌ Erro ${p.nome}: $e');
+        debugPrint('  âŒ Erro ${p.nome}: $e');
         errors.add('${p.nome}: $e');
       }
     }
@@ -432,10 +432,10 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
               '${errors.length} erro(s).';
     });
     debugPrint(
-        '🏁 Importação finalizada: $success/${toImport.length} OK, ${errors.length} erros');
+        'ðŸ Importação finalizada: $success/${toImport.length} OK, ${errors.length} erros');
   }
 
-  // ── Build ─────────────────────────────────────────────────────────────────
+  // â”€â”€ Build â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   @override
   Widget build(BuildContext context) {
     if (!kIsWeb) {
@@ -445,17 +445,17 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FA),
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.primaryPurple,
         elevation: 0,
         leading: IconButton(
-            icon: const Icon(Icons.arrow_back, color: Colors.black87),
+            icon: const Icon(Icons.arrow_back, color: Colors.white),
             onPressed: () => Navigator.pop(context)),
         title: const Row(children: [
           Icon(Icons.upload_file_rounded, color: Color(0xFF25D366), size: 22),
           SizedBox(width: 10),
           Text('Importar Catálogo WhatsApp',
               style: TextStyle(
-                  color: Colors.black87,
+                  color: Colors.white,
                   fontSize: 17,
                   fontWeight: FontWeight.bold)),
         ]),
@@ -547,10 +547,10 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
     }
   }
 
-  // ── STEP 0 ────────────────────────────────────────────────────────────────
+  // â”€â”€ STEP 0 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Widget _step0() =>
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        _hdr('🌐', 'Abrir WhatsApp Web',
+        _hdr('ðŸŒ', 'Abrir WhatsApp Web',
             'Clique abaixo para abrir o WhatsApp Web no navegador. Lá você vai navegar até o seu catálogo.'),
         const SizedBox(height: 28),
         _card(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -558,7 +558,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
           const SizedBox(height: 8),
           _tip(
-              'No Windows, links wa.me abrem o app WhatsApp Desktop — não o WhatsApp Web. '
+              'No Windows, links wa.me abrem o app WhatsApp Desktop â€” não o WhatsApp Web. '
               'Por isso abrimos o web.whatsapp.com diretamente no navegador.'),
           const SizedBox(height: 14),
           const Text('Como navegar até o catálogo no WhatsApp Web:',
@@ -596,10 +596,10 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
         .toList();
   }
 
-  // ── STEP 1: Bookmarklet ───────────────────────────────────────────────────
+  // â”€â”€ STEP 1: Bookmarklet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Widget _step1() =>
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        _hdr('🔖', 'Instalar o Favorito (uma única vez)',
+        _hdr('ðŸ”–', 'Instalar o Favorito (uma única vez)',
             'Salve o bookmarklet na barra de favoritos do Chrome para usar sempre.'),
         const SizedBox(height: 24),
         _infoCard(
@@ -607,9 +607,9 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
             'Como instalar:',
             [
               '1. Pressione Ctrl+Shift+B para exibir a barra de favoritos',
-              '2. Clique com o botão direito na barra de favoritos → "Adicionar página"',
+              '2. Clique com o botão direito na barra de favoritos â†’ "Adicionar página"',
               '3. Cole a URL copiada pelo botão abaixo no campo de endereço',
-              '4. Salve com o nome: 📦 MarkaAI — Importar Catálogo',
+              '4. Salve com o nome: ðŸ“¦ MarkaAI â€” Importar Catálogo',
             ],
             color: Colors.blue[700]!),
         const SizedBox(height: 20),
@@ -622,21 +622,21 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
             'Próximo passo:',
             [
               'Na aba do WhatsApp Web aberta, role o catálogo até o FINAL.',
-              'Depois clique no favorito "📦 MarkaAI — Importar Catálogo".',
-              'Os dados chegam aqui automaticamente — sem copiar nada!',
+              'Depois clique no favorito "ðŸ“¦ MarkaAI â€” Importar Catálogo".',
+              'Os dados chegam aqui automaticamente â€” sem copiar nada!',
             ],
             color: const Color(0xFF25D366)),
         const SizedBox(height: 28),
         Row(children: [
           OutlinedButton(
               onPressed: () => setState(() => _step = 0),
-              child: const Text('← Voltar')),
+              child: const Text('â† Voltar')),
           const SizedBox(width: 14),
           Expanded(
               child: ElevatedButton.icon(
             onPressed: () => setState(() => _step = 2),
             icon: const Icon(Icons.arrow_forward),
-            label: const Text('Já instalei — aguardar'),
+            label: const Text('Já instalei â€” aguardar'),
             style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primaryPurple,
                 foregroundColor: Colors.white,
@@ -645,7 +645,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
         ]),
       ]);
 
-  // ── STEP 2: Aguardando ────────────────────────────────────────────────────
+  // â”€â”€ STEP 2: Aguardando â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Widget _step2() => Center(
           child: Padding(
         padding: const EdgeInsets.all(48),
@@ -662,15 +662,15 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
           Text(
             'Na aba do WhatsApp Web:\n'
             '1. Role o catálogo até o FINAL (carrega as imagens)\n'
-            '2. Clique no favorito "📦 MarkaAI — Importar Catálogo"\n'
+            '2. Clique no favorito "ðŸ“¦ MarkaAI â€” Importar Catálogo"\n'
             '3. Os dados chegam aqui automaticamente!',
             textAlign: TextAlign.center,
             style:
                 TextStyle(color: Colors.grey[600], fontSize: 14, height: 1.7),
           ),
           const SizedBox(height: 28),
-          // ── Opção A: automático via postMessage (já ouvindo) ──────────────────
-          // ── Opção B: colar do clipboard (fallback quando opener=null) ─────────
+          // â”€â”€ Opção A: automático via postMessage (já ouvindo) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+          // â”€â”€ Opção B: colar do clipboard (fallback quando opener=null) â”€â”€â”€â”€â”€â”€â”€â”€â”€
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
@@ -691,7 +691,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
               ]),
               const SizedBox(height: 8),
               Text(
-                  'Se apareceu "✅ X produtos copiados! Cole no MarkaAI.", clique aqui:',
+                  'Se apareceu "âœ… X produtos copiados! Cole no MarkaAI.", clique aqui:',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Colors.grey[700], fontSize: 13)),
               const SizedBox(height: 12),
@@ -721,19 +721,19 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
           const SizedBox(height: 10),
           TextButton(
               onPressed: () => setState(() => _step = 1),
-              child: const Text('← Voltar para instalar o favorito')),
+              child: const Text('â† Voltar para instalar o favorito')),
         ]),
       ));
 
-  // ── STEP 3: Tabela de seleção ─────────────────────────────────────────────
+  // â”€â”€ STEP 3: Tabela de seleção â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Widget _step3() {
     final allSelected = _products.every((p) => p.selected);
     final noneSelected = _products.every((p) => !p.selected);
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      _hdr('✅', '${_products.length} itens encontrados',
+      _hdr('âœ…', '${_products.length} itens encontrados',
           'Selecione os serviços que deseja importar. Edite nome, descrição e preço clicando no campo.'),
       const SizedBox(height: 14),
-      // ── Toolbar ──────────────────────────────────────────────────────────
+      // â”€â”€ Toolbar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         decoration: BoxDecoration(
@@ -775,7 +775,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
         ]),
       ),
       const SizedBox(height: 12),
-      // ── Tabela ───────────────────────────────────────────────────────────
+      // â”€â”€ Tabela â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       _card(Column(
           children: _products.asMap().entries.map((e) {
         final i = e.key;
@@ -790,13 +790,13 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
                   p.looksInvalid && !p.selected ? Colors.amber.shade50 : null,
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
               child: Row(children: [
-                // ── Checkbox ──────────────────────────────────────────────
+                // â”€â”€ Checkbox â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 Checkbox(
                   value: p.selected,
                   activeColor: AppColors.primaryPurple,
                   onChanged: (v) => setState(() => p.selected = v ?? false),
                 ),
-                // ── Imagem ───────────────────────────────────────────────
+                // â”€â”€ Imagem â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 Container(
                     width: 44,
                     height: 44,
@@ -815,7 +815,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
                                     color: Colors.grey)))
                         : const Icon(Icons.image_not_supported,
                             size: 20, color: Colors.grey)),
-                // ── Nome + Descrição (editável) ──────────────────────────
+                // â”€â”€ Nome + Descrição (editável) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 Expanded(
                     child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -835,7 +835,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
                           hint: 'Descrição'),
                     ])),
                 const SizedBox(width: 8),
-                // ── Preço (editável) ─────────────────────────────────────
+                // â”€â”€ Preço (editável) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 SizedBox(
                     width: 120,
                     child: _editableField(
@@ -848,13 +848,13 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
                         hint: '0.00',
                         prefix: 'R\$ ')),
                 const SizedBox(width: 4),
-                // ── Warning icon ─────────────────────────────────────────
+                // â”€â”€ Warning icon â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 if (p.looksInvalid)
                   Tooltip(
                       message: 'Parece ser trecho de conversa',
                       child: Icon(Icons.warning_amber_rounded,
                           size: 18, color: Colors.orange.shade400)),
-                // ── Remove button ────────────────────────────────────────
+                // â”€â”€ Remove button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 IconButton(
                     icon:
                         Icon(Icons.close, size: 17, color: Colors.red.shade300),
@@ -873,7 +873,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
       Row(children: [
         OutlinedButton(
             onPressed: () => setState(() => _step = 2),
-            child: const Text('← Refazer')),
+            child: const Text('â† Refazer')),
         const SizedBox(width: 14),
         Expanded(
             child: ElevatedButton.icon(
@@ -892,7 +892,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
     ]);
   }
 
-  // ── Campo editável inline ─────────────────────────────────────────────────
+  // â”€â”€ Campo editável inline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Widget _editableField({
     required String value,
     required ValueChanged<String> onChanged,
@@ -925,7 +925,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
     );
   }
 
-  // ── STEP 4: Importando ───────────────────────────────────────────────────
+  // â”€â”€ STEP 4: Importando â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Widget _step4() {
     final prog = _products.isNotEmpty ? _importedCount / _products.length : 0.0;
     return Center(
@@ -957,14 +957,14 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
     ));
   }
 
-  // ── STEP 5: Concluído ────────────────────────────────────────────────────
+  // â”€â”€ STEP 5: Concluído â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Widget _step5() => Center(
           child: Padding(
         padding: const EdgeInsets.all(60),
         child: Column(children: [
           const Icon(Icons.check_circle, size: 76, color: Colors.green),
           const SizedBox(height: 22),
-          const Text('Importação concluída! 🎉',
+          const Text('Importação concluída! ðŸŽ‰',
               style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
           const SizedBox(height: 10),
           Text(_importStatus,
@@ -985,7 +985,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
         ]),
       ));
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
+  // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Widget _hdr(String emoji, String title, String sub) =>
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(emoji, style: const TextStyle(fontSize: 38)),
@@ -1072,7 +1072,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
       );
 }
 
-// ── Bookmarklet Copy Button ────────────────────────────────────────────────
+// â”€â”€ Bookmarklet Copy Button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Cria um <a> real via HtmlElementView para ser arrastável para os favoritos,
 // mais um botão Flutter fallback para copiar a URL.
 class _BookmarkletCopyButton extends StatefulWidget {
@@ -1128,7 +1128,7 @@ class _BookmarkletCopyButtonState extends State<_BookmarkletCopyButton> {
   }
 }
 
-// ── Modelo ────────────────────────────────────────────────────────────────────
+// â”€â”€ Modelo â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _CatalogProduct {
   String nome, descricao, preco, imagemUrl;
   bool selected = true;

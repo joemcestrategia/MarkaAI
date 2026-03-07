@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -188,7 +188,9 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
               }
             },
             style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primaryPurple),
+              backgroundColor: AppColors.primaryPurple,
+              foregroundColor: Colors.white,
+            ),
             child:
                 const Text("Adicionar", style: TextStyle(color: Colors.white)),
           ),
@@ -213,17 +215,17 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
           final width = MediaQuery.of(context).size.width;
           if (width < 900) {
             debugPrint(
-                '⚠️ Mobile web detected - skipping crop UI to avoid issues.');
+                'âš ï¸ Mobile web detected - skipping crop UI to avoid issues.');
             return imageFile;
           }
         } catch (_) {}
       }
 
-      // ✅ FIX DEFINITIVO para Android:
+      // âœ… FIX DEFINITIVO para Android:
       // Ativa edge-to-edge ANTES de abrir o cropper. Isso faz com que a
       // Activity nativa do ImageCropper receba insets corretos do sistema,
       // posicionando a toolbar abaixo da status bar e os controles acima
-      // da navigation bar — sem nenhuma sobreposição.
+      // da navigation bar â€” sem nenhuma sobreposição.
       if (!kIsWeb) {
         _prepareSystemUIForCrop();
         // Aguarda o frame para garantir que o canal de plataforma aplicou
@@ -280,7 +282,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
       }
       return null;
     } catch (e) {
-      debugPrint("⚠️ Erro no Crop: $e");
+      debugPrint("âš ï¸ Erro no Crop: $e");
       // Garante restauração mesmo em caso de erro
       if (!kIsWeb) {
         _restoreSystemUI();
@@ -330,7 +332,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
         }
       }
     } catch (e) {
-      debugPrint("❌ Erro ao selecionar: $e");
+      debugPrint("âŒ Erro ao selecionar: $e");
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -436,7 +438,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
           final String url = await ref.getDownloadURL();
           uploadedUrls.add(url);
         } catch (e) {
-          debugPrint("❌ Erro upload imagem $i: $e");
+          debugPrint("âŒ Erro upload imagem $i: $e");
           _showSnackBar("Erro ao enviar imagem ${i + 1}", isError: true);
           continue;
         }
@@ -468,7 +470,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
         _showSnackBar("Serviço salvo com sucesso!");
       }
     } catch (e) {
-      debugPrint("❌ Erro geral ao salvar serviço: $e");
+      debugPrint("âŒ Erro geral ao salvar serviço: $e");
       _showSnackBar("Erro ao salvar serviço: ${e.toString()}", isError: true);
     } finally {
       if (mounted) {
@@ -546,7 +548,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                 ),
               ),
 
-              // CORPO SCROLLÁVEL
+              // CORPO SCROLLÃVEL
               Expanded(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.all(24),
@@ -555,7 +557,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // ÁREA DE FOTOS
+                        // ÃREA DE FOTOS
                         AnimatedContainer(
                           duration: const Duration(milliseconds: 200),
                           height: 120,
@@ -722,7 +724,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                                 Text("$totalImages de 5 fotos",
                                     style: const TextStyle(
                                         fontSize: 12, color: Colors.grey)),
-                                Text(" • Clique no ✂️ para recortar",
+                                Text(" â€¢ Clique no âœ‚ï¸ para recortar",
                                     style: TextStyle(
                                         fontSize: 11,
                                         color: Colors.grey.shade600,
@@ -1015,6 +1017,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                         onPressed: _isSaving ? null : _save,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.primaryPurple,
+                          foregroundColor: Colors.white,
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12)),
                           disabledBackgroundColor:
@@ -1083,7 +1086,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                 );
               },
               errorBuilder: (context, error, stackTrace) {
-                debugPrint("❌ Erro ao carregar: $url - $error");
+                debugPrint("âŒ Erro ao carregar: $url - $error");
                 return Container(
                   color: Colors.red.shade50,
                   child: const Column(
@@ -1146,7 +1149,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                   return const Center(
                       child: CircularProgressIndicator(strokeWidth: 2));
                 } else if (snapshot.hasError) {
-                  debugPrint("❌ Erro ao ler: ${snapshot.error}");
+                  debugPrint("âŒ Erro ao ler: ${snapshot.error}");
                   return Container(
                     color: Colors.orange.shade50,
                     child: const Column(
@@ -1184,6 +1187,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
               child: const CircleAvatar(
                   radius: 10,
                   backgroundColor: AppColors.primaryPurple,
+                  foregroundColor: Colors.white,
                   child: Icon(Icons.crop, size: 12, color: Colors.white)),
             ),
           ),

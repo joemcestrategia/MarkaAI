@@ -31,7 +31,7 @@ import '../team/team_management_page.dart';
 import 'business_settings_page.dart';
 import 'business_schedule_page.dart';
 import 'business_clients_page.dart';
-// import '../settings/excel_import_page.dart'; // Import removed — recurso 'Importar Dados' descontinuado
+// import '../settings/excel_import_page.dart'; // Import removed  recurso 'Importar Dados' descontinuado
 import '../financial/financial_dashboard_page.dart';
 
 import 'subscription_plans_page.dart';
@@ -72,8 +72,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   GlobalKey? _mobileTodayHeaderKey;
 
   int _selectedYear =
-      DateTime.now().year; // Começa com o ano atual para economizar
-  // Lista inicial apenas com o ano atual, será populada dinamicamente se necessário
+      DateTime.now().year; // Comea com o ano atual para economizar
+  // Lista inicial apenas com o ano atual, ser populada dinamicamente se necessrio
   List<int> _availableYears = [DateTime.now().year];
 
   // Indices bloqueados para o plano atual
@@ -299,9 +299,9 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         return;
       }
 
-      // Tenta buscar anos disponíveis (opcional, para popular o dropdown)
-      // Para economizar, podemos manter fixo ou fazer uma query leve de agregação futuramente
-      // Por enquanto, vou gerar de 2024 até o ano atual + 1
+      // Tenta buscar anos disponveis (opcional, para popular o dropdown)
+      // Para economizar, podemos manter fixo ou fazer uma query leve de agregao futuramente
+      // Por enquanto, vou gerar de 2024 at o ano atual + 1
       final currentYear = DateTime.now().year;
       _availableYears = List.generate(5, (index) => (currentYear - 2) + index);
 
@@ -380,34 +380,96 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   }
 
   void _confirmLogout() {
-    showDialog(
+    showModalBottomSheet(
       context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text("Sair da Conta"),
-        content: const Text("Deseja realmente sair do App?"),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancelar"),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        padding: EdgeInsets.fromLTRB(
+            24, 16, 24, MediaQuery.of(ctx).viewInsets.bottom + 24),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(4),
+                ),
               ),
             ),
-            onPressed: () {
-              Navigator.pop(context);
-              _forceLogout();
-            },
-            child: const Text(
-              "Sair",
-              style: TextStyle(color: Colors.white),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Icon(Icons.logout_rounded,
+                    color: Colors.red.shade600, size: 22),
+                const SizedBox(width: 10),
+                Text(
+                  "Sair da Conta",
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.red.shade700,
+                  ),
+                ),
+              ],
             ),
-          ),
-        ],
+            const SizedBox(height: 10),
+            Text(
+              "Tem certeza que deseja sair do painel?\nVocê precisará fazer login novamente.",
+              textAlign: TextAlign.left,
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.grey[600],
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.logout_rounded, size: 18),
+                label: const Text("Confirmar Saída",
+                    style:
+                        TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red.shade600,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  elevation: 0,
+                ),
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _forceLogout();
+                },
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              height: 44,
+              child: TextButton(
+                style: TextButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  foregroundColor: Colors.grey[700],
+                ),
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text("Cancelar",
+                    style:
+                        TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -531,7 +593,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
-                              '⚠️  Sua loja não está visível para os clientes. '
+                              '📍 Sua loja não está visível para os clientes. '
                               'Complete o endereço (cidade e estado) para aparecer nos resultados de busca.',
                               style: TextStyle(
                                   fontSize: 12,
@@ -637,8 +699,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
             child: ListView(
               padding: EdgeInsets.zero,
               children: [
-                _buildDesktopMenuItem(
-                    0, Icons.dashboard_rounded, "Visão Geral"),
+                _buildDesktopMenuItem(0, Icons.dashboard_rounded, "Visão Geral"),
                 _buildDesktopMenuItem(
                     1, Icons.event_note_rounded, "Agenda Completa"),
                 _buildDesktopMenuItem(2, Icons.history, "Histórico"),
@@ -683,7 +744,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                           color: AppColors.primaryPurple)),
                   onTap: () => _handleMenuAction('ajuda'),
                 ),
-                // Importar Catálogo WhatsApp — apenas Web/PC
+                // Importar Catálogo WhatsApp  apenas Web/PC
                 if (kIsWeb)
                   ListTile(
                     dense: true,
@@ -937,7 +998,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       3,
       4,
       8
-    ]; // Index 8 is Settings (BusinessSettingsPage). Histórico está no menu lateral.
+    ]; // Index 8 is Settings (BusinessSettingsPage). Histórico est no menu lateral.
     int currentBottomIndex = mainItems.contains(_selectedIndex)
         ? mainItems.indexOf(_selectedIndex)
         : 0;
@@ -1167,16 +1228,16 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   // ============================================================================
 
   Widget _buildHomeDashboard({required bool isDesktop}) {
-    // 1. Definição do Intervalo de Tempo para Leitura (Range)
-    // Se selecionado "Todos" (-1), pegamos um range amplo, mas idealmente você limitaria.
-    // Aqui vamos focar na otimização do ano selecionado.
+    // 1. Definio do Intervalo de Tempo para Leitura (Range)
+    // Se selecionado "Todos" (-1), pegamos um range amplo, mas idealmente voc limitaria.
+    // Aqui vamos focar na otimizao do ano selecionado.
 
     DateTime startData;
     DateTime endData;
 
     if (_selectedYear == -1) {
       // CUIDADO: Ler tudo pode ser caro.
-      // Em produção, recomendo limitar aos últimos 2 anos.
+      // Em produo, recomendo limitar aos ltimos 2 anos.
       startData = DateTime(2023, 1, 1);
       endData = DateTime(2030, 12, 31);
     } else {
@@ -1192,12 +1253,12 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           .where('shopId', isEqualTo: shopId)
           .where('data_agendamento', isGreaterThanOrEqualTo: startData)
           .where('data_agendamento', isLessThanOrEqualTo: endData)
-          .snapshots(), // Ordenação pode ser feita em memória para economizar índice ou no .orderBy
+          .snapshots(), // Ordenao pode ser feita em memria para economizar ndice ou no .orderBy
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return Center(
               child: Text(
-                  "Erro (Verifique índices no Console): ${snapshot.error}"));
+                  "Erro (Verifique ndices no Console): ${snapshot.error}"));
         }
 
         if (!snapshot.hasData) {
@@ -1256,7 +1317,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
           DateTime date = (data['data_agendamento'] as Timestamp).toDate();
 
-          // Filtra status concluído
+          // Filtra status concludo
           if ((data['status'] ?? 'agendado') == 'concluido') {
             double total = double.tryParse(data['valor_total']?.toString() ??
                     data['valor']?.toString() ??
@@ -1271,7 +1332,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
             if (maoObra == 0 && produtos == 0) maoObra = total;
 
-            // Se for visualização mensal (ano selecionado)
+            // Se for visualizao mensal (ano selecionado)
             if (!isAllYears) {
               dataMoney[date.month - 1] += total;
               dataQty[date.month - 1] += 1;
@@ -1284,9 +1345,9 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           }
         }
 
-        // Se for "Todos os anos", ajustamos o gráfico para ser por Ano, não por Mês
+        // Se for "Todos os anos", ajustamos o grfico para ser por Ano, no por Ms
         if (isAllYears) {
-          // Lógica simplificada para multiplos anos (recalculando baseada nos docs recebidos)
+          // Lgica simplificada para multiplos anos (recalculando baseada nos docs recebidos)
           Map<int, double> yearMoney = {};
           Map<int, double> yearQty = {};
           for (var doc in docs) {
@@ -1340,7 +1401,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     );
   }
 
-  // ... (RESTANTE DOS WIDGETS DE UI - _buildDesktopDashboard, _buildMobileDashboard, ETC. PERMANECEM IGUAIS PARA NÃO QUEBRAR O DESIGN)
+  // ... (RESTANTE DOS WIDGETS DE UI - _buildDesktopDashboard, _buildMobileDashboard, ETC. PERMANECEM IGUAIS PARA NO QUEBRAR O DESIGN)
 
   Widget _buildDesktopDashboard({
     required bool isAllYears,
@@ -1372,7 +1433,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                   ),
                 ),
                 const Text(
-                  "Análise combinada de Faturamento e Atendimentos",
+                  "Anlise combinada de Faturamento e Atendimentos",
                   style: TextStyle(color: Colors.grey, fontSize: 13),
                 ),
               ],
@@ -1404,7 +1465,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
             const SizedBox(width: 16),
             Expanded(
               child: _buildMetricCard(
-                "Ticket Médio",
+                "Ticket Mdio",
                 ticketMedio,
                 Icons.receipt_long,
                 AppColors.primaryPurple,
@@ -1450,7 +1511,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
   Widget _buildEquipeComissoesCard(
       String shopId, List<QueryDocumentSnapshot> appointmentDocs) {
-    // Calcular produção por profissional
+    // Calcular produo por profissional
     final concluidos = appointmentDocs.where((d) {
       final data = d.data() as Map<String, dynamic>;
       return (data['status'] ?? '') == 'confirmado' ||
@@ -1502,7 +1563,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           }
         }
 
-        // Se ninguém produziu nada, não mostra ou mostra vazio elegante
+        // Se ningum produziu nada, no mostra ou mostra vazio elegante
         if (teamData.isEmpty) return const SizedBox.shrink();
 
         // Ordenar por valor a receber (maior para menor)
@@ -1556,7 +1617,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            "Comissões da Equipe",
+                            "Comisses da Equipe",
                             style: TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.bold,
@@ -1564,7 +1625,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                             ),
                           ),
                           Text(
-                            "Produção e valores a repassar",
+                            "Produo e valores a repassar",
                             style: TextStyle(
                               color: Colors.white70,
                               fontSize: 12,
@@ -1645,7 +1706,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
                           Text(
-                            "Comissão (${item['percent']}%)",
+                            "Comisso (${item['percent']}%)",
                             style: TextStyle(
                                 color: Colors.grey[500], fontSize: 10),
                           ),
@@ -1676,7 +1737,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                       const BorderRadius.vertical(bottom: Radius.circular(16)),
                 ),
                 child: Text(
-                  "Valores calculados com base nos agendamentos concluídos do período selecionado.",
+                  "Valores calculados com base nos agendamentos concludos do perodo selecionado.",
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Colors.grey[500], fontSize: 11),
                 ),
@@ -1719,7 +1780,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Hero Header com gradiente ────────────────────────────────────
+          // -- Hero Header com gradiente ------------------------------------
           Container(
             width: double.infinity,
             padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
@@ -1742,7 +1803,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                         children: [
                           Text(
                             isAllYears
-                                ? 'Visão Geral • Todos os anos'
+                                ? 'Visão Geral  Todos os anos'
                                 : 'Resultados de $_selectedYear',
                             style: const TextStyle(
                               color: Colors.white70,
@@ -1810,7 +1871,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: _buildKpiCard(
-                      title: 'Ticket Médio',
+                      title: 'Ticket Mdio',
                       value: fmt.format(ticketMedio),
                       subtitle: 'por atendimento',
                       icon: Icons.receipt_long_rounded,
@@ -1827,11 +1888,11 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             child: Column(
               children: [
-                // ── Card Hoje ─────────────────────────────────────────────
+                // -- Card Hoje ---------------------------------------------
                 _buildHojeCard(hoje, appointmentDocs),
                 const SizedBox(height: 12),
 
-                // ── Breakdown Serviços vs Produtos ────────────────────────
+                // -- Breakdown Servios vs Produtos ------------------------
                 _buildBreakdownVisual(
                   faturamentoMaoDeObra,
                   faturamentoProdutos,
@@ -1839,7 +1900,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 ),
                 const SizedBox(height: 12),
 
-                // ── Gráfico ───────────────────────────────────────────────
+                // -- Grfico -----------------------------------------------
                 _buildMobileChart(dataMoney, dataQty, chartLabels, isAllYears),
 
                 if (shopId != null &&
@@ -1930,7 +1991,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
   Widget _buildHojeCard(int hoje, List<QueryDocumentSnapshot>? allDocs) {
     final now = DateTime.now();
-    // Próximos agendamentos de hoje (somente agendado/confirmado)
+    // Prximos agendamentos de hoje (somente agendado/confirmado)
     final proximosHoje = allDocs?.where((doc) {
           final d = doc.data() as Map<String, dynamic>;
           final ts = d['data_agendamento'];
@@ -2099,7 +2160,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
               const Icon(Icons.pie_chart_rounded,
                   color: AppColors.primaryPurple, size: 18),
               const SizedBox(width: 8),
-              const Text('Composição do Faturamento',
+              const Text('Composio do Faturamento',
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
             ],
           ),
@@ -2492,7 +2553,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           Row(
             children: [
               const Text(
-                "Evolução de Performance",
+                "Evoluo de Performance",
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
               const Spacer(),

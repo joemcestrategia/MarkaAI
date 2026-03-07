@@ -1,11 +1,11 @@
-import 'package:firebase_messaging/firebase_messaging.dart';
+﻿import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
 class NotificationService {
   static final FirebaseMessaging _messaging = FirebaseMessaging.instance;
-  
+
   /// Inicializa o serviço de notificações
   static Future<void> initialize() async {
     // Solicitar permissão (especialmente importante no iOS)
@@ -19,15 +19,16 @@ class NotificationService {
       sound: true,
     );
 
-    debugPrint('🔔 Permissão de notificação: ${settings.authorizationStatus}');
+    debugPrint(
+        'ðŸ”” Permissão de notificação: ${settings.authorizationStatus}');
 
     if (settings.authorizationStatus == AuthorizationStatus.authorized) {
-      debugPrint('✅ Usuário aceitou notificações');
-      
+      debugPrint('âœ… Usuário aceitou notificações');
+
       // Obter token FCM
       String? token = await _messaging.getToken();
       if (token != null) {
-        debugPrint('🔑 FCM Token obtido: ${token.substring(0, 20)}...');
+        debugPrint('ðŸ”‘ FCM Token obtido: ${token.substring(0, 20)}...');
         await _saveTokenToFirestore(token);
       }
 
@@ -37,7 +38,7 @@ class NotificationService {
       // Configurar handlers de notificações
       _setupMessageHandlers();
     } else {
-      debugPrint('❌ Usuário negou permissão de notificações');
+      debugPrint('âŒ Usuário negou permissão de notificações');
     }
   }
 
@@ -60,29 +61,23 @@ class NotificationService {
 
       // Se é dono de loja (tem shopId), salvar token na loja
       if (shopId != null && shopId.toString().isNotEmpty) {
-        await FirebaseFirestore.instance
-            .collection('shops')
-            .doc(shopId)
-            .set({
+        await FirebaseFirestore.instance.collection('shops').doc(shopId).set({
           'fcm_tokens': FieldValue.arrayUnion([token]),
           'fcm_updated_at': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
 
-        debugPrint('✅ Token FCM salvo na loja: $shopId');
+        debugPrint('âœ… Token FCM salvo na loja: $shopId');
       }
 
       // Também salvar no documento do usuário
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .set({
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
         'fcm_token': token,
         'fcm_updated_at': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
-      debugPrint('✅ Token FCM salvo no usuário: ${user.uid}');
+      debugPrint('âœ… Token FCM salvo no usuário: ${user.uid}');
     } catch (e) {
-      debugPrint('❌ Erro ao salvar token FCM: $e');
+      debugPrint('âŒ Erro ao salvar token FCM: $e');
     }
   }
 
@@ -90,7 +85,7 @@ class NotificationService {
   static void _setupMessageHandlers() {
     // Mensagem quando o app está em foreground
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      debugPrint('📩 Notificação recebida (foreground):');
+      debugPrint('ðŸ“© Notificação recebida (foreground):');
       debugPrint('   Título: ${message.notification?.title}');
       debugPrint('   Corpo: ${message.notification?.body}');
       debugPrint('   Dados: ${message.data}');
@@ -101,7 +96,7 @@ class NotificationService {
 
     // Mensagem quando o usuário clica na notificação (app estava fechado)
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-      debugPrint('📱 App aberto via notificação:');
+      debugPrint('ðŸ“± App aberto via notificação:');
       debugPrint('   Dados: ${message.data}');
 
       // Aqui você pode navegar para uma página específica
@@ -112,7 +107,7 @@ class NotificationService {
     // Verificar se o app foi aberto por uma notificação
     _messaging.getInitialMessage().then((RemoteMessage? message) {
       if (message != null) {
-        debugPrint('🚀 App iniciado via notificação:');
+        debugPrint('ðŸš€ App iniciado via notificação:');
         debugPrint('   Dados: ${message.data}');
         _handleNotificationTap(message.data);
       }
@@ -125,7 +120,7 @@ class NotificationService {
     final type = data['type'];
     final id = data['id'];
 
-    debugPrint('🎯 Notificação clicada - Tipo: $type, ID: $id');
+    debugPrint('ðŸŽ¯ Notificação clicada - Tipo: $type, ID: $id');
 
     // Exemplo:
     // if (type == 'new_appointment') {
@@ -173,9 +168,9 @@ class NotificationService {
       // Deletar token do FCM
       await _messaging.deleteToken();
 
-      debugPrint('🗑️ Token FCM removido');
+      debugPrint('ðŸ—‘ï¸ Token FCM removido');
     } catch (e) {
-      debugPrint('❌ Erro ao remover token FCM: $e');
+      debugPrint('âŒ Erro ao remover token FCM: $e');
     }
   }
 
@@ -183,9 +178,9 @@ class NotificationService {
   static Future<void> subscribeToTopic(String topic) async {
     try {
       await _messaging.subscribeToTopic(topic);
-      debugPrint('✅ Inscrito no tópico: $topic');
+      debugPrint('âœ… Inscrito no tópico: $topic');
     } catch (e) {
-      debugPrint('❌ Erro ao se inscrever no tópico $topic: $e');
+      debugPrint('âŒ Erro ao se inscrever no tópico $topic: $e');
     }
   }
 
@@ -193,9 +188,9 @@ class NotificationService {
   static Future<void> unsubscribeFromTopic(String topic) async {
     try {
       await _messaging.unsubscribeFromTopic(topic);
-      debugPrint('✅ Desinscrição do tópico: $topic');
+      debugPrint('âœ… Desinscrição do tópico: $topic');
     } catch (e) {
-      debugPrint('❌ Erro ao se desinscrever do tópico $topic: $e');
+      debugPrint('âŒ Erro ao se desinscrever do tópico $topic: $e');
     }
   }
 }
@@ -203,7 +198,7 @@ class NotificationService {
 /// Handler para mensagens em background
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  debugPrint('📬 Notificação recebida em background:');
+  debugPrint('ðŸ“¬ Notificação recebida em background:');
   debugPrint('   Título: ${message.notification?.title}');
   debugPrint('   Corpo: ${message.notification?.body}');
   debugPrint('   Dados: ${message.data}');

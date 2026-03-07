@@ -1,4 +1,4 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -55,7 +55,7 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
   }
 
   Future<void> _checkPlanRestriction() async {
-    // Usa getShopPlan(shopId) — não canUseOnlinePayment() — pois o usuário
+    // Usa getShopPlan(shopId) â€” não canUseOnlinePayment() â€” pois o usuário
     // logado aqui é o CLIENTE, não o dono da loja.
     final shopPlan = await SubscriptionService.getShopPlan(widget.shopId);
     final canPay = SubscriptionService.planSupportsOnlinePayment(shopPlan);
@@ -325,7 +325,7 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
       }
       setState(() {
         _webClientData = {
-          'publicKey': key, // CRÍTICO: passar public_key na URL para Web
+          'publicKey': key, // CRÃTICO: passar public_key na URL para Web
           'amount': widget.valor.toString(),
           'orderId': widget.orderId,
           'clientEmail': email,
@@ -499,7 +499,7 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
     } catch (_) {}
   }
 
-  // --- LÓGICA DE NEGÓCIO MANTIDA ---
+  // --- LÃ“GICA DE NEGÃ“CIO MANTIDA ---
 
   Future<String> _getPublicKey() async {
     try {
@@ -511,7 +511,7 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
       final key = mp?['public_key'] as String?;
       if (key == null || key.isEmpty) {
         throw Exception(
-            'Loja sem Mercado Pago configurado. Acesse Configurações → Pagamentos para conectar sua conta.');
+            'Loja sem Mercado Pago configurado. Acesse Configurações â†’ Pagamentos para conectar sua conta.');
       }
       return key;
     } catch (e) {
@@ -544,7 +544,7 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
   }
 
   void _handleRawMessage(String message) async {
-    debugPrint('📩 WebView -> Flutter raw: $message');
+    debugPrint('ðŸ“© WebView -> Flutter raw: $message');
     try {
       // Limpeza segura para payloads vindos do html.window.postMessageWeb
       String cleanMessage = message;
@@ -554,7 +554,7 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
       }
       final data = jsonDecode(cleanMessage) as Map<String, dynamic>;
       debugPrint(
-          '📩 WebView parsed action: ${data['action'] ?? '(no action)'}');
+          'ðŸ“© WebView parsed action: ${data['action'] ?? '(no action)'}');
       // Suporte para requisição de parcelas via WebView (HTML envia bin)
       if (data['action'] == 'request_installments') {
         final bin = (data['bin'] ?? '').toString();
@@ -563,10 +563,10 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
                 widget.valor;
         try {
           debugPrint(
-              '🔔 request_installments received: bin=$bin amount=$amount endpoint=$_installmentsEndpoint');
+              'ðŸ”” request_installments received: bin=$bin amount=$amount endpoint=$_installmentsEndpoint');
           if (_installmentsEndpoint.contains('your-backend.example.com')) {
             debugPrint(
-                '⚠️ _installmentsEndpoint is placeholder. Update _installmentsEndpoint to your deployed function URL.');
+                'âš ï¸ _installmentsEndpoint is placeholder. Update _installmentsEndpoint to your deployed function URL.');
           }
           final resp = await http.post(
             Uri.parse(_installmentsEndpoint),
@@ -575,9 +575,9 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
                 {'amount': amount, 'bin': bin, 'shopId': widget.shopId}),
           );
           debugPrint(
-              '→ installments endpoint response status: ${resp.statusCode}');
+              'â†’ installments endpoint response status: ${resp.statusCode}');
           final respBody = resp.body;
-          debugPrint('→ installments endpoint response body: $respBody');
+          debugPrint('â†’ installments endpoint response body: $respBody');
           if (resp.statusCode == 200) {
             final body = jsonDecode(resp.body);
             final dynamic mpData = body['data'] ?? body;
@@ -640,7 +640,7 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
       }
       if (data['action'] == 'process_payment') {
         debugPrint(
-            '🔔 process_payment received from WebView: installments=${data['installments']} paymentMethodId=${data['paymentMethodId']} issuerId=${data['issuerId']}');
+            'ðŸ”” process_payment received from WebView: installments=${data['installments']} paymentMethodId=${data['paymentMethodId']} issuerId=${data['issuerId']}');
         if (widget.collectOnly) return;
         await _processarPagamento(
           cardToken: data['cardToken'],
@@ -687,7 +687,8 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
         'paymentMethodId': paymentMethodId,
         'issuerId': issuerId,
       };
-      debugPrint('🔔 _processarPagamento payload: ${jsonEncode(payloadDebug)}');
+      debugPrint(
+          'ðŸ”” _processarPagamento payload: ${jsonEncode(payloadDebug)}');
       final idToken = await _getPaymentIdToken();
       if (idToken == null) return;
 
@@ -714,8 +715,8 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
           }
         }),
       );
-      debugPrint('→ criarPagamento response status: ${response.statusCode}');
-      debugPrint('→ criarPagamento response body: ${response.body}');
+      debugPrint('â†’ criarPagamento response status: ${response.statusCode}');
+      debugPrint('â†’ criarPagamento response body: ${response.body}');
 
       if (response.statusCode == 200) {
         final result = jsonDecode(response.body);
@@ -872,7 +873,9 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
                     ElevatedButton(
                       onPressed: () => Navigator.pop(context),
                       style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primaryPurple),
+                        backgroundColor: AppColors.primaryPurple,
+                        foregroundColor: Colors.white,
+                      ),
                       child: const Text("Voltar",
                           style: TextStyle(color: Colors.white)),
                     )

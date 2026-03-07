@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 import 'login_page.dart';
 
@@ -10,10 +10,9 @@ class LoginChoicePage extends StatelessWidget {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        backgroundColor: Colors.transparent, 
-        elevation: 0, 
-        iconTheme: const IconThemeData(color: Colors.black)
-      ),
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          iconTheme: const IconThemeData(color: Colors.black)),
       body: Padding(
         padding: const EdgeInsets.all(30.0),
         child: Column(
@@ -28,7 +27,10 @@ class LoginChoicePage extends StatelessWidget {
             const Text(
               "Como deseja prosseguir?",
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.black87),
+              style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87),
             ),
             const SizedBox(height: 12),
             const Text(
@@ -37,7 +39,7 @@ class LoginChoicePage extends StatelessWidget {
               style: TextStyle(fontSize: 14, color: Colors.grey),
             ),
             const SizedBox(height: 50),
-            
+
             // Botão Entrar (Login)
             SizedBox(
               height: 55,
@@ -45,24 +47,27 @@ class LoginChoicePage extends StatelessWidget {
                 onPressed: () {
                   Navigator.push(
                     context,
-                    // 🛡️ CORREÇÃO: Removido isNewUser que causava erro
+                    // ðŸ›¡ï¸ CORREÇÃO: Removido isNewUser que causava erro
                     MaterialPageRoute(builder: (context) => const LoginPage()),
                   );
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primaryPurple,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
                   elevation: 0,
                 ),
-                child: const Text(
-                  "JÁ TENHO UMA CONTA", 
-                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)
-                ),
+                child: const Text("JÃ TENHO UMA CONTA",
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14)),
               ),
             ),
-            
+
             const SizedBox(height: 20),
-            
+
             // Botão Criar Conta (Outlined)
             SizedBox(
               height: 55,
@@ -71,18 +76,21 @@ class LoginChoicePage extends StatelessWidget {
                   // Aqui você pode apontar para sua RegisterPage futuramente
                   Navigator.push(
                     context,
-                    // 🛡️ CORREÇÃO: Removido isNewUser que causava erro
+                    // ðŸ›¡ï¸ CORREÇÃO: Removido isNewUser que causava erro
                     MaterialPageRoute(builder: (context) => const LoginPage()),
                   );
                 },
                 style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: AppColors.primaryPurple, width: 1.5),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  side: const BorderSide(
+                      color: AppColors.primaryPurple, width: 1.5),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
                 ),
-                child: const Text(
-                  "QUERO ME CADASTRAR", 
-                  style: TextStyle(color: AppColors.primaryPurple, fontWeight: FontWeight.bold, fontSize: 14)
-                ),
+                child: const Text("QUERO ME CADASTRAR",
+                    style: TextStyle(
+                        color: AppColors.primaryPurple,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14)),
               ),
             ),
           ],

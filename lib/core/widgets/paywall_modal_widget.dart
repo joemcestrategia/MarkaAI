@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 import '../../modules/business/trial_service.dart';
 import '../../modules/business/trial_activation_page.dart';
@@ -58,7 +58,7 @@ class PaywallModalWidget {
                 child: Column(
                   children: [
                     const Text(
-                      "🎁 Experimente de Graça",
+                      "ðŸŽ Experimente de Graça",
                       style: TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,

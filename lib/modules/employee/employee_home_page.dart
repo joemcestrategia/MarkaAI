@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -111,7 +111,7 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FA),
       appBar: AppBar(
-        title: const Text('Minha Área'),
+        title: const Text('Minha Ãrea'),
         backgroundColor: AppColors.primaryPurple,
         foregroundColor: Colors.white,
         bottom: TabBar(
@@ -758,7 +758,7 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
 }
 
 // ============================================================================
-// PÁGINA DE LISTA COMPLETA DE AGENDAMENTOS DO FUNCIONÁRIO
+// PÃGINA DE LISTA COMPLETA DE AGENDAMENTOS DO FUNCIONÃRIO
 // ============================================================================
 
 class _EmployeeAppointmentsListPage extends StatelessWidget {

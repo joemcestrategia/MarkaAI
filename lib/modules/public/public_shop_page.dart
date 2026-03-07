@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:intl/intl.dart';
@@ -8,11 +8,23 @@ import '../../core/theme/app_colors.dart';
 import '../../widgets/google_reviews_widget.dart';
 import '../clients/client_service_detail_page.dart';
 
-class PublicShopPage extends StatelessWidget {
+class PublicShopPage extends StatefulWidget {
   final String slug;
+  final bool isReschedule;
+  final String? rescheduleAppointmentId;
 
-  const PublicShopPage({super.key, required this.slug});
+  const PublicShopPage({
+    super.key,
+    required this.slug,
+    this.isReschedule = false,
+    this.rescheduleAppointmentId,
+  });
 
+  @override
+  State<PublicShopPage> createState() => _PublicShopPageState();
+}
+
+class _PublicShopPageState extends State<PublicShopPage> {
   Future<void> _launchWhatsApp(BuildContext context, String whatsapp) async {
     try {
       final phone = whatsapp.replaceAll(RegExp(r'[^0-9]'), '');
@@ -77,6 +89,10 @@ class PublicShopPage extends StatelessWidget {
         MaterialPageRoute(
           builder: (context) => ClientServiceDetailPage(
             serviceDoc: serviceDoc,
+            isReschedule: widget.isReschedule,
+            rescheduleAppointmentId: widget.rescheduleAppointmentId,
+            fromSubdomain:
+                true, // Vindo de subdomínio: após booking, redireciona para ClientHomePage
           ),
         ),
       );
@@ -88,7 +104,7 @@ class PublicShopPage extends StatelessWidget {
     return FutureBuilder<QuerySnapshot>(
       future: FirebaseFirestore.instance
           .collection('shops')
-          .where('slug', isEqualTo: slug)
+          .where('slug', isEqualTo: widget.slug)
           .limit(1)
           .get(),
       builder: (context, snapshot) {
@@ -114,7 +130,7 @@ class PublicShopPage extends StatelessWidget {
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    'O link "$slug" não existe ou foi desativado',
+                    'O link "${widget.slug}" não existe ou foi desativado',
                     style: const TextStyle(color: Colors.grey),
                   ),
                 ],
@@ -138,6 +154,7 @@ class PublicShopPage extends StatelessWidget {
                 floating: false,
                 pinned: true,
                 backgroundColor: AppColors.primaryPurple,
+                foregroundColor: Colors.white,
                 flexibleSpace: FlexibleSpaceBar(
                   title: Text(
                     data['nome'] ?? 'Loja',
@@ -346,7 +363,7 @@ class PublicShopPage extends StatelessWidget {
                     );
                   }
 
-                  final services = snapshot.data!.docs;
+                  var services = snapshot.data!.docs;
                   if (services.isEmpty) {
                     return const SliverToBoxAdapter(
                       child: Padding(
@@ -360,6 +377,19 @@ class PublicShopPage extends StatelessWidget {
                       ),
                     );
                   }
+
+                  // âœ… Ordenar serviços em ordem alfabética
+                  services.sort((a, b) {
+                    final strA = (a.data() as Map<String, dynamic>)['nome']
+                            ?.toString()
+                            .toLowerCase() ??
+                        '';
+                    final strB = (b.data() as Map<String, dynamic>)['nome']
+                            ?.toString()
+                            .toLowerCase() ??
+                        '';
+                    return strA.compareTo(strB);
+                  });
 
                   return SliverList(
                     delegate: SliverChildBuilderDelegate(

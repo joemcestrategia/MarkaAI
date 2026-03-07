@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:geolocator/geolocator.dart';
@@ -137,9 +137,22 @@ class _ClientSearchPageState extends State<ClientSearchPage> {
                   final name = (d['nome'] ?? "").toString().toLowerCase();
                   final category =
                       (d['categoria'] ?? "").toString().toLowerCase();
-                  final shopCity = (d['endereco'] ?? d['cidade'] ?? "")
-                      .toString()
-                      .toLowerCase();
+                  // endereco é um Map no Firestore → extrai o campo 'cidade'
+                  final enderecoRaw = d['endereco'];
+                  String shopCity;
+                  if (enderecoRaw is Map) {
+                    shopCity = (enderecoRaw['cidade'] ??
+                            enderecoRaw['city'] ??
+                            d['cidade'] ??
+                            '')
+                        .toString()
+                        .toLowerCase();
+                  } else {
+                    shopCity = (enderecoRaw?.toString() ??
+                            d['cidade']?.toString() ??
+                            '')
+                        .toLowerCase();
+                  }
 
                   final matchesText = query.isEmpty ||
                       name.contains(query) ||
@@ -149,7 +162,7 @@ class _ClientSearchPageState extends State<ClientSearchPage> {
                       shopCity.contains(city) ||
                       city.contains(shopCity);
 
-                  // 🛰️ Filtro por Raio (se disponível)
+                  // ðŸ›°ï¸ Filtro por Raio (se disponível)
                   if (_userLat != null &&
                       _userLng != null &&
                       d['lat'] != null &&
@@ -167,7 +180,7 @@ class _ClientSearchPageState extends State<ClientSearchPage> {
                   return isActive && matchesText && matchesLoc;
                 }).toList();
 
-                // 🔀 Ordenação por Qualidade do Perfil (Media)
+                // ðŸ”€ Ordenação por Qualidade do Perfil (Media)
                 filtered.sort((a, b) {
                   final da = a.data() as Map<String, dynamic>;
                   final db = b.data() as Map<String, dynamic>;

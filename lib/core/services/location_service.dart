@@ -1,4 +1,4 @@
-import 'package:cloud_functions/cloud_functions.dart';
+﻿import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
 
 /// Resultado da consulta de CEP via Cloud Function proxy (fetchCep).
@@ -63,7 +63,8 @@ class LocationService {
       final data = Map<String, dynamic>.from(result.data as Map);
       return CepResult.fromMap(data);
     } on FirebaseFunctionsException catch (e) {
-      debugPrint('[LocationService] fetchCep error: ${e.code} — ${e.message}');
+      debugPrint(
+          '[LocationService] fetchCep error: ${e.code} â€” ${e.message}');
       return null;
     } catch (e) {
       debugPrint('[LocationService] fetchCep unexpected error: $e');

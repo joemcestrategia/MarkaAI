@@ -1,11 +1,11 @@
-import 'package:http/http.dart' as http;
+﻿import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 
 /// =====================================================
 /// MERCADO PAGO CHECKOUT TRANSPARENTE SERVICE
 /// =====================================================
-/// 
+///
 /// Integração com Checkout Transparente
 /// - Gera CardToken via MercadoPago.js (FRONTEND)
 /// - Cria pagamento com token (BACKEND)
@@ -14,21 +14,23 @@ import 'package:flutter/foundation.dart';
 
 class MercadoPagoCheckoutTransparenteService {
   static const String _baseUrl = 'https://api.mercadopago.com/v1/payments';
-  static const String _baseUrlSandbox = 'https://api.sandbox.mercadopago.com/v1/payments';
+  static const String _baseUrlSandbox =
+      'https://api.sandbox.mercadopago.com/v1/payments';
 
   /// Instancia MercadoPago.js no Flutter WebView
   static Future<String> inicializarMercadoPagoJs({
     required String publicKey,
   }) async {
     try {
-      debugPrint('🔧 Inicializando MercadoPago.js com Public Key: $publicKey');
-      
+      debugPrint(
+          'ðŸ”§ Inicializando MercadoPago.js com Public Key: $publicKey');
+
       // Este seria chamado no WebView com:
       // window.mercadopago = new MercadoPago('PUBLIC_KEY', {...});
-      
+
       return publicKey;
     } catch (e) {
-      debugPrint('❌ Erro ao inicializar: $e');
+      debugPrint('âŒ Erro ao inicializar: $e');
       rethrow;
     }
   }
@@ -47,7 +49,7 @@ class MercadoPagoCheckoutTransparenteService {
     try {
       final url = isSandbox ? _baseUrlSandbox : _baseUrl;
 
-      debugPrint('💳 Criando pagamento com CardToken');
+      debugPrint('ðŸ’³ Criando pagamento com CardToken');
       debugPrint('   Valor: R\$ $valor');
       debugPrint('   Parcelas: $parcelas');
       debugPrint('   Email: $clientEmail');
@@ -65,7 +67,7 @@ class MercadoPagoCheckoutTransparenteService {
         'statement_descriptor': 'MarkaAI Service',
       };
 
-      debugPrint('📡 POST $url');
+      debugPrint('ðŸ“¡ POST $url');
       debugPrint('   Body: ${jsonEncode(body)}');
 
       final response = await http.post(
@@ -77,12 +79,12 @@ class MercadoPagoCheckoutTransparenteService {
         body: jsonEncode(body),
       );
 
-      debugPrint('📊 Response status: ${response.statusCode}');
+      debugPrint('ðŸ“Š Response status: ${response.statusCode}');
 
       final responseData = jsonDecode(response.body) as Map<String, dynamic>;
 
       if (response.statusCode == 201 || response.statusCode == 200) {
-        debugPrint('✅ Pagamento criado com sucesso');
+        debugPrint('âœ… Pagamento criado com sucesso');
         debugPrint('   ID: ${responseData['id']}');
         debugPrint('   Status: ${responseData['status']}');
 
@@ -94,7 +96,7 @@ class MercadoPagoCheckoutTransparenteService {
           'transaction_details': responseData['transaction_details'],
         };
       } else {
-        debugPrint('❌ Erro: ${response.statusCode}');
+        debugPrint('âŒ Erro: ${response.statusCode}');
         debugPrint('   ${jsonEncode(responseData)}');
 
         return {
@@ -104,7 +106,7 @@ class MercadoPagoCheckoutTransparenteService {
         };
       }
     } catch (e) {
-      debugPrint('❌ Erro: $e');
+      debugPrint('âŒ Erro: $e');
       rethrow;
     }
   }
@@ -122,7 +124,7 @@ class MercadoPagoCheckoutTransparenteService {
           ? 'https://api.sandbox.mercadopago.com/v1/payment_methods/installments'
           : 'https://api.mercadopago.com/v1/payment_methods/installments';
 
-      debugPrint('🔍 Buscando parcelas para BIN: $bin');
+      debugPrint('ðŸ” Buscando parcelas para BIN: $bin');
 
       final response = await http.get(
         Uri.parse(url).replace(
@@ -146,14 +148,14 @@ class MercadoPagoCheckoutTransparenteService {
                 })
             .toList();
 
-        debugPrint('✅ Parcelas encontradas: ${parcelas.length}');
+        debugPrint('âœ… Parcelas encontradas: ${parcelas.length}');
         return parcelas;
       } else {
-        debugPrint('❌ Erro ao buscar parcelas: ${response.statusCode}');
+        debugPrint('âŒ Erro ao buscar parcelas: ${response.statusCode}');
         return [];
       }
     } catch (e) {
-      debugPrint('❌ Erro: $e');
+      debugPrint('âŒ Erro: $e');
       return [];
     }
   }
@@ -189,7 +191,7 @@ class MercadoPagoCheckoutTransparenteService {
         throw Exception('Erro ao obter status: ${response.statusCode}');
       }
     } catch (e) {
-      debugPrint('❌ Erro: $e');
+      debugPrint('âŒ Erro: $e');
       rethrow;
     }
   }
@@ -198,7 +200,7 @@ class MercadoPagoCheckoutTransparenteService {
 /// =====================================================
 /// ESTRUTURA DE RESPONSE - CRIAR PAGAMENTO
 /// =====================================================
-/// 
+///
 /// Sucesso (201):
 /// {
 ///   "id": 12345678,

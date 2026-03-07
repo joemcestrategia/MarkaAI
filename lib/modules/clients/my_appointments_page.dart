@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -7,8 +7,10 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/mercado_pago_service.dart';
 import '../schedule/checkout_transparente_page.dart';
+import '../schedule/booking_page.dart';
 import 'dart:convert';
 import 'dart:async';
+import '../public/public_shop_page.dart';
 
 class MyAppointmentsPage extends StatefulWidget {
   const MyAppointmentsPage({super.key});
@@ -471,27 +473,98 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
   }
 
   Future<void> _cancelAppointment(DocumentSnapshot appointment) async {
-    // Mostramos diretamente um modal de confirmação,
-    // pois a validação de tempo será feita com segurança no backend.
     if (!mounted) return;
-    final confirm = await showDialog<bool>(
+    final confirm = await showModalBottomSheet<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Cancelar Agendamento'),
-        content:
-            const Text('Tem certeza que deseja cancelar este agendamento?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('NÃO'),
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('SIM, CANCELAR'),
+          padding: EdgeInsets.fromLTRB(
+              24, 24, 24, MediaQuery.of(ctx).padding.bottom + 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withOpacity(0.1),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.cancel_outlined, color: Colors.red),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    'Cancelar Agendamento',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleLarge
+                        ?.copyWith(fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Tem certeza que deseja cancelar este agendamento? Esta ação não poderá ser desfeita.',
+                style: TextStyle(fontSize: 15, color: Colors.black87),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        side: BorderSide(color: Colors.grey.shade400),
+                        foregroundColor: Colors.black87,
+                      ),
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: const Text('VOLTAR',
+                          style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        elevation: 0,
+                      ),
+                      child: const Text('CANCELAR',
+                          style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
+              )
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
 
     if (confirm != true) return;
@@ -523,181 +596,367 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
     } catch (e) {
       if (!mounted) return;
       if (Navigator.canPop(context)) Navigator.pop(context);
-      _showError('Não foi possível cancelar: $e');
+      final errMsg = e is FirebaseFunctionsException
+          ? (e.message ?? e.toString())
+          : e.toString();
+      _showError('Não foi possível cancelar: $errMsg');
     }
   }
 
   // [FASE 7] Solicitação de Reembolso
-  Future<void> _requestRefund(DocumentSnapshot appointment) async {
+  // Exibe o modal com os detalhes e as ações do agendamento
+  void _showAppointmentDetails(DocumentSnapshot appointment, bool isUpcoming,
+      String shopName, String shopLogo) {
     final data = appointment.data() as Map<String, dynamic>;
+    final valorTotal = (data['valor_total'] ?? data['valor'] ?? 0).toDouble();
     final valorPago = (data['valor_pago'] ?? 0).toDouble();
+    final valorRestante = valorTotal - valorPago;
+    final appointmentDate = (data['data_agendamento'] as Timestamp).toDate();
 
-    // Modal de solicitação
-    final chavePixCtrl = TextEditingController();
-    final motivoCtrl = TextEditingController();
-
-    if (!mounted) return;
-    final confirm = await showDialog<bool>(
+    showModalBottomSheet(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Solicitar Reembolso'),
-        content: SingleChildScrollView(
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          padding: EdgeInsets.fromLTRB(
+              24, 24, 24, MediaQuery.of(ctx).padding.bottom + 24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Como você já pagou $currencyFormat.format(valorPago), '
-                'o agendamento será cancelado e uma solicitação de reembolso será enviada para a loja.',
-                style: const TextStyle(fontSize: 14),
-              ),
-              const SizedBox(height: 16),
-              const Text('Sua Chave PIX',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              TextField(
-                controller: chavePixCtrl,
-                decoration: const InputDecoration(
-                  hintText: 'Ex: CPF, E-mail, Celular ou Aleatória',
-                  border: OutlineInputBorder(),
-                  isDense: true,
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(4),
+                  ),
                 ),
               ),
-              const SizedBox(height: 16),
-              const Text('Motivo (Opcional)',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 24),
+              Text(
+                'Detalhes do Agendamento',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleLarge
+                    ?.copyWith(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Container(
+                    width: 60,
+                    height: 60,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade300),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: shopLogo.isNotEmpty
+                          ? CachedNetworkImage(
+                              imageUrl: shopLogo,
+                              fit: BoxFit.cover,
+                              errorWidget: (_, __, ___) => const Icon(
+                                  Icons.store,
+                                  color: AppColors.primaryPurple),
+                            )
+                          : const Icon(Icons.store,
+                              color: AppColors.primaryPurple),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          shopName,
+                          style: const TextStyle(
+                              fontSize: 14,
+                              color: Colors.grey,
+                              fontWeight: FontWeight.w600),
+                        ),
+                        Text(
+                          data['servico_nome'] ?? 'Serviço',
+                          style: const TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryPurple.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.calendar_today,
+                      color: AppColors.primaryPurple),
+                ),
+                title: const Text('Data e Hora',
+                    style: TextStyle(fontSize: 14, color: Colors.grey)),
+                subtitle: Text(
+                  '${DateFormat('dd/MM/yyyy').format(appointmentDate)} às ${DateFormat('HH:mm').format(appointmentDate)}',
+                  style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black),
+                ),
+              ),
+              const Divider(height: 32),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Valor do serviço:',
+                      style: TextStyle(color: Colors.grey)),
+                  Text(currencyFormat.format(valorTotal),
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                ],
+              ),
               const SizedBox(height: 8),
-              TextField(
-                controller: motivoCtrl,
-                maxLines: 2,
-                decoration: const InputDecoration(
-                  hintText: 'Por que está cancelando?',
-                  border: OutlineInputBorder(),
-                  isDense: true,
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Total pago:',
+                      style: TextStyle(color: Colors.grey)),
+                  Text(
+                    currencyFormat.format(valorPago),
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: valorPago > 0 ? Colors.green : Colors.grey),
+                  ),
+                ],
+              ),
+              if (valorRestante > 0) ...[
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('Valor a pagar no local:',
+                        style: TextStyle(
+                            color: Colors.grey, fontWeight: FontWeight.bold)),
+                    Text(
+                      currencyFormat.format(valorRestante),
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, color: Colors.orange),
+                    ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: 32),
+              if (isUpcoming && _shouldShowActions(appointment)) ...[
+                Row(
+                  children: [
+                    if (_canCancelAppointment(appointment))
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () {
+                            Navigator.pop(ctx);
+                            _cancelAppointment(appointment);
+                          },
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.red,
+                            side: const BorderSide(color: Colors.red),
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                          child: const Text('CANCELAR',
+                              style: TextStyle(fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                    if (_canCancelAppointment(appointment))
+                      const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () {
+                          Navigator.pop(ctx);
+                          // Reagendar usando a tela de agendamento ou escolher novo serviço
+                          _promptRescheduleType(appointment, shopName);
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primaryPurple,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                        child: const Text('REAGENDAR',
+                            style: TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ],
+                ),
+              ] else ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.grey[200],
+                      foregroundColor: Colors.black,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: const Text('VOLTAR',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                )
+              ]
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _promptRescheduleType(
+      DocumentSnapshot appointment, String shopName) async {
+    final data = appointment.data() as Map<String, dynamic>;
+    final shopId = data['shopId'] as String;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          padding: EdgeInsets.fromLTRB(
+              24, 24, 24, MediaQuery.of(ctx).padding.bottom + 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+              Text(
+                'Opções de Reagendamento',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleLarge
+                    ?.copyWith(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Você deseja reagendar para o mesmo serviço contratado, ou prefere explorar a loja e escolher um serviço diferente?',
+                style: TextStyle(fontSize: 15, color: Colors.black87),
+              ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.grey[200],
+                    foregroundColor: Colors.black87,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _rescheduleViaBookingPage(appointment);
+                  },
+                  child: const Text('MANTER MESMO SERVIÇO',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primaryPurple,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    showDialog(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (ctx2) =>
+                          const Center(child: CircularProgressIndicator()),
+                    );
+
+                    try {
+                      final db = FirebaseFirestore.instance;
+                      final shopDoc =
+                          await db.collection('shops').doc(shopId).get();
+
+                      if (!mounted) return;
+                      Navigator.pop(context); // close loading
+
+                      if (shopDoc.exists) {
+                        final slug = shopDoc.data()?['slug'];
+                        if (slug != null && slug.toString().isNotEmpty) {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => PublicShopPage(
+                                slug: slug,
+                                isReschedule: true,
+                                rescheduleAppointmentId: appointment.id,
+                              ),
+                            ),
+                          );
+                        } else {
+                          _showError('Link da loja indisponível.');
+                        }
+                      } else {
+                        _showError('Loja não encontrada.');
+                      }
+                    } catch (e) {
+                      if (mounted && Navigator.canPop(context)) {
+                        Navigator.pop(context);
+                      }
+                      _showError('Erro ao carregar loja: $e');
+                    }
+                  },
+                  child: const Text('MUDAR DE SERVIÇO',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
                 ),
               ),
             ],
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('VOLTAR'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              if (chavePixCtrl.text.trim().isEmpty) {
-                ScaffoldMessenger.of(ctx).showSnackBar(
-                  const SnackBar(
-                      content: Text(
-                          'Por favor, informe sua chave PIX para o estorno.')),
-                );
-                return;
-              }
-              Navigator.pop(ctx, true);
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('SOLICITAR REEMBOLSO'),
-          ),
-        ],
-      ),
+        );
+      },
     );
-
-    if (confirm != true) return;
-
-    if (!mounted) return;
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => const Center(child: CircularProgressIndicator()),
-    );
-
-    try {
-      final functions = FirebaseFunctions.instance;
-      await functions.httpsCallable('cancelAppointment').call({
-        'appointmentId': appointment.id,
-        'requestRefund': true,
-        'pixKey': chavePixCtrl.text.trim(),
-        'reason': motivoCtrl.text.trim(),
-        'amount': valorPago,
-      });
-
-      if (!mounted) return;
-      Navigator.pop(context); // close loading
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Solicitação de reembolso enviada com sucesso!'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    } catch (e) {
-      _showError('Não foi possível cancelar: $e');
-    }
   }
 
-  // [FASE 5] Reagendamento
-  Future<void> _rescheduleAppointment(DocumentSnapshot appointment) async {
+  Future<void> _rescheduleViaBookingPage(DocumentSnapshot appointment) async {
     final data = appointment.data() as Map<String, dynamic>;
+    final shopId = data['shopId'] as String;
+    final professionalId = data['profissionalId'] as String;
+    final serviceId = data['servicoId'] as String;
 
-    final currentDate = (data['data_agendamento'] as Timestamp).toDate();
-
-    if (!mounted) return;
-
-    // Picker de nova data
-    final newDate = await showDatePicker(
-      context: context,
-      initialDate: currentDate.add(const Duration(days: 1)),
-      firstDate: DateTime.now().add(const Duration(hours: 1)),
-      lastDate: DateTime.now().add(const Duration(days: 90)),
-      helpText: 'Escolha a nova data',
-    );
-    if (newDate == null || !mounted) return;
-
-    // Picker de nova hora
-    final newTime = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(currentDate),
-      helpText: 'Escolha o novo horário',
-    );
-    if (newTime == null || !mounted) return;
-
-    final newDateTime = DateTime(
-      newDate.year,
-      newDate.month,
-      newDate.day,
-      newTime.hour,
-      newTime.minute,
-    );
-
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Confirmar Reagendamento'),
-        content: Text(
-          'Reagendar para:\n'
-          '📅 ${DateFormat('dd/MM/yyyy').format(newDateTime)} '
-          '🕐 ${DateFormat('HH:mm').format(newDateTime)}\n\n'
-          'Deseja confirmar?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primaryPurple,
-                foregroundColor: Colors.white),
-            child: const Text('Confirmar'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm != true) return;
-
-    if (!mounted) return;
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -705,22 +964,55 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
     );
 
     try {
-      final functions = FirebaseFunctions.instance;
-      await functions.httpsCallable('rescheduleAppointment').call({
-        'appointmentId': appointment.id,
-        'newDateISO': newDateTime.toIso8601String(),
-      });
+      final db = FirebaseFirestore.instance;
+      // Fetch shop details needed by BookingTimePage
+      final shopDoc = await db.collection('shops').doc(shopId).get();
+      final profDoc =
+          await db.collection('employees').doc(professionalId).get();
+      final serviceDoc = await db.collection('services').doc(serviceId).get();
 
       if (!mounted) return;
       Navigator.pop(context); // close loading
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Reagendamento confirmado! ✅'),
-          backgroundColor: Colors.green,
+
+      if (!shopDoc.exists || !profDoc.exists || !serviceDoc.exists) {
+        String missing = '';
+        if (!shopDoc.exists) missing += 'Loja ';
+        if (!profDoc.exists) missing += 'Profissional ';
+        if (!serviceDoc.exists) missing += 'Serviço ';
+        _showError(
+            'Não foi possível carregar os detalhes ($missing) para reagendar.');
+        return;
+      }
+
+      final shopData = shopDoc.data()!;
+      final shopConfig = shopData['config'] as Map<String, dynamic>? ?? {};
+      final intervalMinutes = shopConfig['intervalo_agenda_min'] ?? 60;
+      final minAdvanceHours =
+          shopConfig['limite_minimo_agendamento_horas'] ?? 7;
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => BookingTimePage(
+            shop: shopDoc,
+            serviceDoc: serviceDoc,
+            professionalDoc: profDoc,
+            shopConfig: shopConfig,
+            intervalMinutes: intervalMinutes,
+            minAdvanceHours: minAdvanceHours,
+            isReschedule: true,
+            appointmentId: appointment.id,
+          ),
         ),
       );
     } catch (e) {
-      _showError('Não foi possível reagendar: $e');
+      if (mounted && Navigator.canPop(context)) {
+        Navigator.pop(context);
+      }
+      final errMsg = e is FirebaseFunctionsException
+          ? (e.message ?? e.toString())
+          : e.toString();
+      _showError('Erro ao preparar reagendamento: $errMsg');
     }
   }
 
@@ -756,6 +1048,8 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
           controller: _tabController,
           indicatorColor: Colors.white,
           indicatorWeight: 3,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white70,
           labelStyle:
               const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
           unselectedLabelStyle: const TextStyle(fontSize: 14),
@@ -864,251 +1158,196 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
           elevation: 2,
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Header com logo e nome do estabelecimento
-                Row(
-                  children: [
-                    // Logo do estabelecimento
-                    Container(
-                      width: 50,
-                      height: 50,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.grey.shade300),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: () => _showAppointmentDetails(
+                appointment, isUpcoming, shopName, shopLogo),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header com logo e nome do estabelecimento
+                  Row(
+                    children: [
+                      // Logo do estabelecimento
+                      Container(
+                        width: 50,
+                        height: 50,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.grey.shade300),
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: shopLogo.isNotEmpty
+                              ? CachedNetworkImage(
+                                  imageUrl: shopLogo,
+                                  fit: BoxFit.cover,
+                                  placeholder: (_, __) => Container(
+                                    color: AppColors.primaryPurple
+                                        .withValues(alpha: 0.1),
+                                    child: const Icon(Icons.store,
+                                        color: AppColors.primaryPurple),
+                                  ),
+                                  errorWidget: (_, __, ___) => Container(
+                                    color: AppColors.primaryPurple
+                                        .withValues(alpha: 0.1),
+                                    child: const Icon(Icons.store,
+                                        color: AppColors.primaryPurple),
+                                  ),
+                                )
+                              : Container(
+                                  color: AppColors.primaryPurple
+                                      .withValues(alpha: 0.1),
+                                  child: const Icon(Icons.store,
+                                      color: AppColors.primaryPurple),
+                                ),
+                        ),
                       ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: shopLogo.isNotEmpty
-                            ? CachedNetworkImage(
-                                imageUrl: shopLogo,
-                                fit: BoxFit.cover,
-                                placeholder: (_, __) => Container(
-                                  color: AppColors.primaryPurple
-                                      .withValues(alpha: 0.1),
-                                  child: const Icon(Icons.store,
-                                      color: AppColors.primaryPurple),
-                                ),
-                                errorWidget: (_, __, ___) => Container(
-                                  color: AppColors.primaryPurple
-                                      .withValues(alpha: 0.1),
-                                  child: const Icon(Icons.store,
-                                      color: AppColors.primaryPurple),
-                                ),
-                              )
-                            : Container(
-                                color: AppColors.primaryPurple
-                                    .withValues(alpha: 0.1),
-                                child: const Icon(Icons.store,
-                                    color: AppColors.primaryPurple),
+                      const SizedBox(width: 12),
+                      // Nome do estabelecimento e status
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              shopName,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.grey,
                               ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              data['servico_nome'] ?? 'Serviço',
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    // Nome do estabelecimento e status
-                    Expanded(
-                      child: Column(
+                      // Status badge
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: _getStatusColor(data['status'])
+                              .withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          _getStatusText(data['status']),
+                          style: TextStyle(
+                            color: _getStatusColor(data['status']),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  // Data e hora
+                  Row(
+                    children: [
+                      const Icon(Icons.calendar_today,
+                          size: 16, color: Colors.grey),
+                      const SizedBox(width: 8),
+                      Text(
+                        DateFormat('dd/MM/yyyy').format(appointmentDate),
+                        style: const TextStyle(
+                            color: Colors.grey, fontWeight: FontWeight.w500),
+                      ),
+                      const SizedBox(width: 16),
+                      const Icon(Icons.access_time,
+                          size: 16, color: Colors.grey),
+                      const SizedBox(width: 8),
+                      Text(
+                        DateFormat('HH:mm').format(appointmentDate),
+                        style: const TextStyle(
+                            color: Colors.grey, fontWeight: FontWeight.w500),
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 24),
+                  // Valores
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          const Text('Valor Total:',
+                              style:
+                                  TextStyle(fontSize: 12, color: Colors.grey)),
+                          Text(currencyFormat.format(valorTotal),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Pago:',
+                              style:
+                                  TextStyle(fontSize: 12, color: Colors.grey)),
                           Text(
-                            shopName,
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.grey,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            data['servico_nome'] ?? 'Serviço',
-                            style: const TextStyle(
-                              fontSize: 18,
+                            currencyFormat.format(valorPago),
+                            style: TextStyle(
                               fontWeight: FontWeight.bold,
+                              color: valorPago > 0 ? Colors.green : Colors.grey,
                             ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
                           ),
                         ],
                       ),
-                    ),
-                    // Status badge
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: _getStatusColor(data['status'])
-                            .withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(20),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Restante:',
+                              style:
+                                  TextStyle(fontSize: 12, color: Colors.grey)),
+                          Text(
+                            currencyFormat.format(valorRestante),
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: valorRestante > 0
+                                  ? Colors.orange
+                                  : Colors.green,
+                            ),
+                          ),
+                        ],
                       ),
-                      child: Text(
-                        _getStatusText(data['status']),
-                        style: TextStyle(
-                          color: _getStatusColor(data['status']),
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                // Data e hora
-                Row(
-                  children: [
-                    const Icon(Icons.calendar_today,
-                        size: 16, color: Colors.grey),
-                    const SizedBox(width: 8),
-                    Text(
-                      DateFormat('dd/MM/yyyy').format(appointmentDate),
-                      style: const TextStyle(
-                          color: Colors.grey, fontWeight: FontWeight.w500),
-                    ),
-                    const SizedBox(width: 16),
-                    const Icon(Icons.access_time, size: 16, color: Colors.grey),
-                    const SizedBox(width: 8),
-                    Text(
-                      DateFormat('HH:mm').format(appointmentDate),
-                      style: const TextStyle(
-                          color: Colors.grey, fontWeight: FontWeight.w500),
-                    ),
-                  ],
-                ),
-                const Divider(height: 24),
-                // Valores
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text('Valor Total:',
-                            style: TextStyle(fontSize: 12, color: Colors.grey)),
-                        Text(currencyFormat.format(valorTotal),
-                            style:
-                                const TextStyle(fontWeight: FontWeight.bold)),
-                      ],
-                    ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text('Pago:',
-                            style: TextStyle(fontSize: 12, color: Colors.grey)),
-                        Text(
-                          currencyFormat.format(valorPago),
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: valorPago > 0 ? Colors.green : Colors.grey,
-                          ),
-                        ),
-                      ],
-                    ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text('Restante:',
-                            style: TextStyle(fontSize: 12, color: Colors.grey)),
-                        Text(
-                          currencyFormat.format(valorRestante),
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: valorRestante > 0
-                                ? Colors.orange
-                                : Colors.green,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                // Botões de ação (somente para próximos)
-                if (isUpcoming && _shouldShowActions(appointment)) ...[
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      // Botão Cancelar (Se não pagou nada)
-                      if (valorPago == 0 && _canCancelAppointment(appointment))
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () => _cancelAppointment(appointment),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: Colors.red,
-                              side: const BorderSide(color: Colors.red),
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8)),
-                            ),
-                            child: const Text('CANCELAR'),
-                          ),
-                        ),
-                      // [FASE 7] Botão de Solicitar Reembolso (Se pagou algo)
-                      if (valorPago > 0 && _canCancelAppointment(appointment))
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () => _requestRefund(appointment),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: Colors.redAccent,
-                              side: const BorderSide(color: Colors.redAccent),
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8)),
-                            ),
-                            child: const Text(
-                              'CANCELAR E REEMBOLSAR',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(fontSize: 11),
-                            ),
-                          ),
-                        ),
-
-                      // Espaçador
-                      if (_canCancelAppointment(appointment))
-                        const SizedBox(width: 8),
-
-                      // [FASE 5] Botão Reagendar
-                      if (_shouldShowActions(appointment))
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: () =>
-                                _rescheduleAppointment(appointment),
-                            icon: const Icon(Icons.edit_calendar, size: 15),
-                            label: const Text('REAGENDAR',
-                                style: TextStyle(fontSize: 11)),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: AppColors.primaryPurple,
-                              side: const BorderSide(
-                                  color: AppColors.primaryPurple),
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8)),
-                            ),
-                          ),
-                        ),
-                      if (valorRestante > 0) const SizedBox(width: 8),
-                      // Botão Pagar
-                      if (valorRestante > 0)
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: () => _showPaymentOptions(appointment),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.primaryPurple,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8)),
-                            ),
-                            child: const Text('PAGAR RESTANTE',
-                                style: TextStyle(fontSize: 10)),
-                          ),
-                        ),
                     ],
                   ),
+                  if (isUpcoming && valorRestante > 0) ...[
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: () => _showPaymentOptions(appointment),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primaryPurple,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8)),
+                        ),
+                        child: const Text('PAGAR RESTANTE',
+                            style: TextStyle(
+                                fontSize: 12, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         );

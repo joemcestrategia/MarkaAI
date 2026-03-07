@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../core/theme/app_colors.dart';
@@ -10,10 +10,12 @@ class AppointmentConfirmationPage extends StatefulWidget {
   const AppointmentConfirmationPage({super.key, required this.appointmentId});
 
   @override
-  State<AppointmentConfirmationPage> createState() => _AppointmentConfirmationPageState();
+  State<AppointmentConfirmationPage> createState() =>
+      _AppointmentConfirmationPageState();
 }
 
-class _AppointmentConfirmationPageState extends State<AppointmentConfirmationPage> {
+class _AppointmentConfirmationPageState
+    extends State<AppointmentConfirmationPage> {
   bool _isLoading = false;
   Map<String, dynamic>? _appointmentData;
 
@@ -38,10 +40,12 @@ class _AppointmentConfirmationPageState extends State<AppointmentConfirmationPag
   Future<void> _confirmPresence(bool confirmed) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null || _appointmentData == null) return;
-    
+
     if (_appointmentData!['clientId'] != user.uid) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Este agendamento não pertence a você.'), backgroundColor: Colors.red),
+        const SnackBar(
+            content: Text('Este agendamento não pertence a você.'),
+            backgroundColor: Colors.red),
       );
       return;
     }
@@ -55,11 +59,12 @@ class _AppointmentConfirmationPageState extends State<AppointmentConfirmationPag
         'client_confirmed': confirmed,
         'client_confirmed_at': FieldValue.serverTimestamp(),
       });
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(confirmed ? 'Presença confirmada!' : 'Agendamento cancelado.'),
+            content: Text(
+                confirmed ? 'Presença confirmada!' : 'Agendamento cancelado.'),
             backgroundColor: confirmed ? Colors.green : Colors.orange,
           ),
         );
@@ -80,20 +85,26 @@ class _AppointmentConfirmationPageState extends State<AppointmentConfirmationPag
   Widget build(BuildContext context) {
     if (_appointmentData == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Confirmar Agendamento'), backgroundColor: AppColors.primaryPurple),
+        appBar: AppBar(
+          title: const Text('Confirmar Agendamento'),
+          backgroundColor: AppColors.primaryPurple,
+          foregroundColor: Colors.white,
+        ),
         body: const Center(child: CircularProgressIndicator()),
       );
     }
 
     final data = _appointmentData!;
-    final date = (data['data_agendamento'] as Timestamp?)?.toDate() ?? DateTime.now();
+    final date =
+        (data['data_agendamento'] as Timestamp?)?.toDate() ?? DateTime.now();
     final servico = data['servico_nome'] ?? 'Serviço';
     final horario = data['horario'] ?? '';
     final valor = data['valor_total'] ?? 0.0;
     final metodoPagamento = data['metodo_pagamento'] ?? '';
-    final precisaPagar = (metodoPagamento.toLowerCase().contains('pessoalmente') || 
-                          metodoPagamento.toLowerCase().contains('local')) && 
-                          (data['valor_pago'] ?? 0.0) == 0.0;
+    final precisaPagar =
+        (metodoPagamento.toLowerCase().contains('pessoalmente') ||
+                metodoPagamento.toLowerCase().contains('local')) &&
+            (data['valor_pago'] ?? 0.0) == 0.0;
 
     return Scaffold(
       appBar: AppBar(
@@ -108,18 +119,23 @@ class _AppointmentConfirmationPageState extends State<AppointmentConfirmationPag
           children: [
             Card(
               elevation: 2,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
               child: Padding(
                 padding: const EdgeInsets.all(20),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Detalhes do Agendamento', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    const Text('Detalhes do Agendamento',
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 16),
                     _buildInfoRow(Icons.cut, 'Serviço', servico),
-                    _buildInfoRow(Icons.calendar_today, 'Data', '${date.day}/${date.month}/${date.year}'),
+                    _buildInfoRow(Icons.calendar_today, 'Data',
+                        '${date.day}/${date.month}/${date.year}'),
                     _buildInfoRow(Icons.access_time, 'Horário', horario),
-                    _buildInfoRow(Icons.attach_money, 'Valor', 'R\$ ${valor.toStringAsFixed(2)}'),
+                    _buildInfoRow(Icons.attach_money, 'Valor',
+                        'R\$ ${valor.toStringAsFixed(2)}'),
                     if (precisaPagar) ...[
                       const SizedBox(height: 12),
                       Container(
@@ -131,12 +147,14 @@ class _AppointmentConfirmationPageState extends State<AppointmentConfirmationPag
                         ),
                         child: Row(
                           children: [
-                            Icon(Icons.info, color: Colors.orange[700], size: 20),
+                            Icon(Icons.info,
+                                color: Colors.orange[700], size: 20),
                             const SizedBox(width: 10),
                             Expanded(
                               child: Text(
                                 'Pagamento será realizado no local.',
-                                style: TextStyle(color: Colors.orange[900], fontSize: 13),
+                                style: TextStyle(
+                                    color: Colors.orange[900], fontSize: 13),
                               ),
                             ),
                           ],
@@ -154,11 +172,18 @@ class _AppointmentConfirmationPageState extends State<AppointmentConfirmationPag
                 onPressed: _isLoading ? null : () => _confirmPresence(true),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.green,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
                 ),
                 child: _isLoading
-                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                    : const Text('CONFIRMAR PRESENÇA', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                            color: Colors.white, strokeWidth: 2))
+                    : const Text('CONFIRMAR PRESENÇA',
+                        style: TextStyle(
+                            color: Colors.white, fontWeight: FontWeight.bold)),
               ),
             ),
             const SizedBox(height: 12),
@@ -168,9 +193,12 @@ class _AppointmentConfirmationPageState extends State<AppointmentConfirmationPag
                 onPressed: _isLoading ? null : () => _confirmPresence(false),
                 style: OutlinedButton.styleFrom(
                   side: const BorderSide(color: Colors.orange),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
                 ),
-                child: const Text('CANCELAR AGENDAMENTO', style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
+                child: const Text('CANCELAR AGENDAMENTO',
+                    style: TextStyle(
+                        color: Colors.orange, fontWeight: FontWeight.bold)),
               ),
             ),
           ],
@@ -186,8 +214,12 @@ class _AppointmentConfirmationPageState extends State<AppointmentConfirmationPag
         children: [
           Icon(icon, size: 20, color: Colors.grey[700]),
           const SizedBox(width: 12),
-          Text('$label: ', style: const TextStyle(fontSize: 14, color: Colors.grey)),
-          Expanded(child: Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600))),
+          Text('$label: ',
+              style: const TextStyle(fontSize: 14, color: Colors.grey)),
+          Expanded(
+              child: Text(value,
+                  style: const TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w600))),
         ],
       ),
     );

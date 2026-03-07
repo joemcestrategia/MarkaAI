@@ -1,7 +1,7 @@
-class StringUtils {
+﻿class StringUtils {
   static String removeDiacritics(String str) {
     var withDia =
-        '�������������������������������������������������������???��??';
+        '?????';
     var withoutDia =
         'AAAAAAaaaaaaOOOOOOOooooooEEEEeeeeeCcDIIIIiiiiUUUUuuuuNnSsYyyZz';
 

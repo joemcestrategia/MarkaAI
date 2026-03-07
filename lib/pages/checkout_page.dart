@@ -13,6 +13,7 @@ import '../modules/schedule/checkout_transparente_page.dart';
 import '../modules/schedule/booking_success_page.dart';
 import '../core/widgets/loading_page.dart';
 import '../modules/clients/my_appointments_page.dart';
+import '../modules/clients/client_home_page.dart';
 
 class CheckoutPage extends StatefulWidget {
   final String shopId;
@@ -24,6 +25,7 @@ class CheckoutPage extends StatefulWidget {
   final TimeOfDay time;
   final String? serviceNameOverride;
   final double? servicePriceOverride;
+  final bool fromSubdomain;
 
   const CheckoutPage({
     super.key,
@@ -36,6 +38,7 @@ class CheckoutPage extends StatefulWidget {
     required this.time,
     this.serviceNameOverride,
     this.servicePriceOverride,
+    this.fromSubdomain = false,
   });
 
   @override
@@ -1420,23 +1423,33 @@ class _CheckoutPageState extends State<CheckoutPage> {
         final dateStr = DateFormat('dd/MM/yyyy').format(widget.date);
         final timeStr = horarioStr;
         final paidFlag = (valorPago > 0);
-        // Close the loading page first, then navigate to success
+        // Close the loading page first, then navigate
         try {
           Navigator.pop(context);
         } catch (_) {}
-        Navigator.pushAndRemoveUntil(
-          context,
-          MaterialPageRoute(
-            builder: (c) => BookingSuccessPage(
-              serviceName: svcName,
-              professionalName: profName,
-              date: dateStr,
-              time: timeStr,
-              isPaid: paidFlag,
+        if (widget.fromSubdomain) {
+          // Veio de subdomínio: volta para ClientHomePage com aba Agendamentos
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(
+                builder: (_) => const ClientHomePage(initialTabIndex: 2)),
+            (_) => false,
+          );
+        } else {
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(
+              builder: (c) => BookingSuccessPage(
+                serviceName: svcName,
+                professionalName: profName,
+                date: dateStr,
+                time: timeStr,
+                isPaid: paidFlag,
+              ),
             ),
-          ),
-          (r) => r.isFirst,
-        );
+            (r) => r.isFirst,
+          );
+        }
       }
     } catch (e) {
       // close loading if present then show error

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'core/utils/url_strategy_stub.dart'
     if (dart.library.html) 'core/utils/url_strategy_web.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -10,7 +10,7 @@ import 'core/router/app_router.dart';
 import 'modules/clients/appointment_confirmation_page.dart';
 import 'modules/business/mobile_subscription_manager.dart';
 
-// 🚨 IMPORTANTE: Importe o arquivo que o comando gerou
+// ðŸš¨ IMPORTANTE: Importe o arquivo que o comando gerou
 import 'firebase_options.dart';
 
 // Handler para notificações em background (DEVE estar fora da main)

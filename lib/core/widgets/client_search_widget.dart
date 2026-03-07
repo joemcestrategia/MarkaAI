@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class ClientSearchWidget extends StatefulWidget {
@@ -63,8 +63,10 @@ class _ClientSearchWidgetState extends State<ClientSearchWidget> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(_selectedClient!['nome'], style: const TextStyle(fontWeight: FontWeight.bold)),
-                  Text(_selectedClient!['telefone'] ?? "", style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                  Text(_selectedClient!['nome'],
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                  Text(_selectedClient!['telefone'] ?? "",
+                      style: const TextStyle(fontSize: 12, color: Colors.grey)),
                 ],
               ),
             ),
@@ -85,14 +87,19 @@ class _ClientSearchWidgetState extends State<ClientSearchWidget> {
           decoration: InputDecoration(
             labelText: "Buscar Cliente por Nome",
             prefixIcon: const Icon(Icons.search),
-            suffixIcon: _isLoading ? const Padding(padding: EdgeInsets.all(10), child: CircularProgressIndicator(strokeWidth: 2)) : null,
+            suffixIcon: _isLoading
+                ? const Padding(
+                    padding: EdgeInsets.all(10),
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : null,
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
           ),
         ),
         if (_clients.isNotEmpty)
           Container(
             height: 150,
-            decoration: BoxDecoration(border: Border.all(color: Colors.grey[300]!)),
+            decoration:
+                BoxDecoration(border: Border.all(color: Colors.grey[300]!)),
             child: ListView.builder(
               itemCount: _clients.length,
               itemBuilder: (context, index) {

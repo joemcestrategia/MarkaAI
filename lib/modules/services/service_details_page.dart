@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/theme/app_colors.dart';
@@ -9,8 +9,8 @@ class ServiceDetailsPage extends StatelessWidget {
   final VoidCallback onEdit;
 
   const ServiceDetailsPage({
-    super.key, 
-    required this.doc, 
+    super.key,
+    required this.doc,
     required this.onClose,
     required this.onEdit,
   });
@@ -32,25 +32,36 @@ class ServiceDetailsPage extends StatelessWidget {
               Container(
                 height: 60,
                 padding: const EdgeInsets.symmetric(horizontal: 24),
-                decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey[200]!))),
+                decoration: BoxDecoration(
+                    border:
+                        Border(bottom: BorderSide(color: Colors.grey[200]!))),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text("Detalhes", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    const Text("Detalhes",
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold)),
                     Row(
                       children: [
-                        IconButton(icon: const Icon(Icons.edit, color: AppColors.primaryPurple), onPressed: onEdit, tooltip: "Editar"),
+                        IconButton(
+                            icon: const Icon(Icons.edit,
+                                color: AppColors.primaryPurple),
+                            onPressed: onEdit,
+                            tooltip: "Editar"),
                         const SizedBox(width: 4),
-                        // Ícone X ou Seta dependendo de onde estiver, mas X é universal
-                        IconButton(icon: const Icon(Icons.close), onPressed: onClose, tooltip: "Fechar"),
+                        // Ãcone X ou Seta dependendo de onde estiver, mas X é universal
+                        IconButton(
+                            icon: const Icon(Icons.close),
+                            onPressed: onClose,
+                            tooltip: "Fechar"),
                       ],
                     ),
                   ],
                 ),
               ),
 
-              // --- CONTEÚDO ROLÁVEL (Lista + Infos) ---
-              // Usamos Expanded aqui para que o Scroll ocupe o resto da tela
+              // --- CONTEÚDO ROLÃVEL (Lista + Infos) ---
+              // Usamos Expanded aqui para que o Scroll ocupe o restão da tela
               Expanded(
                 child: SingleChildScrollView(
                   child: Column(
@@ -59,7 +70,7 @@ class ServiceDetailsPage extends StatelessWidget {
                       // GALERIA (Agora rola junto para não ocupar espaço fixo em tela pequena)
                       if (fotos.isNotEmpty)
                         SizedBox(
-                          height: 250, 
+                          height: 250,
                           width: double.infinity,
                           child: PageView.builder(
                             itemCount: fotos.length,
@@ -69,15 +80,25 @@ class ServiceDetailsPage extends StatelessWidget {
                                 CachedNetworkImage(
                                   imageUrl: fotos[i],
                                   fit: BoxFit.cover,
-                                  placeholder: (context, url) => Container(color: Colors.grey[100]),
-                                  errorWidget: (context, url, error) => const Icon(Icons.error),
+                                  placeholder: (context, url) =>
+                                      Container(color: Colors.grey[100]),
+                                  errorWidget: (context, url, error) =>
+                                      const Icon(Icons.error),
                                 ),
                                 Positioned(
-                                  bottom: 10, right: 10,
+                                  bottom: 10,
+                                  right: 10,
                                   child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                    decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.5), borderRadius: BorderRadius.circular(12)),
-                                    child: Text("${i + 1}/${fotos.length}", style: const TextStyle(color: Colors.white, fontSize: 10)),
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 8, vertical: 4),
+                                    decoration: BoxDecoration(
+                                        color:
+                                            Colors.black.withValues(alpha: 0.5),
+                                        borderRadius:
+                                            BorderRadius.circular(12)),
+                                    child: Text("${i + 1}/${fotos.length}",
+                                        style: const TextStyle(
+                                            color: Colors.white, fontSize: 10)),
                                   ),
                                 )
                               ],
@@ -96,15 +117,22 @@ class ServiceDetailsPage extends StatelessWidget {
                               children: [
                                 Expanded(
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
-                                      Text(data['nome'] ?? "", style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                                      Text(data['nome'] ?? "",
+                                          style: const TextStyle(
+                                              fontSize: 22,
+                                              fontWeight: FontWeight.bold)),
                                       const SizedBox(height: 8),
                                       Row(
                                         children: [
-                                          _buildBadge(data['categoria'] ?? "Serviço", AppColors.primaryPurple),
+                                          _buildBadge(
+                                              data['categoria'] ?? "Serviço",
+                                              AppColors.primaryPurple),
                                           const SizedBox(width: 8),
-                                          if (data['ativo'] == false) _buildBadge("INATIVO", Colors.red),
+                                          if (data['ativo'] == false)
+                                            _buildBadge("INATIVO", Colors.red),
                                         ],
                                       ),
                                     ],
@@ -118,9 +146,15 @@ class ServiceDetailsPage extends StatelessWidget {
                             // CARDS
                             Row(
                               children: [
-                                Expanded(child: _buildInfoCard(Icons.timer_outlined, "Duração", "${data['tempo_min']} min")),
+                                Expanded(
+                                    child: _buildInfoCard(
+                                        Icons.timer_outlined,
+                                        "Duração",
+                                        "${data['tempo_min']} min")),
                                 const SizedBox(width: 12),
-                                Expanded(child: _buildInfoCard(Icons.attach_money, "Valor", "R\$ ${data['preco']}")),
+                                Expanded(
+                                    child: _buildInfoCard(Icons.attach_money,
+                                        "Valor", "R\$ ${data['preco']}")),
                               ],
                             ),
 
@@ -129,15 +163,24 @@ class ServiceDetailsPage extends StatelessWidget {
                             const SizedBox(height: 16),
 
                             // DESCRIÇÃO
-                            const Text("Descrição", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey)),
+                            const Text("Descrição",
+                                style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.grey)),
                             const SizedBox(height: 8),
                             Text(
-                              data['descricao']?.toString().isNotEmpty == true ? data['descricao'] : "Nenhuma descrição informada.",
-                              style: const TextStyle(fontSize: 15, height: 1.5, color: Colors.black87),
+                              data['descricao']?.toString().isNotEmpty == true
+                                  ? data['descricao']
+                                  : "Nenhuma descrição informada.",
+                              style: const TextStyle(
+                                  fontSize: 15,
+                                  height: 1.5,
+                                  color: Colors.black87),
                             ),
-                            
+
                             // Espaço extra no final para scroll não cortar
-                            const SizedBox(height: 40), 
+                            const SizedBox(height: 40),
                           ],
                         ),
                       ),
@@ -155,8 +198,12 @@ class ServiceDetailsPage extends StatelessWidget {
   Widget _buildBadge(String text, Color color) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(6)),
-      child: Text(text, style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 11)),
+      decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(6)),
+      child: Text(text,
+          style: TextStyle(
+              color: color, fontWeight: FontWeight.bold, fontSize: 11)),
     );
   }
 
@@ -172,16 +219,24 @@ class ServiceDetailsPage extends StatelessWidget {
         children: [
           Container(
             padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8)),
+            decoration: BoxDecoration(
+                color: Colors.white, borderRadius: BorderRadius.circular(8)),
             child: Icon(icon, size: 18, color: Colors.black87),
           ),
           const SizedBox(width: 12),
-          Expanded( // Adicionado para evitar overflow de texto
+          Expanded(
+            // Adicionado para evitar overflow de texto
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(label, style: TextStyle(color: Colors.grey[600], fontSize: 11)),
-                Text(value, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.black87), overflow: TextOverflow.ellipsis),
+                Text(label,
+                    style: TextStyle(color: Colors.grey[600], fontSize: 11)),
+                Text(value,
+                    style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87),
+                    overflow: TextOverflow.ellipsis),
               ],
             ),
           ),

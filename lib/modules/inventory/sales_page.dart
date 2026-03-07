@@ -1,4 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+﻿import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 
@@ -157,6 +157,7 @@ class _SalesPageState extends State<SalesPage> {
                           child: ElevatedButton(
                             style: ElevatedButton.styleFrom(
                               backgroundColor: AppColors.primaryPurple,
+                              foregroundColor: Colors.white,
                               padding: const EdgeInsets.symmetric(vertical: 14),
                               shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(10)),
@@ -263,8 +264,8 @@ class _SalesPageState extends State<SalesPage> {
       appBar: AppBar(
         title: const Text('Frente de Caixa (PDV)',
             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black87,
+        backgroundColor: AppColors.primaryPurple,
+        foregroundColor: Colors.white,
         elevation: 0,
       ),
       body: isMobile ? _buildMobileLayout() : _buildDesktopLayout(),

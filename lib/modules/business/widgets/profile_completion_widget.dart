@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/theme/app_colors.dart';
 import '../store_profile_page.dart'; // navegar para Editar Perfil
@@ -52,16 +52,16 @@ class _ProfileCompletionWidgetState extends State<ProfileCompletionWidget>
     super.dispose();
   }
 
-  // ──────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // Calculate completion from shopData
-  // ──────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   void _compute() {
     if (widget.shopData == null) return;
     final d = widget.shopData!;
 
     final fields = <_MissingField>[];
 
-    bool _filled(String field) {
+    bool filled0(String field) {
       final v = d[field];
       if (v == null) return false;
       if (v is String) return v.trim().isNotEmpty;
@@ -70,26 +70,38 @@ class _ProfileCompletionWidgetState extends State<ProfileCompletionWidget>
       return true;
     }
 
-    void _check(String field, String label) {
-      if (!_filled(field))
+    void check(String field, String label) {
+      if (!filled0(field)) {
         fields.add(_MissingField(field: field, label: label));
+      }
     }
 
-    // 9 campos do perfil da loja
-    _check('nome', 'Nome da loja');
-    _check('categoria', 'Categoria');
-    _check('telefone', 'Telefone');
-    _check('logo', 'Logo / Foto de perfil');
-    if (!_filled('imageUrl') && !_filled('coverUrl') && !_filled('foto_capa')) {
+    // Campos do perfil da loja
+    check('nome', 'Nome da loja');
+    if (!filled0('categoria') && !filled0('nicho')) {
+      fields.add(const _MissingField(field: 'categoria', label: 'Categoria'));
+    }
+    check('telefone', 'Telefone');
+
+    // Logo
+    if (!filled0('logoUrl') && !filled0('logo') && !filled0('foto')) {
+      fields.add(const _MissingField(
+          field: 'logoUrl', label: 'Logo / Foto de perfil'));
+    }
+
+    // Capa
+    if (!filled0('imageUrl') && !filled0('coverUrl') && !filled0('foto_capa')) {
       fields
           .add(const _MissingField(field: 'foto_capa', label: 'Foto de capa'));
     }
-    _check('descricao', 'Descrição da loja');
-    _check('cidade', 'Cidade');
-    _check('estado', 'Estado');
-    _check('horarios', 'Horários de funcionamento');
+    check('descricao', 'Descrição da loja');
+    if (!filled0('cidade') && !filled0('city')) {
+      fields.add(const _MissingField(field: 'cidade', label: 'Cidade'));
+    }
+    check('estado', 'Estado');
 
-    const total = 9;
+    const total =
+        8; // horários foram removidos dessa contagem, pois pertencem a outra tela
     final filled = total - fields.length;
     final pct = ((filled / total) * 100).round().clamp(0, 100);
 
@@ -124,16 +136,19 @@ class _ProfileCompletionWidgetState extends State<ProfileCompletionWidget>
     if (mounted) setState(() => _dismissed = true);
   }
 
-  // ──────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // Contextual message based on percentage
-  // ──────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   String _message(int pct) {
-    if (pct <= 30)
+    if (pct <= 30) {
       return 'Seu perfil está incompleto. Clientes têm menos chances de encontrar sua loja.';
-    if (pct <= 60)
+    }
+    if (pct <= 60) {
       return 'Bom começo! Complete mais alguns dados para aumentar sua visibilidade.';
-    if (pct < 90)
+    }
+    if (pct < 90) {
       return 'Quase lá! Finalize seu perfil para transmitir mais confiança.';
+    }
     return 'Perfil quase completo! Só faltam poucos detalhes.';
   }
 
@@ -178,7 +193,7 @@ class _ProfileCompletionWidgetState extends State<ProfileCompletionWidget>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ─── Header row ─────────────────────────────
+              // â”€â”€â”€ Header row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
               Row(
                 children: [
                   Container(
@@ -236,7 +251,7 @@ class _ProfileCompletionWidgetState extends State<ProfileCompletionWidget>
 
               const SizedBox(height: 16),
 
-              // ─── Animated progress bar ────────────────
+              // â”€â”€â”€ Animated progress bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
               Row(
                 children: [
                   Expanded(
@@ -273,7 +288,7 @@ class _ProfileCompletionWidgetState extends State<ProfileCompletionWidget>
                 ],
               ),
 
-              // ─── Missing fields list (max 3) ──────────
+              // â”€â”€â”€ Missing fields list (max 3) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
               if (visibleMissing.isNotEmpty) ...[
                 const SizedBox(height: 16),
                 Container(
@@ -330,7 +345,7 @@ class _ProfileCompletionWidgetState extends State<ProfileCompletionWidget>
 
               const SizedBox(height: 16),
 
-              // ─── CTA button ───────────────────────────
+              // â”€â”€â”€ CTA button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(

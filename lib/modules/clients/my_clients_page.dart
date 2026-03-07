@@ -16,13 +16,12 @@ class _MyClientsPageState extends State<MyClientsPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFF8F9FD),
       appBar: AppBar(
-        title:
-            const Text("Meus Clientes", style: TextStyle(color: Colors.black)),
-        backgroundColor: Colors.white,
+        title: const Text("Meus Clientes"),
+        backgroundColor: AppColors.primaryPurple,
+        foregroundColor: Colors.white,
         elevation: 0,
-        iconTheme: const IconThemeData(color: AppColors.primaryPurple),
       ),
       body: Column(
         children: [

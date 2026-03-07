@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../core/theme/app_colors.dart';
@@ -22,11 +22,16 @@ class _PlansPageState extends State<PlansPage> {
 
   Future<void> _checkAdmin() async {
     if (uid == null) return;
-    final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+    final doc =
+        await FirebaseFirestore.instance.collection('users').doc(uid).get();
     final data = doc.exists ? doc.data() : null;
-    final roles = (data?['roles'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [];
+    final roles =
+        (data?['roles'] as List<dynamic>?)?.map((e) => e.toString()).toList() ??
+            [];
     setState(() {
-      _isAdmin = roles.contains('admin') || roles.contains('admin_dev') || (data?['is_admin_dev'] == true);
+      _isAdmin = roles.contains('admin') ||
+          roles.contains('admin_dev') ||
+          (data?['is_admin_dev'] == true);
     });
   }
 
@@ -44,14 +49,20 @@ class _PlansPageState extends State<PlansPage> {
       body: Padding(
         padding: const EdgeInsets.all(12.0),
         child: StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance.collection('plans').orderBy('price_month').snapshots(),
+          stream: FirebaseFirestore.instance
+              .collection('plans')
+              .orderBy('price_month')
+              .snapshots(),
           builder: (context, snap) {
-            if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+            if (!snap.hasData) {
+              return const Center(child: CircularProgressIndicator());
+            }
             final docs = snap.data!.docs;
             // collect feature universe
             final Set<String> allFeatures = {};
             for (final d in docs) {
-              final f = List<String>.from((d.data() as Map<String, dynamic>)['features'] ?? []);
+              final f = List<String>.from(
+                  (d.data() as Map<String, dynamic>)['features'] ?? []);
               allFeatures.addAll(f);
             }
             final featuresList = allFeatures.toList()..sort();
@@ -71,8 +82,13 @@ class _PlansPageState extends State<PlansPage> {
                       children: [
                         Row(
                           children: [
-                            Expanded(child: Text('$planName ($planId)', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
-                            Text('R\$ $price', style: const TextStyle(fontSize: 16)),
+                            Expanded(
+                                child: Text('$planName ($planId)',
+                                    style: const TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold))),
+                            Text('R\$ $price',
+                                style: const TextStyle(fontSize: 16)),
                           ],
                         ),
                         const SizedBox(height: 8),
@@ -88,25 +104,31 @@ class _PlansPageState extends State<PlansPage> {
                                 selected: available,
                                 onSelected: (sel) async {
                                   // toggle feature in plan doc
-                                  final ref = FirebaseFirestore.instance.collection('plans').doc(planId);
+                                  final ref = FirebaseFirestore.instance
+                                      .collection('plans')
+                                      .doc(planId);
                                   if (sel) {
                                     await ref.update({
-                                      'features': FieldValue.arrayUnion([feature])
+                                      'features':
+                                          FieldValue.arrayUnion([feature])
                                     });
                                   } else {
                                     await ref.update({
-                                      'features': FieldValue.arrayRemove([feature])
+                                      'features':
+                                          FieldValue.arrayRemove([feature])
                                     });
                                   }
                                 },
-                                selectedColor: AppColors.primaryPurple.withValues(alpha: 0.15),
+                                selectedColor: AppColors.primaryPurple
+                                    .withValues(alpha: 0.15),
                                 checkmarkColor: AppColors.primaryPurple,
                               ),
                             );
                           }).toList(),
                         ),
                         const SizedBox(height: 8),
-                        Text(data['description'] ?? '', style: const TextStyle(color: Colors.grey)),
+                        Text(data['description'] ?? '',
+                            style: const TextStyle(color: Colors.grey)),
                         const SizedBox(height: 6),
                         Row(
                           children: [
@@ -114,19 +136,35 @@ class _PlansPageState extends State<PlansPage> {
                               onPressed: () async {
                                 // quick edit price
                                 final ctrl = TextEditingController(text: price);
-                                final ok = await showDialog<bool>(context: context, builder: (_) {
-                                  return AlertDialog(
-                                    title: const Text('Editar preço mensal'),
-                                    content: TextField(controller: ctrl, keyboardType: TextInputType.number),
-                                    actions: [
-                                      TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-                                      ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Salvar')),
-                                    ],
-                                  );
-                                });
+                                final ok = await showDialog<bool>(
+                                    context: context,
+                                    builder: (_) {
+                                      return AlertDialog(
+                                        title:
+                                            const Text('Editar preço mensal'),
+                                        content: TextField(
+                                            controller: ctrl,
+                                            keyboardType: TextInputType.number),
+                                        actions: [
+                                          TextButton(
+                                              onPressed: () =>
+                                                  Navigator.pop(context, false),
+                                              child: const Text('Cancelar')),
+                                          ElevatedButton(
+                                              onPressed: () =>
+                                                  Navigator.pop(context, true),
+                                              child: const Text('Salvar')),
+                                        ],
+                                      );
+                                    });
                                 if (ok == true) {
-                                  final newPrice = double.tryParse(ctrl.text.replaceAll(',', '.')) ?? 0;
-                                  await FirebaseFirestore.instance.collection('plans').doc(planId).update({'price_month': newPrice});
+                                  final newPrice = double.tryParse(
+                                          ctrl.text.replaceAll(',', '.')) ??
+                                      0;
+                                  await FirebaseFirestore.instance
+                                      .collection('plans')
+                                      .doc(planId)
+                                      .update({'price_month': newPrice});
                                 }
                               },
                               icon: const Icon(Icons.edit),
@@ -135,18 +173,29 @@ class _PlansPageState extends State<PlansPage> {
                             const SizedBox(width: 12),
                             TextButton.icon(
                               onPressed: () async {
-                                final confirm = await showDialog<bool>(context: context, builder: (_) {
-                                  return AlertDialog(
-                                    title: const Text('Confirmar excluir'),
-                                    content: Text('Excluir plano $planId?'),
-                                    actions: [
-                                      TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-                                      ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Excluir')),
-                                    ],
-                                  );
-                                });
+                                final confirm = await showDialog<bool>(
+                                    context: context,
+                                    builder: (_) {
+                                      return AlertDialog(
+                                        title: const Text('Confirmar excluir'),
+                                        content: Text('Excluir plano $planId?'),
+                                        actions: [
+                                          TextButton(
+                                              onPressed: () =>
+                                                  Navigator.pop(context, false),
+                                              child: const Text('Cancelar')),
+                                          ElevatedButton(
+                                              onPressed: () =>
+                                                  Navigator.pop(context, true),
+                                              child: const Text('Excluir')),
+                                        ],
+                                      );
+                                    });
                                 if (confirm == true) {
-                                  await FirebaseFirestore.instance.collection('plans').doc(planId).delete();
+                                  await FirebaseFirestore.instance
+                                      .collection('plans')
+                                      .doc(planId)
+                                      .delete();
                                 }
                               },
                               icon: const Icon(Icons.delete),
@@ -166,4 +215,3 @@ class _PlansPageState extends State<PlansPage> {
     );
   }
 }
-

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
@@ -86,7 +86,7 @@ class _BoostShopPageState extends State<BoostShopPage> {
           _isLoading = false;
         });
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text("Impulsionamento ativado com sucesso! 🚀"),
+          content: Text("Impulsionamento ativado com sucesso! ðŸš€"),
           backgroundColor: Colors.green,
         ));
         Navigator.pop(context); // Optional: close after purchase
@@ -103,11 +103,11 @@ class _BoostShopPageState extends State<BoostShopPage> {
       backgroundColor: const Color(0xFFF8F9FD),
       appBar: AppBar(
         title: const Text("Impulsionar Negócio",
-            style: TextStyle(fontWeight: FontWeight.bold)),
+            style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
         centerTitle: true,
-        backgroundColor: Colors.transparent,
+        backgroundColor: AppColors.primaryPurple,
         elevation: 0,
-        foregroundColor: Colors.black,
+        foregroundColor: Colors.white,
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),

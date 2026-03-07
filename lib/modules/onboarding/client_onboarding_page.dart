@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 // ignore_for_file: use_build_context_synchronously
 import 'package:flutter/material.dart';
 import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
@@ -22,7 +22,7 @@ class ClientOnboardingPage extends StatefulWidget {
 class _ClientOnboardingPageState extends State<ClientOnboardingPage> {
   final PageController _pageController = PageController();
   int _currentStep = 0;
-  
+
   bool _isSaving = false;
   bool _isSendingSMS = false; // Loading do SMS
   File? _selectedImage;
@@ -32,13 +32,15 @@ class _ClientOnboardingPageState extends State<ClientOnboardingPage> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
   final _phoneController = TextEditingController();
-  final _phoneMask = MaskTextInputFormatter(mask: '(##) #####-####', filter: { "#": RegExp(r'[0-9]') });
+  final _phoneMask = MaskTextInputFormatter(
+      mask: '(##) #####-####', filter: {"#": RegExp(r'[0-9]')});
   final _pinController = TextEditingController();
   final _nameController = TextEditingController();
   final _cepController = TextEditingController();
   final _addressController = TextEditingController();
   final _numberController = TextEditingController();
-  final _cepMask = MaskTextInputFormatter(mask: '#####-###', filter: { "#": RegExp(r'[0-9]') });
+  final _cepMask = MaskTextInputFormatter(
+      mask: '#####-###', filter: {"#": RegExp(r'[0-9]')});
   bool _isLoadingCep = false;
 
   Future<void> _pickImage() async {
@@ -50,7 +52,10 @@ class _ClientOnboardingPageState extends State<ClientOnboardingPage> {
   Future<String> _uploadImage(String userId) async {
     if (_selectedImage == null) return "";
     try {
-      final ref = FirebaseStorage.instance.ref().child('user_photos').child('$userId.jpg');
+      final ref = FirebaseStorage.instance
+          .ref()
+          .child('user_photos')
+          .child('$userId.jpg');
       await ref.putFile(_selectedImage!);
       return await ref.getDownloadURL();
     } catch (e) {
@@ -59,22 +64,25 @@ class _ClientOnboardingPageState extends State<ClientOnboardingPage> {
   }
 
   void _nextPage() {
-    _pageController.nextPage(duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
+    _pageController.nextPage(
+        duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
     setState(() => _currentStep++);
   }
 
   // --- PASSO CRUCIAL: VERIFICAÇÃO + SMS ---
   Future<void> _submitPhone() async {
     // 1. Valida tamanho do número
-    if (_phoneController.text.length < 15) { // (31) 99999-9999 tem 15 caracteres
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Número incompleto")));
+    if (_phoneController.text.length < 15) {
+      // (31) 99999-9999 tem 15 caracteres
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text("Número incompleto")));
       return;
     }
 
     setState(() => _isSendingSMS = true);
 
     try {
-      // 2. VERIFICA SE O NÚMERO JÁ EXISTE NO BANCO (Anti-Duplicidade)
+      // 2. VERIFICA SE O NÚMERO JÃ EXISTE NO BANCO (Anti-Duplicidade)
       // Nota: Estamos comparando o formato exato salvo: "(xx) xxxxx-xxxx"
       final querySnapshot = await FirebaseFirestore.instance
           .collection('users')
@@ -82,24 +90,22 @@ class _ClientOnboardingPageState extends State<ClientOnboardingPage> {
           .get();
 
       if (querySnapshot.docs.isNotEmpty) {
-        // JÁ EXISTE! PARA TUDO.
+        // JÃ EXISTE! PARA TUDO.
         setState(() => _isSendingSMS = false);
         if (mounted) {
-           ScaffoldMessenger.of(context).showSnackBar(
-             const SnackBar(
-               content: Text("Este número já possui conta! Faça Login."), 
-               backgroundColor: Colors.red,
-               duration: Duration(seconds: 4),
-             )
-           );
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text("Este número já possui conta! Faça Login."),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 4),
+          ));
         }
-        return; 
+        return;
       }
 
       // 3. SE NÃO EXISTE, MANDA O SMS
       // Formata para padrão internacional (+55319...)
       String rawPhone = _phoneController.text.replaceAll(RegExp(r'[^\d]'), '');
-      String formattedPhone = "+55$rawPhone"; 
+      String formattedPhone = "+55$rawPhone";
 
       await _auth.verifyPhoneNumber(
         phoneNumber: formattedPhone,
@@ -107,14 +113,15 @@ class _ClientOnboardingPageState extends State<ClientOnboardingPage> {
         verificationCompleted: (PhoneAuthCredential credential) async {
           // Android pode verificar automático (raro em emulador, comum em físico)
           await _auth.signInWithCredential(credential);
-          _nextPage(); 
+          _nextPage();
         },
         verificationFailed: (FirebaseAuthException e) {
           setState(() => _isSendingSMS = false);
           String msg = "Erro no envio do SMS.";
           if (e.code == 'invalid-phone-number') msg = "Número inválido.";
           // Se der erro de SHA-1, vai aparecer aqui como 'app-not-authorized' ou similar
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$msg (${e.code})"), backgroundColor: Colors.red));
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text("$msg (${e.code})"), backgroundColor: Colors.red));
         },
         codeSent: (String verificationId, int? resendToken) {
           // SUCESSO! O SMS FOI
@@ -128,27 +135,26 @@ class _ClientOnboardingPageState extends State<ClientOnboardingPage> {
           _verificationId = verificationId;
         },
       );
-
     } catch (e) {
-       setState(() => _isSendingSMS = false);
-       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Erro: $e")));
+      setState(() => _isSendingSMS = false);
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text("Erro: $e")));
     }
   }
 
-  // --- CONFIRMAÇÃO DO CÓDIGO ---
+  // --- CONFIRMAÇÃO DO CÃ“DIGO ---
   Future<void> _submitCode() async {
     if (_pinController.text.length != 6) {
-       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("O código tem 6 dígitos")));
-       return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("O código tem 6 dígitos")));
+      return;
     }
 
     setState(() => _isSendingSMS = true);
 
     try {
       PhoneAuthCredential credential = PhoneAuthProvider.credential(
-        verificationId: _verificationId!, 
-        smsCode: _pinController.text
-      );
+          verificationId: _verificationId!, smsCode: _pinController.text);
 
       // Tenta autenticar com o código
       await _auth.signInWithCredential(credential);
@@ -156,10 +162,10 @@ class _ClientOnboardingPageState extends State<ClientOnboardingPage> {
       // Se passou, deu certo!
       setState(() => _isSendingSMS = false);
       _nextPage();
-
     } catch (e) {
       setState(() => _isSendingSMS = false);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Código incorreto!"), backgroundColor: Colors.red));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text("Código incorreto!"), backgroundColor: Colors.red));
     }
   }
 
@@ -168,7 +174,9 @@ class _ClientOnboardingPageState extends State<ClientOnboardingPage> {
     setState(() => _isLoadingCep = true);
     final res = await ViaCepService.buscarCep(cep);
     setState(() => _isLoadingCep = false);
-    if (res != null) _addressController.text = "${res['logradouro']}, ${res['bairro']}";
+    if (res != null) {
+      _addressController.text = "${res['logradouro']}, ${res['bairro']}";
+    }
   }
 
   Future<void> _finishRegistration() async {
@@ -184,9 +192,11 @@ class _ClientOnboardingPageState extends State<ClientOnboardingPage> {
 
       final dadosCliente = {
         'id': docRef.id,
-        'auth_uid': _auth.currentUser?.uid, // Vincula com a autenticação do SMS
+        'auth_uid':
+            _auth.currentUser?.uid, // Vincula com a autenticação do SMS
         'nome': _nameController.text,
-        'telefone': _phoneController.text, // Salva formatado visualmente (31) 9...
+        'telefone':
+            _phoneController.text, // Salva formatado visualmente (31) 9...
         'endereco': _addressController.text,
         'numero': _numberController.text,
         'cep': _cepController.text,
@@ -202,12 +212,18 @@ class _ClientOnboardingPageState extends State<ClientOnboardingPage> {
         userType: 'client',
         userId: docRef.id,
       );
-      
+
       if (mounted) {
-        Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (context) => const ClientHomePage()), (route) => false);
+        Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (context) => const ClientHomePage()),
+            (route) => false);
       }
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Erro: $e")));
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text("Erro: $e")));
+      }
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -216,77 +232,135 @@ class _ClientOnboardingPageState extends State<ClientOnboardingPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: LinearProgressIndicator(value: (_currentStep + 1) / 4, color: AppColors.primaryPurple)),
+      appBar: AppBar(
+          title: LinearProgressIndicator(
+              value: (_currentStep + 1) / 4, color: AppColors.primaryPurple)),
       body: PageView(
         controller: _pageController,
         physics: const NeverScrollableScrollPhysics(),
         children: [
           // Passo 1: Telefone
           _baseStep(
-            title: "Qual seu WhatsApp?", 
-            subtitle: "Enviaremos um SMS de verdade.",
-            child: TextFormField(
-              controller: _phoneController, 
-              inputFormatters: [_phoneMask], 
-              keyboardType: TextInputType.phone, 
-              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold), 
-              decoration: const InputDecoration(hintText: "(00) 00000-0000", border: InputBorder.none)
-            ), 
-            onNext: _submitPhone, 
-            btnText: "ENVIAR CÓDIGO",
-            isLoading: _isSendingSMS
-          ),
-          
+              title: "Qual seu WhatsApp?",
+              subtitle: "Enviaremos um SMS de verdade.",
+              child: TextFormField(
+                  controller: _phoneController,
+                  inputFormatters: [_phoneMask],
+                  keyboardType: TextInputType.phone,
+                  style: const TextStyle(
+                      fontSize: 24, fontWeight: FontWeight.bold),
+                  decoration: const InputDecoration(
+                      hintText: "(00) 00000-0000", border: InputBorder.none)),
+              onNext: _submitPhone,
+              btnText: "ENVIAR CÃ“DIGO",
+              isLoading: _isSendingSMS),
+
           // Passo 2: Código
           _baseStep(
-            title: "Código SMS", 
-            subtitle: "Digite os 6 números.", 
-            child: Pinput(
-              controller: _pinController, 
-              length: 6, 
-              autofocus: true, 
-              onCompleted: (_) => _submitCode()
-            ), 
-            onNext: _submitCode, 
-            btnText: "VALIDAR",
-            isLoading: _isSendingSMS
-          ),
+              title: "Código SMS",
+              subtitle: "Digite os 6 números.",
+              child: Pinput(
+                  controller: _pinController,
+                  length: 6,
+                  autofocus: true,
+                  onCompleted: (_) => _submitCode()),
+              onNext: _submitCode,
+              btnText: "VALIDAR",
+              isLoading: _isSendingSMS),
 
           // Passo 3: Dados
           Padding(
             padding: const EdgeInsets.all(24),
             child: Column(children: [
-              GestureDetector(onTap: _pickImage, child: CircleAvatar(radius: 60, backgroundColor: Colors.grey[200], backgroundImage: _selectedImage != null ? FileImage(_selectedImage!) : null, child: _selectedImage == null ? const Icon(Icons.camera_alt) : null)),
+              GestureDetector(
+                  onTap: _pickImage,
+                  child: CircleAvatar(
+                      radius: 60,
+                      backgroundColor: Colors.grey[200],
+                      backgroundImage: _selectedImage != null
+                          ? FileImage(_selectedImage!)
+                          : null,
+                      child: _selectedImage == null
+                          ? const Icon(Icons.camera_alt)
+                          : null)),
               const SizedBox(height: 20),
-              TextFormField(controller: _nameController, decoration: const InputDecoration(labelText: "Nome Completo")),
+              TextFormField(
+                  controller: _nameController,
+                  decoration:
+                      const InputDecoration(labelText: "Nome Completo")),
               const Spacer(),
-              ElevatedButton(onPressed: () => _nameController.text.isNotEmpty ? _nextPage() : null, style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryPurple, minimumSize: const Size(double.infinity, 50)), child: const Text("CONTINUAR", style: TextStyle(color: Colors.white)))
+              ElevatedButton(
+                  onPressed: () =>
+                      _nameController.text.isNotEmpty ? _nextPage() : null,
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primaryPurple,
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size(double.infinity, 50)),
+                  child: const Text("CONTINUAR",
+                      style: TextStyle(color: Colors.white)))
             ]),
           ),
 
           // Passo 4: Endereço
-          _baseStep(title: "Endereço", child: Column(children: [TextFormField(controller: _cepController, inputFormatters: [_cepMask], keyboardType: TextInputType.number, onChanged: (v) { if(v.length == 9) _buscarCep(v); }, decoration: const InputDecoration(labelText: "CEP")), if(_isLoadingCep) const LinearProgressIndicator(), TextFormField(controller: _addressController), TextFormField(controller: _numberController, decoration: const InputDecoration(labelText: "Número"))]), onNext: _finishRegistration, isLoading: _isSaving, btnText: "FINALIZAR"),
+          _baseStep(
+              title: "Endereço",
+              child: Column(children: [
+                TextFormField(
+                    controller: _cepController,
+                    inputFormatters: [_cepMask],
+                    keyboardType: TextInputType.number,
+                    onChanged: (v) {
+                      if (v.length == 9) _buscarCep(v);
+                    },
+                    decoration: const InputDecoration(labelText: "CEP")),
+                if (_isLoadingCep) const LinearProgressIndicator(),
+                TextFormField(controller: _addressController),
+                TextFormField(
+                    controller: _numberController,
+                    decoration: const InputDecoration(labelText: "Número"))
+              ]),
+              onNext: _finishRegistration,
+              isLoading: _isSaving,
+              btnText: "FINALIZAR"),
         ],
       ),
     );
   }
 
-  Widget _baseStep({required String title, String? subtitle, required Widget child, required VoidCallback onNext, bool isLoading = false, String btnText = "CONTINUAR"}) {
+  Widget _baseStep(
+      {required String title,
+      String? subtitle,
+      required Widget child,
+      required VoidCallback onNext,
+      bool isLoading = false,
+      String btnText = "CONTINUAR"}) {
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(title, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: AppColors.primaryPurple)),
-          if (subtitle != null) Text(subtitle, style: const TextStyle(fontSize: 16, color: Colors.grey)),
+          Text(title,
+              style: const TextStyle(
+                  fontSize: 26,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.primaryPurple)),
+          if (subtitle != null)
+            Text(subtitle,
+                style: const TextStyle(fontSize: 16, color: Colors.grey)),
           const SizedBox(height: 40),
           child,
           const Spacer(),
           ElevatedButton(
-            onPressed: isLoading ? null : onNext,
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryPurple, minimumSize: const Size(double.infinity, 50)),
-            child: isLoading ? const CircularProgressIndicator(color: Colors.white) : Text(btnText, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))
-          )
+              onPressed: isLoading ? null : onNext,
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primaryPurple,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(double.infinity, 50)),
+              child: isLoading
+                  ? const CircularProgressIndicator(color: Colors.white)
+                  : Text(btnText,
+                      style: const TextStyle(
+                          color: Colors.white, fontWeight: FontWeight.bold)))
         ],
       ),
     );

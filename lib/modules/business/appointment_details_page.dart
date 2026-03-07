@@ -6,10 +6,10 @@ import '../../core/theme/app_colors.dart';
 class AppointmentDetailsPage extends StatefulWidget {
   final DocumentSnapshot appointmentDoc;
 
-  // 🔥 Parâmetros para o modo 3 Colunas (Desktop)
+  // ?? Parâmetros para o modo 3 Colunas (Desktop)
   final bool isEmbedded;
   final VoidCallback? onClose;
-  final bool startInEditMode; // 🆕 Iniciar direto em modo de edição
+  final bool startInEditMode; // ?? Iniciar direto em modo de edição
 
   const AppointmentDetailsPage({
     super.key,
@@ -43,7 +43,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
   void initState() {
     super.initState();
     _loadData();
-    // 🆕 Inicia em modo de edição se solicitado
+    // ?? Inicia em modo de edição se solicitado
     if (widget.startInEditMode) {
       _isEditing = true;
     }
@@ -127,33 +127,99 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     final status = data['status'] ?? '';
     final isHistory = status == 'cancelado' || status == 'concluido';
 
-    final confirm = await showDialog<bool>(
+    final confirm = await showModalBottomSheet<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Excluir Agendamento?"),
-        content: Text(
-          isHistory
-              ? "Este agendamento será removido permanentemente do histórico.\n\nEsta ação não pode ser desfeita."
-              : "Este agendamento ativo será excluído permanentemente.\n\nEsta ação não pode ser desfeita.",
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text("CANCELAR"),
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-            ),
-            child: const Text(
-              "EXCLUIR PERMANENTEMENTE",
-              style:
-                  TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-            ),
+          padding: EdgeInsets.fromLTRB(
+              24, 24, 24, MediaQuery.of(ctx).padding.bottom + 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withOpacity(0.1),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.delete_outline, color: Colors.red),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    'Excluir Agendamento?',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleLarge
+                        ?.copyWith(fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Text(
+                isHistory
+                    ? "Este agendamento será removido permanentemente do histórico.\nEsta ação não pode ser desfeita."
+                    : "Este agendamento ativo será excluído permanentemente.\nEsta ação não pode ser desfeita.",
+                style: const TextStyle(fontSize: 15, color: Colors.black87),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        side: BorderSide(color: Colors.grey.shade400),
+                        foregroundColor: Colors.black87,
+                      ),
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: const Text('VOLTAR',
+                          style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        elevation: 0,
+                      ),
+                      child: const Text('EXCLUIR',
+                          style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
+              )
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
 
     if (confirm == true) {
@@ -165,7 +231,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('✅ Agendamento excluído com sucesso'),
+              content: Text('? Agendamento excluído com sucesso'),
               backgroundColor: Colors.green,
             ),
           );
@@ -237,20 +303,13 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
 
     // MODO MOBILE (SCAFFOLD)
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFF8F9FD),
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.primaryPurple,
+        foregroundColor: Colors.white,
         elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new,
-              color: Colors.black, size: 20),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: const Text("Detalhes",
-            style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
-        actions: [
-          // botão superior removido por solicitação — exclusão permanece disponível no botão inferior
-        ],
+        title: const Text("Detalhes do Agendamento",
+            style: TextStyle(fontWeight: FontWeight.bold)),
         centerTitle: true,
       ),
       bottomNavigationBar: SafeArea(
@@ -295,6 +354,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
             onPressed: _updateAppointment,
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primaryPurple,
+              foregroundColor: Colors.white,
               padding:
                   const EdgeInsets.symmetric(vertical: 12), // Botão mais fino
               shape: RoundedRectangleBorder(
@@ -334,6 +394,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
                           fontSize: 13)),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primaryPurple,
+                    foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10)),

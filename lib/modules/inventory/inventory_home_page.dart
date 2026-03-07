@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 import 'products_page.dart';
 import 'sales_page.dart';
@@ -17,8 +17,8 @@ class InventoryHomePage extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Inventário & Estoque',
             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black87,
+        backgroundColor: AppColors.primaryPurple,
+        foregroundColor: Colors.white,
         elevation: 0,
         centerTitle: false,
         actions: [

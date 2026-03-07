@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class AdminShopsWidget extends StatefulWidget {
@@ -107,7 +107,8 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
                         ],
                       ],
                     ),
-                    subtitle: Text('$categoria • Plano: ${plan.toUpperCase()}'),
+                    subtitle:
+                        Text('$categoria â€¢ Plano: ${plan.toUpperCase()}'),
                     trailing: PopupMenuButton<String>(
                       icon: const Icon(Icons.more_vert),
                       onSelected: (value) {

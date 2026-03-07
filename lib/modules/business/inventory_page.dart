@@ -52,6 +52,7 @@ class _InventoryPageState extends State<InventoryPage> {
         floatingActionButton: FloatingActionButton(
           onPressed: () => _showAddProduct(context),
           backgroundColor: AppColors.primaryPurple,
+          foregroundColor: Colors.white,
           child: const Icon(Icons.add),
         ),
       ),
@@ -71,15 +72,28 @@ class _InventoryPageState extends State<InventoryPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(controller: nome, decoration: const InputDecoration(labelText: 'Nome *')),
-              TextField(controller: marca, decoration: const InputDecoration(labelText: 'Marca')),
-              TextField(controller: peso, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Peso (ex: 0.5 kg)')),
-              TextField(controller: tipo, decoration: const InputDecoration(labelText: 'Tipo (ex: Shampoo, Tinta)')),
+              TextField(
+                  controller: nome,
+                  decoration: const InputDecoration(labelText: 'Nome *')),
+              TextField(
+                  controller: marca,
+                  decoration: const InputDecoration(labelText: 'Marca')),
+              TextField(
+                  controller: peso,
+                  keyboardType: TextInputType.number,
+                  decoration:
+                      const InputDecoration(labelText: 'Peso (ex: 0.5 kg)')),
+              TextField(
+                  controller: tipo,
+                  decoration: const InputDecoration(
+                      labelText: 'Tipo (ex: Shampoo, Tinta)')),
             ],
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancelar')),
           ElevatedButton(
             onPressed: () async {
               if (nome.text.trim().isEmpty) return;
@@ -116,10 +130,13 @@ class _ProductsList extends StatelessWidget {
           .orderBy('nome')
           .snapshots(),
       builder: (context, snapshot) {
-        if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
         final docs = snapshot.data!.docs;
         if (docs.isEmpty) {
-          return const Center(child: Text('Nenhum produto. Toque em + para cadastrar.'));
+          return const Center(
+              child: Text('Nenhum produto. Toque em + para cadastrar.'));
         }
         return ListView.builder(
           padding: const EdgeInsets.all(16),
@@ -130,7 +147,8 @@ class _ProductsList extends StatelessWidget {
               margin: const EdgeInsets.only(bottom: 8),
               child: ListTile(
                 title: Text(d['nome'] ?? ''),
-                subtitle: Text('${d['marca'] ?? ''} • ${d['tipo'] ?? ''} • ${d['peso'] ?? ''}\nEstoque: ${d['quantidade'] ?? 0}'),
+                subtitle: Text(
+                    '${d['marca'] ?? ''} • ${d['tipo'] ?? ''} • ${d['peso'] ?? ''}\nEstoque: ${d['quantidade'] ?? 0}'),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -139,7 +157,8 @@ class _ProductsList extends StatelessWidget {
                       onPressed: () => _movement(context, docs[i].id, true),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.remove_circle, color: Colors.orange),
+                      icon:
+                          const Icon(Icons.remove_circle, color: Colors.orange),
                       onPressed: () => _movement(context, docs[i].id, false),
                     ),
                   ],
@@ -152,7 +171,8 @@ class _ProductsList extends StatelessWidget {
     );
   }
 
-  Future<void> _movement(BuildContext context, String productId, bool isEntrada) async {
+  Future<void> _movement(
+      BuildContext context, String productId, bool isEntrada) async {
     final qtdCtrl = TextEditingController(text: '1');
     final ok = await showDialog<bool>(
       context: context,
@@ -164,22 +184,28 @@ class _ProductsList extends StatelessWidget {
           decoration: const InputDecoration(labelText: 'Quantidade'),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
-          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Confirmar')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancelar')),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Confirmar')),
         ],
       ),
     );
     if (ok != true) return;
     final qtd = int.tryParse(qtdCtrl.text) ?? 1;
     if (qtd <= 0) return;
-    final ref = FirebaseFirestore.instance.collection('inventory').doc(productId);
+    final ref =
+        FirebaseFirestore.instance.collection('inventory').doc(productId);
     await FirebaseFirestore.instance.runTransaction((tx) async {
       final snap = await tx.get(ref);
       final current = (snap.data()?['quantidade'] ?? 0) as int;
       final newQty = isEntrada ? current + qtd : current - qtd;
       if (newQty < 0) throw Exception('Estoque insuficiente');
       tx.update(ref, {'quantidade': newQty});
-      final movRef = FirebaseFirestore.instance.collection('inventory_movements').doc();
+      final movRef =
+          FirebaseFirestore.instance.collection('inventory_movements').doc();
       tx.set(movRef, {
         'shopId': shopId,
         'productId': productId,
@@ -191,7 +217,9 @@ class _ProductsList extends StatelessWidget {
       });
     });
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(isEntrada ? 'Entrada registrada' : 'Saída registrada')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content:
+              Text(isEntrada ? 'Entrada registrada' : 'Saída registrada')));
     }
   }
 }
@@ -211,9 +239,13 @@ class _MovementsList extends StatelessWidget {
           .limit(100)
           .snapshots(),
       builder: (context, snapshot) {
-        if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
         final docs = snapshot.data!.docs;
-        if (docs.isEmpty) return const Center(child: Text('Nenhuma movimentação.'));
+        if (docs.isEmpty) {
+          return const Center(child: Text('Nenhuma movimentação.'));
+        }
         return ListView.builder(
           padding: const EdgeInsets.all(16),
           itemCount: docs.length,
@@ -221,11 +253,17 @@ class _MovementsList extends StatelessWidget {
             final d = docs[i].data() as Map<String, dynamic>;
             final tipo = d['tipo'] == 'entrada' ? 'Entrada' : 'Saída';
             final ts = d['criado_em'] as Timestamp?;
-            final date = ts != null ? '${ts.toDate().day}/${ts.toDate().month}' : '';
+            final date =
+                ts != null ? '${ts.toDate().day}/${ts.toDate().month}' : '';
             return ListTile(
               leading: CircleAvatar(
-                backgroundColor: d['tipo'] == 'entrada' ? Colors.green : Colors.orange,
-                child: Icon(d['tipo'] == 'entrada' ? Icons.arrow_downward : Icons.arrow_upward, color: Colors.white),
+                backgroundColor:
+                    d['tipo'] == 'entrada' ? Colors.green : Colors.orange,
+                child: Icon(
+                    d['tipo'] == 'entrada'
+                        ? Icons.arrow_downward
+                        : Icons.arrow_upward,
+                    color: Colors.white),
               ),
               title: Text('$tipo: ${d['quantidade']} un.'),
               subtitle: Text('Estoque após: ${d['quantidade_apos']} • $date'),
@@ -236,4 +274,3 @@ class _MovementsList extends StatelessWidget {
     );
   }
 }
-

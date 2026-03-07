@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -8,7 +8,7 @@ import '../../core/theme/app_colors.dart';
 
 /// Página para gerenciar backup automático no Google Calendar
 class CalendarBackupPage extends StatefulWidget {
-  final bool isOwner;  // true para dono da loja, false para funcionário
+  final bool isOwner; // true para dono da loja, false para funcionário
   final String? shopId;
   final String? employeeId;
 
@@ -39,7 +39,7 @@ class _CalendarBackupPageState extends State<CalendarBackupPage> {
 
   Future<void> _loadCalendarStatus() async {
     setState(() => _isLoading = true);
-    
+
     try {
       final user = FirebaseAuth.instance.currentUser;
       if (user != null) {
@@ -64,7 +64,7 @@ class _CalendarBackupPageState extends State<CalendarBackupPage> {
             .where('status', whereIn: ['confirmado', 'aguardando_confirmacao'])
             .count()
             .get();
-        
+
         if (mounted) setState(() => _totalAppointments = count.count ?? 0);
       } else if (!widget.isOwner && widget.employeeId != null) {
         final count = await FirebaseFirestore.instance
@@ -73,7 +73,7 @@ class _CalendarBackupPageState extends State<CalendarBackupPage> {
             .where('status', whereIn: ['confirmado', 'aguardando_confirmacao'])
             .count()
             .get();
-        
+
         if (mounted) setState(() => _totalAppointments = count.count ?? 0);
       }
 
@@ -85,7 +85,7 @@ class _CalendarBackupPageState extends State<CalendarBackupPage> {
             .where('googleCalendarEventId', isNotEqualTo: null)
             .count()
             .get();
-        
+
         if (mounted) setState(() => _syncedAppointments = synced.count ?? 0);
       } else if (!widget.isOwner && widget.employeeId != null) {
         final synced = await FirebaseFirestore.instance
@@ -94,10 +94,9 @@ class _CalendarBackupPageState extends State<CalendarBackupPage> {
             .where('googleCalendarEventId', isNotEqualTo: null)
             .count()
             .get();
-        
+
         if (mounted) setState(() => _syncedAppointments = synced.count ?? 0);
       }
-
     } catch (e) {
       if (kDebugMode) debugPrint('Erro ao carregar status: $e');
     } finally {
@@ -107,15 +106,15 @@ class _CalendarBackupPageState extends State<CalendarBackupPage> {
 
   Future<void> _connectGoogleCalendar() async {
     setState(() => _isLoading = true);
-    
+
     try {
       final result = await GoogleCalendarService.authenticateUser();
-      
+
       if (result != null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('✅ Conectado ao Google Calendar com sucesso!'),
+              content: Text('âœ… Conectado ao Google Calendar com sucesso!'),
               backgroundColor: Colors.green,
             ),
           );
@@ -125,7 +124,7 @@ class _CalendarBackupPageState extends State<CalendarBackupPage> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('❌ Falha ao conectar. Tente novamente.'),
+              content: Text('âŒ Falha ao conectar. Tente novamente.'),
               backgroundColor: Colors.red,
             ),
           );
@@ -135,7 +134,7 @@ class _CalendarBackupPageState extends State<CalendarBackupPage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('❌ Erro: $e'),
+            content: Text('âŒ Erro: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -161,7 +160,8 @@ class _CalendarBackupPageState extends State<CalendarBackupPage> {
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Desconectar', style: TextStyle(color: Colors.white)),
+            child: const Text('Desconectar',
+                style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -171,7 +171,7 @@ class _CalendarBackupPageState extends State<CalendarBackupPage> {
       setState(() => _isLoading = true);
       await GoogleCalendarService.disconnect();
       await _loadCalendarStatus();
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -198,17 +198,19 @@ class _CalendarBackupPageState extends State<CalendarBackupPage> {
 
     try {
       int synced = 0;
-      
+
       if (widget.isOwner && widget.shopId != null) {
-        synced = await GoogleCalendarService.syncAllShopAppointments(widget.shopId!);
+        synced =
+            await GoogleCalendarService.syncAllShopAppointments(widget.shopId!);
       } else if (!widget.isOwner && widget.employeeId != null) {
-        synced = await GoogleCalendarService.syncEmployeeAppointments(widget.employeeId!);
+        synced = await GoogleCalendarService.syncEmployeeAppointments(
+            widget.employeeId!);
       }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('✅ $synced agendamentos sincronizados!'),
+            content: Text('âœ… $synced agendamentos sincronizados!'),
             backgroundColor: Colors.green,
           ),
         );
@@ -219,7 +221,7 @@ class _CalendarBackupPageState extends State<CalendarBackupPage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('❌ Erro ao sincronizar: $e'),
+            content: Text('âŒ Erro ao sincronizar: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -247,7 +249,7 @@ class _CalendarBackupPageState extends State<CalendarBackupPage> {
                 children: [
                   // Status Card
                   _buildStatusCard(),
-                  
+
                   const SizedBox(height: 20),
 
                   // Informações
@@ -301,7 +303,7 @@ class _CalendarBackupPageState extends State<CalendarBackupPage> {
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-            color: _isConnected
+              color: _isConnected
                   ? Colors.green.withValues(alpha: 0.1)
                   : Colors.orange.withValues(alpha: 0.1),
               shape: BoxShape.circle,
@@ -452,7 +454,8 @@ class _CalendarBackupPageState extends State<CalendarBackupPage> {
     );
   }
 
-  Widget _buildStatItem(String label, String value, IconData icon, Color color) {
+  Widget _buildStatItem(
+      String label, String value, IconData icon, Color color) {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -501,6 +504,7 @@ class _CalendarBackupPageState extends State<CalendarBackupPage> {
         ),
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.primaryPurple,
+          foregroundColor: Colors.white,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(10),
           ),
@@ -594,10 +598,14 @@ class _CalendarBackupPageState extends State<CalendarBackupPage> {
             ],
           ),
           const SizedBox(height: 12),
-          _buildTipItem('Sincronização automática: novos agendamentos são adicionados automaticamente'),
-          _buildTipItem('Atualizações e cancelamentos também são sincronizados'),
-          _buildTipItem('Você pode desconectar a qualquer momento sem perder dados'),
-          _buildTipItem('Os eventos ficam no calendário "MarkaAI - Agendamentos"'),
+          _buildTipItem(
+              'Sincronização automática: novos agendamentos são adicionados automaticamente'),
+          _buildTipItem(
+              'Atualizações e cancelamentos também são sincronizados'),
+          _buildTipItem(
+              'Você pode desconectar a qualquer momento sem perder dados'),
+          _buildTipItem(
+              'Os eventos ficam no calendário "MarkaAI - Agendamentos"'),
         ],
       ),
     );

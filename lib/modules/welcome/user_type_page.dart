@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 import '../onboarding/client_onboarding_page.dart';
 import '../login/login_page.dart';
@@ -45,17 +45,18 @@ class UserTypePage extends StatelessWidget {
               onTap: () {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) => const ClientOnboardingPage()),
+                  MaterialPageRoute(
+                      builder: (context) => const ClientOnboardingPage()),
                 );
               },
             ),
-            
+
             const SizedBox(height: 20),
 
-            // BOTÃO PROPRIETÁRIO
+            // BOTÃO PROPRIETÃRIO
             _buildButton(
               context,
-              title: "SOU PROPRIETÁRIO",
+              title: "SOU PROPRIETÃRIO",
               subtitle: "Quero gerenciar meu studio e equipe",
               icon: Icons.business_center,
               color: AppColors.primaryPurple,
@@ -72,13 +73,12 @@ class UserTypePage extends StatelessWidget {
     );
   }
 
-  Widget _buildButton(BuildContext context, {
-    required String title, 
-    required String subtitle, 
-    required IconData icon, 
-    required Color color, 
-    required VoidCallback onTap
-  }) {
+  Widget _buildButton(BuildContext context,
+      {required String title,
+      required String subtitle,
+      required IconData icon,
+      required Color color,
+      required VoidCallback onTap}) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(20),
@@ -111,20 +111,21 @@ class UserTypePage extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    title, 
-                    // CORREÇÃO AQUI: Trocado .black por .bold ou .w900 para evitar o erro da imagem c9c15d.png
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: color)
-                  ),
+                  Text(title,
+                      // CORREÇÃO AQUI: Trocado .black por .bold ou .w900 para evitar o erro da imagem c9c15d.png
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18,
+                          color: color)),
                   const SizedBox(height: 4),
-                  Text(
-                    subtitle, 
-                    style: const TextStyle(fontSize: 14, color: Colors.black54)
-                  ),
+                  Text(subtitle,
+                      style:
+                          const TextStyle(fontSize: 14, color: Colors.black54)),
                 ],
               ),
             ),
-            Icon(Icons.arrow_forward_ios, color: color.withValues(alpha: 0.3), size: 16),
+            Icon(Icons.arrow_forward_ios,
+                color: color.withValues(alpha: 0.3), size: 16),
           ],
         ),
       ),

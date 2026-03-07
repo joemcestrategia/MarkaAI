@@ -10,7 +10,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
-// 🚨 IMPORT CORRIGIDO: Apontando para a Home de Negócios real
+// ?? IMPORT CORRIGIDO: Apontando para a Home de Negócios real
 import 'business_home_page.dart';
 
 const List<String> _kOnboardingUFs = [
@@ -60,8 +60,8 @@ class _BusinessOnboardingPageState extends State<BusinessOnboardingPage> {
   final _categoriaController = TextEditingController();
   final _donoNomeController = TextEditingController();
   final _telefoneController = TextEditingController();
-  final _cidadeController = TextEditingController(); // 🌍 NOVO
-  String? _estadoSelecionado; // 🌍 NOVO
+  final _cidadeController = TextEditingController(); // ?? NOVO
+  String? _estadoSelecionado; // ?? NOVO
   final _phoneMask = MaskTextInputFormatter(
       mask: '(##) #####-####', filter: {"#": RegExp(r'[0-9]')});
 
@@ -117,7 +117,7 @@ class _BusinessOnboardingPageState extends State<BusinessOnboardingPage> {
     setState(() => _isSaving = true);
 
     try {
-      // 🛡️ Usamos o ID do usuário logado para manter a integridade
+      // ??? Usamos o ID do usuário logado para manter a integridade
       final String uid = currentUser.uid;
       final newShopRef = FirebaseFirestore.instance.collection('shops').doc();
 
@@ -131,11 +131,11 @@ class _BusinessOnboardingPageState extends State<BusinessOnboardingPage> {
         'dono_id': uid,
         'telefone': _telefoneController.text.trim(),
         'imageUrl': logoUrl, // Sincronizado com o nome usado na ClientHomePage
-        'cidade': _cidadeController.text.trim(), // 🌍 NOVO
-        'estado': _estadoSelecionado ?? '', // 🌍 NOVO
+        'cidade': _cidadeController.text.trim(), // ?? NOVO
+        'estado': _estadoSelecionado ?? '', // ?? NOVO
         'sem_endereco_fixo': false,
         'criado_em': FieldValue.serverTimestamp(),
-        // 🚀 Configuração de Assinatura (Trial de 90 dias)
+        // ?? Configuração de Assinatura (Trial de 90 dias)
         'subscription': {
           'plan_id': 'starter', // Plano base após o trial
           'status': 'trial',
@@ -160,7 +160,7 @@ class _BusinessOnboardingPageState extends State<BusinessOnboardingPage> {
           userType: 'pro', userId: uid, shopId: newShopRef.id);
 
       if (mounted) {
-        // 🚨 NAVEGAÇÃO CORRIGIDA: Vai para o Painel de Negócios real
+        // ?? NAVEGAÇÃO CORRIGIDA: Vai para o Painel de Negócios real
         Navigator.pushAndRemoveUntil(
             context,
             MaterialPageRoute(builder: (context) => const BusinessHomePage()),
@@ -249,7 +249,7 @@ class _BusinessOnboardingPageState extends State<BusinessOnboardingPage> {
                       labelText: "WhatsApp da Empresa",
                       border: OutlineInputBorder())),
               const SizedBox(height: 20),
-              // 🌍 CIDADE E ESTADO — obrigatórios desde o cadastro inicial
+              // ?? CIDADE E ESTADO — obrigatórios desde o cadastro inicial
               TextFormField(
                 controller: _cidadeController,
                 decoration: const InputDecoration(
@@ -283,7 +283,7 @@ class _BusinessOnboardingPageState extends State<BusinessOnboardingPage> {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
                     content:
-                        Text('⚠️ Informe a cidade e o estado para continuar.'),
+                        Text('?? Informe a cidade e o estado para continuar.'),
                     backgroundColor: Colors.orange,
                   ),
                 );
@@ -322,6 +322,7 @@ class _BusinessOnboardingPageState extends State<BusinessOnboardingPage> {
                   onPressed: isLoading ? null : onNext,
                   style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primaryPurple,
+                      foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12))),
                   child: isLoading

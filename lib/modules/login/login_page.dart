@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -103,7 +103,7 @@ class _LoginPageState extends State<LoginPage>
     super.dispose();
   }
 
-  // --- 🛡️ MOTOR DE ROTEAMENTO (MANTIDO E BLINDADO) ---
+  // --- ðŸ›¡ï¸ MOTOR DE ROTEAMENTO (MANTIDO E BLINDADO) ---
   Future<void> _routeUser(User user) async {
     setState(() => _isLoading = true);
     try {
@@ -179,7 +179,7 @@ class _LoginPageState extends State<LoginPage>
     }
   }
 
-  // --- LÓGICA DE CEP ---
+  // --- LÃ“GICA DE CEP ---
   Future<void> _handleCepSearch(String value) async {
     if (value.length == 9) {
       setState(() => _isLoading = true);
@@ -432,7 +432,7 @@ class _LoginPageState extends State<LoginPage>
       backgroundColor: Colors.white,
       body: Row(
         children: [
-          // 💻 PAINEL ESQUERDO (Apenas Desktop)
+          // ðŸ’» PAINEL ESQUERDO (Apenas Desktop)
           if (isDesktop)
             Expanded(
               flex: 5,
@@ -482,7 +482,7 @@ class _LoginPageState extends State<LoginPage>
                         const SizedBox(height: 18),
                         const SizedBox(height: 12),
                         const Text(
-                          "Domine sua agenda — organize seu negócio e aumente seu faturamento.",
+                          "Domine sua agenda â€” organize seu negócio e aumente seu faturamento.",
                           style: TextStyle(
                               color: Colors.white,
                               fontSize: 32,
@@ -499,7 +499,7 @@ class _LoginPageState extends State<LoginPage>
                               border: Border.all(
                                   color: Colors.white.withValues(alpha: 0.2))),
                           child: const Text(
-                              "🚀 Agendamento Inteligente • Gestão Financeira",
+                              "ðŸš€ Agendamento Inteligente â€¢ Gestão Financeira",
                               style:
                                   TextStyle(color: Colors.white, fontSize: 14)),
                         )
@@ -510,7 +510,7 @@ class _LoginPageState extends State<LoginPage>
               ),
             ),
 
-          // 📱 PAINEL DIREITO (Formulário)
+          // ðŸ“± PAINEL DIREITO (Formulário)
           Expanded(
             flex: isDesktop ? 6 : 1,
             child: Container(
@@ -533,7 +533,7 @@ class _LoginPageState extends State<LoginPage>
     );
   }
 
-  // --- FORMULÁRIO DE LOGIN (SIMPLES E ELEGANTE) ---
+  // --- FORMULÃRIO DE LOGIN (SIMPLES E ELEGANTE) ---
   Widget _buildLoginForm() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -782,7 +782,7 @@ class _LoginPageState extends State<LoginPage>
             if (_currentStep > 0) const SizedBox(width: 10),
             Expanded(
               child: _PrimaryButton(
-                text: _currentStep == 3 ? "CRIAR CONTA" : "PRÓXIMO",
+                text: _currentStep == 3 ? "CRIAR CONTA" : "PRÃ“XIMO",
                 isLoading: _isLoading,
                 onPressed: _handleAuth,
               ),
@@ -1166,7 +1166,7 @@ class _LoginPageState extends State<LoginPage>
 }
 
 // =============================================================================
-// 🧱 WIDGETS REUTILIZÁVEIS
+// ðŸ§± WIDGETS REUTILIZÃVEIS
 // =============================================================================
 
 class _ModernInput extends StatelessWidget {
@@ -1262,6 +1262,7 @@ class _PrimaryButton extends StatelessWidget {
         onPressed: isLoading ? null : onPressed,
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.primaryPurple,
+          foregroundColor: Colors.white,
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           elevation: 2,

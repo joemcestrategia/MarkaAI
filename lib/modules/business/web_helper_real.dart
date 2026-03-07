@@ -1,5 +1,5 @@
-// ignore_for_file: avoid_web_libraries_in_flutter
-/// Web helper — REAL implementation using dart:html / dart:ui_web.
+﻿// ignore_for_file: avoid_web_libraries_in_flutter
+/// Web helper â€” REAL implementation using dart:html / dart:ui_web.
 /// Conditionally imported only when compiling for the web target.
 library;
 
@@ -73,7 +73,7 @@ bool registerBookmarkletView(String viewId, String href) {
         ..cursor = 'grab'
         ..boxShadow = '0 3px 10px rgba(37,211,102,.3)'
         ..userSelect = 'none';
-      anchor.text = '🔖  Arraste este favorito para a barra do Chrome';
+      anchor.text = 'ðŸ”–  Arraste este favorito para a barra do Chrome';
       return anchor;
     });
     return true;

@@ -127,10 +127,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 _cartaoOnline = config['cartao_online'] ??
                     config['pagamento_cartao'] ??
                     false;
-                _debitoPresencial = config['debito_presencial'] ?? false;
+                _debitoPresencial = config['pagamento_pix'] ??
+                    config['debito_presencial'] ??
+                    false;
                 _pagarPessoalmente = config['pagar_pessoalmente'] ??
                     config['pagamento_dinheiro'] ??
-                    config['pagamento_pix'] ??
                     true;
                 _requireDeposit = config['exigir_sinal'] ?? false;
                 _depositPercent = (config['percentual_sinal'] ?? 30).toDouble();
@@ -184,9 +185,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         _debitoPresencial = false;
         _requireDeposit = false;
         _pagarPessoalmente = true;
-        _creditTaxPercent = 0.0; // ← [FIX] não salvar taxa para plano free
+        _creditTaxPercent = 0.0; // ? [FIX] não salvar taxa para plano free
         _acceptInstallments =
-            false; // ← [FIX] não salvar parcelamento para plano free
+            false; // ? [FIX] não salvar parcelamento para plano free
       } else {
         // Paid Plan Validation: Ensure at least one payment method is enabled
         if (!(_cartaoOnline || _debitoPresencial || _pagarPessoalmente)) {
@@ -219,7 +220,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           // Legacy fallbacks for older app versions
           'pagamento_cartao': _cartaoOnline,
           'pagamento_dinheiro': _pagarPessoalmente,
-          'pagamento_pix': _pagarPessoalmente,
+          'pagamento_pix': _debitoPresencial,
           'exigir_sinal': _requireDeposit,
           'percentual_sinal': _depositPercent.round(),
           // única taxa aplicada ao crédito (aplicada quando cliente escolher cartão)
@@ -351,7 +352,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ─────────── Toggle principal — SEMPRE ativo ───────────
+              // ----------- Toggle principal — SEMPRE ativo -----------
               _buildSettingCard([
                 _buildSwitchTile(
                     "Agendamento Online Ativo",
@@ -362,7 +363,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
 
               const SizedBox(height: 24),
 
-              // ─── Tudo abaixo fica desabilitado quando booking for inativo ───
+              // --- Tudo abaixo fica desabilitado quando booking for inativo ---
               AbsorbPointer(
                 absorbing: !_onlineBookingActive,
                 child: AnimatedOpacity(
@@ -371,7 +372,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // ═══ REGRAS DE AGENDAMENTO ═══
+                      // --- REGRAS DE AGENDAMENTO ---
                       _buildSectionHeader(
                           "Regras de Agendamento", Icons.settings_suggest),
                       _buildSettingCard([
@@ -576,25 +577,25 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         ),
                       ]),
 
-                      // ═══ POLÍTICA DE CANCELAMENTO ═══
+                      // --- POLÍTICA DE CANCELAMENTO ---
                       const SizedBox(height: 24),
                       _buildSectionHeader(
                           "Política de Cancelamento", Icons.timer_off),
                       _buildCancelCard(),
 
-                      // ═══ FINANCEIRO E SINAL ═══
+                      // --- FINANCEIRO E SINAL ---
                       const SizedBox(height: 24),
                       _buildSectionHeader(
                           "Financeiro e Sinal", Icons.payments_outlined),
                       _buildFinanceCard(),
 
-                      // ═══ PAGAMENTOS ONLINE ═══
+                      // --- PAGAMENTOS ONLINE ---
                       const SizedBox(height: 12),
                       _buildSectionHeader(
                           "Pagamentos Online", Icons.account_balance_wallet),
                       _buildPaymentIntegrationCard(),
 
-                      // ═══ NOTIFICAÇÕES ═══
+                      // --- NOTIFICAÇÕES ---
                       const SizedBox(height: 24),
                       _buildSectionHeader(
                           "Notificações", Icons.notifications_active),
@@ -606,7 +607,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 ),
               ),
 
-              // ═══ INTEGRAÇÕES — sempre ativa ═══
+              // --- INTEGRAÇÕES — sempre ativa ---
               _buildSectionHeader("Integrações", Icons.link),
               _buildIntegrationsCard(),
             ],
@@ -634,7 +635,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text("Recurso Premium ⭐"),
+        title: const Text("Recurso Premium ?"),
         content: const Text(
             "Configurações avançadas de agenda são exclusivas de planos pagos.\n\nAssine para liberar!"),
         actions: [
@@ -718,6 +719,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           child: ElevatedButton(
             style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primaryPurple,
+                foregroundColor: Colors.white,
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12))),
             onPressed: _saveSettings,
@@ -786,13 +788,16 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       activeThumbColor: AppColors.primaryPurple,
       title: Row(
         children: [
-          Text(title,
-              style:
-                  const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+          Flexible(
+            child: Text(title,
+                style:
+                    const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+          ),
           if (trailing != null) trailing,
         ],
       ),
-      subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
+      subtitle: Text(subtitle,
+          style: const TextStyle(fontSize: 12), overflow: TextOverflow.visible),
     );
   }
 
@@ -938,12 +943,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         ),
                       ),
 
-                      // Débito Presencial
+                      // Pix Online
                       Opacity(
                         opacity: isPremium ? 1.0 : 0.6,
                         child: _buildSwitchTile(
-                          "Débito (Presencial - Maquininha)",
-                          "Use sua própria maquininha na loja",
+                          "Pix",
+                          "Pagamento instantâneo via QR Code (requer Mercado Pago)",
                           isPremium ? _debitoPresencial : false,
                           isPremium
                               ? (v) {
@@ -1128,7 +1133,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               spacing: 8,
               runSpacing: 8,
               children: [1, 2, 6, 12, 24, 48].map((h) {
-                // Map existing _notifyDaysBefore (days) → hours
+                // Map existing _notifyDaysBefore (days) ? hours
                 final currentH = _notifyDaysBefore * 24;
                 final isSelected = currentH == h;
                 return ChoiceChip(

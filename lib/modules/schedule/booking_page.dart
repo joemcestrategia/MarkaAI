@@ -1,5 +1,6 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:intl/intl.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../core/theme/app_colors.dart';
@@ -105,12 +106,18 @@ class BookingPage extends StatefulWidget {
   final DocumentSnapshot shop;
   final DocumentSnapshot serviceDoc;
   final Map<String, dynamic>? selectedVariation;
+  final bool isReschedule;
+  final String? appointmentId;
+  final bool fromSubdomain;
 
   const BookingPage({
     super.key,
     required this.shop,
     required this.serviceDoc,
     this.selectedVariation,
+    this.isReschedule = false,
+    this.appointmentId,
+    this.fromSubdomain = false,
   });
 
   Map<String, dynamic> get serviceData =>
@@ -246,7 +253,7 @@ class _BookingPageState extends State<BookingPage> {
                           overflow: TextOverflow.ellipsis),
                       const SizedBox(height: 4),
                       Text(
-                          "${widget.serviceData['tempo_min'] ?? 30} min • ${currencyFormat.format(widget.selectedVariation?['price'] ?? widget.serviceData['preco'])}",
+                          "${widget.serviceData['tempo_min'] ?? 30} min â€¢ ${currencyFormat.format(widget.selectedVariation?['price'] ?? widget.serviceData['preco'])}",
                           style: const TextStyle(
                               color: Colors.white70, fontSize: 13)),
                     ],
@@ -269,7 +276,7 @@ class _BookingPageState extends State<BookingPage> {
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           debugPrint(
-              '❌ BookingPage: ERRO ao carregar profissionais: ${snapshot.error}');
+              'âŒ BookingPage: ERRO ao carregar profissionais: ${snapshot.error}');
           return Center(
             child: Padding(
               padding: const EdgeInsets.all(24.0),
@@ -312,6 +319,8 @@ class _BookingPageState extends State<BookingPage> {
                       shopConfig: _shopConfig,
                       intervalMinutes: _intervalMinutes,
                       minAdvanceHours: _minAdvanceHours,
+                      isReschedule: widget.isReschedule,
+                      appointmentId: widget.appointmentId,
                     ),
                   ),
                 );
@@ -364,6 +373,7 @@ class _BookingPageState extends State<BookingPage> {
                               shopConfig: _shopConfig,
                               intervalMinutes: _intervalMinutes,
                               minAdvanceHours: _minAdvanceHours,
+                              fromSubdomain: widget.fromSubdomain,
                             ),
                           ),
                         );
@@ -444,7 +454,7 @@ class _BookingPageState extends State<BookingPage> {
 }
 
 // ========================================
-// PÁGINA DE SELEÇÃO DE DATA - SEM PROBLEMAS
+// PÃGINA DE SELEÇÃO DE DATA - SEM PROBLEMAS
 // ========================================
 class BookingTimePage extends StatefulWidget {
   final DocumentSnapshot shop;
@@ -454,6 +464,9 @@ class BookingTimePage extends StatefulWidget {
   final Map<String, dynamic> shopConfig;
   final int intervalMinutes;
   final int minAdvanceHours;
+  final bool isReschedule;
+  final String? appointmentId;
+  final bool fromSubdomain;
 
   const BookingTimePage({
     super.key,
@@ -464,6 +477,9 @@ class BookingTimePage extends StatefulWidget {
     required this.shopConfig,
     required this.intervalMinutes,
     required this.minAdvanceHours,
+    this.isReschedule = false,
+    this.appointmentId,
+    this.fromSubdomain = false,
   });
 
   Map<String, dynamic> get serviceData =>
@@ -481,7 +497,7 @@ class _BookingTimePageState extends State<BookingTimePage> {
   void initState() {
     super.initState();
     debugPrint(
-        '🚀 BookingPage: initState | shopId: ${widget.shop.id} | serviceId: ${widget.serviceDoc.id}');
+        'ðŸš€ BookingPage: initState | shopId: ${widget.shop.id} | serviceId: ${widget.serviceDoc.id}');
 
     // Proteção de Rota Direta (Web Bypass Prevention)
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -504,8 +520,10 @@ class _BookingTimePageState extends State<BookingTimePage> {
         rawWorkDays.map((e) => int.parse(e.toString())).toList();
 
     final now = DateTime.now();
-    DateTime testDate = DateTime(now.year, now.month, now.day);
-    if (now.hour >= 18) testDate = testDate.add(const Duration(days: 1));
+    // Respeita minAdvanceHours: começa da data mínima permitida
+    final minAdvanceDateRaw = now.add(Duration(hours: widget.minAdvanceHours));
+    DateTime testDate = DateTime(
+        minAdvanceDateRaw.year, minAdvanceDateRaw.month, minAdvanceDateRaw.day);
 
     for (int i = 0; i < _bookingWindowDays; i++) {
       if (workDays.contains(testDate.weekday)) {
@@ -553,7 +571,7 @@ class _BookingTimePageState extends State<BookingTimePage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // ✅ USANDO CALENDARDATEPICKER - MAIS ESTÁVEL
+              // âœ… USANDO CALENDARDATEPICKER - MAIS ESTÃVEL
               Container(
                 decoration: BoxDecoration(
                   color: Colors.white,
@@ -576,14 +594,27 @@ class _BookingTimePageState extends State<BookingTimePage> {
                       const SizedBox(height: 16),
                       // ✅ CalendarDatePicker - RÁPIDO E RESPONSIVO
                       CalendarDatePicker(
-                        initialDate:
-                            _selectedDate?.isBefore(firstDateBound) == true
-                                ? firstDateBound
-                                : (_selectedDate ?? firstDateBound),
+                        initialDate: () {
+                          // Garante que initialDate satisfaz o selectableDayPredicate:
+                          // deve ser >= minAllowedDate E ser um dia de trabalho
+                          DateTime candidate = _selectedDate ?? firstDateBound;
+                          if (candidate.isBefore(firstDateBound)) {
+                            candidate = firstDateBound;
+                          }
+                          // Avança até encontrar um dia de trabalho válido
+                          int safety = 0;
+                          while ((!workDays.contains(candidate.weekday) ||
+                                  candidate.isBefore(minAllowedDate)) &&
+                              safety < 60) {
+                            candidate = candidate.add(const Duration(days: 1));
+                            safety++;
+                          }
+                          return candidate;
+                        }(),
                         firstDate: firstDateBound,
                         lastDate: lastAllowedDay,
                         selectableDayPredicate: (day) {
-                          // Comparação real para bloquear dias proibidos (muito proximos)
+                          // Bloqueia dias antes do mínimo de antecedência
                           if (day.isBefore(minAllowedDate)) return false;
                           if (day.isAfter(lastAllowedDay)) return false;
                           return workDays.contains(day.weekday);
@@ -591,7 +622,6 @@ class _BookingTimePageState extends State<BookingTimePage> {
                         onDateChanged: (selected) {
                           setState(() {
                             _selectedDate = selected;
-                            // _focusedDay removido (não utilizado)
                           });
                         },
                       ),
@@ -600,7 +630,7 @@ class _BookingTimePageState extends State<BookingTimePage> {
                 ),
               ),
               const SizedBox(height: 24),
-              // ✅ DATA SELECIONADA
+              // âœ… DATA SELECIONADA
               if (_selectedDate != null)
                 Container(
                   padding: const EdgeInsets.all(16),
@@ -626,13 +656,21 @@ class _BookingTimePageState extends State<BookingTimePage> {
                   ),
                 ),
               const SizedBox(height: 24),
-              // ✅ BOTÕES
+              // âœ… BOTÕES
               Row(
                 children: [
                   Expanded(
                     child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        side: BorderSide(color: Colors.grey.shade400),
+                        foregroundColor: Colors.black87,
+                      ),
                       onPressed: () => Navigator.pop(context),
-                      child: const Text('Voltar'),
+                      child: const Text('VOLTAR',
+                          style: TextStyle(fontWeight: FontWeight.bold)),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -653,16 +691,25 @@ class _BookingTimePageState extends State<BookingTimePage> {
                                     intervalMinutes: widget.intervalMinutes,
                                     minAdvanceHours: widget.minAdvanceHours,
                                     selectedDate: _selectedDate!,
+                                    isReschedule: widget.isReschedule,
+                                    appointmentId: widget.appointmentId,
+                                    fromSubdomain: widget.fromSubdomain,
                                   ),
                                 ),
                               );
                             },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.primaryPurple,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        elevation: 0,
                       ),
                       child: const Text(
-                        'Ver Horários',
-                        style: TextStyle(color: Colors.white),
+                        'VER HORÃRIOS',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 14),
                       ),
                     ),
                   ),
@@ -677,7 +724,7 @@ class _BookingTimePageState extends State<BookingTimePage> {
 }
 
 // ========================================
-// PÁGINA DE SELEÇÃO DE HORÁRIOS
+// PÃGINA DE SELEÇÃO DE HORÃRIOS
 // ========================================
 class BookingSlotsPage extends StatefulWidget {
   final DocumentSnapshot shop;
@@ -688,6 +735,9 @@ class BookingSlotsPage extends StatefulWidget {
   final int intervalMinutes;
   final int minAdvanceHours;
   final DateTime selectedDate;
+  final bool isReschedule;
+  final String? appointmentId;
+  final bool fromSubdomain;
 
   const BookingSlotsPage({
     super.key,
@@ -699,6 +749,9 @@ class BookingSlotsPage extends StatefulWidget {
     required this.intervalMinutes,
     required this.minAdvanceHours,
     required this.selectedDate,
+    this.isReschedule = false,
+    this.appointmentId,
+    this.fromSubdomain = false,
   });
 
   Map<String, dynamic> get serviceData =>
@@ -714,7 +767,8 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
   @override
   void initState() {
     super.initState();
-    debugPrint('🚀 BookingSlotsPage: initState | date: ${widget.selectedDate}');
+    debugPrint(
+        'ðŸš€ BookingSlotsPage: initState | date: ${widget.selectedDate}');
   }
 
   @override
@@ -752,8 +806,16 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                 children: [
                   Expanded(
                     child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        side: BorderSide(color: Colors.grey.shade400),
+                        foregroundColor: Colors.black87,
+                      ),
                       onPressed: () => Navigator.pop(context),
-                      child: const Text('Voltar'),
+                      child: const Text('VOLTAR',
+                          style: TextStyle(fontWeight: FontWeight.bold)),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -761,37 +823,133 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                     child: ElevatedButton(
                       onPressed: _selectedTime == null
                           ? null
-                          : () {
+                          : () async {
                               final shopId = widget.shop.id;
                               final shopData =
                                   widget.shop.data() as Map<String, dynamic>;
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (c) => CheckoutPage(
-                                    shopId: shopId,
-                                    shopData: shopData,
-                                    shopConfig: widget.shopConfig,
-                                    serviceDoc: widget.serviceDoc,
-                                    serviceNameOverride:
-                                        widget.serviceData['nome'],
-                                    servicePriceOverride: double.tryParse(widget
-                                            .serviceData['preco']
-                                            .toString()) ??
-                                        0.0,
-                                    professionalDoc: widget.professionalDoc,
-                                    date: widget.selectedDate,
-                                    time: _selectedTime!,
+
+                              final profData = widget.professionalDoc.data()
+                                  as Map<String, dynamic>;
+
+                              String finalName = widget.serviceData['nome'];
+                              double finalPrice = double.tryParse(
+                                      widget.serviceData['preco'].toString()) ??
+                                  0.0;
+
+                              if (widget.selectedVariation != null) {
+                                finalName +=
+                                    " (${widget.selectedVariation!['name']})";
+                                finalPrice = double.tryParse(widget
+                                        .selectedVariation!['price']
+                                        .toString()) ??
+                                    finalPrice;
+                              }
+
+                              if (widget.isReschedule &&
+                                  widget.appointmentId != null) {
+                                // Realiza o reagendamento diretamente
+                                final newDateTime = DateTime(
+                                  widget.selectedDate.year,
+                                  widget.selectedDate.month,
+                                  widget.selectedDate.day,
+                                  _selectedTime!.hour,
+                                  _selectedTime!.minute,
+                                );
+
+                                // Salva o messenger antes de dar os pops
+                                final sm = ScaffoldMessenger.of(context);
+
+                                showDialog(
+                                  context: context,
+                                  barrierDismissible: false,
+                                  builder: (ctx) => const Center(
+                                      child: CircularProgressIndicator()),
+                                );
+
+                                try {
+                                  final functions = FirebaseFunctions.instance;
+                                  await functions
+                                      .httpsCallable('rescheduleAppointment')
+                                      .call({
+                                    'appointmentId': widget.appointmentId,
+                                    'newDateISO': newDateTime.toIso8601String(),
+                                    'newServiceId': widget.serviceDoc.id,
+                                    'newServiceName': finalName,
+                                    'newPrice': finalPrice,
+                                    'newProfessionalId':
+                                        widget.professionalDoc.id,
+                                    'newProfessionalName':
+                                        profData['nome'] ?? 'Profissional',
+                                  });
+
+                                  if (!mounted) return;
+
+                                  // Precisamos fechar: 1) Modal de Loading 2) BookingSlotsPage 3) BookingTimePage
+                                  // Para voltar para a tela onde a Modal Reschedule Type foi chamada (MyAppointmentsPage ou PublicShopPage)
+                                  int count = 0;
+                                  Navigator.popUntil(context, (route) {
+                                    return count++ >= 3;
+                                  });
+
+                                  sm.showSnackBar(
+                                    const SnackBar(
+                                      content:
+                                          Text('Reagendamento confirmado! âœ…'),
+                                      backgroundColor: Colors.green,
+                                    ),
+                                  );
+                                } catch (e) {
+                                  if (!mounted) return;
+                                  Navigator.pop(context); // fecha dialog
+                                  final errMsg = e is FirebaseFunctionsException
+                                      ? (e.message ?? e.toString())
+                                      : e.toString();
+                                  sm.showSnackBar(
+                                    SnackBar(
+                                      content:
+                                          Text('Erro ao reagendar: $errMsg'),
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  );
+                                }
+                              } else {
+                                // Fluxo normal de Checkout
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (c) => CheckoutPage(
+                                      shopId: shopId,
+                                      shopData: shopData,
+                                      shopConfig: widget.shopConfig,
+                                      serviceDoc: widget.serviceDoc,
+                                      serviceNameOverride: finalName,
+                                      servicePriceOverride: finalPrice,
+                                      professionalDoc: widget.professionalDoc,
+                                      date: widget.selectedDate,
+                                      time: _selectedTime!,
+                                      fromSubdomain: widget.fromSubdomain,
+                                    ),
                                   ),
-                                ),
-                              );
+                                );
+                              }
                             },
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
+                        backgroundColor: widget.isReschedule
+                            ? AppColors.primaryPurple
+                            : const Color(0xFF25D366),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        elevation: 0,
                       ),
-                      child: const Text(
-                        'Continuar',
-                        style: TextStyle(color: Colors.white),
+                      child: Text(
+                        widget.isReschedule
+                            ? 'CONFIRMAR HORÃRIO'
+                            : 'CONTINUAR',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 14),
+                        textAlign: TextAlign.center,
                       ),
                     ),
                   ),
@@ -823,7 +981,7 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           debugPrint(
-              '❌ BookingSlotsPage: ERRO ao carregar agendamentos (slots): ${snapshot.error}');
+              'âŒ BookingSlotsPage: ERRO ao carregar agendamentos (slots): ${snapshot.error}');
           return Center(
             child: Padding(
               padding: const EdgeInsets.all(24.0),

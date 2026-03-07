@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -11,8 +11,17 @@ import 'package:url_launcher/url_launcher.dart';
 
 class ClientServiceDetailPage extends StatefulWidget {
   final DocumentSnapshot serviceDoc;
+  final bool isReschedule;
+  final String? rescheduleAppointmentId;
+  final bool fromSubdomain;
 
-  const ClientServiceDetailPage({super.key, required this.serviceDoc});
+  const ClientServiceDetailPage({
+    super.key,
+    required this.serviceDoc,
+    this.isReschedule = false,
+    this.rescheduleAppointmentId,
+    this.fromSubdomain = false,
+  });
 
   Map<String, dynamic> get serviceData =>
       serviceDoc.data() as Map<String, dynamic>;
@@ -124,7 +133,7 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
           _goToBooking();
         }
       }
-      return; // ⛔ TRAVA DEFINITIVA: Impede qualquer execução adicional se não estava logado quando clicou
+      return; // â›” TRAVA DEFINITIVA: Impede qualquer execução adicional se não estava logado quando clicou
     }
     final user = userState;
 
@@ -196,6 +205,9 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
             shop: shopDoc!,
             serviceDoc: widget.serviceDoc,
             selectedVariation: _selectedVariation,
+            isReschedule: widget.isReschedule,
+            appointmentId: widget.rescheduleAppointmentId,
+            fromSubdomain: widget.fromSubdomain,
           ),
         ),
       );
@@ -265,6 +277,7 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
                 expandedHeight: 400,
                 pinned: true,
                 backgroundColor: AppColors.primaryPurple,
+                foregroundColor: Colors.white,
                 leading: IconButton(
                   icon: Container(
                     padding: const EdgeInsets.all(8),

@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+﻿import 'package:flutter/foundation.dart';
 import 'package:googleapis/calendar/v3.dart' as calendar;
 import 'package:googleapis_auth/auth_io.dart';
 import 'package:http/http.dart' as http;
@@ -15,7 +15,7 @@ class GoogleCalendarService {
 
   // Nome do calendário de backup
   static const String _calendarName = 'MarkaAI - Agendamentos';
-  
+
   /// Inicia o fluxo de autenticação OAuth2
   static Future<Map<String, dynamic>?> authenticateUser() async {
     try {
@@ -41,10 +41,7 @@ class GoogleCalendarService {
       final user = FirebaseAuth.instance.currentUser;
       if (user != null) {
         final credentials = client.credentials;
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .set({
+        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
           'googleCalendar': {
             'connected': true,
             'accessToken': credentials.accessToken.data,
@@ -139,7 +136,7 @@ class GoogleCalendarService {
     try {
       // Lista calendários existentes
       final calendarList = await calendarApi.calendarList.list();
-      
+
       // Procura pelo calendário do MarkaAI
       for (var entry in calendarList.items ?? []) {
         if (entry.summary == _calendarName) {
@@ -173,7 +170,8 @@ class GoogleCalendarService {
     if (calendarId == null) return false;
 
     try {
-      final dataAgendamento = (appointmentData['data_agendamento'] as Timestamp?)?.toDate();
+      final dataAgendamento =
+          (appointmentData['data_agendamento'] as Timestamp?)?.toDate();
       if (dataAgendamento == null) return false;
 
       // Busca dados do serviço
@@ -215,17 +213,17 @@ ID: $appointmentId
 Status: ${appointmentData['status'] ?? 'confirmado'}
 Valor: R\$ ${appointmentData['valor_total']?.toStringAsFixed(2) ?? '0.00'}
 ''';
-      
+
       event.start = calendar.EventDateTime(
         dateTime: dataAgendamento,
         timeZone: 'America/Sao_Paulo',
       );
-      
+
       event.end = calendar.EventDateTime(
         dateTime: dataAgendamento.add(Duration(minutes: duracaoMinutos)),
         timeZone: 'America/Sao_Paulo',
       );
-      
+
       event.extendedProperties = calendar.EventExtendedProperties();
       event.extendedProperties!.private = {
         'markaai_appointment_id': appointmentId,
@@ -234,14 +232,14 @@ Valor: R\$ ${appointmentData['valor_total']?.toStringAsFixed(2) ?? '0.00'}
 
       // Verifica se o evento já existe
       final existingEventId = appointmentData['googleCalendarEventId'];
-      
+
       if (existingEventId != null) {
         // Atualiza evento existente
         await calendarApi.events.update(event, calendarId, existingEventId);
       } else {
         // Cria novo evento
         final created = await calendarApi.events.insert(event, calendarId);
-        
+
         // Salva o ID do evento no Firestore
         await FirebaseFirestore.instance
             .collection('appointments')
@@ -271,13 +269,13 @@ Valor: R\$ ${appointmentData['valor_total']?.toStringAsFixed(2) ?? '0.00'}
 
     try {
       await calendarApi.events.delete(calendarId, eventId);
-      
+
       // Remove referência no Firestore
       await FirebaseFirestore.instance
           .collection('appointments')
           .doc(appointmentId)
           .update({'googleCalendarEventId': FieldValue.delete()});
-      
+
       return true;
     } catch (e) {
       if (kDebugMode) debugPrint('Erro ao deletar evento: $e');
@@ -290,8 +288,8 @@ Valor: R\$ ${appointmentData['valor_total']?.toStringAsFixed(2) ?? '0.00'}
     final appointments = await FirebaseFirestore.instance
         .collection('appointments')
         .where('shopId', isEqualTo: shopId)
-        .where('status', whereIn: ['confirmado', 'aguardando_confirmacao'])
-        .get();
+        .where('status',
+            whereIn: ['confirmado', 'aguardando_confirmacao']).get();
 
     int synced = 0;
     for (var doc in appointments.docs) {
@@ -310,8 +308,8 @@ Valor: R\$ ${appointmentData['valor_total']?.toStringAsFixed(2) ?? '0.00'}
     final appointments = await FirebaseFirestore.instance
         .collection('appointments')
         .where('profissionalId', isEqualTo: employeeId)
-        .where('status', whereIn: ['confirmado', 'aguardando_confirmacao'])
-        .get();
+        .where('status',
+            whereIn: ['confirmado', 'aguardando_confirmacao']).get();
 
     int synced = 0;
     for (var doc in appointments.docs) {

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:geolocator/geolocator.dart';
@@ -229,13 +229,16 @@ class _AddressSelectorPageState extends State<AddressSelectorPage> {
       backgroundColor: const Color(0xFFF8F9FD),
       appBar: AppBar(
         title: const Text('Localização',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
+            style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 17,
+                color: Colors.white)),
         centerTitle: true,
-        backgroundColor: Colors.transparent,
-        foregroundColor: AppColors.primaryPurple,
+        backgroundColor: AppColors.primaryPurple,
+        foregroundColor: Colors.white,
         elevation: 0,
         flexibleSpace: Container(
-          decoration: const BoxDecoration(color: Colors.white),
+          decoration: const BoxDecoration(color: AppColors.primaryPurple),
         ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new, size: 20),

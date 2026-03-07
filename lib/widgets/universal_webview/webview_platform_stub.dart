@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 Widget buildWebView({
@@ -6,4 +6,5 @@ Widget buildWebView({
   required Function(String) onMessage,
   required Function(WebViewController) onControllerCreated,
   Map<String, String>? initialData,
-}) => throw UnsupportedError('Plataforma não suportada');
+}) =>
+    throw UnsupportedError('Plataforma não suportada');

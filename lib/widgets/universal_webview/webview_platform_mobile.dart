@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'dart:convert';
 
@@ -10,7 +10,8 @@ Widget buildWebView({
 }) {
   final controller = WebViewController()
     ..setJavaScriptMode(JavaScriptMode.unrestricted)
-    ..addJavaScriptChannel('FlutterChannel', onMessageReceived: (msg) => onMessage(msg.message))
+    ..addJavaScriptChannel('FlutterChannel',
+        onMessageReceived: (msg) => onMessage(msg.message))
     ..setBackgroundColor(const Color(0xFFFFFFFF))
     ..setNavigationDelegate(NavigationDelegate(
       onPageFinished: (url) {
@@ -29,10 +30,8 @@ Widget buildWebView({
   // Build query string from initialData
   String query = '';
   if (initialData != null && initialData.isNotEmpty) {
-    query = '?${initialData.entries
-            .map((e) =>
-                '${Uri.encodeQueryComponent(e.key)}=${Uri.encodeQueryComponent(e.value)}')
-            .join('&')}';
+    query =
+        '?${initialData.entries.map((e) => '${Uri.encodeQueryComponent(e.key)}=${Uri.encodeQueryComponent(e.value)}').join('&')}';
   }
   final Uri uri = Uri.parse(hostedBase + relative + query);
   debugPrint('WebView URL: $uri');

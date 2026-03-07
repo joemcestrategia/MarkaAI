@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_colors.dart';
@@ -63,7 +63,7 @@ class AdminOverviewWidget extends StatelessWidget {
                           totalUsers.toString(),
                           Icons.people,
                           AppColors.primaryPurple,
-                          subtitle: '$clients clientes • $owners donos',
+                          subtitle: '$clients clientes â€¢ $owners donos',
                         ),
                       ),
                       const SizedBox(width: 16),

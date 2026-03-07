@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -87,7 +87,7 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
     super.dispose();
   }
 
-  // 🛠️ CORREÇÃO DO SHOP ID + LOGS DE DEBUG
+  // ðŸ› ï¸ CORREÇÃO DO SHOP ID + LOGS DE DEBUG
   Future<void> _loadShopId() async {
     try {
       // 1. Tenta pegar da memória local (rápido)
@@ -95,7 +95,7 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
 
       if (_shopId == null || _shopId!.isEmpty) {
         debugPrint(
-            "⚠️ ShopId não encontrado no cache local. Buscando no Firebase...");
+            "âš ï¸ ShopId não encontrado no cache local. Buscando no Firebase...");
 
         final user = FirebaseAuth.instance.currentUser;
         if (user != null) {
@@ -107,18 +107,18 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
           if (doc.exists) {
             _shopId = doc.data()?['shopId'] as String?;
 
-            // 🔥 CORREÇÃO: Salva no SessionService para não buscar de novo
+            // ðŸ”¥ CORREÇÃO: Salva no SessionService para não buscar de novo
             if (_shopId != null) {
               await SessionService.saveShopId(_shopId!);
-              debugPrint("✅ ShopId recuperado e salvo: $_shopId");
+              debugPrint("âœ… ShopId recuperado e salvo: $_shopId");
             }
           }
         }
       } else {
-        // debugPrint("✅ ShopId carregado da sessão: $_shopId");
+        // debugPrint("âœ… ShopId carregado da sessão: $_shopId");
       }
     } catch (e) {
-      debugPrint('❌ Erro crítico ao carregar shopId: $e');
+      debugPrint('âŒ Erro crítico ao carregar shopId: $e');
     }
 
     if (mounted) {
@@ -161,7 +161,7 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
     _refresh();
   }
 
-  // 📊 LEITURA DE TOTAIS (Monitorada)
+  // ðŸ“Š LEITURA DE TOTAIS (Monitorada)
   Future<void> _loadTotals() async {
     if (_shopId == null) return;
     final monthKey = _selectedMonth != null ? '_$_selectedMonth' : '_all';
@@ -173,11 +173,11 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
           .doc(summaryId)
           .get();
 
-      // 📊 LOG DE CUSTO - RESUMO
+      // ðŸ“Š LOG DE CUSTO - RESUMO
       if (doc.metadata.isFromCache) {
-        // debugPrint("💰 [RESUMO] Leitura do Cache (Grátis)");
+        // debugPrint("ðŸ’° [RESUMO] Leitura do Cache (Grátis)");
       } else {
-        debugPrint("💸 [RESUMO] 1 Leitura no Servidor (Custo Baixo)");
+        debugPrint("ðŸ’¸ [RESUMO] 1 Leitura no Servidor (Custo Baixo)");
       }
 
       if (doc.exists) {
@@ -216,10 +216,10 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
           .where('data', isLessThanOrEqualTo: Timestamp.fromDate(end))
           .get();
 
-      // 📊 LOG DE CUSTO - CÁLCULO MANUAL
+      // ðŸ“Š LOG DE CUSTO - CÃLCULO MANUAL
       if (!snapshot.metadata.isFromCache) {
         debugPrint(
-            "⚠️ [MANUAL] Calculando totais lendo ${snapshot.docs.length} docs (Dica: Use o botão Otimizar)");
+            "âš ï¸ [MANUAL] Calculando totais lendo ${snapshot.docs.length} docs (Dica: Use o botão Otimizar)");
       }
 
       double receita = 0.0;
@@ -246,7 +246,7 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
     }
   }
 
-  // 📊 LEITURA DE TRANSAÇÕES (Monitorada)
+  // ðŸ“Š LEITURA DE TRANSAÇÕES (Monitorada)
   Future<void> _loadTransactions({bool reset = false}) async {
     if (_shopId == null || (!_hasMore && !reset) || _isLoadingMore) return;
 
@@ -279,12 +279,12 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
 
       final snap = await query.get();
 
-      // 📊 O GRANDE LOG DE CUSTO 📊
+      // ðŸ“Š O GRANDE LOG DE CUSTO ðŸ“Š
       if (snap.metadata.isFromCache) {
-        // debugPrint("💰 [LISTA] ${snap.docs.length} itens carregados do CACHE (R\$ 0,00)");
+        // debugPrint("ðŸ’° [LISTA] ${snap.docs.length} itens carregados do CACHE (R\$ 0,00)");
       } else {
         debugPrint(
-            "💸 [LISTA] Baixando ${snap.docs.length} novos itens do SERVIDOR.");
+            "ðŸ’¸ [LISTA] Baixando ${snap.docs.length} novos itens do SERVIDOR.");
       }
 
       if (reset) {
@@ -1052,9 +1052,9 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
                 color: Colors.grey[200],
                 borderRadius: BorderRadius.circular(8)),
             child: Row(mainAxisSize: MainAxisSize.min, children: [
-              _tabBtn('📄 Lista', !_showGraph,
+              _tabBtn('ðŸ“„ Lista', !_showGraph,
                   () => setState(() => _showGraph = false)),
-              _tabBtn('📊 Gráfico', _showGraph,
+              _tabBtn('ðŸ“Š Gráfico', _showGraph,
                   () => setState(() => _showGraph = true))
             ])),
         if (!_showGraph)
@@ -1261,7 +1261,7 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis),
                   subtitle: Text(
-                      '${DateFormat('dd/MM/yy').format(ts.toDate())} • ${d['banco_origem'] ?? ''}',
+                      '${DateFormat('dd/MM/yy').format(ts.toDate())} â€¢ ${d['banco_origem'] ?? ''}',
                       style: const TextStyle(fontSize: 11)),
                   trailing: Text(
                       NumberFormat.simpleCurrency(locale: 'pt_BR').format(val),

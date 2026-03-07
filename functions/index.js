@@ -78,21 +78,68 @@ exports.publicShopPreview = onRequest({ cors: true }, async (req, res) => {
 
     if (snap.empty) {
       console.warn(`publicShopPreview: shop not found for slug=${slug}`);
-      if (!isBot) {
-        return res.redirect(302, siteUrl);
+      // Fallback OG for bots when shop not found, allowing human users to hit the Flutter router natively to see "Loja não encontrada" rather than forcing a 302 to root which triggers the login gate.
+      if (isBot) {
+        const fallbackHtml = `<!doctype html><html lang="pt-BR"><head>
+          <meta charset="utf-8">
+          <title>Marka AI - Não Encontrada</title>
+          <meta property="og:title" content="Marka AI" />
+          <meta property="og:description" content="Desculpe, a loja solicitada não foi encontrada." />
+          <meta property="og:image" content="${siteUrl}/icons/Icon-512.png" />
+          <meta property="og:url" content="${siteUrl}" />
+          <meta property="og:site_name" content="Marka AI" />
+          <meta property="og:type" content="website" />
+        </head><body></body></html>`;
+        return res.status(200).send(fallbackHtml);
       }
-      // Fallback OG for bots when shop not found
-      const fallbackHtml = `<!doctype html><html lang="pt-BR"><head>
-        <meta charset="utf-8">
-        <title>Marka AI</title>
-        <meta property="og:title" content="Marka AI" />
-        <meta property="og:description" content="Conectando você aos melhores negócios." />
-        <meta property="og:image" content="${siteUrl}/icons/Icon-512.png" />
-        <meta property="og:url" content="${siteUrl}" />
-        <meta property="og:site_name" content="Marka AI" />
-        <meta property="og:type" content="website" />
-      </head><body></body></html>`;
-      return res.status(200).send(fallbackHtml);
+
+      // Se não for bot, ignoramos o preenchimento de OG tags e apenas enviamos o HTML base normal vazio. 
+      // Isso força o roteador do flutter a montar e renderizar a rota e consequentemente dar 404 visual.
+      const ogHtmlTags = `
+        <title>Marka AI - Não Encontrada</title>
+        <meta property="og:title" content="Loja não encontrada" />
+      `;
+      const name = "Página não encontrada";
+      const ogDescription = "A loja não existe.";
+      const shopUrl = siteUrl;
+
+      const fullHtml = `<!doctype html>
+<html lang="pt-BR">
+<!-- Version: 1.0.1-not-found-fallback -->
+<head>
+  <base href="/">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  
+  ${ogHtmlTags}
+  
+  <meta name="google-signin-client_id" content="170942564821-s8doqh3tcqe4rs7muauefgkdqehcf1l9.apps.googleusercontent.com">
+  <link rel="icon" type="image/png" href="favicon.png"/>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/croppie/2.6.5/croppie.css" />
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/croppie/2.6.5/croppie.min.js"></script>
+</head>
+<body style="margin: 0; padding: 0; background: #5B2DB6;">
+  <!-- Splash / Loading state -->
+  <div id="splash" style="position: fixed; inset: 0; background: linear-gradient(180deg, #5B2DB6, #4A1F8A); display: flex; align-items: center; justify-content: center; flex-direction: column; z-index: 9999; color: #fff; font-family: sans-serif;">
+    <div style="font-size: 24px; font-weight: bold; margin-bottom: 20px;">Marka AI</div>
+    <div style="font-size: 14px; opacity: 0.8;">Carregando...</div>
+  </div>
+
+  <!-- Flutter Loader -->
+  <script src="flutter_bootstrap.js" async></script>
+  <script>
+    function hideSplash() {
+      var s = document.getElementById('splash');
+      if (s) s.style.display = 'none';
+    }
+    window.addEventListener('flutter-first-frame', hideSplash);
+    setTimeout(hideSplash, 10000);
+  </script>
+</body>
+</html>`;
+      return res.status(200).send(fullHtml);
     }
 
     const shop = snap.docs[0].data() || {};
@@ -3261,7 +3308,7 @@ exports.cancelAppointment = onCall(async (request) => {
 
     // Authorization check
     // Clients can only cancel their own appointments. Shops can cancel any appointment belonging to them.
-    const isClient = data.cliente_id === auth.uid;
+    const isClient = (data.clientId || data.cliente_id) === auth.uid;
     const isShopOwner = data.shopId; // We should ideally check if the auth.uid is the shop owner, but for now we trust shop-side requests or we do a quick check
 
     let shopData = null;
@@ -3306,8 +3353,8 @@ exports.cancelAppointment = onCall(async (request) => {
       transaction.set(refundRef, {
         appointmentId: docRef.id,
         shopId: data.shopId,
-        clientId: data.cliente_id,
-        clientName: data.cliente_nome,
+        clientId: data.clientId || data.cliente_id || '',
+        clientName: data.client_nome || data.cliente_nome || '',
         valor_pago: amount || valorPago, // Optional partial refund
         chave_pix: pixKey || '',
         motivo: reason || '',
@@ -3325,8 +3372,8 @@ exports.rescheduleAppointment = onCall(async (request) => {
   const auth = request.auth;
   if (!auth) throw new functions.https.HttpsError('unauthenticated', 'Usuário não autenticado.');
 
-  const { appointmentId, newDateISO, newProfessionalId, newProfessionalName } = request.data;
-  if (!appointmentId || !newDateISO) throw new functions.https.HttpsError('invalid-argument', 'Faltam dados obrigatórios.');
+  const { appointmentId, newDateISO, newServiceId, newServiceName, newPrice, newProfessionalId, newProfessionalName } = request.data;
+  if (!appointmentId || !newDateISO) throw new functions.https.HttpsError('invalid-argument', 'Faltam dados obrigatórios (appointmentId ou newDateISO).');
 
   const db = admin.firestore();
   const docRef = db.collection('appointments').doc(appointmentId);
@@ -3338,7 +3385,7 @@ exports.rescheduleAppointment = onCall(async (request) => {
     const data = docSnap.data();
 
     // Permissões
-    const isClient = data.cliente_id === auth.uid;
+    const isClient = (data.clientId || data.cliente_id) === auth.uid;
     const shopSnap = await transaction.get(db.collection('shops').doc(data.shopId));
     let shopData = null;
     if (shopSnap.exists) shopData = shopSnap.data();
@@ -3369,20 +3416,40 @@ exports.rescheduleAppointment = onCall(async (request) => {
       throw new functions.https.HttpsError('failed-precondition', `A loja exige antecedência mínima de ${tempoMinimo}h para reagendar.`);
     }
 
+    // Calcular diferença de preço se houver mudança de serviço/valor
+    let restanteAPagarAtualizado = data.restante_a_pagar || 0;
+    const valorPagoAtual = data.valor_pago || 0;
+    let novoPrecoCalculado = data.valor_total || data.valor || 0;
+
+    if (newPrice !== undefined && newPrice !== null) {
+      novoPrecoCalculado = parseFloat(newPrice);
+      restanteAPagarAtualizado = novoPrecoCalculado - valorPagoAtual;
+      if (restanteAPagarAtualizado < 0) restanteAPagarAtualizado = 0; // Lidaremos com reembolsos manualmente
+    }
+
     // UPDATE
     const updateData = {
       data_agendamento: admin.firestore.Timestamp.fromDate(newDate),
       reagendado_em: admin.firestore.FieldValue.serverTimestamp(),
       reagendado_por: isClient ? 'cliente' : 'loja',
+      valor_total: novoPrecoCalculado,
+      restante_a_pagar: restanteAPagarAtualizado,
     };
 
     if (newProfessionalId) {
       updateData.profissional_id = newProfessionalId;
       updateData.profissional_nome = newProfessionalName || null;
+      updateData.profissionalId = newProfessionalId; // Manter compatibilidade com ambos os campos
+    }
+
+    if (newServiceId) {
+      updateData.servico_id = newServiceId;
+      updateData.servicoId = newServiceId; // Manter compatibilidade
+      if (newServiceName) updateData.servico_nome = newServiceName;
     }
 
     transaction.update(docRef, updateData);
-    return { success: true, message: 'Agendamento alterado com sucesso.' };
+    return { success: true, message: 'Agendamento alterado com sucesso.', restanteCalculado: restanteAPagarAtualizado };
   });
 });
 
@@ -3431,3 +3498,5 @@ exports.approveRefund = onCall(async (request) => {
     return { success: true, message: `Reembolso ${novoStatus}.` };
   });
 });
+
+exports.debugAppointments = require('./debug').debugAppointments;

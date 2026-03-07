@@ -1,4 +1,4 @@
-class AuthMessages {
+﻿class AuthMessages {
   static const String telefoneJaCadastrado =
       "Este telefone já está vinculado a uma conta. Faça login para continuar.";
 

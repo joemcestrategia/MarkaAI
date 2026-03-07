@@ -1,15 +1,15 @@
-// ignore_for_file: use_build_context_synchronously
+﻿// ignore_for_file: use_build_context_synchronously
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:intl/intl.dart';
-import 'package:image_picker/image_picker.dart'; // NECESSÁRIO PARA FOTO
-import 'dart:io'; // NECESSÁRIO PARA FOTO
+import 'package:image_picker/image_picker.dart'; // NECESSÃRIO PARA FOTO
+import 'dart:io'; // NECESSÃRIO PARA FOTO
 import '../../core/theme/app_colors.dart';
 import '../../core/services/viacep_service.dart';
-import '../../core/services/session_service.dart'; // NECESSÁRIO PARA PEGAR ID DA LOJA
+import '../../core/services/session_service.dart'; // NECESSÃRIO PARA PEGAR ID DA LOJA
 import 'client_home_page.dart';
 
 class ClientRegisterPage extends StatefulWidget {
@@ -180,13 +180,13 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
     try {
       String? docId = widget.user?.uid;
 
-      // --- LÓGICA DO VÍNCULO (LOJAS VINCULADAS) ---
+      // --- LÃ“GICA DO VÃNCULO (LOJAS VINCULADAS) ---
       String? currentShopId;
       if (widget.isBusinessAdding) {
         currentShopId = await SessionService.getShopId();
       }
 
-      // --- LÓGICA DE UPLOAD DE FOTO ---
+      // --- LÃ“GICA DE UPLOAD DE FOTO ---
       String? uploadedFotoUrl;
       if (_imageFile != null) {
         final storageRef = FirebaseStorage.instance
@@ -203,7 +203,7 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
         'nome_normalizado': _nameController.text
             .trim()
             .toLowerCase()
-            .replaceAll(RegExp(r'[áàãâä]'), 'a')
+            .replaceAll(RegExp(r'[áÃ ãâä]'), 'a')
             .replaceAll(RegExp(r'[éèêë]'), 'e')
             .replaceAll(RegExp(r'[íìîï]'), 'i')
             .replaceAll(RegExp(r'[óòõôö]'), 'o')
@@ -228,7 +228,7 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
         clientData['foto'] = uploadedFotoUrl;
       }
 
-      // VINCULA O CLIENTE À LOJA ATUAL
+      // VINCULA O CLIENTE Ã€ LOJA ATUAL
       if (currentShopId != null) {
         clientData['lojasVinculadas'] = FieldValue.arrayUnion([currentShopId]);
       } else {
@@ -280,15 +280,14 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFF8F9FD),
       appBar: AppBar(
         title: Text(
-            widget.isBusinessAdding ? "Novo Cliente" : "Complete seu Cadastro",
-            style: const TextStyle(color: Colors.black)),
-        backgroundColor: Colors.white,
+            widget.isBusinessAdding ? "Novo Cliente" : "Complete seu Cadastro"),
+        backgroundColor: AppColors.primaryPurple,
+        foregroundColor: Colors.white,
         elevation: 0,
         automaticallyImplyLeading: widget.isBusinessAdding,
-        iconTheme: const IconThemeData(color: Colors.black),
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -436,6 +435,7 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
                     onPressed: _isSaving ? null : _salvarCliente,
                     style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.primaryPurple,
+                        foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12))),
                     child: _isSaving

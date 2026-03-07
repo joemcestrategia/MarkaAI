@@ -1,8 +1,8 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 import '../clients/client_register_page.dart';
-// 🚨 IMPORT CORRIGIDO: Removida a HomePage genérica e adicionada a Home de Negócios
-import '../business/business_home_page.dart'; 
+// ðŸš¨ IMPORT CORRIGIDO: Removida a HomePage genérica e adicionada a Home de Negócios
+import '../business/business_home_page.dart';
 
 class RoleSelectionPage extends StatelessWidget {
   const RoleSelectionPage({super.key});
@@ -17,7 +17,8 @@ class RoleSelectionPage extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Icon(Icons.people_alt, size: 80, color: AppColors.primaryPurple),
+            const Icon(Icons.people_alt,
+                size: 80, color: AppColors.primaryPurple),
             const SizedBox(height: 24),
             const Text(
               "Como você deseja usar\no MarkaAI?",
@@ -46,7 +47,8 @@ class RoleSelectionPage extends StatelessWidget {
               onTap: () {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) => const ClientRegisterPage()),
+                  MaterialPageRoute(
+                      builder: (context) => const ClientRegisterPage()),
                 );
               },
             ),
@@ -61,10 +63,11 @@ class RoleSelectionPage extends StatelessWidget {
               icon: Icons.storefront,
               color: AppColors.primaryPurple,
               onTap: () {
-                // 🚨 NAVEGAÇÃO CORRIGIDA: Agora aponta para a Home de Negócios real
+                // ðŸš¨ NAVEGAÇÃO CORRIGIDA: Agora aponta para a Home de Negócios real
                 Navigator.pushAndRemoveUntil(
                   context,
-                  MaterialPageRoute(builder: (context) => const BusinessHomePage()),
+                  MaterialPageRoute(
+                      builder: (context) => const BusinessHomePage()),
                   (route) => false,
                 );
               },
@@ -75,7 +78,8 @@ class RoleSelectionPage extends StatelessWidget {
     );
   }
 
-  Widget _buildRoleCard(BuildContext context, {
+  Widget _buildRoleCard(
+    BuildContext context, {
     required String title,
     required String subtitle,
     required IconData icon,
@@ -123,7 +127,8 @@ class RoleSelectionPage extends StatelessWidget {
                 ],
               ),
             ),
-            Icon(Icons.arrow_forward_ios, size: 16, color: color.withValues(alpha: 0.5)),
+            Icon(Icons.arrow_forward_ios,
+                size: 16, color: color.withValues(alpha: 0.5)),
           ],
         ),
       ),

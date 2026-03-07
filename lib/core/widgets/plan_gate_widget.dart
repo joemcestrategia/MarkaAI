@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 import '../../modules/business/subscription_service.dart';
 
@@ -71,7 +71,7 @@ class _PlanGateWidgetState extends State<PlanGateWidget> {
 
     return Stack(
       children: [
-        // Conteúdo bloqueado — visual desfocado
+        // Conteúdo bloqueado â€” visual desfocado
         IgnorePointer(
           child: Opacity(
             opacity: 0.35,
@@ -135,7 +135,7 @@ class _PlanGateWidgetState extends State<PlanGateWidget> {
                       TextButton(
                         onPressed: widget.onUpgradeTap,
                         child: const Text(
-                          'Ver Planos →',
+                          'Ver Planos â†’',
                           style: TextStyle(
                             color: AppColors.primaryPurple,
                             fontSize: 12,
@@ -155,7 +155,7 @@ class _PlanGateWidgetState extends State<PlanGateWidget> {
   }
 }
 
-/// Banner compacto de upgrade — exibir no topo de páginas/seções bloqueadas
+/// Banner compacto de upgrade â€” exibir no topo de páginas/seções bloqueadas
 class PlanUpgradeBanner extends StatelessWidget {
   final String currentPlanName;
   final String featureDescription;
@@ -185,7 +185,7 @@ class PlanUpgradeBanner extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              '⚠️ Seu plano atual ($currentPlanName) não inclui $featureDescription.',
+              'âš ï¸ Seu plano atual ($currentPlanName) não inclui $featureDescription.',
               style: const TextStyle(
                   fontSize: 12,
                   color: Color(0xFF533F03),
@@ -204,7 +204,7 @@ class PlanUpgradeBanner extends StatelessWidget {
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: const Text(
-                  'Upgrade →',
+                  'Upgrade â†’',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 11,

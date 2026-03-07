@@ -1,4 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+﻿import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 
@@ -148,6 +148,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                           child: ElevatedButton(
                             style: ElevatedButton.styleFrom(
                               backgroundColor: AppColors.primaryPurple,
+                              foregroundColor: Colors.white,
                               padding: const EdgeInsets.symmetric(vertical: 14),
                               shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(10)),
@@ -253,8 +254,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
       appBar: AppBar(
         title: const Text('Entradas e Compras',
             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black87,
+        backgroundColor: AppColors.primaryPurple,
+        foregroundColor: Colors.white,
         elevation: 0,
       ),
       body: isMobile ? _buildMobileLayout() : _buildDesktopLayout(),
@@ -273,6 +274,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
           FloatingActionButton(
             heroTag: 'add',
             backgroundColor: AppColors.primaryPurple,
+            foregroundColor: Colors.white,
             onPressed: _addLineSheet,
             tooltip: 'Adicionar produto',
             child: const Icon(Icons.add),
@@ -557,7 +559,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                   title: Text('Compra ${d.id.substring(0, 8)}',
                       style: const TextStyle(
                           fontWeight: FontWeight.w600, fontSize: 13)),
-                  subtitle: Text('$dateStr • ${items.length} itens',
+                  subtitle: Text('$dateStr â€¢ ${items.length} itens',
                       style: const TextStyle(fontSize: 12)),
                   children: [
                     Padding(

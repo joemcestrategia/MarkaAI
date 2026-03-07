@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../core/theme/app_colors.dart';
@@ -38,14 +38,15 @@ class _GoogleReviewsWidgetState extends State<GoogleReviewsWidget> {
 
     try {
       final response = await http.post(
-        Uri.parse('https://us-central1-wismart-118c3.cloudfunctions.net/getGoogleReviews'),
+        Uri.parse(
+            'https://us-central1-wismart-118c3.cloudfunctions.net/getGoogleReviews'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'place_id': widget.placeId}),
       );
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        
+
         if (data['success'] == true) {
           setState(() {
             _placeData = data;
@@ -127,7 +128,7 @@ class _GoogleReviewsWidgetState extends State<GoogleReviewsWidget> {
     final reviews = _placeData!['reviews'] as List;
     final rating = _placeData!['rating'] ?? 0.0;
     final totalReviews = _placeData!['user_ratings_total'] ?? 0;
-    
+
     // Mostrar apenas as 3 primeiras se _showAllReviews for false
     final displayReviews = _showAllReviews ? reviews : reviews.take(3).toList();
 
@@ -172,16 +173,17 @@ class _GoogleReviewsWidgetState extends State<GoogleReviewsWidget> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-              // Use an inline icon instead of requesting an asset that may be missing on web
-              const Icon(
-                Icons.g_mobiledata,
-                size: 16,
-                color: Colors.blue,
-              ),
+                    // Use an inline icon instead of requesting an asset that may be missing on web
+                    const Icon(
+                      Icons.g_mobiledata,
+                      size: 16,
+                      color: Colors.blue,
+                    ),
                     const SizedBox(width: 4),
                     const Text(
                       'Google',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                      style:
+                          TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
                     ),
                   ],
                 ),
@@ -189,7 +191,7 @@ class _GoogleReviewsWidgetState extends State<GoogleReviewsWidget> {
             ],
           ),
           const SizedBox(height: 20),
-          
+
           // Título da seção
           const Text(
             'Avaliações',
@@ -314,9 +316,10 @@ class _GoogleReviewsWidgetState extends State<GoogleReviewsWidget> {
               _buildStars((review['rating'] ?? 0).toDouble()),
             ],
           ),
-          
+
           // Texto da avaliação
-          if (review['text'] != null && review['text'].toString().isNotEmpty) ...[
+          if (review['text'] != null &&
+              review['text'].toString().isNotEmpty) ...[
             const SizedBox(height: 12),
             Text(
               review['text'],

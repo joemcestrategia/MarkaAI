@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart'; // Para saber se é Web
 
 class WebContainer extends StatelessWidget {
@@ -9,7 +9,8 @@ class WebContainer extends StatelessWidget {
   const WebContainer({
     super.key,
     required this.child,
-    this.backgroundColor = const Color(0xFFF0F2F5), // Cinza clarinho padrão web
+    this.backgroundColor =
+        const Color(0xFFF0F2F5), // Cinza clarinho padrão web
   });
 
   @override
@@ -20,7 +21,7 @@ class WebContainer extends StatelessWidget {
         color: backgroundColor, // Fundo da página inteira
         child: Center(
           child: ConstrainedBox(
-            // TÁTICA: Limita a largura a 500px (tamanho de um tablet/celular grande)
+            // TÃTICA: Limita a largura a 500px (tamanho de um tablet/celular grande)
             constraints: const BoxConstraints(maxWidth: 500),
             child: Container(
               decoration: BoxDecoration(

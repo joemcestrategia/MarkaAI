@@ -180,7 +180,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
         final uf = result.estado.toUpperCase();
         _estadoSelecionado = _kUFs.contains(uf) ? uf : null;
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('📍 CEP encontrado: ${result.cidade}/${result.estado}'),
+          content: Text('?? CEP encontrado: ${result.cidade}/${result.estado}'),
           backgroundColor: Colors.green,
           duration: const Duration(seconds: 2),
         ));
@@ -204,7 +204,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
     if (cidade.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text(
-            '⚠️ Cidade é obrigatória para que sua loja seja encontrada pelos clientes.'),
+            '?? Cidade é obrigatória para que sua loja seja encontrada pelos clientes.'),
         backgroundColor: Colors.red,
       ));
       _cidadeFocus.requestFocus();
@@ -212,7 +212,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
     }
     if (estado == null || estado.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('⚠️ Estado (UF) é obrigatório.'),
+        content: Text('?? Estado (UF) é obrigatório.'),
         backgroundColor: Colors.red,
       ));
       return;
@@ -247,7 +247,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(
-              '✅ Endereço salvo! Sua loja agora pode ser encontrada pelos clientes em $cidade.'),
+              '? Endereço salvo! Sua loja agora pode ser encontrada pelos clientes em $cidade.'),
           backgroundColor: Colors.green,
         ));
       }
@@ -312,8 +312,8 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
         });
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(isCover
-              ? '📸 Capa carregada! Clique em SALVAR.'
-              : '📸 Logo carregada! Clique em SALVAR.'),
+              ? '?? Capa carregada! Clique em SALVAR.'
+              : '?? Logo carregada! Clique em SALVAR.'),
           backgroundColor: Colors.blue,
         ));
       }
@@ -689,6 +689,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
                             (_isLoading || _isUploading) ? null : _saveData,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.primaryPurple,
+                          foregroundColor: Colors.white,
                           disabledBackgroundColor: Colors.grey[400],
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12)),

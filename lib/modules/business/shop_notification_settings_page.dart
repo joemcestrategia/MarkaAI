@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../core/services/session_service.dart';
 import '../../core/theme/app_colors.dart';
@@ -82,7 +82,10 @@ class _ShopNotificationSettingsPageState
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Configurações de Notificações'),
+        title: const Text('Notificações',
+            style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+        centerTitle: true,
+        elevation: 0,
         backgroundColor: AppColors.primaryPurple,
         foregroundColor: Colors.white,
         actions: [
