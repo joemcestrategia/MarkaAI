@@ -561,6 +561,7 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
             stream: FirebaseFirestore.instance
                 .collection('services')
                 .where('shopId', isEqualTo: shopId)
+                .orderBy('nome')
                 .snapshots(),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {

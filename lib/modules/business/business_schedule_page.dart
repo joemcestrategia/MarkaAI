@@ -489,6 +489,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                           .collection('services')
                           .where('shopId', isEqualTo: widget.shopId)
                           .where('ativo', isEqualTo: true)
+                          .orderBy('nome')
                           .snapshots(),
                       builder: (context, snapshot) {
                         if (!snapshot.hasData) {

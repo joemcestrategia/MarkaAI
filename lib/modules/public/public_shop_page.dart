@@ -355,6 +355,7 @@ class _PublicShopPageState extends State<PublicShopPage> {
                     .collection('services')
                     .where('shopId', isEqualTo: shopDoc.id)
                     .where('ativo', isEqualTo: true)
+                    .orderBy('nome')
                     .snapshots(),
                 builder: (context, snapshot) {
                   if (!snapshot.hasData) {

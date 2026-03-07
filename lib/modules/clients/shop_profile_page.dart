@@ -317,6 +317,7 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
                 .collection('services')
                 .where('shopId', isEqualTo: widget.shopDoc.id)
                 .where('ativo', isEqualTo: true)
+                .orderBy('nome')
                 .snapshots(),
             builder: (context, snapshot) {
               if (!snapshot.hasData) {

@@ -46,6 +46,7 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
           .collection('services')
           .where('shopId', isEqualTo: shopId)
           .where('ativo', isEqualTo: true)
+          .orderBy('nome')
           .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
@@ -371,8 +372,7 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
       int h = currentMinutes ~/ 60;
       int m = currentMinutes % 60;
       slots.add(_formatTime(h, m));
-      currentMinutes +=
-          durationMin; // âš¡ Usa a duração real em vez de 30 fixo
+      currentMinutes += durationMin; // âš¡ Usa a duração real em vez de 30 fixo
     }
     return slots;
   }
