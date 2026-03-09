@@ -7,6 +7,7 @@ import 'dart:async';
 import '../../core/theme/app_colors.dart';
 import 'appointment_details_page.dart';
 import '../clients/client_details_page.dart';
+import '../../core/utils/availability_utils.dart';
 
 class BusinessSchedulePage extends StatefulWidget {
   final String shopId;
@@ -44,6 +45,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
   DocumentSnapshot? _lastDocument;
   DocumentSnapshot? _firstDocument;
   final int _perPage = 20;
+  Map<String, dynamic> _shopConfig = {};
 
   // --- LÃ“GICA DE VISUALIZAÇÃO ---
   bool _showOnlySelectedDay = true;
@@ -61,6 +63,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     // por padrão, começar a lista a partir de hoje sem carregar passado
     _startFromSelectedDay = true;
     _startFromDate = DateTime.now();
+    _loadShopConfig();
     _loadMonthEvents();
     _loadAppointments();
     _scrollController.addListener(() {
@@ -79,6 +82,19 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     _cacheRefreshTimer = Timer.periodic(const Duration(minutes: 2), (_) {
       _refreshStaleCacheEntries();
     });
+  }
+
+  Future<void> _loadShopConfig() async {
+    final doc = await FirebaseFirestore.instance
+        .collection('shops')
+        .doc(widget.shopId)
+        .get();
+    if (doc.exists && mounted) {
+      final data = doc.data() as Map<String, dynamic>;
+      setState(() {
+        _shopConfig = data['config'] as Map<String, dynamic>? ?? {};
+      });
+    }
   }
 
   // Carregar eventos do mês para marcar no calendário
@@ -606,6 +622,110 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                         );
                       },
                     ),
+                    const SizedBox(height: 15),
+
+                    // Horários Disponíveis (Sugestão Visual)
+                    const Text(
+                      'Sugestões de Horários Livres:',
+                      style:
+                          TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                    const SizedBox(height: 8),
+                    if (selectedProfessionalId != null)
+                      FutureBuilder<List<Map<String, int>>>(
+                        future: AvailabilityUtils.getBusyIntervals(
+                          selectedProfessionalId!,
+                          appointmentDate,
+                          excludeDocId: doc.id,
+                        ),
+                        builder: (context, busySnapshot) {
+                          if (!busySnapshot.hasData) return const SizedBox();
+
+                          // Buscando dados do profissional selecionado para pegar horários
+                          return FutureBuilder<DocumentSnapshot>(
+                              future: FirebaseFirestore.instance
+                                  .collection('employees')
+                                  .doc(selectedProfessionalId)
+                                  .get(),
+                              builder: (context, empSnapshot) {
+                                if (!empSnapshot.hasData)
+                                  return const SizedBox();
+                                final empData = empSnapshot.data!.data()
+                                        as Map<String, dynamic>? ??
+                                    {};
+
+                                int duration = int.tryParse(
+                                        data['duracao_min']?.toString() ??
+                                            '30') ??
+                                    30;
+
+                                final slots =
+                                    AvailabilityUtils.generateSmartSlots(
+                                  startStr:
+                                      empData['horario_inicio'] ?? "08:00",
+                                  endStr: empData['horario_fim'] ?? "18:00",
+                                  interval:
+                                      _shopConfig['intervalo_agenda_min'] ?? 30,
+                                  serviceDuration: duration,
+                                  busyIntervals: busySnapshot.data!,
+                                  preventGaps:
+                                      _shopConfig['evitar_buracos_agenda'] ??
+                                          false,
+                                  minAdvanceHours:
+                                      0, // Loja pode agendar para qualquer hora (passado/futuro)
+                                  selectedDate: appointmentDate,
+                                );
+
+                                if (slots.isEmpty) {
+                                  return const Text(
+                                      "Sem horários livres sugeridos.",
+                                      style: TextStyle(
+                                          fontSize: 12, color: Colors.grey));
+                                }
+
+                                return Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: slots.take(12).map((slotStr) {
+                                    final parts = slotStr.split(':');
+                                    final slotTime = TimeOfDay(
+                                        hour: int.parse(parts[0]),
+                                        minute: int.parse(parts[1]));
+                                    final isCurrent =
+                                        appointmentTime.hour == slotTime.hour &&
+                                            appointmentTime.minute ==
+                                                slotTime.minute;
+
+                                    return ChoiceChip(
+                                      label: Text(slotStr,
+                                          style: const TextStyle(fontSize: 11)),
+                                      selected: isCurrent,
+                                      onSelected: (selected) {
+                                        if (selected) {
+                                          setModalState(() {
+                                            appointmentTime = slotTime;
+                                            appointmentDate = DateTime(
+                                              appointmentDate.year,
+                                              appointmentDate.month,
+                                              appointmentDate.day,
+                                              slotTime.hour,
+                                              slotTime.minute,
+                                            );
+                                          });
+                                        }
+                                      },
+                                      selectedColor: AppColors.primaryPurple
+                                          .withValues(alpha: 0.2),
+                                      backgroundColor: Colors.white,
+                                      shape: RoundedRectangleBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(8)),
+                                    );
+                                  }).toList(),
+                                );
+                              });
+                        },
+                      ),
                     const SizedBox(height: 10),
 
                     // Valor Total
@@ -702,6 +822,44 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                             content: Text('Nome do cliente é obrigatório')),
                       );
                       return;
+                    }
+
+                    // Verificação de Conflito de Horário
+                    if (selectedProfessionalId != null) {
+                      final busy = await AvailabilityUtils.getBusyIntervals(
+                        selectedProfessionalId!,
+                        appointmentDate,
+                        excludeDocId: doc.id,
+                      );
+
+                      int duration = int.tryParse(
+                              data['duracao_min']?.toString() ?? '30') ??
+                          30;
+                      int startMin =
+                          appointmentTime.hour * 60 + appointmentTime.minute;
+
+                      bool available = AvailabilityUtils.isSlotAvailable(
+                          startMin, duration, busy);
+
+                      if (!available) {
+                        bool? confirm = await showDialog<bool>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            title: const Text("Conflito de Horário"),
+                            content: const Text(
+                                "Este profissional já possui um agendamento neste horário. Deseja agendar mesmo assim?"),
+                            actions: [
+                              TextButton(
+                                  onPressed: () => Navigator.pop(ctx, false),
+                                  child: const Text("NÃO")),
+                              TextButton(
+                                  onPressed: () => Navigator.pop(ctx, true),
+                                  child: const Text("SIM, AGENDAR")),
+                            ],
+                          ),
+                        );
+                        if (confirm != true) return;
+                      }
                     }
 
                     double valorTotal = double.tryParse(
@@ -964,6 +1122,93 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                         );
                       },
                     ),
+                    const SizedBox(height: 15),
+                    const Text(
+                      'Sugestões de Horários Livres:',
+                      style:
+                          TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                    const SizedBox(height: 8),
+                    if (selectedProfessionalId != null)
+                      FutureBuilder<List<Map<String, int>>>(
+                        future: AvailabilityUtils.getBusyIntervals(
+                          selectedProfessionalId!,
+                          manualDate,
+                        ),
+                        builder: (context, busySnapshot) {
+                          if (!busySnapshot.hasData) return const SizedBox();
+
+                          return FutureBuilder<DocumentSnapshot>(
+                              future: FirebaseFirestore.instance
+                                  .collection('employees')
+                                  .doc(selectedProfessionalId)
+                                  .get(),
+                              builder: (context, empSnapshot) {
+                                if (!empSnapshot.hasData)
+                                  return const SizedBox();
+                                final empData = empSnapshot.data!.data()
+                                        as Map<String, dynamic>? ??
+                                    {};
+
+                                final slots =
+                                    AvailabilityUtils.generateSmartSlots(
+                                  startStr:
+                                      empData['horario_inicio'] ?? "08:00",
+                                  endStr: empData['horario_fim'] ?? "18:00",
+                                  interval:
+                                      _shopConfig['intervalo_agenda_min'] ?? 30,
+                                  serviceDuration:
+                                      30, // Padrão 30m para entrada rápida
+                                  busyIntervals: busySnapshot.data!,
+                                  preventGaps:
+                                      _shopConfig['evitar_buracos_agenda'] ??
+                                          false,
+                                  minAdvanceHours: 0,
+                                  selectedDate: manualDate,
+                                );
+
+                                if (slots.isEmpty) {
+                                  return const Text(
+                                      "Sem horários livres sugeridos.",
+                                      style: TextStyle(
+                                          fontSize: 12, color: Colors.grey));
+                                }
+
+                                return Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: slots.take(12).map((slotStr) {
+                                    final parts = slotStr.split(':');
+                                    final slotTime = TimeOfDay(
+                                        hour: int.parse(parts[0]),
+                                        minute: int.parse(parts[1]));
+                                    final isCurrent = manualTime.hour ==
+                                            slotTime.hour &&
+                                        manualTime.minute == slotTime.minute;
+
+                                    return ChoiceChip(
+                                      label: Text(slotStr,
+                                          style: const TextStyle(fontSize: 11)),
+                                      selected: isCurrent,
+                                      onSelected: (selected) {
+                                        if (selected) {
+                                          setModalState(() {
+                                            manualTime = slotTime;
+                                          });
+                                        }
+                                      },
+                                      selectedColor: AppColors.primaryPurple
+                                          .withValues(alpha: 0.2),
+                                      backgroundColor: Colors.white,
+                                      shape: RoundedRectangleBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(8)),
+                                    );
+                                  }).toList(),
+                                );
+                              });
+                        },
+                      ),
                   ],
                 ),
               ),
@@ -978,6 +1223,38 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                     if (nameController.text.isEmpty ||
                         valueController.text.isEmpty) {
                       return;
+                    }
+
+                    // Verificação de Conflito de Horário
+                    if (selectedProfessionalId != null) {
+                      final busy = await AvailabilityUtils.getBusyIntervals(
+                        selectedProfessionalId!,
+                        manualDate,
+                      );
+
+                      int startMin = manualTime.hour * 60 + manualTime.minute;
+                      bool available =
+                          AvailabilityUtils.isSlotAvailable(startMin, 30, busy);
+
+                      if (!available) {
+                        bool? confirm = await showDialog<bool>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            title: const Text("Conflito de Horário"),
+                            content: const Text(
+                                "Este profissional já possui um agendamento neste horário. Deseja agendar mesmo assim?"),
+                            actions: [
+                              TextButton(
+                                  onPressed: () => Navigator.pop(ctx, false),
+                                  child: const Text("NÃO")),
+                              TextButton(
+                                  onPressed: () => Navigator.pop(ctx, true),
+                                  child: const Text("SIM, AGENDAR")),
+                            ],
+                          ),
+                        );
+                        if (confirm != true) return;
+                      }
                     }
                     double valor = double.tryParse(
                             valueController.text.replaceAll(',', '.')) ??

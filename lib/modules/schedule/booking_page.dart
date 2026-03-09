@@ -6,101 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../../core/theme/app_colors.dart';
 import '../../pages/checkout_page.dart';
 
-// Helper reutilizável para geração de horários
-List<String> generateSmartSlots({
-  required String startStr,
-  required String endStr,
-  required int interval,
-  required int serviceDuration,
-  required List<Map<String, int>> busyIntervals,
-  required bool preventGaps,
-  required int minAdvanceHours,
-  required DateTime selectedDate,
-}) {
-  List<String> validSlots = [];
-  try {
-    int startDayMin = int.parse(startStr.split(':')[0]) * 60 +
-        int.parse(startStr.split(':')[1]);
-    int endDayMin =
-        int.parse(endStr.split(':')[0]) * 60 + int.parse(endStr.split(':')[1]);
-
-    busyIntervals.sort((a, b) => a['start']!.compareTo(b['start']!));
-
-    if (preventGaps) {
-      Set<int> anchorPoints = {startDayMin};
-      for (var busy in busyIntervals) {
-        if (busy['end']! < endDayMin) {
-          anchorPoints.add(busy['end']!);
-        }
-      }
-
-      List<int> sortedAnchors = anchorPoints.toList()..sort();
-
-      for (int anchor in sortedAnchors) {
-        int current = anchor;
-        int slotEnd = current + serviceDuration;
-        if (slotEnd > endDayMin) continue;
-        bool hasCollision = false;
-        for (var busy in busyIntervals) {
-          if (current < busy['end']! && slotEnd > busy['start']!) {
-            hasCollision = true;
-            break;
-          }
-        }
-
-        bool isPast = false;
-        final now = DateTime.now();
-        final slotDt = DateTime(selectedDate.year, selectedDate.month,
-            selectedDate.day, current ~/ 60, current % 60);
-        final minAllowedTime = now.add(Duration(hours: minAdvanceHours));
-        if (slotDt.isBefore(minAllowedTime)) isPast = true;
-
-        if (!hasCollision && !isPast) {
-          String timeString =
-              "${(current ~/ 60).toString().padLeft(2, '0')}:${(current % 60).toString().padLeft(2, '0')}";
-          if (!validSlots.contains(timeString)) validSlots.add(timeString);
-        }
-      }
-    } else {
-      int current = startDayMin;
-      while (current < endDayMin) {
-        int slotEnd = current + serviceDuration;
-        if (slotEnd > endDayMin) break;
-        bool hasCollision = false;
-        for (var busy in busyIntervals) {
-          if (current < busy['end']! && slotEnd > busy['start']!) {
-            hasCollision = true;
-            break;
-          }
-        }
-
-        bool isPast = false;
-        final now = DateTime.now();
-        final slotDt = DateTime(selectedDate.year, selectedDate.month,
-            selectedDate.day, current ~/ 60, current % 60);
-        final minAllowedTime = now.add(Duration(hours: minAdvanceHours));
-        if (slotDt.isBefore(minAllowedTime)) isPast = true;
-
-        if (!hasCollision && !isPast) {
-          String timeString =
-              "${(current ~/ 60).toString().padLeft(2, '0')}:${(current % 60).toString().padLeft(2, '0')}";
-          validSlots.add(timeString);
-        }
-        current += interval;
-      }
-    }
-  } catch (e) {
-    debugPrint("Erro generateSmartSlots: $e");
-  }
-
-  validSlots.sort((a, b) {
-    int minA = int.parse(a.split(':')[0]) * 60 + int.parse(a.split(':')[1]);
-    int minB = int.parse(b.split(':')[0]) * 60 + int.parse(b.split(':')[1]);
-    return minA.compareTo(minB);
-  });
-
-  return validSlots;
-}
+import '../../core/utils/availability_utils.dart';
 
 class BookingPage extends StatefulWidget {
   final DocumentSnapshot shop;
@@ -1019,7 +925,7 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
         }
 
         final preventGaps = widget.shopConfig['evitar_buracos_agenda'] ?? false;
-        List<String> slots = generateSmartSlots(
+        List<String> slots = AvailabilityUtils.generateSmartSlots(
           startStr: profData['horario_inicio'] ?? "08:00",
           endStr: profData['horario_fim'] ?? "18:00",
           interval: widget.intervalMinutes,
