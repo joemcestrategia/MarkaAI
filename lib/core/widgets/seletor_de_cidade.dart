@@ -227,14 +227,16 @@ class SeletorDeCidadeModal extends StatefulWidget {
 
         String getVal(List<String> keys) {
           for (var k in keys) {
-            if (d[k] != null && d[k].toString().trim().isNotEmpty)
+            if (d[k] != null && d[k].toString().trim().isNotEmpty) {
               return d[k].toString().trim();
+            }
           }
           if (d['endereco'] is Map) {
             final m = d['endereco'] as Map;
             for (var k in keys) {
-              if (m[k] != null && m[k].toString().trim().isNotEmpty)
+              if (m[k] != null && m[k].toString().trim().isNotEmpty) {
                 return m[k].toString().trim();
+              }
             }
           }
           return '';
@@ -281,13 +283,9 @@ class SeletorDeCidadeModal extends StatefulWidget {
 }
 
 class _SeletorDeCidadeModalState extends State<SeletorDeCidadeModal> {
-  final _searchCtrl = TextEditingController();
-  List<CidadeOpcao> _sugestoes = [];
   List<CidadeSelecionada> _cidadesSalvas = [];
-  bool _loading = false;
-  bool _firstLoad = true;
+  final bool _loading = false;
   bool _gpsLoading = false;
-  Timer? _debounce;
 
   // Etapa: null = busca, cidade selecionada = escolher raio
   CidadeOpcao? _cidadeEscolhida;

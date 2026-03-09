@@ -2,6 +2,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import '../../core/theme/app_colors.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../clients/client_details_page.dart';
 
 class AppointmentDetailsPage extends StatefulWidget {
   final DocumentSnapshot appointmentDoc;
@@ -36,8 +38,12 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
   String? _selectedProfessionalName;
   String? _selectedClientId;
   String? _selectedClientName;
+  String? _selectedClientPhone;
+  String? _selectedProfessionalFoto;
+  String? _selectedProfessionalCargo;
   double? _selectedPrice;
   final TextEditingController _priceController = TextEditingController();
+  List<String> _clientTags = [];
 
   @override
   void initState() {
@@ -69,14 +75,117 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     _selectedServiceName = data['servico_nome'];
     _selectedProfessionalId = data['profissionalId'];
     _selectedProfessionalName = data['profissional_nome'];
+    _selectedProfessionalFoto = data['profissional_foto'];
+    _selectedProfessionalCargo = data['profissional_cargo'];
     _selectedClientId = data['clientId'];
     _selectedClientName = data['client_nome'] ?? data['cliente_nome'];
+    _selectedClientPhone =
+        data['client_phone'] ?? data['telefone'] ?? data['whatsapp'];
     _selectedPrice = double.tryParse(data['valor_total']?.toString() ??
             data['valor']?.toString() ??
             "0") ??
         0.0;
     _priceController.text =
         _selectedPrice!.toStringAsFixed(2).replaceAll('.', ',');
+
+    // --- NOVA LÓGICA: Sincronizar dados do cliente em tempo real ---
+    if (_selectedClientId != null) {
+      _syncClientData();
+    }
+  }
+
+  Future<void> _syncClientData() async {
+    try {
+      final shopId =
+          (widget.appointmentDoc.data() as Map<String, dynamic>)['shopId'];
+
+      // 1. Tenta buscar no perfil global (users)
+      DocumentSnapshot userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(_selectedClientId)
+          .get();
+
+      Map<String, dynamic>? clientData;
+      if (userDoc.exists) {
+        clientData = userDoc.data() as Map<String, dynamic>?;
+      } else {
+        // 2. Fallback: Busca na subcoleção de clientes da loja
+        final clientDoc = await FirebaseFirestore.instance
+            .collection('shops')
+            .doc(shopId)
+            .collection('clients')
+            .doc(_selectedClientId)
+            .get();
+        if (clientDoc.exists) {
+          clientData = clientDoc.data();
+        }
+      }
+
+      if (clientData != null && mounted) {
+        setState(() {
+          // Se o nome atual for um e-mail ou estiver vazio, atualiza com o nome do perfil
+          final String profileName = clientData?['nome'] ?? '';
+          if (profileName.isNotEmpty &&
+              (_selectedClientName == null ||
+                  _selectedClientName!.contains('@') ||
+                  _selectedClientName!.isEmpty)) {
+            _selectedClientName = profileName;
+            // Opcional: Atualizar o agendamento no Firestore para persistir a correção
+            widget.appointmentDoc.reference
+                .update({'client_nome': profileName});
+          }
+
+          // Atualiza telefone se estiver vazio no agendamento mas existir no perfil
+          final String profilePhone =
+              clientData?['telefone'] ?? clientData?['whatsapp'] ?? '';
+          if (profilePhone.isNotEmpty &&
+              (_selectedClientPhone == null ||
+                  _selectedClientPhone!.isEmpty ||
+                  _selectedClientPhone == 'Não informado')) {
+            _selectedClientPhone = profilePhone;
+            widget.appointmentDoc.reference
+                .update({'client_phone': profilePhone});
+          }
+          // Sincroniza tags
+          _clientTags = List<String>.from(clientData?['manualTags'] ?? []);
+
+          // Sincroniza Profissional se necessário
+          if (_selectedProfessionalId != null &&
+              (_selectedProfessionalName == null ||
+                  _selectedProfessionalName == "Não definido" ||
+                  _selectedProfessionalName!.isEmpty)) {
+            _fetchProfessionalName(shopId);
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('Erro ao sincronizar dados do cliente: $e');
+    }
+  }
+
+  Future<void> _fetchProfessionalName(String shopId) async {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('employees')
+          .doc(_selectedProfessionalId)
+          .get();
+      if (doc.exists && mounted) {
+        final pData = doc.data() as Map<String, dynamic>;
+        setState(() {
+          _selectedProfessionalName = pData['nome'];
+          _selectedProfessionalFoto = pData['foto_url'];
+          _selectedProfessionalCargo = pData['cargo'];
+        });
+        // Atualiza o agendamento para persistir
+        widget.appointmentDoc.reference.update({
+          'profissional_nome': pData['nome'],
+          if (pData['foto_url'] != null) 'profissional_foto': pData['foto_url'],
+          if (pData['cargo'] != null) 'profissional_cargo': pData['cargo'],
+        });
+      }
+    } catch (e) {
+      debugPrint('Erro ao buscar profissional: $e');
+    }
   }
 
   @override
@@ -99,6 +208,8 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
         'servico_nome': _selectedServiceName,
         'profissionalId': _selectedProfessionalId,
         'profissional_nome': _selectedProfessionalName,
+        'profissional_foto': _selectedProfessionalFoto,
+        'profissional_cargo': _selectedProfessionalCargo,
         'valor_total': _selectedPrice ??
             double.tryParse(_priceController.text.replaceAll(',', '.')) ??
             0.0,
@@ -159,7 +270,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
                   Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: Colors.red.withOpacity(0.1),
+                      color: Colors.red.withValues(alpha: 0.1),
                       shape: BoxShape.circle,
                     ),
                     child: const Icon(Icons.delete_outline, color: Colors.red),
@@ -405,59 +516,217 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
           );
   }
 
-  // --- HEADER COMPACTO ---
+  // --- HEADER COMPACTO (Focado no Cliente) ---
   Widget _buildCompactHeader(String status) {
     Color statusColor = status == 'confirmado'
         ? Colors.green
         : (status == 'cancelado' ? Colors.red : Colors.orange);
-    return Container(
-      padding: const EdgeInsets.all(10), // Padding interno reduzido
-      decoration: BoxDecoration(
-          color: Colors.grey[50],
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.grey[200]!)),
-      child: Row(
-        children: [
-          CircleAvatar(
-            radius: 18, // Avatar menor (era 20)
-            backgroundColor: AppColors.primaryPurple.withValues(alpha: 0.1),
-            child: const Icon(Icons.person,
-                color: AppColors.primaryPurple, size: 18),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _selectedClientName ?? "Cliente",
-                  style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black87), // Fonte reduzida
-                  overflow: TextOverflow.ellipsis,
-                ),
-                Text(
-                  _selectedServiceName ?? "Serviço",
-                  style: const TextStyle(
-                      fontSize: 11, color: Colors.grey), // Fonte reduzida
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
+
+    return InkWell(
+      onTap: _selectedClientId != null
+          ? () async {
+              // Buscar dados completos do cliente no Firestore antes de navegar
+              setState(() => _isLoading = true);
+              try {
+                final shopId = (widget.appointmentDoc.data()
+                    as Map<String, dynamic>)['shopId'];
+
+                // Tenta buscar na coleção users
+                DocumentSnapshot userDoc = await FirebaseFirestore.instance
+                    .collection('users')
+                    .doc(_selectedClientId)
+                    .get();
+
+                Map<String, dynamic> clientData;
+                if (userDoc.exists) {
+                  clientData = userDoc.data() as Map<String, dynamic>;
+                } else {
+                  // Fallback: Tenta buscar na subcoleção de clientes da loja
+                  final clientDoc = await FirebaseFirestore.instance
+                      .collection('shops')
+                      .doc(shopId)
+                      .collection('clients')
+                      .doc(_selectedClientId)
+                      .get();
+
+                  if (clientDoc.exists) {
+                    clientData = clientDoc.data() as Map<String, dynamic>;
+                  } else {
+                    // Fallback final: Usa os dados que já temos no agendamento
+                    clientData = {
+                      'nome': _selectedClientName,
+                      'telefone': _selectedClientPhone,
+                      'origem': 'manual',
+                    };
+                  }
+                }
+
+                if (mounted) {
+                  setState(() => _isLoading = false);
+                  // Navega para o perfil do cliente
+                  if (widget.isEmbedded) {
+                    // No Desktop, idealmente abriria na mesma coluna ou substituiria
+                    // Por enquanto, seguimos o padrão de diálogo ou push
+                    showDialog(
+                      context: context,
+                      builder: (context) => Dialog(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 500),
+                          child: ClientDetailsPage(
+                            clientData: clientData,
+                            clientId: _selectedClientId!,
+                            onClose: () => Navigator.pop(context),
+                            shopIdOverride: shopId,
+                          ),
+                        ),
+                      ),
+                    );
+                  } else {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => Scaffold(
+                          appBar: AppBar(
+                            title: const Text("Perfil do Cliente"),
+                            backgroundColor: AppColors.primaryPurple,
+                            foregroundColor: Colors.white,
+                          ),
+                          body: ClientDetailsPage(
+                            clientData: clientData,
+                            clientId: _selectedClientId!,
+                            onClose: () => Navigator.pop(context),
+                            shopIdOverride: shopId,
+                          ),
+                        ),
+                      ),
+                    ).then((_) {
+                      // Recarrega os dados caso o nome tenha sido editado
+                      _loadData();
+                      setState(() {});
+                    });
+                  }
+                }
+              } catch (e) {
+                if (mounted) {
+                  setState(() => _isLoading = false);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text("Erro ao carregar cliente: $e")),
+                  );
+                }
+              }
+            }
+          : null,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.grey[200]!),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.02),
+                blurRadius: 4,
+                offset: const Offset(0, 2),
+              )
+            ]),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 20,
+              backgroundColor: AppColors.primaryPurple.withValues(alpha: 0.1),
+              child: const Icon(Icons.person,
+                  color: AppColors.primaryPurple, size: 20),
             ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-            decoration: BoxDecoration(
-                color: statusColor.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(6)),
-            child: Text(status.toUpperCase(),
-                style: TextStyle(
-                    color: statusColor,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 9)),
-          ),
-        ],
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          _selectedClientName ?? "Cliente",
+                          style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black87),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (_selectedClientPhone != null &&
+                          _selectedClientPhone!.isNotEmpty &&
+                          _selectedClientPhone != 'Não informado') ...[
+                        const SizedBox(width: 6),
+                        GestureDetector(
+                          onTap: () async {
+                            final phone = _selectedClientPhone!
+                                .replaceAll(RegExp(r'\D'), '');
+                            final url = 'https://wa.me/55$phone';
+                            if (await canLaunchUrl(Uri.parse(url))) {
+                              await launchUrl(Uri.parse(url));
+                            }
+                          },
+                          child: const Icon(Icons.chat_rounded,
+                              color: Colors.green, size: 14),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _selectedClientPhone != null &&
+                            _selectedClientPhone!.isNotEmpty
+                        ? _selectedClientPhone!
+                        : "Telefone não informado",
+                    style: const TextStyle(fontSize: 11, color: Colors.grey),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (_clientTags.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 4,
+                      runSpacing: 2,
+                      children: _clientTags.map((tag) {
+                        return Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color:
+                                AppColors.primaryPurple.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            tag,
+                            style: const TextStyle(
+                              color: AppColors.primaryPurple,
+                              fontSize: 8,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            // Tag de Status
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                  color: statusColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8)),
+              child: Text(status.toUpperCase(),
+                  style: TextStyle(
+                      color: statusColor,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 10)),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -582,7 +851,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
             Icons.badge_outlined,
             _isEditing,
             _buildProfessionalDropdown(shopId),
-            _selectedProfessionalName ?? ""),
+            _selectedProfessionalName ?? "Não definido"),
         const SizedBox(height: 8), // Espaçamento reduzido (15 -> 8)
         _buildEditableField("Serviço", Icons.content_cut_outlined, _isEditing,
             _buildServiceDropdown(shopId), _selectedServiceName ?? ""),
@@ -590,12 +859,106 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
         // Price editable field
         _buildPriceField(),
         const SizedBox(height: 8),
-        _buildEditableField("Cliente", Icons.person_outline, _isEditing,
-            _buildClientDropdown(shopId), _selectedClientName ?? ""),
+        InkWell(
+          onTap: !_isEditing && _selectedClientId != null
+              ? () => _openClientProfile()
+              : null,
+          child: _buildEditableField(
+              "Cliente",
+              Icons.person_outline,
+              _isEditing,
+              _buildClientDropdown(shopId),
+              _selectedClientName ?? ""),
+        ),
         const SizedBox(height: 8),
         _buildDateTimeField(),
       ],
     );
+  }
+
+  // Helper para abrir o perfil do cliente centralizado
+  Future<void> _openClientProfile() async {
+    setState(() => _isLoading = true);
+    try {
+      final data = widget.appointmentDoc.data() as Map<String, dynamic>;
+      final shopId = data['shopId'];
+
+      DocumentSnapshot userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(_selectedClientId)
+          .get();
+
+      Map<String, dynamic> clientData;
+      if (userDoc.exists) {
+        clientData = userDoc.data() as Map<String, dynamic>;
+      } else {
+        final clientDoc = await FirebaseFirestore.instance
+            .collection('shops')
+            .doc(shopId)
+            .collection('clients')
+            .doc(_selectedClientId)
+            .get();
+
+        if (clientDoc.exists) {
+          clientData = clientDoc.data() as Map<String, dynamic>;
+        } else {
+          clientData = {
+            'nome': _selectedClientName,
+            'telefone': _selectedClientPhone,
+            'origem': 'manual',
+          };
+        }
+      }
+
+      if (mounted) {
+        setState(() => _isLoading = false);
+        if (widget.isEmbedded) {
+          showDialog(
+            context: context,
+            builder: (context) => Dialog(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 500),
+                child: ClientDetailsPage(
+                  clientData: clientData,
+                  clientId: _selectedClientId!,
+                  onClose: () => Navigator.pop(context),
+                  shopIdOverride: shopId,
+                ),
+              ),
+            ),
+          );
+        } else {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => Scaffold(
+                appBar: AppBar(
+                  title: const Text("Perfil do Cliente"),
+                  backgroundColor: AppColors.primaryPurple,
+                  foregroundColor: Colors.white,
+                ),
+                body: ClientDetailsPage(
+                  clientData: clientData,
+                  clientId: _selectedClientId!,
+                  onClose: () => Navigator.pop(context),
+                  shopIdOverride: shopId,
+                ),
+              ),
+            ),
+          ).then((_) {
+            _loadData();
+            setState(() {});
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Erro ao carregar cliente: $e")),
+        );
+      }
+    }
   }
 
   Widget _buildPriceField() {
@@ -815,6 +1178,11 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
               _selectedServiceId = val;
               _selectedServiceName = data['nome'];
               _selectedPrice = double.tryParse(data['preco'].toString()) ?? 0.0;
+              // Resetamos o profissional para obrigar uma nova seleção válida se o atual não souber fazer o novo serviço
+              _selectedProfessionalId = null;
+              _selectedProfessionalName = null;
+              _selectedProfessionalFoto = null;
+              _selectedProfessionalCargo = null;
             });
           },
         );
@@ -830,21 +1198,39 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
           .snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const SizedBox();
+        final profs = snapshot.data!.docs.where((d) {
+          final skills =
+              (d.data() as Map)['servicos_habilidade'] as List? ?? [];
+          return skills.isEmpty || skills.contains(_selectedServiceId);
+        }).toList();
+
+        if (profs.isEmpty) {
+          return const Text("Nenhum profissional apto para este serviço",
+              style: TextStyle(fontSize: 12, color: Colors.red));
+        }
+
         return DropdownButton<String>(
-          value: _selectedProfessionalId,
+          value: profs.any((d) => d.id == _selectedProfessionalId)
+              ? _selectedProfessionalId
+              : null,
           isExpanded: true,
           underline: const SizedBox(),
-          items: snapshot.data!.docs
+          hint: Text(_selectedProfessionalName ?? 'Selecione o profissional',
+              style: const TextStyle(fontSize: 13)),
+          items: profs
               .map((doc) => DropdownMenuItem(
                   value: doc.id,
                   child:
                       Text(doc['nome'], style: const TextStyle(fontSize: 13))))
               .toList(),
           onChanged: (val) {
-            final doc = snapshot.data!.docs.firstWhere((d) => d.id == val);
+            final doc = profs.firstWhere((d) => d.id == val);
+            final data = doc.data() as Map<String, dynamic>;
             setState(() {
               _selectedProfessionalId = val;
-              _selectedProfessionalName = doc['nome'];
+              _selectedProfessionalName = data['nome'];
+              _selectedProfessionalFoto = data['foto_url'];
+              _selectedProfessionalCargo = data['cargo'];
             });
           },
         );

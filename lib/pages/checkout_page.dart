@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/services.dart';
@@ -26,6 +27,9 @@ class CheckoutPage extends StatefulWidget {
   final String? serviceNameOverride;
   final double? servicePriceOverride;
   final bool fromSubdomain;
+
+  Map<String, dynamic> get serviceData =>
+      serviceDoc.data() as Map<String, dynamic>;
 
   const CheckoutPage({
     super.key,
@@ -219,6 +223,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
             setState(() => _isLoading = false);
 
+            if (!mounted) return;
             if (savedCardsSnap.docs.isNotEmpty) {
               final sheetResult = await showModalBottomSheet<dynamic>(
                 context: context,
@@ -245,8 +250,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 },
               );
 
-              if (sheetResult == null)
+              if (sheetResult == null) {
                 return; // User closed bottom sheet without selecting
+              }
 
               if (sheetResult == 'NEW_CARD') {
                 final result = await _pushCheckoutTransparente(valorParaCobrar);
@@ -1196,7 +1202,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
           'Esta loja não configurou os meios de pagamento online ainda.');
       return;
     }
-    bool _pixShown = false; // Tracks if QR Code page was successfully opened
+    bool pixShown = false; // Tracks if QR Code page was successfully opened
     // show full-screen loading
     if (mounted) {
       Navigator.push(
@@ -1230,14 +1236,14 @@ class _CheckoutPageState extends State<CheckoutPage> {
         // close loading page
         Navigator.pop(context);
         // Mark as shown BEFORE pushing so the finally block won't close it
-        _pixShown = true;
+        pixShown = true;
         _showPixModal(qrCode64, copyPaste, paymentId, amount);
       }
     } catch (e) {
       _showError("Erro ao gerar PIX: $e");
     } finally {
       if (mounted) {
-        if (!_pixShown) {
+        if (!pixShown) {
           // Only pop the loading page if PIX screen was NOT shown
           // (i.e., an error occurred before we could show the QR code)
           try {
@@ -1348,6 +1354,46 @@ class _CheckoutPageState extends State<CheckoutPage> {
         widget.time.minute,
       );
 
+      final int duration =
+          int.tryParse(widget.serviceData['tempo_min']?.toString() ?? '30') ??
+              30;
+
+      // Validação de Double-Booking via Cloud Function no Backend
+      try {
+        final functions = FirebaseFunctions.instance;
+        final result = await functions.httpsCallable('checkAvailability').call({
+          'professionalId': widget.professionalDoc.id,
+          'startTime': bookingDate.toIso8601String(),
+          'duration': duration,
+        });
+
+        if (result.data['available'] != true) {
+          if (mounted) {
+            // Fecha o loading de "Finalizando agendamento..."
+            Navigator.pop(context);
+            await showDialog(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                title: const Text('Horário Indisponível'),
+                content: const Text(
+                    'Infelizmente este horário foi preenchido por outra pessoa enquanto você finalizava. Por favor, escolha outro horário.'),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('OK'),
+                  ),
+                ],
+              ),
+            );
+          }
+          setState(() => _isLoading = false);
+          return;
+        }
+      } catch (e) {
+        debugPrint('Erro na validação de disponibilidade (backend): $e');
+        // Em caso de erro na função, procedemos com a validação local já existente abaixo
+      }
+
       // Validação: permitir agendamentos múltiplos (configuração da loja)
       final permitirMultiplos =
           (widget.shopConfig['permitir_multiplos'] ?? true) as bool;
@@ -1393,17 +1439,25 @@ class _CheckoutPageState extends State<CheckoutPage> {
         }
       }
 
+      final profData = widget.professionalDoc.data() as Map<String, dynamic>;
+      final DateTime endDate = bookingDate.add(Duration(minutes: duration));
+
       await FirebaseFirestore.instance.collection('appointments').add({
         'shopId': widget.shopId,
         'clientId': user.uid,
         'client_nome': user.displayName ?? user.email ?? 'Cliente',
         'servico_nome': widget.serviceNameOverride ?? widget.serviceDoc['nome'],
         'profissionalId': widget.professionalDoc.id,
+        'profissional_nome': profData['nome'] ?? 'Profissional',
+        'profissional_foto': profData['foto_url'],
+        'profissional_cargo': profData['cargo'] ?? '',
         'servicoId': widget.serviceDoc.id,
         'valor_total': valorTotal,
         'valor_pago': valorPago,
         'restante_a_pagar': (valorTotal - valorPago),
+        'duracao_min': duration,
         'data_agendamento': Timestamp.fromDate(bookingDate),
+        'data_fim': Timestamp.fromDate(endDate),
         'horario': horarioStr,
         'status': status,
         'metodo_pagamento': metodo,
@@ -1749,12 +1803,11 @@ class _SavedCardsSheet extends StatefulWidget {
       onCardSelected;
 
   const _SavedCardsSheet({
-    Key? key,
     required this.shopId,
     required this.valor,
     required this.onAddNewCard,
     required this.onCardSelected,
-  }) : super(key: key);
+  });
 
   @override
   State<_SavedCardsSheet> createState() => _SavedCardsSheetState();
@@ -1796,11 +1849,12 @@ class _SavedCardsSheetState extends State<_SavedCardsSheet> {
                 .orderBy('createdAt', descending: true)
                 .snapshots(),
             builder: (context, snapshot) {
-              if (!snapshot.hasData)
+              if (!snapshot.hasData) {
                 return const Center(
                     child: Padding(
                         padding: EdgeInsets.all(20),
                         child: CircularProgressIndicator()));
+              }
               final docs = snapshot.data!.docs;
               if (docs.isEmpty) {
                 WidgetsBinding.instance.addPostFrameCallback((_) {

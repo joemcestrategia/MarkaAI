@@ -486,7 +486,9 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
           'totalGasto': valor,
           'visitas': 1,
           'ultimaVisita': dataVisita,
-          'email': ""
+          'email': "",
+          'birthDate':
+              data['data_nascimento'] ?? data['nascimento'] ?? data['birthDate']
         };
       } else {
         targetMap[key]!['totalGasto'] += valor;
@@ -615,8 +617,21 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
           child: Text((client['nome'] ?? "?").substring(0, 1).toUpperCase(),
               style: TextStyle(color: themeColor, fontWeight: FontWeight.bold)),
         ),
-        title: Text(client['nome'],
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(client['nome'],
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 14)),
+            ),
+            if (_isBirthdayToday(client['birthDate']))
+              Padding(
+                padding: const EdgeInsets.only(left: 4),
+                child: Icon(Icons.cake_rounded,
+                    color: Colors.pink.shade400, size: 16),
+              ),
+          ],
+        ),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -741,5 +756,26 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
         ],
       ),
     );
+  }
+
+  bool _isBirthdayToday(dynamic birth) {
+    if (birth == null) return false;
+    final now = DateTime.now();
+    final todayStr = DateFormat('dd/MM').format(now);
+
+    String clientBirthStr = "";
+    if (birth is Timestamp) {
+      clientBirthStr = DateFormat('dd/MM').format(birth.toDate());
+    } else if (birth is String) {
+      if (birth.contains('/')) {
+        clientBirthStr = birth.split('/').take(2).join('/');
+      } else if (birth.contains('-')) {
+        final parts = birth.split('-');
+        if (parts.length >= 3) {
+          clientBirthStr = "${parts[2]}/${parts[1]}";
+        }
+      }
+    }
+    return clientBirthStr == todayStr;
   }
 }

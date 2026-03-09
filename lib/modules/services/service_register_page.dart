@@ -842,8 +842,8 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                               max: 480,
                               divisions: 95, // (480-5)/5
                               activeColor: AppColors.primaryPurple,
-                              inactiveColor:
-                                  AppColors.primaryPurple.withOpacity(0.1),
+                              inactiveColor: AppColors.primaryPurple
+                                  .withValues(alpha: 0.1),
                               onChanged: (double value) {
                                 setState(() {
                                   _timeController.text =

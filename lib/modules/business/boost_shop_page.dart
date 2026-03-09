@@ -239,15 +239,18 @@ class _BoostShopPageState extends State<BoostShopPage> {
               child: Row(
                 children: [
                   Radio<int>(
-                      value: index,
-                      groupValue: _selectedOption,
-                      fillColor: WidgetStateProperty.resolveWith((states) {
-                        if (states.contains(WidgetState.selected)) {
-                          return AppColors.primaryPurple;
-                        }
-                        return Colors.grey;
-                      }),
-                      onChanged: (v) => setState(() => _selectedOption = v!)),
+                    value: index,
+                    groupValue: _selectedOption,
+                    onChanged: (v) {
+                      if (v != null) setState(() => _selectedOption = v);
+                    },
+                    fillColor: WidgetStateProperty.resolveWith((states) {
+                      if (states.contains(WidgetState.selected)) {
+                        return AppColors.primaryPurple;
+                      }
+                      return Colors.grey;
+                    }),
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Column(

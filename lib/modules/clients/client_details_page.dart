@@ -2,6 +2,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 
@@ -135,7 +136,205 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
     if (phone.length <= 11) phone = '55$phone';
     final url = Uri.parse('https://wa.me/$phone');
     if (await canLaunchUrl(url)) {
-      await launchUrl(url);
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  String _toTitleCase(String text) {
+    if (text.isEmpty) return text;
+    return text.toLowerCase().split(' ').map((word) {
+      if (word.isEmpty) return word;
+      return word[0].toUpperCase() + word.substring(1);
+    }).join(' ');
+  }
+
+  Future<void> _editClientDetails() async {
+    final TextEditingController nameEditController =
+        TextEditingController(text: widget.clientData['nome']);
+
+    // Máscara dinâmica para 10 ou 11 dígitos
+    String initialPhone = widget.clientData['telefone'] ?? '';
+    if (initialPhone == 'Não informado') initialPhone = '';
+    initialPhone = initialPhone.replaceAll(RegExp(r'\D'), '');
+
+    final phoneMask = MaskTextInputFormatter(
+      mask: initialPhone.length > 10 ? '(##) #####-####' : '(##) ####-####',
+      filter: {"#": RegExp(r'[0-9]')},
+      initialText: initialPhone,
+    );
+
+    final TextEditingController phoneEditController =
+        TextEditingController(text: phoneMask.maskText(initialPhone));
+
+    final result = await showDialog<Map<String, String>>(
+      context: context,
+      builder: (context) => StatefulBuilder(builder: (context, setDialogState) {
+        return AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: AppColors.primaryPurple.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.edit_rounded,
+                    color: AppColors.primaryPurple, size: 20),
+              ),
+              const SizedBox(width: 12),
+              const Text(
+                "Editar Cliente",
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameEditController,
+                decoration: InputDecoration(
+                  labelText: "Nome Completo",
+                  prefixIcon: const Icon(Icons.person_outline_rounded,
+                      color: AppColors.primaryPurple),
+                  filled: true,
+                  fillColor: Colors.grey.shade50,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+                textCapitalization: TextCapitalization.words,
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: phoneEditController,
+                onChanged: (v) {
+                  final unmasked = phoneMask.getUnmaskedText();
+                  if (unmasked.length <= 10 &&
+                      phoneMask.getMask() != '(##) ####-####') {
+                    setDialogState(() {
+                      phoneMask.updateMask(mask: '(##) ####-####');
+                    });
+                  } else if (unmasked.length > 10 &&
+                      phoneMask.getMask() != '(##) #####-####') {
+                    setDialogState(() {
+                      phoneMask.updateMask(mask: '(##) #####-####');
+                    });
+                  }
+                },
+                inputFormatters: [phoneMask],
+                decoration: InputDecoration(
+                  labelText: "Telefone/WhatsApp",
+                  prefixIcon: const Icon(Icons.phone_iphone_rounded,
+                      color: AppColors.primaryPurple),
+                  filled: true,
+                  fillColor: Colors.grey.shade50,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+                keyboardType: TextInputType.phone,
+              ),
+            ],
+          ),
+          actionsPadding:
+              const EdgeInsets.only(right: 16, bottom: 16, left: 16),
+          actions: [
+            Row(
+              children: [
+                Expanded(
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    child: const Text("Cancelar",
+                        style: TextStyle(color: Colors.grey)),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(context, {
+                      'nome': nameEditController.text,
+                      'telefone': phoneMask.getUnmaskedText(),
+                    }),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primaryPurple,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text("SALVAR",
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        );
+      }),
+    );
+
+    if (result != null) {
+      final String newName = _toTitleCase(result['nome']?.trim() ?? '');
+      final String newPhone =
+          result['telefone']?.trim().replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+
+      final bool nameChanged =
+          newName.isNotEmpty && newName != widget.clientData['nome'];
+      final bool phoneChanged = newPhone != widget.clientData['telefone'];
+
+      if (nameChanged || phoneChanged) {
+        setState(() => _isLoading = true);
+        try {
+          Map<String, dynamic> updateData = {};
+          if (nameChanged) updateData['nome'] = newName;
+          if (phoneChanged) {
+            updateData['telefone'] = newPhone;
+            updateData['whatsapp'] = newPhone;
+          }
+
+          // 1. Atualiza no perfil do cliente (subcoleção da loja)
+          if (shopId != null) {
+            await FirebaseFirestore.instance
+                .collection('shops')
+                .doc(shopId)
+                .collection('clients')
+                .doc(widget.clientId)
+                .set(updateData, SetOptions(merge: true));
+          }
+
+          // 2. Atualiza no documento global do usuário (se existir)
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(widget.clientId)
+              .set(updateData, SetOptions(merge: true));
+
+          if (mounted) {
+            setState(() {
+              if (nameChanged) widget.clientData['nome'] = newName;
+              if (phoneChanged) widget.clientData['telefone'] = newPhone;
+              _isLoading = false;
+            });
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text("Cadastro atualizado com sucesso!")));
+          }
+        } catch (e) {
+          if (mounted) {
+            setState(() => _isLoading = false);
+            ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text("Erro ao atualizar cadastro: $e")));
+          }
+        }
+      }
     }
   }
 
@@ -256,20 +455,27 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          nome,
-                          style: const TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black87,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                nome,
+                                style: const TextStyle(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black87,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
                         ),
                         if (telefone.isNotEmpty && telefone != 'Não informado')
                           GestureDetector(
                             onTap: _launchWhatsApp,
                             child: Row(
+                              mainAxisSize: MainAxisSize.min,
                               children: [
                                 const Icon(Icons.chat,
                                     size: 12, color: Colors.green),
@@ -298,12 +504,28 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
                     ),
                   ),
 
-                  // Botão fechar
-                  IconButton(
-                    icon: const Icon(Icons.close, color: Colors.grey, size: 20),
-                    onPressed: widget.onClose,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
+                  // Botoes Ação
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        onPressed: _editClientDetails,
+                        icon: const Icon(Icons.edit_outlined,
+                            size: 20, color: AppColors.primaryPurple),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        tooltip: 'Editar cadastro',
+                      ),
+                      const SizedBox(width: 12),
+                      // Botão fechar
+                      IconButton(
+                        icon: const Icon(Icons.close,
+                            color: Colors.grey, size: 20),
+                        onPressed: widget.onClose,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
+                    ],
                   ),
                 ],
               ),

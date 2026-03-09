@@ -19,7 +19,44 @@ const MP_WEBHOOK_SECRET = defineSecret("MP_WEBHOOK_SECRET");
 const MP_CLIENT_ID = defineSecret("MP_CLIENT_ID");
 const MP_CLIENT_SECRET = defineSecret("MP_CLIENT_SECRET");
 
-admin.initializeApp();
+// Validação de disponibilidade para evitar double-booking
+exports.checkAvailability = onCall(async (request) => {
+  if (!request.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Usuário não autenticado');
+  }
+
+  const { professionalId, startTime, duration } = request.data;
+  if (!professionalId || !startTime || !duration) {
+    throw new functions.https.HttpsError('invalid-argument', 'Dados incompletos para validação');
+  }
+
+  const startTimeObj = new Date(startTime);
+  const start = admin.firestore.Timestamp.fromDate(startTimeObj);
+  const end = admin.firestore.Timestamp.fromDate(new Date(startTimeObj.getTime() + duration * 60000));
+
+  const appointments = await admin.firestore()
+    .collection('appointments')
+    .where('profissionalId', '==', professionalId)
+    .where('status', 'not-in', ['cancelado', 'rejeitado', 'excluido'])
+    .get();
+
+  const conflicting = appointments.docs.filter(doc => {
+    const data = doc.data();
+    const apptStart = data.data_agendamento.toDate();
+    const apptDuration = data.duracao_min || 30;
+    const apptEnd = new Date(apptStart.getTime() + apptDuration * 60000);
+
+    const reqStart = new Date(startTime);
+    const reqEnd = new Date(reqStart.getTime() + duration * 60000);
+
+    return (reqStart < apptEnd && reqEnd > apptStart);
+  });
+
+  return {
+    available: conflicting.length === 0,
+    conflicts: conflicting.length
+  };
+});
 
 // Página HTML do checkout transparente (servida via HTTPS para tokenização)
 const checkoutHtmlPath = path.join(__dirname, "checkout_transparente.html");
@@ -2313,10 +2350,19 @@ exports.onNewAppointment = onDocumentCreated('appointments/{appointmentId}', asy
     const clientDoc = await admin.firestore().collection('users').doc(appointment.clientId).get();
     const clientName = clientDoc.exists ? (clientDoc.data().nome || clientDoc.data().name || 'Cliente') : 'Cliente';
 
-    // Formatar data e hora
+    // Formatar data e hora com fuso de Brasília
     const appointmentDate = appointment.data_agendamento.toDate();
-    const dateStr = appointmentDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-    const timeStr = appointmentDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    const dateStr = appointmentDate.toLocaleDateString('pt-BR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      timeZone: 'America/Sao_Paulo'
+    });
+    const timeStr = appointmentDate.toLocaleTimeString('pt-BR', {
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'America/Sao_Paulo'
+    });
 
     // Enviar notificação
     const title = '🎉 Novo Agendamento!';
@@ -2359,10 +2405,19 @@ exports.onAppointmentCancelled = onDocumentUpdated('appointments/{appointmentId}
       const clientDoc = await admin.firestore().collection('users').doc(after.clientId).get();
       const clientName = clientDoc.exists ? (clientDoc.data().nome || clientDoc.data().name || 'Cliente') : 'Cliente';
 
-      // Formatar data e hora
+      // Formatar data e hora com fuso de Brasília
       const appointmentDate = after.data_agendamento.toDate();
-      const dateStr = appointmentDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-      const timeStr = appointmentDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      const dateStr = appointmentDate.toLocaleDateString('pt-BR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        timeZone: 'America/Sao_Paulo'
+      });
+      const timeStr = appointmentDate.toLocaleTimeString('pt-BR', {
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZone: 'America/Sao_Paulo'
+      });
 
       // Identificar quem cancelou
       const canceladoPor = after.cancelado_por || 'desconhecido';

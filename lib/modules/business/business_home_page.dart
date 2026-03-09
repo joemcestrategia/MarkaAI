@@ -1,6 +1,7 @@
 ﻿// ignore_for_file: use_build_context_synchronously
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'catalog_import_page.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -699,7 +700,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
             child: ListView(
               padding: EdgeInsets.zero,
               children: [
-                _buildDesktopMenuItem(0, Icons.dashboard_rounded, "Visão Geral"),
+                _buildDesktopMenuItem(
+                    0, Icons.dashboard_rounded, "Visão Geral"),
                 _buildDesktopMenuItem(
                     1, Icons.event_note_rounded, "Agenda Completa"),
                 _buildDesktopMenuItem(2, Icons.history, "Histórico"),
@@ -1433,7 +1435,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                   ),
                 ),
                 const Text(
-                  "Anlise combinada de Faturamento e Atendimentos",
+                  "Análise combinada de Faturamento e Atendimentos",
                   style: TextStyle(color: Colors.grey, fontSize: 13),
                 ),
               ],
@@ -1442,6 +1444,10 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           ],
         ),
         const SizedBox(height: 20),
+
+        // --- ANIVERSARIANTES DO DIA (DESKTOP) ---
+        _buildBirthdaysSection(isDesktop: true),
+
         Row(
           children: [
             Expanded(
@@ -1888,6 +1894,10 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             child: Column(
               children: [
+                // -- Aniversariantes do Dia --------------------------------
+                _buildBirthdaysSection(isDesktop: false),
+                const SizedBox(height: 12),
+
                 // -- Card Hoje ---------------------------------------------
                 _buildHojeCard(hoje, appointmentDocs),
                 const SizedBox(height: 12),
@@ -2751,6 +2761,150 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         ],
       ),
     );
+  }
+
+  Widget _buildBirthdaysSection({required bool isDesktop}) {
+    if (shopId == null) return const SizedBox.shrink();
+
+    final now = DateTime.now();
+    final todayStr = DateFormat('dd/MM').format(now);
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('users')
+          .where('lojasVinculadas', arrayContains: shopId)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) return const SizedBox.shrink();
+
+        final aniversariantes = snapshot.data!.docs.where((doc) {
+          final data = doc.data() as Map<String, dynamic>;
+          final birth = data['data_nascimento'] ??
+              data['nascimento'] ??
+              data['birthDate'];
+          if (birth == null) return false;
+
+          String clientBirthStr = "";
+          if (birth is Timestamp) {
+            clientBirthStr = DateFormat('dd/MM').format(birth.toDate());
+          } else if (birth is String) {
+            // Tenta parsear string DD/MM/AAAA ou AAAA-MM-DD
+            if (birth.contains('/')) {
+              clientBirthStr = birth.split('/').take(2).join('/');
+            } else if (birth.contains('-')) {
+              final parts = birth.split('-');
+              if (parts.length >= 3) {
+                clientBirthStr = "${parts[2]}/${parts[1]}";
+              }
+            }
+          }
+          return clientBirthStr == todayStr;
+        }).toList();
+
+        if (aniversariantes.isEmpty) return const SizedBox.shrink();
+
+        return Container(
+          margin: EdgeInsets.only(bottom: isDesktop ? 20 : 12),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.pink.shade100),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.pink.withValues(alpha: 0.05),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.pink.shade50,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(Icons.cake_rounded,
+                        color: Colors.pink.shade400, size: 20),
+                  ),
+                  const SizedBox(width: 12),
+                  const Text(
+                    "Aniversariantes do Dia!",
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        color: Color(0xFF1A1D2E)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 60,
+                child: ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: aniversariantes.length,
+                  itemBuilder: (context, index) {
+                    final client =
+                        aniversariantes[index].data() as Map<String, dynamic>;
+                    final nome = client['nome'] ?? "Cliente";
+                    final phone = client['telefone'] ?? client['whatsapp'];
+                    final foto = client['fotoUrl'] ?? client['foto'];
+
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: InkWell(
+                        onTap: () {
+                          if (phone != null) {
+                            _launchWhatsAppFromPhone(phone.toString());
+                          }
+                        },
+                        child: Column(
+                          children: [
+                            CircleAvatar(
+                              radius: 20,
+                              backgroundColor: Colors.pink.shade50,
+                              backgroundImage: foto != null
+                                  ? CachedNetworkImageProvider(foto)
+                                  : null,
+                              child: foto == null
+                                  ? const Icon(Icons.person,
+                                      size: 20, color: Colors.pink)
+                                  : null,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              nome.split(' ')[0],
+                              style: const TextStyle(
+                                  fontSize: 10, fontWeight: FontWeight.w500),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _launchWhatsAppFromPhone(String phoneRaw) async {
+    String phone = phoneRaw.replaceAll(RegExp(r'[^0-9]'), '');
+    if (phone.length <= 11) phone = '55$phone';
+
+    final url = Uri.parse(
+        'https://wa.me/$phone?text=Parabéns pelo seu aniversário! 🎉');
+    if (await canLaunchUrl(url)) {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    }
   }
 
   Widget _buildLegendItemBreakdown(String label, double pct, Color color) {

@@ -40,12 +40,13 @@ class _PrivacySettingsPageState extends State<PrivacySettingsPage> {
 
       String jsonStr = const JsonEncoder.withIndent('  ').convert(data);
 
-      final dir = await getTemporaryDirectory();
-      final file = File('\${dir.path}/meus_dados_markaai.json');
+      final file = File(
+          '${(await getTemporaryDirectory()).path}/meus_dados_markaai.json');
       await file.writeAsString(jsonStr);
 
       if (mounted) {
-        Share.shareXFiles([XFile(file.path)], text: 'Meus Dados MarkaAI');
+        await Share.shareXFiles([XFile(file.path)],
+            subject: 'Meus Dados MarkaAI');
       }
     } catch (e) {
       if (mounted) {

@@ -32,6 +32,7 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
   final _startWorkController = TextEditingController(text: "08:00");
   final _endWorkController = TextEditingController(text: "18:00");
   final _comissaoController = TextEditingController(text: "0");
+  final _cargoController = TextEditingController(); // Cargo ou Especialidade
 
   // Máscara de telefone
   final phoneMask = MaskTextInputFormatter(
@@ -91,6 +92,7 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
           _comissaoController.text = (data['comissao_percent'] != null)
               ? data['comissao_percent'].toString()
               : '0';
+          _cargoController.text = data['cargo'] ?? "";
           if (data['servicos_habilidade'] != null) {
             _selectedServices = List<String>.from(data['servicos_habilidade']);
           }
@@ -141,8 +143,8 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
                   const Text("Motivo da Folga", style: TextStyle(fontSize: 16)),
               content: TextField(
                   controller: obsController,
-                  decoration: const InputDecoration(
-                      hintText: "Ex: Férias, Médico...")),
+                  decoration:
+                      const InputDecoration(hintText: "Ex: Férias, Médico...")),
               actions: [
                 TextButton(
                     onPressed: () => Navigator.pop(context),
@@ -183,8 +185,8 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
             context: context,
             builder: (context) => AlertDialog(
                   title: const Text("Excluir Membro?"),
-                  content: const Text(
-                      "O funcionário será removido da lista ativa."),
+                  content:
+                      const Text("O funcionário será removido da lista ativa."),
                   actions: [
                     TextButton(
                         onPressed: () => Navigator.pop(context, false),
@@ -250,6 +252,7 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
         'comissao_percent':
             double.tryParse(_comissaoController.text.replaceAll(',', '.')) ??
                 0.0,
+        'cargo': _cargoController.text.trim(),
         'atualizado_em': FieldValue.serverTimestamp(),
       };
 
@@ -343,6 +346,10 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
                     _sectionTitle("Dados Pessoais"),
                     _buildField("Nome Completo", _nameController,
                         icon: Icons.person_outline),
+                    _buildField(
+                        "Cargo / Especialidade (Ex: Barbeiro, Esteticista)",
+                        _cargoController,
+                        icon: Icons.work_outline),
                     _buildField(
                       "Email para Backup (Google Calendar)",
                       _backupEmailController,
@@ -555,6 +562,7 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
       stream: FirebaseFirestore.instance
           .collection('services')
           .where('shopId', isEqualTo: _shopId)
+          .orderBy('nome')
           .snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const LinearProgressIndicator();

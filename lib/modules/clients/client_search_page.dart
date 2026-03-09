@@ -141,22 +141,26 @@ class _ClientSearchPageState extends State<ClientSearchPage> {
                       (d['categoria'] ?? "").toString().toLowerCase();
                   // 📍 Recupera cidade e estado com fallbacks (raiz e 'endereco')
                   String getLocField(String key, List<String> fallbacks) {
-                    if (d[key] != null && d[key].toString().trim().isNotEmpty)
+                    if (d[key] != null && d[key].toString().trim().isNotEmpty) {
                       return d[key].toString().trim();
+                    }
                     if (d['endereco'] is Map) {
                       final map = d['endereco'] as Map;
                       if (map[key] != null &&
-                          map[key].toString().trim().isNotEmpty)
+                          map[key].toString().trim().isNotEmpty) {
                         return map[key].toString().trim();
+                      }
                       for (var fb in fallbacks) {
                         if (map[fb] != null &&
-                            map[fb].toString().trim().isNotEmpty)
+                            map[fb].toString().trim().isNotEmpty) {
                           return map[fb].toString().trim();
+                        }
                       }
                     }
                     for (var fb in fallbacks) {
-                      if (d[fb] != null && d[fb].toString().trim().isNotEmpty)
+                      if (d[fb] != null && d[fb].toString().trim().isNotEmpty) {
                         return d[fb].toString().trim();
+                      }
                     }
                     return '';
                   }

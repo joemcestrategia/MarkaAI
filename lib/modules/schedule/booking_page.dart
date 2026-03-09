@@ -887,6 +887,7 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                   // Precisamos fechar: 1) Modal de Loading 2) BookingSlotsPage 3) BookingTimePage
                                   // Para voltar para a tela onde a Modal Reschedule Type foi chamada (MyAppointmentsPage ou PublicShopPage)
                                   int count = 0;
+                                  if (!mounted) return;
                                   Navigator.popUntil(context, (route) {
                                     return count++ >= 3;
                                   });
@@ -900,7 +901,9 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                   );
                                 } catch (e) {
                                   if (!mounted) return;
-                                  Navigator.pop(context); // fecha dialog
+                                  if (Navigator.canPop(context)) {
+                                    Navigator.pop(context); // fecha dialog
+                                  }
                                   final errMsg = e is FirebaseFunctionsException
                                       ? (e.message ?? e.toString())
                                       : e.toString();
@@ -998,10 +1001,18 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
         for (var d in snapshot.data!.docs) {
           final data = d.data() as Map<String, dynamic>;
           final status = (data['status'] ?? '').toString().toLowerCase();
-          if (status == 'cancelado' || status == 'recusado') continue;
+
+          // Ignorar agendamentos que não ocupam a agenda
+          if (status == 'cancelado' ||
+              status == 'recusado' ||
+              status == 'excluido') {
+            continue;
+          }
 
           final dt = (data['data_agendamento'] as Timestamp).toDate();
-          int agDuration = data['duracao_min'] ?? duration;
+          // Prioriza duracao_min gravada no agendamento, senão usa a do serviço atual
+          int agDuration =
+              int.tryParse(data['duracao_min']?.toString() ?? '') ?? duration;
           int startMin = dt.hour * 60 + dt.minute;
           int endMin = startMin + agDuration;
           busyIntervals.add({"start": startMin, "end": endMin});

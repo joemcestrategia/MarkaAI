@@ -340,7 +340,7 @@ class _LoginPageState extends State<LoginPage>
     } on FirebaseAuthException catch (e) {
       _handleFirebaseError(e);
     } catch (e, st) {
-      print('[SIGNUP-ERR] ${e.runtimeType}: $e\n$st');
+      debugPrint('[SIGNUP-ERR] ${e.runtimeType}: $e\n$st');
       _showError('[${e.runtimeType}] ${e.toString()}');
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -413,6 +413,7 @@ class _LoginPageState extends State<LoginPage>
   }
 
   void _showError(String msg) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(msg),

@@ -506,7 +506,7 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
                   Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: Colors.red.withOpacity(0.1),
+                      color: Colors.red.withValues(alpha: 0.1),
                       shape: BoxShape.circle,
                     ),
                     child: const Icon(Icons.cancel_outlined, color: Colors.red),
@@ -585,7 +585,7 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
             false, // Aqui é só cancelamento sem devolução financeira
       });
 
-      Navigator.pop(context); // close loading
+      if (mounted) Navigator.pop(context); // close loading
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(

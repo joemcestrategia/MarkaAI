@@ -151,8 +151,11 @@ class _TrialActivationPageState extends State<TrialActivationPage> {
                               value: plan,
                               groupValue: _selectedPlan,
                               activeColor: AppColors.primaryPurple,
-                              onChanged: (val) =>
-                                  setState(() => _selectedPlan = val),
+                              onChanged: (SubscriptionPlan? val) {
+                                if (val != null) {
+                                  setState(() => _selectedPlan = val);
+                                }
+                              },
                             ),
                             Expanded(
                               child: Column(

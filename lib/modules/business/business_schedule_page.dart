@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:table_calendar/table_calendar.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'dart:async';
 import '../../core/theme/app_colors.dart';
 import 'appointment_details_page.dart';
@@ -120,18 +119,14 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
       }
 
       if (mounted) {
-        // Merge events to avoid losing markers already loaded for other months
         setState(() {
-          final merged = Map<DateTime, List<String>>.from(_events);
-          events.forEach((k, v) {
-            final existing = merged[k] ?? [];
-            final union = [...existing];
-            for (var id in v) {
-              if (!union.contains(id)) union.add(id);
-            }
-            merged[k] = union;
-          });
-          _events = merged;
+          // Limpamos apenas os eventos que estão dentro do período que acabamos de carregar
+          // para garantir que os marcadores reflitam fielmente o banco (sem bolinhas fantasmas)
+          _events.removeWhere((date, _) =>
+              date.isAfter(startOfMonth.subtract(const Duration(days: 1))) &&
+              date.isBefore(endOfMonth.add(const Duration(days: 1))));
+
+          _events.addAll(events);
         });
       }
     } catch (e) {
@@ -347,6 +342,8 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
         TextEditingController(text: data['client_nome'] ?? '');
     String? selectedServiceId = data['servicoId'];
     String selectedServiceName = data['servico_nome'] ?? '';
+    String? selectedProfessionalId = data['profissionalId'];
+    String selectedProfessionalName = data['profissional_nome'] ?? 'Selecione';
     double selectedServicePrice = _safeParseValue(doc);
 
     final TextEditingController valueController = TextEditingController(
@@ -552,6 +549,65 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                     ),
                     const SizedBox(height: 10),
 
+                    // Profissional
+                    StreamBuilder<QuerySnapshot>(
+                      stream: FirebaseFirestore.instance
+                          .collection('employees')
+                          .where('shopId', isEqualTo: widget.shopId)
+                          .snapshots(),
+                      builder: (context, snapshot) {
+                        if (!snapshot.hasData) return const SizedBox();
+                        final pros = snapshot.data!.docs;
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Profissional',
+                                style: TextStyle(fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 8),
+                            Container(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 12),
+                              decoration: BoxDecoration(
+                                color: Colors.grey.shade50,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: DropdownButton<String>(
+                                isExpanded: true,
+                                underline: const SizedBox(),
+                                value: pros.any(
+                                        (p) => p.id == selectedProfessionalId)
+                                    ? selectedProfessionalId
+                                    : null,
+                                hint: Text(selectedProfessionalName),
+                                items: pros.map((pro) {
+                                  final pData =
+                                      pro.data() as Map<String, dynamic>;
+                                  return DropdownMenuItem<String>(
+                                    value: pro.id,
+                                    child: Text(pData['nome'] ?? 'Sem nome'),
+                                  );
+                                }).toList(),
+                                onChanged: (value) {
+                                  if (value != null) {
+                                    final pro =
+                                        pros.firstWhere((p) => p.id == value);
+                                    final pData =
+                                        pro.data() as Map<String, dynamic>;
+                                    setModalState(() {
+                                      selectedProfessionalId = value;
+                                      selectedProfessionalName =
+                                          pData['nome'] ?? '';
+                                    });
+                                  }
+                                },
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 10),
+
                     // Valor Total
                     TextField(
                       controller: valueController,
@@ -667,6 +723,10 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                             : selectedServiceName,
                         if (selectedServiceId != null)
                           'servicoId': selectedServiceId,
+                        if (selectedProfessionalId != null) ...{
+                          'profissionalId': selectedProfessionalId,
+                          'profissional_nome': selectedProfessionalName,
+                        },
                         'valor_total': valorTotal,
                         'valor': valorTotal,
                         'valor_pago': valorPago,
@@ -717,6 +777,8 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     final TextEditingController nameController = TextEditingController();
     final TextEditingController serviceController = TextEditingController();
     final TextEditingController valueController = TextEditingController();
+    String? selectedProfessionalId;
+    String selectedProfessionalName = 'Selecione Profissional';
     DateTime manualDate = initialDate ?? _selectedDay;
     TimeOfDay manualTime = const TimeOfDay(hour: 8, minute: 0);
 
@@ -846,6 +908,62 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                         ),
                       ),
                     ),
+                    const SizedBox(height: 12),
+
+                    // Profissional
+                    StreamBuilder<QuerySnapshot>(
+                      stream: FirebaseFirestore.instance
+                          .collection('employees')
+                          .where('shopId', isEqualTo: widget.shopId)
+                          .snapshots(),
+                      builder: (context, snapshot) {
+                        if (!snapshot.hasData) return const SizedBox();
+                        final pros = snapshot.data!.docs;
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Profissional',
+                                style: TextStyle(fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 8),
+                            Container(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 12),
+                              decoration: BoxDecoration(
+                                color: Colors.grey.shade50,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: DropdownButton<String>(
+                                isExpanded: true,
+                                underline: const SizedBox(),
+                                value: selectedProfessionalId,
+                                hint: Text(selectedProfessionalName),
+                                items: pros.map((pro) {
+                                  final pData =
+                                      pro.data() as Map<String, dynamic>;
+                                  return DropdownMenuItem<String>(
+                                    value: pro.id,
+                                    child: Text(pData['nome'] ?? 'Sem nome'),
+                                  );
+                                }).toList(),
+                                onChanged: (value) {
+                                  if (value != null) {
+                                    final pro =
+                                        pros.firstWhere((p) => p.id == value);
+                                    final pData =
+                                        pro.data() as Map<String, dynamic>;
+                                    setModalState(() {
+                                      selectedProfessionalId = value;
+                                      selectedProfessionalName =
+                                          pData['nome'] ?? '';
+                                    });
+                                  }
+                                },
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
                   ],
                 ),
               ),
@@ -885,6 +1003,10 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                       'valor_total': valor,
                       'valor': valor,
                       'valor_pago': valor,
+                      if (selectedProfessionalId != null) ...{
+                        'profissionalId': selectedProfessionalId,
+                        'profissional_nome': selectedProfessionalName,
+                      },
                       'status': 'concluido',
                       'data_agendamento':
                           Timestamp.fromDate(manualDateNormalized),
@@ -1083,8 +1205,18 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                 appointmentDoc: _selectedAppointment!,
                 isEmbedded: true,
                 onClose: () {
+                  final id = _selectedAppointment?.id;
                   setState(() => _selectedAppointment = null);
+                  if (id != null) {
+                    setState(() {
+                      _docCache.remove(id);
+                      _cacheAccess.remove(id);
+                      _appointments.removeWhere((d) => d.id == id);
+                      _events.forEach((key, list) => list.remove(id));
+                    });
+                  }
                   _loadAppointments();
+                  _loadMonthEvents();
                 },
               ),
             ),
@@ -1627,8 +1759,9 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                   'nome': clientNome,
                   'telefone': data['client_phone'] ??
                       data['telefone'] ??
+                      data['whatsapp'] ??
                       'Não informado',
-                  'email': data['client_email'] ?? '',
+                  'email': data['client_email'] ?? data['email'] ?? '',
                   'origem': data['tipo'] == 'manual' ? 'manual' : 'app',
                   'totalGasto': total,
                   'visitas': 1,
@@ -1656,7 +1789,18 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
               builder: (context) => AppointmentDetailsPage(appointmentDoc: doc),
             ),
           );
+          // Limpa cache específico do documento para evitar "flash" se foi deletado
+          setState(() {
+            _docCache.remove(doc.id);
+            _cacheAccess.remove(doc.id);
+            _appointments.removeWhere((d) => d.id == doc.id);
+            // Remove também dos eventos
+            for (var list in _events.values) {
+              list.remove(doc.id);
+            }
+          });
           _loadAppointments();
+          _loadMonthEvents();
         }
       },
       child: Container(
@@ -1727,25 +1871,81 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            GestureDetector(
-                              onTap: openClientProfile,
-                              child: Text(
-                                clientNome,
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 15,
-                                  decoration: isCanceled
-                                      ? TextDecoration.lineThrough
-                                      : TextDecoration.underline,
-                                  color: isCanceled
-                                      ? Colors.grey
-                                      : AppColors.primaryPurple,
+                            Row(
+                              children: [
+                                Flexible(
+                                  child: GestureDetector(
+                                    onTap: openClientProfile,
+                                    child: Text(
+                                      clientNome,
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 15,
+                                        decoration: isCanceled
+                                            ? TextDecoration.lineThrough
+                                            : TextDecoration.none,
+                                        color: isCanceled
+                                            ? Colors.grey
+                                            : Colors.black87,
+                                      ),
+                                    ),
+                                  ),
                                 ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
+                              ],
                             ),
-                            const SizedBox(height: 4),
+                            const SizedBox(height: 2),
+                            // Tags do cliente
+                            if (data['clientId'] != null)
+                              FutureBuilder<DocumentSnapshot>(
+                                future: FirebaseFirestore.instance
+                                    .collection('shops')
+                                    .doc(widget.shopId)
+                                    .collection('clients')
+                                    .doc(data['clientId'].toString())
+                                    .get(),
+                                builder: (context, snapshot) {
+                                  if (!snapshot.hasData ||
+                                      !snapshot.data!.exists) {
+                                    return const SizedBox.shrink();
+                                  }
+                                  final clientData = snapshot.data!.data()
+                                      as Map<String, dynamic>;
+                                  final List<String> tags = List<String>.from(
+                                      clientData['manualTags'] ?? []);
+                                  if (tags.isEmpty) {
+                                    return const SizedBox.shrink();
+                                  }
+
+                                  return Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: Wrap(
+                                      spacing: 4,
+                                      runSpacing: 2,
+                                      children: tags.map((tag) {
+                                        return Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 6, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: AppColors.primaryPurple
+                                                .withValues(alpha: 0.1),
+                                            borderRadius:
+                                                BorderRadius.circular(4),
+                                          ),
+                                          child: Text(
+                                            tag,
+                                            style: const TextStyle(
+                                              color: AppColors.primaryPurple,
+                                              fontSize: 8,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        );
+                                      }).toList(),
+                                    ),
+                                  );
+                                },
+                              ),
+                            const SizedBox(height: 2),
                             Text(
                               data['servico_nome'] ?? "Serviço",
                               style: TextStyle(
@@ -1782,50 +1982,6 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                               ),
                             ),
                           ),
-                          if (data['client_phone'] != null ||
-                              data['telefone'] != null) ...[
-                            const SizedBox(height: 6),
-                            GestureDetector(
-                              onTap: () async {
-                                final phone =
-                                    (data['client_phone'] ?? data['telefone'])
-                                        .toString()
-                                        .replaceAll(RegExp(r'\D'), '');
-                                final url = 'https://wa.me/$phone';
-                                if (await canLaunchUrl(Uri.parse(url))) {
-                                  await launchUrl(Uri.parse(url));
-                                } else {
-                                  if (!context.mounted) return;
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                        content: Text(
-                                            'Não foi possível abrir o WhatsApp')),
-                                  );
-                                }
-                              },
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 3),
-                                decoration: BoxDecoration(
-                                  color: Colors.green.withValues(alpha: 0.1),
-                                  borderRadius: BorderRadius.circular(6),
-                                ),
-                                child: const Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(Icons.chat_rounded,
-                                        color: Colors.green, size: 10),
-                                    SizedBox(width: 3),
-                                    Text('WhatsApp',
-                                        style: TextStyle(
-                                            color: Colors.green,
-                                            fontSize: 9,
-                                            fontWeight: FontWeight.w800)),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
                         ],
                       ),
 

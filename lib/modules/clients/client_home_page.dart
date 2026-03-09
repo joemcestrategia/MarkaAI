@@ -636,7 +636,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
     try {
       final idToken = await FirebaseAuth.instance.currentUser?.getIdToken(true);
       if (idToken == null) {
-        Navigator.pop(context);
+        if (mounted) Navigator.pop(context);
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Erro: usuário não autenticado')));
@@ -650,7 +650,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
             'Authorization': 'Bearer $idToken'
           },
           body: jsonEncode({'confirm': true}));
-      Navigator.pop(context);
+      if (mounted) Navigator.pop(context);
       if (resp.statusCode == 200) {
         // success
         try {
@@ -672,7 +672,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
             content: Text('Falha ao excluir conta: ${resp.statusCode} $body')));
       }
     } catch (e) {
-      Navigator.pop(context);
+      if (mounted) Navigator.pop(context);
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Erro ao excluir conta: $e')));
