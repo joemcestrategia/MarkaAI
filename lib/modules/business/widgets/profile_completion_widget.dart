@@ -52,58 +52,91 @@ class _ProfileCompletionWidgetState extends State<ProfileCompletionWidget>
     super.dispose();
   }
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  @override
+  void didUpdateWidget(ProfileCompletionWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Recalcular sempre que o stream de cima (Home) injetar dados atualizados no shopData
+    if (widget.shopData != oldWidget.shopData) {
+      _compute();
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────
   // Calculate completion from shopData
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─────────────────────────────────────────────────────────────────
   void _compute() {
     if (widget.shopData == null) return;
     final d = widget.shopData!;
 
     final fields = <_MissingField>[];
+    debugPrint('--- SHOP DATA COMPUTADO: $d');
 
+    // Helper p/ checar se um campo tem conteúdo válido.
     bool filled0(String field) {
+      if (!d.containsKey(field)) return false;
       final v = d[field];
       if (v == null) return false;
       if (v is String) return v.trim().isNotEmpty;
-      if (v is List) return (v).isNotEmpty;
-      if (v is Map) return (v).isNotEmpty;
+      if (v is List) return v.isNotEmpty;
+      if (v is Map) return v.isNotEmpty;
       return true;
     }
 
     void check(String field, String label) {
       if (!filled0(field)) {
+        debugPrint('FALTANDO CAMPO SIMPLES: $field');
         fields.add(_MissingField(field: field, label: label));
       }
     }
 
     // Campos do perfil da loja
+    int totalValidatedFields = 0;
+
     check('nome', 'Nome da loja');
+    totalValidatedFields++;
+
     if (!filled0('categoria') && !filled0('nicho')) {
+      debugPrint('FALTANDO CAMPO: categoria ou nicho');
       fields.add(const _MissingField(field: 'categoria', label: 'Categoria'));
     }
+    totalValidatedFields++;
+
     check('telefone', 'Telefone');
+    totalValidatedFields++;
 
     // Logo
     if (!filled0('logoUrl') && !filled0('logo') && !filled0('foto')) {
+      debugPrint('FALTANDO CAMPO: logoUrl / logo / foto');
       fields.add(const _MissingField(
           field: 'logoUrl', label: 'Logo / Foto de perfil'));
     }
+    totalValidatedFields++;
 
     // Capa
     if (!filled0('imageUrl') && !filled0('coverUrl') && !filled0('foto_capa')) {
+      debugPrint('FALTANDO CAMPO: imageUrl / coverUrl / foto_capa');
       fields
           .add(const _MissingField(field: 'foto_capa', label: 'Foto de capa'));
     }
+    totalValidatedFields++;
+
     check('descricao', 'Descrição da loja');
+    totalValidatedFields++;
+
     if (!filled0('cidade') && !filled0('city')) {
+      debugPrint('FALTANDO CAMPO: cidade / city');
       fields.add(const _MissingField(field: 'cidade', label: 'Cidade'));
     }
-    check('estado', 'Estado');
+    totalValidatedFields++;
 
-    const total =
-        8; // horários foram removidos dessa contagem, pois pertencem a outra tela
-    final filled = total - fields.length;
-    final pct = ((filled / total) * 100).round().clamp(0, 100);
+    check('estado', 'Estado');
+    totalValidatedFields++;
+
+    // Cálculo da porcentagem (Tamanho total validado menos o tamanho dos não encontrados)
+    final filled = totalValidatedFields - fields.length;
+    final pct = totalValidatedFields > 0
+        ? ((filled / totalValidatedFields) * 100).round().clamp(0, 100)
+        : 0;
 
     setState(() {
       _percentage = pct;

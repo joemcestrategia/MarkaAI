@@ -1787,11 +1787,13 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
         final data = doc.data();
         final status = (data['status'] ?? '').toString().toLowerCase();
         if (status == 'cancelado') continue;
-        sum += double.tryParse(data['valor_pago']?.toString() ??
-                data['valor_total']?.toString() ??
-                data['valor']?.toString() ??
-                '0') ??
-            0;
+        String vp = data['valor_pago']?.toString() ?? '';
+        String vt = data['valor_total']?.toString() ?? '';
+        String v = data['valor']?.toString() ?? '';
+        String finalStr = vp.trim().isNotEmpty
+            ? vp
+            : (vt.trim().isNotEmpty ? vt : (v.trim().isNotEmpty ? v : '0'));
+        sum += double.tryParse(finalStr.replaceAll(',', '.')) ?? 0.0;
       }
       return sum;
     });
@@ -1816,11 +1818,13 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
         final data = doc.data();
         final status = (data['status'] ?? '').toString().toLowerCase();
         if (status == 'cancelado') continue;
-        sum += double.tryParse(data['valor_pago']?.toString() ??
-                data['valor_total']?.toString() ??
-                data['valor']?.toString() ??
-                '0') ??
-            0;
+        String vp = data['valor_pago']?.toString() ?? '';
+        String vt = data['valor_total']?.toString() ?? '';
+        String v = data['valor']?.toString() ?? '';
+        String finalStr = vp.trim().isNotEmpty
+            ? vp
+            : (vt.trim().isNotEmpty ? vt : (v.trim().isNotEmpty ? v : '0'));
+        sum += double.tryParse(finalStr.replaceAll(',', '.')) ?? 0.0;
       }
       return sum;
     });
@@ -1830,7 +1834,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
   double _safeParseValue(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
     dynamic val = data['valor_total'] ?? data['valor'];
-    if (val == null) return 0.0;
+    if (val == null || val.toString().trim().isEmpty) return 0.0;
     if (val is num) return val.toDouble();
     if (val is String) return double.tryParse(val.replaceAll(',', '.')) ?? 0.0;
     return 0.0;

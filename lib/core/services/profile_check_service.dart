@@ -16,14 +16,10 @@ class ProfileCheckService {
     if (_empty(d['nome']) || _empty(d['email']) || _empty(d['telefone'])) {
       return false;
     }
-    final end = d['endereco'] as Map<String, dynamic>?;
-    if (end == null) return false;
-    if (_empty(end['cep']) ||
-        _empty(end['rua']) ||
-        _empty(end['numero']) ||
-        _empty(end['cidade'])) {
-      return false;
-    }
+
+    // O Endereço no App foi definido como (Opcional) visualmente.
+    // Ignorar validação de endereço para não gerar falso "Perfil Incompleto"
+    // contanto que Nome e Contato existam.
     return true;
   }
 

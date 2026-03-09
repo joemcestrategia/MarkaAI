@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../../core/theme/app_colors.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../clients/client_details_page.dart';
+import 'edit_appointment_date_page.dart';
 
 class AppointmentDetailsPage extends StatefulWidget {
   final DocumentSnapshot appointmentDoc;
@@ -42,6 +43,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
   String? _selectedProfessionalFoto;
   String? _selectedProfessionalCargo;
   double? _selectedPrice;
+  int? _selectedServiceDuration;
   final TextEditingController _priceController = TextEditingController();
   List<String> _clientTags = [];
 
@@ -85,6 +87,8 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
             data['valor']?.toString() ??
             "0") ??
         0.0;
+    _selectedServiceDuration =
+        int.tryParse(data['duracao_min']?.toString() ?? '') ?? 30;
     _priceController.text =
         _selectedPrice!.toStringAsFixed(2).replaceAll('.', ',');
 
@@ -199,6 +203,113 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     try {
       final fullDate = DateTime(_selectedDate!.year, _selectedDate!.month,
           _selectedDate!.day, _selectedTime!.hour, _selectedTime!.minute);
+
+      // --- VALIDAÇÃO DE CONFLITO AVANÇADA ---
+      if (_selectedProfessionalId == null) {
+        if (mounted) {
+          setState(() => _isLoading = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('Selecione um profissional válido.'),
+                backgroundColor: Colors.red),
+          );
+        }
+        return;
+      }
+
+      int serviceDuration = _selectedServiceDuration ?? 30; // fallback state
+      final newStartMin = fullDate.hour * 60 + fullDate.minute;
+      final newEndMin = newStartMin + serviceDuration;
+
+      final dayStart = DateTime(fullDate.year, fullDate.month, fullDate.day);
+      final dayEnd =
+          DateTime(fullDate.year, fullDate.month, fullDate.day, 23, 59);
+
+      // Validação 1: Profissional
+      final snapProf = await FirebaseFirestore.instance
+          .collection('appointments')
+          .where('profissionalId', isEqualTo: _selectedProfessionalId)
+          .where('data_agendamento', isGreaterThanOrEqualTo: dayStart)
+          .where('data_agendamento', isLessThanOrEqualTo: dayEnd)
+          .get();
+
+      bool hasProfConflict = false;
+      for (final doc in snapProf.docs) {
+        if (doc.id == widget.appointmentDoc.id) continue;
+        final data = doc.data();
+        final status = (data['status'] ?? '').toString().toLowerCase();
+        if (status == 'cancelado' ||
+            status == 'recusado' ||
+            status == 'excluido') continue;
+
+        final dt = (data['data_agendamento'] as Timestamp).toDate();
+        final dur = int.tryParse(data['duracao_min']?.toString() ?? '') ?? 30;
+        final startMin = dt.hour * 60 + dt.minute;
+        final endMin = startMin + dur;
+
+        // Verifica interseção: A.start < B.end && B.start < A.end
+        if (newStartMin < endMin && startMin < newEndMin) {
+          hasProfConflict = true;
+          break;
+        }
+      }
+
+      if (hasProfConflict) {
+        if (mounted) {
+          setState(() => _isLoading = false);
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text(
+                '⚠️ Horário indisponível! Já existe um agendamento conflitante para este profissional.'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 4),
+          ));
+        }
+        return;
+      }
+
+      // Validação 2: Cliente
+      if (_selectedClientId != null) {
+        final snapClient = await FirebaseFirestore.instance
+            .collection('appointments')
+            .where('clientId', isEqualTo: _selectedClientId)
+            .where('data_agendamento', isGreaterThanOrEqualTo: dayStart)
+            .where('data_agendamento', isLessThanOrEqualTo: dayEnd)
+            .get();
+
+        bool hasClientConflict = false;
+        for (final doc in snapClient.docs) {
+          if (doc.id == widget.appointmentDoc.id) continue;
+          final data = doc.data();
+          final status = (data['status'] ?? '').toString().toLowerCase();
+          if (status == 'cancelado' ||
+              status == 'recusado' ||
+              status == 'excluido') continue;
+
+          final dt = (data['data_agendamento'] as Timestamp).toDate();
+          final dur = int.tryParse(data['duracao_min']?.toString() ?? '') ?? 30;
+          final startMin = dt.hour * 60 + dt.minute;
+          final endMin = startMin + dur;
+
+          if (newStartMin < endMin && startMin < newEndMin) {
+            hasClientConflict = true;
+            break;
+          }
+        }
+
+        if (hasClientConflict) {
+          if (mounted) {
+            setState(() => _isLoading = false);
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text(
+                  '⚠️ Conflito! O cliente já possui um ou mais serviços agendados para este mesmo horário.'),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 4),
+            ));
+          }
+          return;
+        }
+      }
+      // --- FIM VALIDAÇÃO AVANÇADA ---
 
       await widget.appointmentDoc.reference.update({
         'clientId': _selectedClientId,
@@ -1042,34 +1153,184 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
   }
 
   Widget _buildDateTimeField() {
-    return Row(children: [
-      Expanded(
-          child: InkWell(
-              onTap: _isEditing
-                  ? () async {
-                      final date = await showDatePicker(
-                          context: context,
-                          initialDate: _selectedDate!,
-                          firstDate: DateTime(2020),
-                          lastDate: DateTime(2030));
-                      if (date != null) setState(() => _selectedDate = date);
-                    }
-                  : null,
-              child: _buildEditableField("Data", Icons.event, false, null,
-                  DateFormat('dd/MM/yyyy').format(_selectedDate!)))),
-      const SizedBox(width: 10),
-      Expanded(
-          child: InkWell(
-              onTap: _isEditing
-                  ? () async {
-                      final time = await showTimePicker(
-                          context: context, initialTime: _selectedTime!);
-                      if (time != null) setState(() => _selectedTime = time);
-                    }
-                  : null,
-              child: _buildEditableField("Horário", Icons.schedule, false, null,
-                  _selectedTime!.format(context))))
-    ]);
+    // ── Modo de visualização: exibe data e hora lado a lado ───────────────────
+    if (!_isEditing) {
+      final dateText = _selectedDate != null
+          ? DateFormat('dd/MM/yyyy').format(_selectedDate!)
+          : 'Pendente';
+      final timeText =
+          _selectedTime != null ? _selectedTime!.format(context) : 'Pendente';
+
+      return Row(children: [
+        Expanded(
+            child: _buildEditableField(
+                "Data", Icons.event, false, null, dateText)),
+        const SizedBox(width: 10),
+        Expanded(
+            child: _buildEditableField(
+                "Horário", Icons.schedule, false, null, timeText)),
+      ]);
+    }
+
+    // ── Modo de edição: card que abre o fluxo visual de reagendamento ────────
+    return InkWell(
+      onTap: _openRescheduleFlow,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: AppColors.primaryPurple.withValues(alpha: 0.04),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+              color: AppColors.primaryPurple.withValues(alpha: 0.35), width: 1),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(7),
+              decoration: BoxDecoration(
+                color: AppColors.primaryPurple.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.event_repeat,
+                  size: 17, color: AppColors.primaryPurple),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Data / Horário',
+                      style: TextStyle(fontSize: 10, color: Colors.grey)),
+                  const SizedBox(height: 2),
+                  Text(
+                    _selectedDate != null && _selectedTime != null
+                        ? '${DateFormat('dd/MM/yyyy').format(_selectedDate!)}  •  ${_selectedTime!.format(context)}'
+                        : 'Pendente (Toque para reagendar)',
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: _selectedDate != null
+                            ? Colors.black87
+                            : Colors.orange),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.arrow_forward_ios,
+                size: 13, color: AppColors.primaryPurple),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Carrega os documentos necessários e abre o fluxo visual de reagendamento.
+  Future<void> _openRescheduleFlow() async {
+    setState(() => _isLoading = true);
+    try {
+      final data = widget.appointmentDoc.data() as Map<String, dynamic>;
+      final shopId = data['shopId'] as String?;
+      final serviceId = _selectedServiceId ?? data['servicoId'] as String?;
+      final profId =
+          _selectedProfessionalId ?? data['profissionalId'] as String?;
+
+      if (shopId == null || serviceId == null || profId == null) {
+        if (mounted) {
+          setState(() => _isLoading = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text(
+                    'Dados incompletos para reagendar. Verifique serviço e profissional.')),
+          );
+        }
+        return;
+      }
+
+      // Carrega em paralelo
+      final results = await Future.wait([
+        FirebaseFirestore.instance.collection('shops').doc(shopId).get(),
+        FirebaseFirestore.instance.collection('services').doc(serviceId).get(),
+        FirebaseFirestore.instance.collection('employees').doc(profId).get(),
+      ]);
+
+      final shopDoc = results[0];
+      final serviceDoc = results[1];
+      final profDoc = results[2];
+
+      if (!shopDoc.exists || !serviceDoc.exists || !profDoc.exists) {
+        if (mounted) {
+          setState(() => _isLoading = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('Não foi possível carregar os dados da agenda.')),
+          );
+        }
+        return;
+      }
+
+      final shopData = shopDoc.data() as Map<String, dynamic>;
+      final Map<String, dynamic> shopConfig =
+          shopData['config'] as Map<String, dynamic>? ?? {};
+      final int intervalMinutes =
+          (shopConfig['intervalo_agenda_min'] as num?)?.toInt() ?? 60;
+
+      // Group all pending non-saved state edits
+      final pendingUpdates = <String, dynamic>{
+        if (_selectedClientId != null) 'clientId': _selectedClientId,
+        if (_selectedClientName != null) 'client_nome': _selectedClientName,
+        if (_selectedServiceId != null) 'servicoId': _selectedServiceId,
+        if (_selectedServiceName != null) 'servico_nome': _selectedServiceName,
+        if (_selectedProfessionalId != null)
+          'profissionalId': _selectedProfessionalId,
+        if (_selectedProfessionalName != null)
+          'profissional_nome': _selectedProfessionalName,
+        if (_selectedProfessionalFoto != null)
+          'profissional_foto': _selectedProfessionalFoto,
+        if (_selectedProfessionalCargo != null)
+          'profissional_cargo': _selectedProfessionalCargo,
+        if (_selectedServiceDuration != null)
+          'duracao_min': _selectedServiceDuration,
+        'valor_total': _selectedPrice ??
+            double.tryParse(_priceController.text.replaceAll(',', '.')) ??
+            0.0,
+        'valor': _selectedPrice ??
+            double.tryParse(_priceController.text.replaceAll(',', '.')) ??
+            0.0,
+      };
+
+      if (mounted) {
+        setState(() => _isLoading = false);
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => EditAppointmentDatePage(
+              appointmentDoc: widget.appointmentDoc,
+              shop: shopDoc,
+              serviceDoc: serviceDoc,
+              professionalDoc: profDoc,
+              shopConfig: shopConfig,
+              intervalMinutes: intervalMinutes,
+              pendingUpdates: pendingUpdates, // Passando pra Base
+              onSuccess: () {
+                // Recarrega dados após confirmação do reagendamento
+                setState(() {
+                  _isEditing = false;
+                  _loadData();
+                });
+              },
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro ao abrir reagendamento: $e')),
+        );
+      }
+    }
   }
 
   // --- DROPDOWNS (Mantidos com estilo de texto ajustado) ---
@@ -1174,15 +1435,26 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
           onChanged: (val) {
             final doc = docs.firstWhere((d) => d.id == val);
             final data = doc.data() as Map<String, dynamic>;
+            final newPrice = double.tryParse(data['preco'].toString()) ?? 0.0;
+            final newDur = int.tryParse(data['tempo_min'].toString()) ?? 30;
             setState(() {
               _selectedServiceId = val;
               _selectedServiceName = data['nome'];
-              _selectedPrice = double.tryParse(data['preco'].toString()) ?? 0.0;
-              // Resetamos o profissional para obrigar uma nova seleção válida se o atual não souber fazer o novo serviço
+              _selectedPrice = newPrice;
+              _selectedServiceDuration = newDur;
+              // Atualiza campo de texto do preço
+              _priceController.text =
+                  newPrice.toStringAsFixed(2).replaceAll('.', ',');
+
+              // Reforça fluxo rigoroso sequencial:
+              // Mudou serviço > Zera Profissional > Zera Data/Hora
               _selectedProfessionalId = null;
               _selectedProfessionalName = null;
               _selectedProfessionalFoto = null;
               _selectedProfessionalCargo = null;
+
+              _selectedDate = null;
+              _selectedTime = null;
             });
           },
         );
@@ -1231,6 +1503,12 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
               _selectedProfessionalName = data['nome'];
               _selectedProfessionalFoto = data['foto_url'];
               _selectedProfessionalCargo = data['cargo'];
+
+              // Reforça fluxo rigoroso sequencial:
+              // Mudou profissional > Zera Data/Hora, pois a disponibilidade
+              // do novo profissional será diferente.
+              _selectedDate = null;
+              _selectedTime = null;
             });
           },
         );

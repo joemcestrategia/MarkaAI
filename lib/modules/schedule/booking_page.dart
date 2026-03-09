@@ -645,6 +645,30 @@ class BookingSlotsPage extends StatefulWidget {
   final String? appointmentId;
   final bool fromSubdomain;
 
+  // ── Props opcionais para o modo de edição do dono ──────────────────────
+  // Nenhuma dessas props afeta o comportamento padrão (cliente).
+  /// Id do agendamento sendo editado — excluído do cálculo de ocupação.
+  final String? ownerExcludeAppointmentId;
+
+  /// Horário original do agendamento ("HH:mm") — exibe badge "Horário atual".
+  final String? ownerHighlightedSlotTime;
+
+  /// Quando true, slots ocupados ficam clicáveis (privilégio do dono).
+  final bool allowOccupiedSelection;
+
+  /// Callback chamado ao selecionar um slot que já está ocupado.
+  /// Recebe o horário selecionado e os dados do agendamento conflitante.
+  final void Function(String slot, Map<String, dynamic> conflictData)?
+      onOccupiedSlotSelected;
+
+  /// Callback exclusivo do modo dono: chamado ao confirmar o horário.
+  /// Quando definido, substitui completamente o fluxo de checkout e a cloud
+  /// function de reagendamento do cliente. Recebe o [TimeOfDay] selecionado e,
+  /// opcionalmente, os dados do agendamento conflitante (sobreposição).
+  final void Function(
+          TimeOfDay selectedTime, Map<String, dynamic>? conflictData)?
+      onOwnerSlotConfirmed;
+
   const BookingSlotsPage({
     super.key,
     required this.shop,
@@ -658,6 +682,13 @@ class BookingSlotsPage extends StatefulWidget {
     this.isReschedule = false,
     this.appointmentId,
     this.fromSubdomain = false,
+    // Modo dono — todos opcionais
+    this.ownerExcludeAppointmentId,
+    this.ownerHighlightedSlotTime,
+    this.allowOccupiedSelection = false,
+    this.onOccupiedSlotSelected,
+    // Callback exclusivo do modo dono: quando definido, substitui checkout/cloud function
+    this.onOwnerSlotConfirmed,
   });
 
   Map<String, dynamic> get serviceData =>
@@ -670,6 +701,9 @@ class BookingSlotsPage extends StatefulWidget {
 class _BookingSlotsPageState extends State<BookingSlotsPage> {
   TimeOfDay? _selectedTime;
 
+  /// Dados do último conflito detectado ao selecionar um slot no modo dono.
+  Map<String, dynamic>? _lastConflictData;
+
   @override
   void initState() {
     super.initState();
@@ -680,9 +714,13 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
   @override
   Widget build(BuildContext context) {
     final svcName = widget.serviceData['nome'] ?? 'Serviço';
+    final isOwnerConfirmMode = widget.onOwnerSlotConfirmed != null;
+
     return Scaffold(
       appBar: AppBar(
-        title: Text('Horários - $svcName'),
+        title: Text(isOwnerConfirmMode
+            ? 'Reagendar — $svcName'
+            : 'Horários - $svcName'),
         backgroundColor: AppColors.primaryPurple,
         foregroundColor: Colors.white,
         elevation: 0,
@@ -729,123 +767,133 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                     child: ElevatedButton(
                       onPressed: _selectedTime == null
                           ? null
-                          : () async {
-                              final shopId = widget.shop.id;
-                              final shopData =
-                                  widget.shop.data() as Map<String, dynamic>;
+                          : isOwnerConfirmMode
+                              // ── Modo dono: chama callback (sem checkout, sem cloud fn) ──
+                              ? () => widget.onOwnerSlotConfirmed!(
+                                    _selectedTime!,
+                                    _lastConflictData,
+                                  )
+                              // ── Modo cliente: fluxo original inalterado ──
+                              : () async {
+                                  final shopId = widget.shop.id;
+                                  final shopData = widget.shop.data()
+                                      as Map<String, dynamic>;
 
-                              final profData = widget.professionalDoc.data()
-                                  as Map<String, dynamic>;
+                                  final profData = widget.professionalDoc.data()
+                                      as Map<String, dynamic>;
 
-                              String finalName = widget.serviceData['nome'];
-                              double finalPrice = double.tryParse(
-                                      widget.serviceData['preco'].toString()) ??
-                                  0.0;
+                                  String finalName = widget.serviceData['nome'];
+                                  double finalPrice = double.tryParse(widget
+                                          .serviceData['preco']
+                                          .toString()) ??
+                                      0.0;
 
-                              if (widget.selectedVariation != null) {
-                                finalName +=
-                                    " (${widget.selectedVariation!['name']})";
-                                finalPrice = double.tryParse(widget
-                                        .selectedVariation!['price']
-                                        .toString()) ??
-                                    finalPrice;
-                              }
-
-                              if (widget.isReschedule &&
-                                  widget.appointmentId != null) {
-                                // Realiza o reagendamento diretamente
-                                final newDateTime = DateTime(
-                                  widget.selectedDate.year,
-                                  widget.selectedDate.month,
-                                  widget.selectedDate.day,
-                                  _selectedTime!.hour,
-                                  _selectedTime!.minute,
-                                );
-
-                                // Salva o messenger antes de dar os pops
-                                final sm = ScaffoldMessenger.of(context);
-
-                                showDialog(
-                                  context: context,
-                                  barrierDismissible: false,
-                                  builder: (ctx) => const Center(
-                                      child: CircularProgressIndicator()),
-                                );
-
-                                try {
-                                  final functions = FirebaseFunctions.instance;
-                                  await functions
-                                      .httpsCallable('rescheduleAppointment')
-                                      .call({
-                                    'appointmentId': widget.appointmentId,
-                                    'newDateISO': newDateTime.toIso8601String(),
-                                    'newServiceId': widget.serviceDoc.id,
-                                    'newServiceName': finalName,
-                                    'newPrice': finalPrice,
-                                    'newProfessionalId':
-                                        widget.professionalDoc.id,
-                                    'newProfessionalName':
-                                        profData['nome'] ?? 'Profissional',
-                                  });
-
-                                  if (!mounted) return;
-
-                                  // Precisamos fechar: 1) Modal de Loading 2) BookingSlotsPage 3) BookingTimePage
-                                  // Para voltar para a tela onde a Modal Reschedule Type foi chamada (MyAppointmentsPage ou PublicShopPage)
-                                  int count = 0;
-                                  if (!mounted) return;
-                                  Navigator.popUntil(context, (route) {
-                                    return count++ >= 3;
-                                  });
-
-                                  sm.showSnackBar(
-                                    const SnackBar(
-                                      content:
-                                          Text('Reagendamento confirmado! âœ…'),
-                                      backgroundColor: Colors.green,
-                                    ),
-                                  );
-                                } catch (e) {
-                                  if (!mounted) return;
-                                  if (Navigator.canPop(context)) {
-                                    Navigator.pop(context); // fecha dialog
+                                  if (widget.selectedVariation != null) {
+                                    finalName +=
+                                        " (${widget.selectedVariation!['name']})";
+                                    finalPrice = double.tryParse(widget
+                                            .selectedVariation!['price']
+                                            .toString()) ??
+                                        finalPrice;
                                   }
-                                  final errMsg = e is FirebaseFunctionsException
-                                      ? (e.message ?? e.toString())
-                                      : e.toString();
-                                  sm.showSnackBar(
-                                    SnackBar(
-                                      content:
-                                          Text('Erro ao reagendar: $errMsg'),
-                                      backgroundColor: Colors.red,
-                                    ),
-                                  );
-                                }
-                              } else {
-                                // Fluxo normal de Checkout
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (c) => CheckoutPage(
-                                      shopId: shopId,
-                                      shopData: shopData,
-                                      shopConfig: widget.shopConfig,
-                                      serviceDoc: widget.serviceDoc,
-                                      serviceNameOverride: finalName,
-                                      servicePriceOverride: finalPrice,
-                                      professionalDoc: widget.professionalDoc,
-                                      date: widget.selectedDate,
-                                      time: _selectedTime!,
-                                      fromSubdomain: widget.fromSubdomain,
-                                    ),
-                                  ),
-                                );
-                              }
-                            },
+
+                                  if (widget.isReschedule &&
+                                      widget.appointmentId != null) {
+                                    final newDateTime = DateTime(
+                                      widget.selectedDate.year,
+                                      widget.selectedDate.month,
+                                      widget.selectedDate.day,
+                                      _selectedTime!.hour,
+                                      _selectedTime!.minute,
+                                    );
+
+                                    final sm = ScaffoldMessenger.of(context);
+
+                                    showDialog(
+                                      context: context,
+                                      barrierDismissible: false,
+                                      builder: (ctx) => const Center(
+                                          child: CircularProgressIndicator()),
+                                    );
+
+                                    try {
+                                      final functions =
+                                          FirebaseFunctions.instance;
+                                      await functions
+                                          .httpsCallable(
+                                              'rescheduleAppointment')
+                                          .call({
+                                        'appointmentId': widget.appointmentId,
+                                        'newDateISO':
+                                            newDateTime.toIso8601String(),
+                                        'newServiceId': widget.serviceDoc.id,
+                                        'newServiceName': finalName,
+                                        'newPrice': finalPrice,
+                                        'newProfessionalId':
+                                            widget.professionalDoc.id,
+                                        'newProfessionalName':
+                                            profData['nome'] ?? 'Profissional',
+                                      });
+
+                                      if (!mounted) return;
+
+                                      int count = 0;
+                                      if (!mounted) return;
+                                      Navigator.popUntil(context, (route) {
+                                        return count++ >= 3;
+                                      });
+
+                                      sm.showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                              'Reagendamento confirmado! ✅'),
+                                          backgroundColor: Colors.green,
+                                        ),
+                                      );
+                                    } catch (e) {
+                                      if (!mounted) return;
+                                      if (Navigator.canPop(context)) {
+                                        Navigator.pop(context);
+                                      }
+                                      final errMsg =
+                                          e is FirebaseFunctionsException
+                                              ? (e.message ?? e.toString())
+                                              : e.toString();
+                                      sm.showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                              'Erro ao reagendar: $errMsg'),
+                                          backgroundColor: Colors.red,
+                                        ),
+                                      );
+                                    }
+                                  } else {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (c) => CheckoutPage(
+                                          shopId: shopId,
+                                          shopData: shopData,
+                                          shopConfig: widget.shopConfig,
+                                          serviceDoc: widget.serviceDoc,
+                                          serviceNameOverride: finalName,
+                                          servicePriceOverride: finalPrice,
+                                          professionalDoc:
+                                              widget.professionalDoc,
+                                          date: widget.selectedDate,
+                                          time: _selectedTime!,
+                                          fromSubdomain: widget.fromSubdomain,
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                },
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: widget.isReschedule
+                        backgroundColor: isOwnerConfirmMode
                             ? AppColors.primaryPurple
-                            : const Color(0xFF25D366),
+                            : widget.isReschedule
+                                ? AppColors.primaryPurple
+                                : const Color(0xFF25D366),
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(
@@ -853,9 +901,11 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                         elevation: 0,
                       ),
                       child: Text(
-                        widget.isReschedule
-                            ? 'CONFIRMAR HORÃRIO'
-                            : 'CONTINUAR',
+                        isOwnerConfirmMode
+                            ? 'CONFIRMAR HORÁRIO'
+                            : widget.isReschedule
+                                ? 'CONFIRMAR HORÁRIO'
+                                : 'CONTINUAR',
                         style: const TextStyle(
                             fontWeight: FontWeight.bold, fontSize: 14),
                         textAlign: TextAlign.center,
@@ -878,6 +928,8 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
     final startDay = DateTime(widget.selectedDate.year,
         widget.selectedDate.month, widget.selectedDate.day);
     final endDay = startDay.add(const Duration(hours: 23, minutes: 59));
+    final isOwnerMode = widget.ownerExcludeAppointmentId != null ||
+        widget.allowOccupiedSelection;
 
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
@@ -890,7 +942,7 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           debugPrint(
-              'âŒ BookingSlotsPage: ERRO ao carregar agendamentos (slots): ${snapshot.error}');
+              '❌ BookingSlotsPage: ERRO ao carregar agendamentos (slots): ${snapshot.error}');
           return Center(
             child: Padding(
               padding: const EdgeInsets.all(24.0),
@@ -903,7 +955,10 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
               child: CircularProgressIndicator(color: AppColors.primaryPurple));
         }
 
+        // Mapa: minuto_inicio -> dados do agendamento ocupante (para modo dono)
+        final Map<int, Map<String, dynamic>> occupiedSlotData = {};
         List<Map<String, int>> busyIntervals = [];
+
         for (var d in snapshot.data!.docs) {
           final data = d.data() as Map<String, dynamic>;
           final status = (data['status'] ?? '').toString().toLowerCase();
@@ -915,26 +970,62 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
             continue;
           }
 
+          // No modo dono: ignora o próprio agendamento sendo editado
+          if (widget.ownerExcludeAppointmentId != null &&
+              d.id == widget.ownerExcludeAppointmentId) {
+            continue;
+          }
+
           final dt = (data['data_agendamento'] as Timestamp).toDate();
-          // Prioriza duracao_min gravada no agendamento, senão usa a do serviço atual
           int agDuration =
               int.tryParse(data['duracao_min']?.toString() ?? '') ?? duration;
           int startMin = dt.hour * 60 + dt.minute;
           int endMin = startMin + agDuration;
           busyIntervals.add({"start": startMin, "end": endMin});
+
+          // Registra dados do conflito para exibição no modo dono
+          if (isOwnerMode) {
+            occupiedSlotData[startMin] = {
+              ...data,
+              'id': d.id,
+            };
+          }
         }
 
         final preventGaps = widget.shopConfig['evitar_buracos_agenda'] ?? false;
-        List<String> slots = AvailabilityUtils.generateSmartSlots(
-          startStr: profData['horario_inicio'] ?? "08:00",
-          endStr: profData['horario_fim'] ?? "18:00",
-          interval: widget.intervalMinutes,
-          serviceDuration: duration,
-          busyIntervals: busyIntervals,
-          preventGaps: preventGaps,
-          minAdvanceHours: widget.minAdvanceHours,
-          selectedDate: widget.selectedDate,
-        );
+
+        // Modo dono: gera TODOS os slots do turno (livres + ocupados visíveis)
+        // Modo cliente: comportamento original (apenas livres)
+        List<String> slots;
+        List<String> allSlots = [];
+        if (isOwnerMode) {
+          // Gera todos os slots do turno, sem filtro de colisão, sem filtro de horário passado
+          final startStr = profData['horario_inicio'] ?? "08:00";
+          final endStr = profData['horario_fim'] ?? "18:00";
+          int startDayMin = int.parse(startStr.split(':')[0]) * 60 +
+              int.parse(startStr.split(':')[1]);
+          int endDayMin = int.parse(endStr.split(':')[0]) * 60 +
+              int.parse(endStr.split(':')[1]);
+          int current = startDayMin;
+          while (current + duration <= endDayMin) {
+            final h = (current ~/ 60).toString().padLeft(2, '0');
+            final m = (current % 60).toString().padLeft(2, '0');
+            allSlots.add('$h:$m');
+            current += widget.intervalMinutes;
+          }
+          slots = allSlots;
+        } else {
+          slots = AvailabilityUtils.generateSmartSlots(
+            startStr: profData['horario_inicio'] ?? "08:00",
+            endStr: profData['horario_fim'] ?? "18:00",
+            interval: widget.intervalMinutes,
+            serviceDuration: duration,
+            busyIntervals: busyIntervals,
+            preventGaps: preventGaps,
+            minAdvanceHours: widget.minAdvanceHours,
+            selectedDate: widget.selectedDate,
+          );
+        }
 
         if (slots.isEmpty) {
           return const Center(
@@ -949,29 +1040,200 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
           );
         }
 
+        // Slot selecionado atual para exibição de aviso inline
+        String? selectedConflictWarning;
+        if (_selectedTime != null && isOwnerMode) {
+          final selMin = _selectedTime!.hour * 60 + _selectedTime!.minute;
+          for (final busy in busyIntervals) {
+            if (selMin < busy['end']! && selMin + duration > busy['start']!) {
+              // Slot selecionado conflita — encontra os dados do agendamento
+              for (final entry in occupiedSlotData.entries) {
+                if (selMin < entry.key + duration &&
+                    selMin + duration > entry.key) {
+                  // entry.value disponível para future use (ex: callback de sobreposição)
+                  final conflictDt =
+                      (entry.value['data_agendamento'] as Timestamp).toDate();
+                  final conflictTime =
+                      '${conflictDt.hour.toString().padLeft(2, '0')}:${conflictDt.minute.toString().padLeft(2, '0')}';
+                  final conflictClient = entry.value['client_nome'] ??
+                      entry.value['cliente_nome'] ??
+                      'Cliente';
+                  selectedConflictWarning =
+                      'Este horário já possui um agendamento de $conflictClient às $conflictTime.';
+                  break;
+                }
+              }
+              break;
+            }
+          }
+        }
+
         return SingleChildScrollView(
           child: Padding(
             padding:
                 const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-            child: Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              children: slots.map((t) {
-                final isSelected = _selectedTime != null &&
-                    "${_selectedTime!.hour.toString().padLeft(2, '0')}:${_selectedTime!.minute.toString().padLeft(2, '0')}" ==
-                        t;
-                return ChoiceChip(
-                  label: Text(t),
-                  selected: isSelected,
-                  onSelected: (sel) {
-                    final p = t.split(':');
-                    setState(() => _selectedTime = TimeOfDay(
-                        hour: int.parse(p[0]), minute: int.parse(p[1])));
-                  },
-                  selectedColor: AppColors.primaryPurple,
-                  backgroundColor: Colors.white,
-                );
-              }).toList(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Aviso inline de sobreposição (apenas modo dono)
+                if (selectedConflictWarning != null) ...[
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 16),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.orange),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.warning_amber_rounded,
+                            color: Colors.orange, size: 20),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            selectedConflictWarning,
+                            style: const TextStyle(
+                                fontSize: 13,
+                                color: Colors.black87,
+                                height: 1.4),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: slots.map((t) {
+                    final parts = t.split(':');
+                    final slotMin =
+                        int.parse(parts[0]) * 60 + int.parse(parts[1]);
+                    final isSelected = _selectedTime != null &&
+                        "${_selectedTime!.hour.toString().padLeft(2, '0')}:${_selectedTime!.minute.toString().padLeft(2, '0')}" ==
+                            t;
+                    final isHighlighted =
+                        isOwnerMode && widget.ownerHighlightedSlotTime == t;
+
+                    // Verifica se o slot está ocupado (no modo dono exibe diferente)
+                    bool isOccupied = false;
+                    if (isOwnerMode) {
+                      for (final busy in busyIntervals) {
+                        if (slotMin < busy['end']! &&
+                            slotMin + duration > busy['start']!) {
+                          isOccupied = true;
+                          break;
+                        }
+                      }
+                    }
+
+                    // Cor do chip
+                    Color backgroundColor;
+                    Color labelColor;
+                    bool showWarningBorder = false;
+                    if (isSelected && isOccupied) {
+                      backgroundColor = Colors.orange.withValues(alpha: 0.2);
+                      labelColor = Colors.deepOrange;
+                      showWarningBorder = true;
+                    } else if (isSelected) {
+                      backgroundColor = AppColors.primaryPurple;
+                      labelColor = Colors.white;
+                    } else if (isOccupied) {
+                      backgroundColor = Colors.grey.withValues(alpha: 0.15);
+                      labelColor = Colors.grey[600]!;
+                    } else {
+                      backgroundColor = Colors.white;
+                      labelColor = Colors.black87;
+                    }
+
+                    return Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        GestureDetector(
+                          onTap: () {
+                            if (isOccupied && !widget.allowOccupiedSelection) {
+                              // Comportamento padrão do cliente: slot ocupado não é clicável
+                              return;
+                            }
+                            final p = t.split(':');
+                            setState(() => _selectedTime = TimeOfDay(
+                                hour: int.parse(p[0]),
+                                minute: int.parse(p[1])));
+                            if (isOccupied && widget.allowOccupiedSelection) {
+                              // Busca dados do conflito para callback
+                              Map<String, dynamic>? conflictData;
+                              for (final entry in occupiedSlotData.entries) {
+                                if (slotMin < entry.key + duration &&
+                                    slotMin + duration > entry.key) {
+                                  conflictData = entry.value;
+                                  break;
+                                }
+                              }
+                              // Armazena no state para usar no onOwnerSlotConfirmed
+                              setState(() => _lastConflictData = conflictData);
+                              // Chama callback opcional
+                              if (widget.onOccupiedSlotSelected != null) {
+                                widget.onOccupiedSlotSelected!(
+                                    t, conflictData ?? {});
+                              }
+                            } else {
+                              // Slot livre selecionado: limpa conflito
+                              setState(() => _lastConflictData = null);
+                            }
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: backgroundColor,
+                              borderRadius: BorderRadius.circular(10),
+                              border: showWarningBorder
+                                  ? Border.all(color: Colors.orange, width: 2)
+                                  : isSelected
+                                      ? null
+                                      : Border.all(
+                                          color: Colors.grey
+                                              .withValues(alpha: 0.2)),
+                            ),
+                            child: Text(
+                              t,
+                              style: TextStyle(
+                                  color: labelColor,
+                                  fontWeight: isSelected || isHighlighted
+                                      ? FontWeight.bold
+                                      : FontWeight.normal,
+                                  fontSize: 14),
+                            ),
+                          ),
+                        ),
+                        // Badge "Horário atual" (modo dono)
+                        if (isHighlighted)
+                          Positioned(
+                            top: -8,
+                            right: -4,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 5, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: AppColors.primaryPurple,
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: const Text(
+                                'atual',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          ),
+                      ],
+                    );
+                  }).toList(),
+                ),
+              ],
             ),
           ),
         );
