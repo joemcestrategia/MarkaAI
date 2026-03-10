@@ -600,6 +600,9 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
         'profissional_nome': profData['nome'] ?? "Profissional",
         'servicoId': _selectedService!.id,
         'servico_nome': servicoData['nome'],
+        // ✔️ Salva a duração real do serviço no agendamento para evitar sobreposição na agenda
+        'duracao_min':
+            int.tryParse(servicoData['tempo_min']?.toString() ?? "30") ?? 30,
         'valor': valor,
         'data_agendamento': Timestamp.fromDate(fullDate),
         'status': 'agendado',

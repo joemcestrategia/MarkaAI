@@ -4,16 +4,19 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import '../../core/services/session_service.dart';
 import 'trial_service.dart';
+import '../../core/services/stripe_service.dart';
+import '../../core/theme/app_colors.dart';
+import '../../core/widgets/premium_dialogs.dart';
 
-enum SubscriptionPlan { start, flex, plus, prime, elite }
+enum SubscriptionPlan { free, start, plus, pro }
 
 class SubscriptionService {
   static const String _collection = 'shops';
 
   // Definição dos Planos
   static final Map<SubscriptionPlan, Map<String, dynamic>> _plans = {
-    SubscriptionPlan.start: {
-      'name': 'Start',
+    SubscriptionPlan.free: {
+      'name': 'Free',
       'price': 0.00,
       'employeeLimit': 1,
       'clientLimit': 50,
@@ -22,27 +25,27 @@ class SubscriptionService {
       'financialModule': false,
       'commissionModule': false,
       'inventoryModule': false,
-      'customLink': true,
+      'customLink': false,
       'maxServicePhotos': 1,
       'advancedScheduling': false,
-      'features': ['scheduling', 'custom_link', 'ads'],
-      'description': 'Ideal para começar.',
+      'features': ['scheduling', 'ads'],
+      'description': 'Ideal para conhecer a plataforma.',
     },
-    SubscriptionPlan.flex: {
-      'name': 'Flex',
+    SubscriptionPlan.start: {
+      'name': 'Start',
       'price': 29.90,
       'employeeLimit': 3,
       'clientLimit': 500,
       'adEnabled': false,
-      'onlinePayment': true,
-      'financialModule': true,
+      'onlinePayment': false,
+      'financialModule': false,
       'commissionModule': false,
-      'inventoryModule': true,
+      'inventoryModule': false,
       'customLink': true,
       'maxServicePhotos': 3,
-      'advancedScheduling': true,
-      'features': ['scheduling', 'financial', 'custom_link'],
-      'description': 'Essencial para autônomos.',
+      'advancedScheduling': false,
+      'features': ['scheduling', 'custom_link'],
+      'description': 'Perfeito para autônomos.',
     },
     SubscriptionPlan.plus: {
       'name': 'Plus',
@@ -52,18 +55,18 @@ class SubscriptionService {
       'adEnabled': false,
       'onlinePayment': true,
       'financialModule': true,
-      'commissionModule': true,
+      'commissionModule': false,
       'inventoryModule': true,
       'customLink': true,
       'maxServicePhotos': 5,
       'advancedScheduling': true,
-      'features': ['scheduling', 'financial', 'commissions'],
-      'description': 'Gestão completa com comissões.',
+      'features': ['scheduling', 'financial'],
+      'description': 'Gestão completa com pagamentos online.',
     },
-    SubscriptionPlan.prime: {
-      'name': 'Prime',
+    SubscriptionPlan.pro: {
+      'name': 'Pro',
       'price': 99.90,
-      'employeeLimit': 10,
+      'employeeLimit': 15,
       'clientLimit': 999999,
       'adEnabled': false,
       'onlinePayment': true,
@@ -72,22 +75,6 @@ class SubscriptionService {
       'inventoryModule': true,
       'customLink': true,
       'maxServicePhotos': 10,
-      'advancedScheduling': true,
-      'features': ['all'],
-      'description': 'Para grandes equipes. Até 10 profissionais.',
-    },
-    SubscriptionPlan.elite: {
-      'name': 'Elite',
-      'price': 149.90,
-      'employeeLimit': 999999,
-      'clientLimit': 999999,
-      'adEnabled': false,
-      'onlinePayment': true,
-      'financialModule': true,
-      'commissionModule': true,
-      'inventoryModule': true,
-      'customLink': true,
-      'maxServicePhotos': 15,
       'advancedScheduling': true,
       'features': ['all'],
       'description': 'Recursos ilimitados para o seu negócio.',
@@ -144,7 +131,7 @@ class SubscriptionService {
       if (sub['status'] == 'trial') {
         final end = (sub['trial_ends_at'] as Timestamp?)?.toDate();
         if (end != null && end.isAfter(DateTime.now())) {
-          return SubscriptionPlan.prime; // Trial dá acesso total
+          return SubscriptionPlan.pro; // Trial dá acesso total
         }
       }
 
@@ -157,35 +144,26 @@ class SubscriptionService {
 
   static SubscriptionPlan _parsePlanId(String? id) {
     switch (id) {
-      // IDs legados (antigos)
-      case 'starter':
-        return SubscriptionPlan.flex;
-      case 'pro':
-        return SubscriptionPlan.plus;
-      case 'vip':
-        return SubscriptionPlan.prime;
-      // IDs Firestore (seedados via seedPlans: start/flex/plus/prime)
       case 'start':
         return SubscriptionPlan.start;
-      case 'flex':
-        return SubscriptionPlan.flex;
       case 'plus':
         return SubscriptionPlan.plus;
-      case 'prime':
-        return SubscriptionPlan.prime;
-      case 'elite':
-        return SubscriptionPlan.elite;
+      case 'pro':
+        return SubscriptionPlan.pro;
       default:
-        return SubscriptionPlan.start;
+        // Assume Free plan for completely unmatching identities
+        return SubscriptionPlan.free;
     }
   }
 
-  static String _getPlanId(SubscriptionPlan plan) {
-    if (plan == SubscriptionPlan.flex) return 'flex';
+  static String _getPlanId(SubscriptionPlan plan) => getPlanId(plan);
+
+  /// Converte enum para string do plano (público)
+  static String getPlanId(SubscriptionPlan plan) {
+    if (plan == SubscriptionPlan.start) return 'start';
     if (plan == SubscriptionPlan.plus) return 'plus';
-    if (plan == SubscriptionPlan.prime) return 'prime';
-    if (plan == SubscriptionPlan.elite) return 'elite';
-    return 'start';
+    if (plan == SubscriptionPlan.pro) return 'pro';
+    return 'free';
   }
 
   /// Verifica se pode adicionar mais funcionários
@@ -270,7 +248,7 @@ class SubscriptionService {
       if (sub['status'] == 'trial') {
         final end = (sub['trial_ends_at'] as Timestamp?)?.toDate();
         if (end != null && end.isAfter(DateTime.now())) {
-          return SubscriptionPlan.prime;
+          return SubscriptionPlan.pro;
         }
       }
 
@@ -338,9 +316,7 @@ class SubscriptionService {
     return _plans[plan]!;
   }
 
-  /// CORREÇÃO 4: Inicia o fluxo de assinatura de um plano.
-  /// Planos pagos requerem Mercado Pago conectado e cobram via Cloud Function.
-  /// Plano gratuito é ativado diretamente no Firestore.
+  /// Inicia o fluxo de assinatura, upgrade ou downgrade de plano.
   static Future<bool> startPurchaseFlow(
       BuildContext context, SubscriptionPlan plan) async {
     final planDetails = _plans[plan]!;
@@ -348,36 +324,7 @@ class SubscriptionService {
     final planName = planDetails['name'] as String;
     final planId = _getPlanId(plan);
 
-    // Plano gratuito: ativar diretamente, sem cobrança
-    if (planPrice <= 0) {
-      final confirm = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text("Confirmar Plano Gratuito"),
-          content: Text("Deseja ativar o plano '$planName'?"),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text("Cancelar"),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green, foregroundColor: Colors.white),
-              child: const Text("Confirmar"),
-            ),
-          ],
-        ),
-      );
-      if (confirm == true && context.mounted) {
-        await _ativarPlanoGratuito(
-            context: context, planId: planId, planName: planName);
-        return true;
-      }
-      return false;
-    }
-
-    // PLANO PAGO: requer Mercado Pago configurado
+    // Busca shopId
     String? shopId = await SessionService.getShopId();
     if (shopId == null) {
       final user = FirebaseAuth.instance.currentUser;
@@ -387,9 +334,9 @@ class SubscriptionService {
             .doc(user.uid)
             .get();
         shopId = userDoc.data()?['shopId'];
+        if (shopId != null) await SessionService.saveShopId(shopId);
       }
     }
-
     if (shopId == null) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -400,33 +347,110 @@ class SubscriptionService {
       return false;
     }
 
-    if (!context.mounted) return false;
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text("Assinar Plano $planName"),
-        content: Text(
-          "Será cobrado R\$ ${planPrice.toStringAsFixed(2).replaceAll('.', ',')} "
-          "mensalmente pelo plano '$planName'.\n\nDeseja confirmar a assinatura?",
+    // Detecta plano atual
+    final currentPlan = await getCurrentPlan();
+    final currentPlanPrice = (_plans[currentPlan]!['price'] as num).toDouble();
+    final isCurrentlyPaid = currentPlanPrice > 0;
+
+    // ── CENÁRIO 1: downgrade para FREE (cancelamento) ────────────────
+    if (planPrice <= 0) {
+      if (!context.mounted) return false;
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber, color: Colors.orange),
+              SizedBox(width: 8),
+              Text('Fazer Downgrade?'),
+            ],
+          ),
+          content: Text(
+            isCurrentlyPaid
+                ? 'Ao fazer downgrade para o plano gratuito, sua assinatura será cancelada '
+                    'e você manterá acesso ao plano atual até o fim do período já pago.'
+                : 'Deseja ativar o plano gratuito?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.orange,
+                  foregroundColor: Colors.white),
+              child: const Text('Confirmar Downgrade'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text("Cancelar"),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.deepPurple,
-                foregroundColor: Colors.white),
-            child: const Text("Confirmar"),
-          ),
-        ],
-      ),
-    );
+      );
+      if (confirm != true || !context.mounted) return false;
 
-    if (confirm != true || !context.mounted) return false;
+      if (isCurrentlyPaid) {
+        // Cancela assinatura no Stripe e mantém acesso até fim do período
+        return await cancelSubscription(context: context, shopId: shopId);
+      } else {
+        // Estava no free ou trial, ativa free diretamente
+        await _ativarPlanoGratuito(
+            context: context, planId: planId, planName: planName);
+        return true;
+      }
+    }
 
+    // ── CENÁRIO 2: upgrade ou downgrade entre planos pagos ───────────
+    if (isCurrentlyPaid && currentPlan != plan) {
+      if (!context.mounted) return false;
+      final isUpgrade = planPrice > currentPlanPrice;
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Row(
+            children: [
+              Icon(isUpgrade ? Icons.rocket_launch : Icons.arrow_downward,
+                  color: isUpgrade ? Colors.purple : Colors.orange),
+              const SizedBox(width: 8),
+              Text(isUpgrade ? 'Fazer Upgrade?' : 'Fazer Downgrade?'),
+            ],
+          ),
+          content: Text(
+            isUpgrade
+                ? 'Você será cobrado proporcionalmente (pro-rata) pela diferença '
+                    'até o fim do ciclo atual e depois R\$ ${planPrice.toStringAsFixed(2).replaceAll(".", ",")}/mês.'
+                : 'Seu plano será reduzido para $planName. O crédito restante '
+                    'será aplicado proporcionalmente no novo valor.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: isUpgrade ? Colors.purple : Colors.orange,
+                foregroundColor: Colors.white,
+              ),
+              child:
+                  Text(isUpgrade ? 'Confirmar Upgrade' : 'Confirmar Downgrade'),
+            ),
+          ],
+        ),
+      );
+      if (confirm != true || !context.mounted) return false;
+
+      return await upgradeSubscription(
+        context: context,
+        shopId: shopId,
+        newPlanId: planId,
+        newPlanName: planName,
+        newPlanPrice: planPrice,
+      );
+    }
+
+    // ── CENÁRIO 3: novo assinante (Free/Trial → Plano Pago) ──────────
+    if (!context.mounted) return false;
     return await _iniciarPagamentoAssinatura(
       context: context,
       shopId: shopId,
@@ -436,7 +460,7 @@ class SubscriptionService {
     );
   }
 
-  /// Chama Cloud Function createSubscription (onCall) para ativar o plano.
+  /// Chama o StripeService para ativar o plano via Payment Sheet Nativo.
   static Future<bool> _iniciarPagamentoAssinatura({
     required BuildContext context,
     required String shopId,
@@ -445,51 +469,39 @@ class SubscriptionService {
     required double planPrice,
   }) async {
     try {
-      final callable =
-          FirebaseFunctions.instance.httpsCallable('createSubscription');
-      final result = await callable.call({
-        'shopId': shopId,
-        'planId': planId,
-        'planName': planName,
-        'planPrice': planPrice,
-        'billingCycle': 'monthly',
-      });
-
-      final success = result.data?['success'] == true;
-      if (success) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text("Plano $planName ativado com sucesso! ðŸš€"),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
-        return true;
-      } else {
-        throw Exception(result.data?['message'] ?? 'Erro ao criar assinatura.');
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null || user.email == null) {
+        throw Exception("Usuário não autenticado ou sem e-mail.");
       }
-    } on FirebaseFunctionsException catch (e) {
-      debugPrint(
-          "_iniciarPagamentoAssinatura FirebaseFunctionsException: ${e.code} - ${e.message}");
-      if (context.mounted) {
+
+      PremiumDialogs.showLoading(context, "Preparando seu novo ambiente...");
+
+      final success = await StripeService.instance.setupSubscriptionPayment(
+        planId: planId,
+        shopId: shopId,
+        customerEmail: user.email!,
+      );
+
+      if (context.mounted) PremiumDialogs.hideLoading(context);
+
+      if (success && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Erro ao processar assinatura: ${e.message}'),
-            backgroundColor: Colors.red,
+          const SnackBar(
+            content: Text("Sensacional! Sua marca agora é Premium. 🚀"),
+            backgroundColor: AppColors.successGreen,
           ),
         );
+        return true;
+      } else if (!success && context.mounted) {
+        // O StripeService já logou o erro
       }
-      return false;
+      return success;
     } catch (e) {
+      if (context.mounted) PremiumDialogs.hideLoading(context);
       debugPrint("_iniciarPagamentoAssinatura error: $e");
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Erro ao processar assinatura: ${e.toString()}'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        PremiumDialogs.showError(
+            context, "Não conseguimos iniciar seu sucesso agora: $e");
       }
       return false;
     }
@@ -530,7 +542,7 @@ class SubscriptionService {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("Plano $planName ativado! ðŸŽ‰"),
+            content: Text('Plano $planName ativado!'),
             backgroundColor: Colors.green,
           ),
         );

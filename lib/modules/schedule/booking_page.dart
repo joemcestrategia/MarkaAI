@@ -921,6 +921,66 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
     );
   }
 
+  Future<List<Map<String, dynamic>>> _fetchAppointmentsAndIntervals(
+      DateTime startDay, DateTime endDay, bool isOwnerMode) async {
+    final querySnapshot = await FirebaseFirestore.instance
+        .collection('appointments')
+        .where('shopId', isEqualTo: widget.shop.id)
+        .where('profissionalId', isEqualTo: widget.professionalDoc.id)
+        .where('data_agendamento', isGreaterThanOrEqualTo: startDay)
+        .where('data_agendamento', isLessThanOrEqualTo: endDay)
+        .get();
+
+    List<Map<String, dynamic>> results = [];
+
+    for (var d in querySnapshot.docs) {
+      final data = d.data();
+      final status = (data['status'] ?? '').toString().toLowerCase();
+
+      if (status == 'cancelado' ||
+          status == 'recusado' ||
+          status == 'excluido') {
+        continue;
+      }
+
+      if (widget.ownerExcludeAppointmentId != null &&
+          d.id == widget.ownerExcludeAppointmentId) {
+        continue;
+      }
+
+      int? agDuration = int.tryParse(data['duracao_min']?.toString() ?? '') ??
+          int.tryParse(data['duracao']?.toString() ?? '');
+
+      if (agDuration == null) {
+        String? savedServiceId = data['servicoId'] ?? data['servico_id'];
+        if (savedServiceId != null && savedServiceId.isNotEmpty) {
+          try {
+            final svcDoc = await FirebaseFirestore.instance
+                .collection('services')
+                .doc(savedServiceId)
+                .get();
+            if (svcDoc.exists) {
+              final svcData = svcDoc.data();
+              if (svcData != null) {
+                agDuration =
+                    int.tryParse(svcData['tempo_min']?.toString() ?? '');
+              }
+            }
+          } catch (_) {}
+        }
+        agDuration ??= 30; // fallback final
+      }
+
+      results.add({
+        ...data,
+        'id': d.id,
+        'computed_duration': agDuration,
+      });
+    }
+
+    return results;
+  }
+
   Widget _buildSlotsList() {
     final profData = widget.professionalDoc.data() as Map<String, dynamic>;
     int duration =
@@ -931,18 +991,16 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
     final isOwnerMode = widget.ownerExcludeAppointmentId != null ||
         widget.allowOccupiedSelection;
 
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('appointments')
-          .where('shopId', isEqualTo: widget.shop.id)
-          .where('profissionalId', isEqualTo: widget.professionalDoc.id)
-          .where('data_agendamento', isGreaterThanOrEqualTo: startDay)
-          .where('data_agendamento', isLessThanOrEqualTo: endDay)
-          .snapshots(),
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _fetchAppointmentsAndIntervals(startDay, endDay, isOwnerMode),
       builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+              child: CircularProgressIndicator(color: AppColors.primaryPurple));
+        }
+
         if (snapshot.hasError) {
-          debugPrint(
-              '❌ BookingSlotsPage: ERRO ao carregar agendamentos (slots): ${snapshot.error}');
+          debugPrint('❌ BookingSlotsPage: ERRO: ${snapshot.error}');
           return Center(
             child: Padding(
               padding: const EdgeInsets.all(24.0),
@@ -950,45 +1008,21 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
             ),
           );
         }
-        if (!snapshot.hasData) {
-          return const Center(
-              child: CircularProgressIndicator(color: AppColors.primaryPurple));
-        }
 
-        // Mapa: minuto_inicio -> dados do agendamento ocupante (para modo dono)
+        final dataList = snapshot.data ?? [];
         final Map<int, Map<String, dynamic>> occupiedSlotData = {};
         List<Map<String, int>> busyIntervals = [];
 
-        for (var d in snapshot.data!.docs) {
-          final data = d.data() as Map<String, dynamic>;
-          final status = (data['status'] ?? '').toString().toLowerCase();
-
-          // Ignorar agendamentos que não ocupam a agenda
-          if (status == 'cancelado' ||
-              status == 'recusado' ||
-              status == 'excluido') {
-            continue;
-          }
-
-          // No modo dono: ignora o próprio agendamento sendo editado
-          if (widget.ownerExcludeAppointmentId != null &&
-              d.id == widget.ownerExcludeAppointmentId) {
-            continue;
-          }
-
+        for (var data in dataList) {
           final dt = (data['data_agendamento'] as Timestamp).toDate();
-          int agDuration =
-              int.tryParse(data['duracao_min']?.toString() ?? '') ?? duration;
           int startMin = dt.hour * 60 + dt.minute;
+          int agDuration = data['computed_duration'] as int;
           int endMin = startMin + agDuration;
+
           busyIntervals.add({"start": startMin, "end": endMin});
 
-          // Registra dados do conflito para exibição no modo dono
           if (isOwnerMode) {
-            occupiedSlotData[startMin] = {
-              ...data,
-              'id': d.id,
-            };
+            occupiedSlotData[startMin] = data;
           }
         }
 
@@ -999,7 +1033,8 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
         List<String> slots;
         List<String> allSlots = [];
         if (isOwnerMode) {
-          // Gera todos os slots do turno, sem filtro de colisão, sem filtro de horário passado
+          // Gera todos os slots do turno, sem filtro de horário passado.
+          // Slots que colidem com um serviço em andamento são marcados como occupied.
           final startStr = profData['horario_inicio'] ?? "08:00";
           final endStr = profData['horario_fim'] ?? "18:00";
           int startDayMin = int.parse(startStr.split(':')[0]) * 60 +
@@ -1117,13 +1152,23 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                     final isHighlighted =
                         isOwnerMode && widget.ownerHighlightedSlotTime == t;
 
-                    // Verifica se o slot está ocupado (no modo dono exibe diferente)
+                    // Verifica se o slot está ocupado e pega os dados do agendamento
                     bool isOccupied = false;
+                    Map<String, dynamic>? conflictObj;
                     if (isOwnerMode) {
                       for (final busy in busyIntervals) {
                         if (slotMin < busy['end']! &&
                             slotMin + duration > busy['start']!) {
                           isOccupied = true;
+                          for (final entry in occupiedSlotData.entries) {
+                            int occupDuration =
+                                entry.value['computed_duration'] ?? 30;
+                            if (slotMin < entry.key + occupDuration &&
+                                slotMin + duration > entry.key) {
+                              conflictObj = entry.value;
+                              break;
+                            }
+                          }
                           break;
                         }
                       }
@@ -1185,7 +1230,7 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                           },
                           child: Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 14, vertical: 10),
+                                horizontal: 4, vertical: 8),
                             decoration: BoxDecoration(
                               color: backgroundColor,
                               borderRadius: BorderRadius.circular(10),
@@ -1197,14 +1242,48 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                           color: Colors.grey
                                               .withValues(alpha: 0.2)),
                             ),
-                            child: Text(
-                              t,
-                              style: TextStyle(
-                                  color: labelColor,
-                                  fontWeight: isSelected || isHighlighted
-                                      ? FontWeight.bold
-                                      : FontWeight.normal,
-                                  fontSize: 14),
+                            child: Container(
+                              // Formato quadradinho para otimizar espaço de tela
+                              constraints: BoxConstraints(
+                                  minWidth: isOwnerMode ? 72 : 64,
+                                  minHeight: isOwnerMode ? 72 : 48),
+                              alignment: Alignment.center,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  if (isOccupied && conflictObj != null)
+                                    Container(
+                                      constraints:
+                                          const BoxConstraints(maxWidth: 86),
+                                      padding:
+                                          const EdgeInsets.only(bottom: 2.0),
+                                      child: Text(
+                                        "${conflictObj['servico_nome'] ?? 'Serviço'}\n${conflictObj['client_nome'] ?? conflictObj['cliente_nome'] ?? conflictObj['profissional_nome'] ?? ''}",
+                                        style: TextStyle(
+                                            color: labelColor.withValues(
+                                                alpha: 0.9),
+                                            fontSize: 9,
+                                            height: 1.1,
+                                            fontWeight: FontWeight.w600),
+                                        textAlign: TextAlign.center,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  Text(
+                                    t,
+                                    style: TextStyle(
+                                        color: labelColor,
+                                        fontWeight: isSelected || isHighlighted
+                                            ? FontWeight.bold
+                                            : FontWeight.normal,
+                                        fontSize: (isOccupied && isOwnerMode)
+                                            ? 12
+                                            : 14),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         ),

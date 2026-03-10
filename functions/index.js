@@ -13,6 +13,20 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const cors = require("cors")({ origin: true });
+const stripe = require("stripe")("sk_test_51T97xzFzh8r5AMGz5dDtbgzjOacC7aZ4vnTrUMW1fEu7ecxmkDIwYta1lJoKW9t1EmAIhi0GQeszwaCRVZgSYsVs0021hsHzB9");
+
+const PRICE_IDS = {
+  // IDs de Teste (sk_test) - criados via API para validação
+  'start': 'price_1T9BG1Fzh8r5AMGzr6o1Lck5', // Test - R$ 29,90/mês
+  'plus': 'price_1T9BG1Fzh8r5AMGz8gdRehFu',  // Test - R$ 59,90/mês
+  'pro': 'price_1T9BG2Fzh8r5AMGzKlwVOB1n',   // Test - R$ 99,90/mês
+  // Boosts (manter IDs antigos - podem ser Live, testar separadamente)
+  'boost_24h': 'price_1T98cJFzh8r5AMGzFOigUfSM',
+  'boost_3d': 'price_1T98d6Fzh8r5AMGznhujEh4J',
+  'boost_7d': 'price_1T98e3Fzh8r5AMGz4FJhXU3C',
+  // Plano test_plan legado
+  'test_plan': 'price_1T98SZFzh8r5AMGzPrzLG4c8'
+};
 
 const GOOGLE_PLACES_API_KEY = defineString("GOOGLE_PLACES_API_KEY");
 const MP_WEBHOOK_SECRET = defineSecret("MP_WEBHOOK_SECRET");
@@ -91,6 +105,162 @@ function escapeJs(unsafe) {
   if (!unsafe) return '';
   return unsafe.replace(/'/g, "\\'").replace(/"/g, '\\"');
 }
+
+// Public shop preview page (provides OG meta tags for WhatsApp/social previews)
+exports.publicShopPreview = onRequest({ cors: true }, async (req, res) => {
+  try {
+    // Extract slug from URL path (e.g. /afroed) or query param
+    const slug = (req.path.replace(/^\//, '').replace(/\/$/, '') || req.query.slug || '').trim();
+    if (!slug) {
+      return res.status(400).send("Slug não fornecido");
+    }
+    // ... rest of the function ...
+  } catch (e) {
+    // ... error handling ...
+  }
+});
+
+/**
+ * Cria uma Assinatura no Stripe e retorna o segredo para o App (Stripe Native)
+ */
+exports.createStripeSubscription = onCall(async (request) => {
+  const { planId, email, shopId } = request.data;
+
+  if (!planId || !email || !shopId) {
+    throw new functions.https.HttpsError('invalid-argument', 'Dados incompletos');
+  }
+
+  const priceId = PRICE_IDS[planId];
+  if (!priceId || priceId.includes('TODO')) {
+    throw new functions.https.HttpsError('not-found', 'ID de Preço não configurado para este plano');
+  }
+
+  try {
+    // 1. Buscar ou Criar Cliente
+    let customer;
+    const customers = await stripe.customers.list({ email: email, limit: 1 });
+    if (customers.data.length > 0) {
+      customer = customers.data[0];
+    } else {
+      customer = await stripe.customers.create({
+        email: email,
+        metadata: { shopId: shopId }
+      });
+    }
+
+    // 2. Criar Chave Efêmera (para o Payment Sheet)
+    const ephemeralKey = await stripe.ephemeralKeys.create(
+      { customer: customer.id },
+      { apiVersion: '2024-06-20' }
+    );
+
+    // 4. Salvar IDs no Firestore imediatamente
+    await admin.firestore().collection('shops').doc(shopId).update({
+      'subscription.stripe_subscription_id': subscription.id,
+      'subscription.stripe_customer_id': customer.id,
+      'subscription.status': 'pending_payment',
+      'subscription.plan_id': planId,
+      'stripe_customer_id': customer.id, // redundancy for easy lookup
+    });
+
+    return {
+      subscriptionId: subscription.id,
+      paymentIntentClientSecret: subscription.latest_invoice.payment_intent.client_secret,
+      customer: customer.id,
+      ephemeralKey: ephemeralKey.secret,
+      publishableKey: "pk_test_51T97xzFzh8r5AMGzFUh6FoEmFia9Q0w1QftuKEJJHv5gY7yxvCQREukvqPtCCufP4ZaRmYtCTZG5rswephuyEfQh00IxX3VrYP"
+    };
+  } catch (error) {
+    console.error("Stripe Subscription Error:", error);
+    throw new functions.https.HttpsError('internal', error.message);
+  }
+});
+
+/**
+ * Webhook do Stripe para sincronização Assíncrona (SaaS)
+ */
+exports.stripeWebhook = onRequest({ cors: true }, async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  let event;
+
+  try {
+    // Nota: Em produção, valide o sig usando stripe.webhooks.constructEvent se tiver o endpoint secret
+    event = req.body;
+  } catch (err) {
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  const db = admin.firestore();
+
+  switch (event.type) {
+    case 'invoice.payment_succeeded': {
+      const invoice = event.data.object;
+      const subscriptionId = invoice.subscription;
+      const customerId = invoice.customer;
+
+      if (subscriptionId) {
+        // Encontrar a loja vinculada a este cliente ou assinatura
+        const shops = await db.collection('shops')
+          .where('subscription.stripe_subscription_id', '==', subscriptionId)
+          .limit(1)
+          .get();
+
+        if (!shops.empty) {
+          const shopDoc = shops.docs[0];
+          const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+
+          await shopDoc.ref.update({
+            'subscription.status': 'active',
+            'subscription.current_period_end': admin.firestore.Timestamp.fromMillis(subscription.current_period_end * 1000),
+            'subscription.updated_at': admin.firestore.FieldValue.serverTimestamp(),
+          });
+          console.log(`✅ Webhook: Assinatura renovada para loja ${shopDoc.id}`);
+        }
+      }
+      break;
+    }
+
+    case 'customer.subscription.deleted': {
+      const subscription = event.data.object;
+      const shops = await db.collection('shops')
+        .where('subscription.stripe_subscription_id', '==', subscription.id)
+        .limit(1)
+        .get();
+
+      if (!shops.empty) {
+        await shops.docs[0].ref.update({
+          'subscription.status': 'expired',
+          'subscription.updated_at': admin.firestore.FieldValue.serverTimestamp(),
+          'plan': 'free',
+          'plan_id': 'free'
+        });
+        console.log(`❌ Webhook: Assinatura expirada/excluída para loja ${shops.docs[0].id}`);
+      }
+      break;
+    }
+  }
+
+  res.json({ received: true });
+});
+exports.createStripePaymentIntent = onCall(async (request) => {
+  const { amount, currency, description } = request.data;
+
+  try {
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: amount,
+      currency: currency || 'brl',
+      description: description,
+      automatic_payment_methods: { enabled: true },
+    });
+
+    return {
+      clientSecret: paymentIntent.client_secret,
+    };
+  } catch (error) {
+    console.error("Stripe PaymentIntent Error:", error);
+    throw new functions.https.HttpsError('internal', error.message);
+  }
+});
 
 // Public shop preview page (provides OG meta tags for WhatsApp/social previews)
 exports.publicShopPreview = onRequest({ cors: true }, async (req, res) => {
@@ -3064,53 +3234,55 @@ exports.upgradeSubscription = onCall(async (request) => {
   if (!auth) throw new functions.https.HttpsError('unauthenticated', 'Usuário não autenticado.');
   const uid = auth.uid;
   const { shopId, newPlanId, newPlanName, newPlanPrice } = request.data;
-  if (!shopId || !newPlanId || !newPlanName) {
-    throw new functions.https.HttpsError('invalid-argument', 'shopId, newPlanId e newPlanName são obrigatórios.');
+
+  if (!shopId || !newPlanId) {
+    throw new functions.https.HttpsError('invalid-argument', 'shopId e newPlanId são obrigatórios.');
   }
-  const validPlans = ['free', 'starter', 'pro', 'vip'];
-  if (!validPlans.includes(newPlanId)) {
-    throw new functions.https.HttpsError('invalid-argument', `Plano inválido: ${newPlanId}`);
-  }
+
   const db = admin.firestore();
   const shopRef = db.collection('shops').doc(shopId);
   const shopDoc = await shopRef.get();
   if (!shopDoc.exists) throw new functions.https.HttpsError('not-found', 'Loja não encontrada.');
+
   const shopData = shopDoc.data();
-  const ownerId = shopData?.ownerId || shopData?.userId || shopData?.owner_uid;
-  if (ownerId && ownerId !== uid) {
-    throw new functions.https.HttpsError('permission-denied', 'Sem permissão para alterar esta loja.');
-  }
-  // Calcular crédito pro-rata (dias restantes do ciclo atual)
-  const current = shopData?.subscription || {};
-  const currentPeriodEnd = current.current_period_end?.toDate ? current.current_period_end.toDate() : null;
-  const now = new Date();
-  let upgradeCredit = 0;
-  if (currentPeriodEnd && currentPeriodEnd > now) {
-    const daysLeft = Math.max(0, Math.ceil((currentPeriodEnd - now) / (1000 * 60 * 60 * 24)));
-    const dailyRate = (current.price || 0) / 30;
-    upgradeCredit = parseFloat((daysLeft * dailyRate).toFixed(2));
-  }
-  // Novo período: 30 dias a partir de hoje
-  const newPeriodEnd = new Date(now);
-  newPeriodEnd.setDate(newPeriodEnd.getDate() + 30);
-  await shopRef.update({
-    subscription: {
+  const subscriptionId = shopData?.subscription?.stripe_subscription_id;
+
+  // Se não tem assinatura Stripe, trata como upgrade manual (legado ou free -> paid)
+  if (!subscriptionId) {
+    // Lógica original para ativar planos sem cobrar via Stripe (Free -> Start por exemplo)
+    await shopRef.update({
+      plan: newPlanId,
       plan_id: newPlanId,
-      plan_name: newPlanName,
-      price: parseFloat(newPlanPrice) || 0,
-      status: 'active',
-      billing_cycle: 'monthly',
-      current_period_start: admin.firestore.FieldValue.serverTimestamp(),
-      current_period_end: admin.firestore.Timestamp.fromDate(newPeriodEnd),
-      upgrade_credit: upgradeCredit,
-      updated_at: admin.firestore.FieldValue.serverTimestamp(),
-      upgraded_by: uid,
-    },
-    plan: newPlanId,
-    plan_id: newPlanId,
-  });
-  console.log(`✅ upgradeSubscription: loja ${shopId} → ${newPlanId}, crédito=R$${upgradeCredit} (uid ${uid})`);
-  return { success: true, message: `Plano ${newPlanName} ativado com crédito de R$ ${upgradeCredit.toFixed(2).replace('.', ',')}!`, upgradeCredit };
+      'subscription.plan_id': newPlanId,
+      'subscription.status': 'active',
+    });
+    return { success: true, message: "Plano atualizado localmente." };
+  }
+
+  const newPriceId = PRICE_IDS[newPlanId];
+  if (!newPriceId) throw new functions.https.HttpsError('not-found', 'ID de preço não encontrado.');
+
+  try {
+    // 1. Recuperar assinatura atual no Stripe
+    const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+
+    // 2. Realizar o Upgrade no Stripe (com pro-rata automático)
+    await stripe.subscriptions.update(subscriptionId, {
+      items: [{
+        id: subscription.items.data[0].id,
+        price: newPriceId,
+      }],
+      proration_behavior: 'always_invoice', // Cobra a diferença imediatamente
+      payment_behavior: 'default_incomplete', // Exige pagamento se houver diferença
+      expand: ['latest_invoice.payment_intent'],
+    });
+
+    console.log(`✅ upgradeSubscription (Stripe): loja ${shopId} → ${newPlanId}`);
+    return { success: true, message: `Upgrade para ${newPlanName} solicitado via Stripe.` };
+  } catch (error) {
+    console.error("Stripe Upgrade Error:", error);
+    throw new functions.https.HttpsError('internal', error.message);
+  }
 });
 
 // TESTE 11 — Downgrade agendado para próximo ciclo
@@ -3155,28 +3327,36 @@ exports.cancelSubscription = onCall(async (request) => {
   const uid = auth.uid;
   const { shopId } = request.data;
   if (!shopId) throw new functions.https.HttpsError('invalid-argument', 'shopId é obrigatório.');
+
   const db = admin.firestore();
   const shopRef = db.collection('shops').doc(shopId);
   const shopDoc = await shopRef.get();
   if (!shopDoc.exists) throw new functions.https.HttpsError('not-found', 'Loja não encontrada.');
+
   const shopData = shopDoc.data();
-  const ownerId = shopData?.ownerId || shopData?.userId || shopData?.owner_uid;
-  if (ownerId && ownerId !== uid) {
-    throw new functions.https.HttpsError('permission-denied', 'Sem permissão para alterar esta loja.');
+  const subscriptionId = shopData?.subscription?.stripe_subscription_id;
+
+  if (!subscriptionId) {
+    // Fallback cancelamento local
+    await shopRef.update({
+      'subscription.status': 'canceled',
+      'subscription.updated_at': admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return { success: true, message: "Acesso local cancelado." };
   }
-  const current = shopData?.subscription || {};
-  const currentPeriodEnd = current.current_period_end || null;
-  // Status = 'canceled', acesso mantido até current_period_end
-  await shopRef.update({
-    'subscription.status': 'canceled',
-    'subscription.cancel_at': admin.firestore.FieldValue.serverTimestamp(),
-    'subscription.canceled_by': uid,
-    'subscription.access_until': currentPeriodEnd || admin.firestore.FieldValue.serverTimestamp(),
-    'subscription.updated_at': admin.firestore.FieldValue.serverTimestamp(),
-  });
-  console.log(`✅ cancelSubscription: loja ${shopId} cancelada (acesso até ${currentPeriodEnd ? 'fim do período' : 'agora'}) (uid ${uid})`);
-  const accessMsg = currentPeriodEnd ? 'Você mantém acesso até o fim do período atual.' : 'Assinatura cancelada.';
-  return { success: true, message: `Assinatura cancelada. ${accessMsg}` };
+
+  try {
+    // Agendar cancelamento para o fim do período (para não prejudicar o cliente)
+    await stripe.subscriptions.update(subscriptionId, {
+      cancel_at_period_end: true,
+    });
+
+    console.log(`✅ cancelSubscription (Stripe): loja ${shopId} agendada para encerrar.`);
+    return { success: true, message: "Sua assinatura será encerrada ao final do período pago. Você mantém acesso até lá." };
+  } catch (error) {
+    console.error("Stripe Cancel Error:", error);
+    throw new functions.https.HttpsError('internal', error.message);
+  }
 });
 
 // TESTE 13 — Reativação de assinatura cancelada
@@ -3184,40 +3364,33 @@ exports.reactivateSubscription = onCall(async (request) => {
   const auth = request.auth;
   if (!auth) throw new functions.https.HttpsError('unauthenticated', 'Usuário não autenticado.');
   const uid = auth.uid;
-  const { shopId, planId, planName } = request.data;
+  const { shopId } = request.data;
   if (!shopId) throw new functions.https.HttpsError('invalid-argument', 'shopId é obrigatório.');
+
   const db = admin.firestore();
   const shopRef = db.collection('shops').doc(shopId);
   const shopDoc = await shopRef.get();
   if (!shopDoc.exists) throw new functions.https.HttpsError('not-found', 'Loja não encontrada.');
+
   const shopData = shopDoc.data();
-  const ownerId = shopData?.ownerId || shopData?.userId || shopData?.owner_uid;
-  if (ownerId && ownerId !== uid) {
-    throw new functions.https.HttpsError('permission-denied', 'Sem permissão para alterar esta loja.');
+  const subscriptionId = shopData?.subscription?.stripe_subscription_id;
+
+  if (!subscriptionId) {
+    throw new functions.https.HttpsError('failed-precondition', 'Nenhuma assinatura Stripe vinculada.');
   }
-  const current = shopData?.subscription || {};
-  const resolvedPlanId = planId || current.plan_id || 'free';
-  const resolvedPlanName = planName || current.plan_name || resolvedPlanId;
-  // Novo período de 30 dias
-  const newPeriodEnd = new Date();
-  newPeriodEnd.setDate(newPeriodEnd.getDate() + 30);
-  await shopRef.update({
-    'subscription.status': 'active',
-    'subscription.plan_id': resolvedPlanId,
-    'subscription.plan_name': resolvedPlanName,
-    'subscription.current_period_start': admin.firestore.FieldValue.serverTimestamp(),
-    'subscription.current_period_end': admin.firestore.Timestamp.fromDate(newPeriodEnd),
-    'subscription.cancel_at': admin.firestore.FieldValue.delete(),
-    'subscription.canceled_by': admin.firestore.FieldValue.delete(),
-    'subscription.access_until': admin.firestore.FieldValue.delete(),
-    'subscription.pending_downgrade': admin.firestore.FieldValue.delete(),
-    'subscription.reactivated_by': uid,
-    'subscription.updated_at': admin.firestore.FieldValue.serverTimestamp(),
-    plan: resolvedPlanId,
-    plan_id: resolvedPlanId,
-  });
-  console.log(`✅ reactivateSubscription: loja ${shopId} reativada como ${resolvedPlanId} (uid ${uid})`);
-  return { success: true, message: `Assinatura ${resolvedPlanName} reativada com sucesso!`, planId: resolvedPlanId };
+
+  try {
+    // Reverter o cancelamento agendado (Stripe volta a ser recorrente)
+    await stripe.subscriptions.update(subscriptionId, {
+      cancel_at_period_end: false,
+    });
+
+    console.log(`✅ reactivateSubscription (Stripe): loja ${shopId} reativada.`);
+    return { success: true, message: "Sua assinatura foi reativada com sucesso! 🚀" };
+  } catch (error) {
+    console.error("Stripe Reactivate Error:", error);
+    throw new functions.https.HttpsError('internal', error.message);
+  }
 });
 
 // ============================================================
@@ -3555,3 +3728,256 @@ exports.approveRefund = onCall(async (request) => {
 });
 
 exports.debugAppointments = require('./debug').debugAppointments;
+
+// ============================================================
+// STRIPE SAAS - Assinaturas de Planos (MarkaAI → Lojas)
+// ============================================================
+
+/**
+ * Cria uma assinatura Stripe para o dono de loja.
+ * Retorna os dados necessários para o PaymentSheet nativo do Flutter.
+ */
+exports.createStripeSubscription = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) throw new functions.https.HttpsError('unauthenticated', 'Usuário não autenticado.');
+
+  const { planId, shopId, email } = request.data;
+  if (!planId || !shopId || !email) {
+    throw new functions.https.HttpsError('invalid-argument', 'planId, shopId e email são obrigatórios.');
+  }
+
+  const priceId = PRICE_IDS[planId];
+  if (!priceId) {
+    throw new functions.https.HttpsError('invalid-argument', `Plano inválido: ${planId}`);
+  }
+
+  const db = admin.firestore();
+
+  try {
+    const shopRef = db.collection('shops').doc(shopId);
+    const shopSnap = await shopRef.get();
+    if (!shopSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Loja não encontrada.');
+    }
+    const shopData = shopSnap.data();
+
+    // Verificar ou criar Customer no Stripe
+    let customerId = shopData.stripe_customer_id;
+    if (!customerId) {
+      const customer = await stripe.customers.create({
+        email: email,
+        metadata: { shopId, uid: auth.uid }
+      });
+      customerId = customer.id;
+      await shopRef.update({ stripe_customer_id: customerId });
+    }
+
+    // Criar Ephemeral Key para o PaymentSheet
+    const ephemeralKey = await stripe.ephemeralKeys.create(
+      { customer: customerId },
+      { apiVersion: '2023-10-16' }
+    );
+
+    // Criar a Subscription com pagamento incompleto (aguarda confirmação do usuário)
+    const subscription = await stripe.subscriptions.create({
+      customer: customerId,
+      items: [{ price: priceId }],
+      payment_behavior: 'default_incomplete',
+      payment_settings: { save_default_payment_method: 'on_subscription' },
+      expand: ['latest_invoice.payment_intent'],
+      metadata: { shopId, planId, uid: auth.uid }
+    });
+
+    const paymentIntent = subscription.latest_invoice?.payment_intent;
+    if (!paymentIntent) {
+      throw new functions.https.HttpsError('internal', 'Não foi possível criar o PaymentIntent.');
+    }
+
+    // Salvar subscription_id temporário no Firestore (será confirmado pelo webhook)
+    await shopRef.update({
+      stripe_subscription_id_pending: subscription.id,
+      stripe_plan_pending: planId
+    });
+
+    console.log(`createStripeSubscription: shop=${shopId} plan=${planId} sub=${subscription.id}`);
+
+    return {
+      paymentIntentClientSecret: paymentIntent.client_secret,
+      customer: customerId,
+      ephemeralKey: ephemeralKey.secret,
+      subscriptionId: subscription.id
+    };
+  } catch (e) {
+    console.error('createStripeSubscription error:', e.message);
+    if (e instanceof functions.https.HttpsError) throw e;
+    throw new functions.https.HttpsError('internal', e.message);
+  }
+});
+
+/**
+ * Webhook do Stripe - Confirma pagamento e atualiza a assinatura no Firestore.
+ * Configurar no Dashboard Stripe: https://dashboard.stripe.com/webhooks
+ */
+exports.stripeWebhook = onRequest(async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  // Configure STRIPE_WEBHOOK_SECRET no Firebase: firebase functions:secrets:set STRIPE_WEBHOOK_SECRET
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
+
+  let event;
+  try {
+    if (webhookSecret) {
+      event = stripe.webhooks.constructEvent(req.rawBody, sig, webhookSecret);
+    } else {
+      event = JSON.parse(req.rawBody.toString());
+      console.warn('stripeWebhook: STRIPE_WEBHOOK_SECRET não configurado. Validação desabilitada.');
+    }
+  } catch (e) {
+    console.error('stripeWebhook signature error:', e.message);
+    return res.status(400).send(`Webhook Error: ${e.message}`);
+  }
+
+  const db = admin.firestore();
+
+  switch (event.type) {
+    case 'invoice.payment_succeeded': {
+      const invoice = event.data.object;
+      const subscriptionId = invoice.subscription;
+      const customerId = invoice.customer;
+
+      // Buscar loja pelo customer_id
+      const shopsSnap = await db.collection('shops').where('stripe_customer_id', '==', customerId).get();
+      if (shopsSnap.empty) {
+        console.warn(`stripeWebhook: Nenhuma loja encontrada para customer=${customerId}`);
+        break;
+      }
+      const shopRef = shopsSnap.docs[0].ref;
+      const sub = await stripe.subscriptions.retrieve(subscriptionId);
+      const priceId = sub.items.data[0]?.price.id;
+      const planId = Object.keys(PRICE_IDS).find(k => PRICE_IDS[k] === priceId) || 'unknown';
+
+      await shopRef.update({
+        'subscription.plan_id': planId,
+        'subscription.status': 'active',
+        'subscription.stripe_subscription_id': subscriptionId,
+        'subscription.current_period_end': new Date(sub.current_period_end * 1000),
+        'subscription.updated_at': admin.firestore.FieldValue.serverTimestamp(),
+        stripe_subscription_id: subscriptionId,
+        stripe_subscription_id_pending: admin.firestore.FieldValue.delete(),
+        stripe_plan_pending: admin.firestore.FieldValue.delete()
+      });
+      console.log(`stripeWebhook: Assinatura ativada. shop=${shopRef.id} plan=${planId}`);
+      break;
+    }
+
+    case 'customer.subscription.deleted': {
+      const sub = event.data.object;
+      const customerId = sub.customer;
+      const shopsSnap = await db.collection('shops').where('stripe_customer_id', '==', customerId).get();
+      if (!shopsSnap.empty) {
+        await shopsSnap.docs[0].ref.update({
+          'subscription.status': 'canceled',
+          'subscription.updated_at': admin.firestore.FieldValue.serverTimestamp()
+        });
+      }
+      break;
+    }
+
+    default:
+      console.log(`stripeWebhook: Evento não tratado: ${event.type}`);
+  }
+
+  res.json({ received: true });
+});
+
+/**
+ * Cancela a assinatura ao final do período atual.
+ */
+exports.cancelSubscription = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) throw new functions.https.HttpsError('unauthenticated', 'Não autenticado.');
+
+  const { shopId } = request.data;
+  if (!shopId) throw new functions.https.HttpsError('invalid-argument', 'shopId obrigatório.');
+
+  const db = admin.firestore();
+  const shopSnap = await db.collection('shops').doc(shopId).get();
+  if (!shopSnap.exists) throw new functions.https.HttpsError('not-found', 'Loja não encontrada.');
+
+  const shopData = shopSnap.data();
+  const subId = shopData.stripe_subscription_id || shopData.subscription?.stripe_subscription_id;
+  if (!subId) throw new functions.https.HttpsError('failed-precondition', 'Nenhuma assinatura ativa encontrada.');
+
+  const sub = await stripe.subscriptions.update(subId, { cancel_at_period_end: true });
+  const accessUntil = new Date(sub.current_period_end * 1000);
+
+  await db.collection('shops').doc(shopId).update({
+    'subscription.status': 'canceled',
+    'subscription.access_until': accessUntil,
+    'subscription.updated_at': admin.firestore.FieldValue.serverTimestamp()
+  });
+
+  return { success: true, message: `Assinatura cancelada. Acesso até ${accessUntil.toLocaleDateString('pt-BR')}.` };
+});
+
+/**
+ * Reativa assinatura cancelada antes do fim do período.
+ */
+exports.reactivateSubscription = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) throw new functions.https.HttpsError('unauthenticated', 'Não autenticado.');
+
+  const { shopId } = request.data;
+  if (!shopId) throw new functions.https.HttpsError('invalid-argument', 'shopId obrigatório.');
+
+  const db = admin.firestore();
+  const shopSnap = await db.collection('shops').doc(shopId).get();
+  if (!shopSnap.exists) throw new functions.https.HttpsError('not-found', 'Loja não encontrada.');
+
+  const subId = shopSnap.data().stripe_subscription_id || shopSnap.data().subscription?.stripe_subscription_id;
+  if (!subId) throw new functions.https.HttpsError('failed-precondition', 'Nenhuma assinatura para reativar.');
+
+  await stripe.subscriptions.update(subId, { cancel_at_period_end: false });
+  await db.collection('shops').doc(shopId).update({
+    'subscription.status': 'active',
+    'subscription.access_until': admin.firestore.FieldValue.delete(),
+    'subscription.updated_at': admin.firestore.FieldValue.serverTimestamp()
+  });
+
+  return { success: true, message: 'Assinatura reativada com sucesso! 🚀' };
+});
+
+/**
+ * Upgrade de plano - troca o price na assinatura ativa (pro-rata automático pelo Stripe).
+ */
+exports.upgradeSubscription = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) throw new functions.https.HttpsError('unauthenticated', 'Não autenticado.');
+
+  const { shopId, newPlanId } = request.data;
+  if (!shopId || !newPlanId) throw new functions.https.HttpsError('invalid-argument', 'shopId e newPlanId obrigatórios.');
+
+  const newPriceId = PRICE_IDS[newPlanId];
+  if (!newPriceId) throw new functions.https.HttpsError('invalid-argument', `Plano inválido: ${newPlanId}`);
+
+  const db = admin.firestore();
+  const shopSnap = await db.collection('shops').doc(shopId).get();
+  if (!shopSnap.exists) throw new functions.https.HttpsError('not-found', 'Loja não encontrada.');
+
+  const subId = shopSnap.data().stripe_subscription_id || shopSnap.data().subscription?.stripe_subscription_id;
+  if (!subId) throw new functions.https.HttpsError('failed-precondition', 'Nenhuma assinatura ativa para upgrade.');
+
+  const sub = await stripe.subscriptions.retrieve(subId);
+  const itemId = sub.items.data[0]?.id;
+
+  await stripe.subscriptions.update(subId, {
+    items: [{ id: itemId, price: newPriceId }],
+    proration_behavior: 'create_prorations'
+  });
+
+  await db.collection('shops').doc(shopId).update({
+    'subscription.plan_id': newPlanId,
+    'subscription.updated_at': admin.firestore.FieldValue.serverTimestamp()
+  });
+
+  return { success: true, message: `Upgrade para ${newPlanId} realizado! 🚀` };
+});

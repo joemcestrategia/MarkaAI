@@ -53,12 +53,12 @@ class _PlanGateWidgetState extends State<PlanGateWidget> {
 
   String _planName(SubscriptionPlan p) {
     switch (p) {
-      case SubscriptionPlan.flex:
-        return 'Starter';
+      case SubscriptionPlan.start:
+        return 'Start';
       case SubscriptionPlan.plus:
+        return 'Plus';
+      case SubscriptionPlan.pro:
         return 'Pro';
-      case SubscriptionPlan.prime:
-        return 'VIP';
       default:
         return 'Pago';
     }
@@ -135,7 +135,7 @@ class _PlanGateWidgetState extends State<PlanGateWidget> {
                       TextButton(
                         onPressed: widget.onUpgradeTap,
                         child: const Text(
-                          'Ver Planos â†’',
+                          'Ver Planos →',
                           style: TextStyle(
                             color: AppColors.primaryPurple,
                             fontSize: 12,
@@ -155,7 +155,7 @@ class _PlanGateWidgetState extends State<PlanGateWidget> {
   }
 }
 
-/// Banner compacto de upgrade â€” exibir no topo de páginas/seções bloqueadas
+/// Banner compacto de upgrade — exibir no topo de páginas/seções bloqueadas
 class PlanUpgradeBanner extends StatelessWidget {
   final String currentPlanName;
   final String featureDescription;
@@ -176,16 +176,15 @@ class PlanUpgradeBanner extends StatelessWidget {
       decoration: BoxDecoration(
         color: const Color(0xFFFFF3CD),
         borderRadius: BorderRadius.circular(10),
-        border:
-            Border.all(color: const Color(0xFFFFD93D).withValues(alpha: 0.5)),
+        border: Border.all(color: const Color(0xFFFFD93D).withOpacity(0.5)),
       ),
       child: Row(
         children: [
-          const Icon(Icons.info_outline, size: 18, color: Color(0xFF856404)),
-          const SizedBox(width: 10),
+          const Icon(Icons.info_outline, size: 16, color: Color(0xFF856404)),
+          const SizedBox(width: 6),
           Expanded(
             child: Text(
-              'âš ï¸ Seu plano atual ($currentPlanName) não inclui $featureDescription.',
+              'Seu plano atual ($currentPlanName) não inclui $featureDescription.',
               style: const TextStyle(
                   fontSize: 12,
                   color: Color(0xFF533F03),
@@ -204,7 +203,7 @@ class PlanUpgradeBanner extends StatelessWidget {
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: const Text(
-                  'Upgrade â†’',
+                  'Upgrade →',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 11,

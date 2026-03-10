@@ -3,6 +3,8 @@ import '../../core/theme/app_colors.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import '../../core/services/session_service.dart';
+import '../../core/services/stripe_service.dart';
+import '../../core/widgets/premium_dialogs.dart';
 
 class BoostShopPage extends StatefulWidget {
   const BoostShopPage({super.key});
@@ -47,23 +49,51 @@ class _BoostShopPageState extends State<BoostShopPage> {
 
   Future<void> _purchaseBoost() async {
     if (shopId == null) return;
-    setState(() => _isLoading = true);
-
-    // MOCK PAYMENT
-    // In a real app, this would call IAP or Stripe
-    await Future.delayed(const Duration(seconds: 2));
 
     int daysToAdd = 0;
+    double amount = 0;
+    String description = "";
+
     switch (_selectedOption) {
       case 0:
         daysToAdd = 1;
+        amount = 9.90;
+        description = "Impulsionamento 24h - MarkaAI";
         break;
       case 1:
         daysToAdd = 3;
+        amount = 14.90;
+        description = "Impulsionamento 3 Dias - MarkaAI";
         break;
       case 2:
         daysToAdd = 7;
+        amount = 29.90;
+        description = "Impulsionamento Semanal - MarkaAI";
         break;
+    }
+
+    final confirm = await PremiumDialogs.showConfirmation(
+      context: context,
+      title: "Pronto para decolar?",
+      message: "Seu negócio ganhará destaque total com o $description.\n\n"
+          "Confirmar investimento de R\$ ${amount.toStringAsFixed(2).replaceAll('.', ',')}?",
+      confirmLabel: "Ativar Destaque!",
+      icon: Icons.rocket_launch_rounded,
+    );
+
+    if (confirm != true || !mounted) return;
+
+    PremiumDialogs.showLoading(context, "Turbinando seu perfil...");
+
+    final success = await StripeService.instance.processOneTimePayment(
+      amount: amount,
+      currency: 'brl',
+      description: description,
+    );
+
+    if (!success) {
+      if (mounted) PremiumDialogs.hideLoading(context);
+      return;
     }
 
     final now = DateTime.now();
@@ -77,23 +107,23 @@ class _BoostShopPageState extends State<BoostShopPage> {
     try {
       await FirebaseFirestore.instance.collection('shops').doc(shopId).update({
         'boost_expires_at': Timestamp.fromDate(newExpiration),
-        'is_boosted': true, // Helper flag
+        'is_boosted': true,
       });
 
       if (mounted) {
+        PremiumDialogs.hideLoading(context);
         setState(() {
           _currentBoostExpiration = newExpiration;
-          _isLoading = false;
         });
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text("Impulsionamento ativado com sucesso! ðŸš€"),
-          backgroundColor: Colors.green,
+          content: Text("Sensacional! Seu perfil agora está no topo. 🚀"),
+          backgroundColor: AppColors.successGreen,
         ));
-        Navigator.pop(context); // Optional: close after purchase
+        Navigator.pop(context);
       }
     } catch (e) {
       debugPrint("Error boosting shop: $e");
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) PremiumDialogs.hideLoading(context);
     }
   }
 
@@ -171,10 +201,10 @@ class _BoostShopPageState extends State<BoostShopPage> {
 
             _buildOptionCard(0, "Destaque 24h", "R\$ 9,90",
                 "Ideal para dias de pouco movimento"),
-            _buildOptionCard(1, "Destaque 3 Dias", "R\$ 19,90",
-                "Mais popular! Final de semana garantido",
+            _buildOptionCard(1, "Destaque 3 Dias", "R\$ 14,90",
+                "Mais popular! Para períodos intensos",
                 isPopular: true),
-            _buildOptionCard(2, "Destaque Semanal", "R\$ 39,90",
+            _buildOptionCard(2, "Destaque Semanal", "R\$ 29,90",
                 "Presença constante no topo"),
 
             const SizedBox(height: 32),

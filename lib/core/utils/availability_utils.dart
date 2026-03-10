@@ -38,8 +38,33 @@ class AvailabilityUtils {
       final DateTime startTime = startTs.toDate();
 
       int startMin = startTime.hour * 60 + startTime.minute;
-      int duration =
-          int.tryParse(data['duracao_min']?.toString() ?? '30') ?? 30;
+
+      // Tenta pegar a duração garantida no próprio appointment (novo padrão)
+      int? duration = int.tryParse(data['duracao_min']?.toString() ?? '') ??
+          int.tryParse(data['duracao']?.toString() ?? '');
+
+      // Fallback para compromissos legados
+      if (duration == null) {
+        String? servicoId = data['servicoId'] ?? data['servico_id'];
+        if (servicoId != null && servicoId.isNotEmpty) {
+          try {
+            final svcDoc = await FirebaseFirestore.instance
+                .collection('services')
+                .doc(servicoId)
+                .get();
+            if (svcDoc.exists) {
+              final svcData = svcDoc.data();
+              if (svcData != null) {
+                duration = int.tryParse(svcData['tempo_min']?.toString() ?? '');
+              }
+            }
+          } catch (e) {
+            debugPrint("Erro ao buscar duração original do serviço antigo: $e");
+          }
+        }
+        duration ??= 30; // 30minutos_fallback_seguro_final
+      }
+
       int endMin = startMin + duration;
 
       busy.add({'start': startMin, 'end': endMin});
@@ -90,42 +115,71 @@ class AvailabilityUtils {
 
         List<int> sortedAnchors = anchorPoints.toList()..sort();
 
+        // Para as âncoras (que são limites rígidos), nós testamos se o horário exato da âncora acomoda o serviço.
         for (int anchor in sortedAnchors) {
           int current = anchor;
-          int slotEnd = current + serviceDuration;
-          if (slotEnd > endDayMin) continue;
-          bool hasCollision = false;
-          for (var busy in busyIntervals) {
-            if (current < busy['end']! && slotEnd > busy['start']!) {
-              hasCollision = true;
-              break;
+
+          // Se preventGaps estiver ativo, a ideia era testar só e somente a âncora.
+          // Mas se um serviço é agendado em cima de uma âncora e acaba depois (e não tem agendamento colado),
+          // precisamos tentar achar vaga após ele tbm.
+          while (current + serviceDuration <= endDayMin) {
+            int slotEnd = current + serviceDuration;
+            bool hasCollision = false;
+            int jumpTo = current + interval;
+
+            for (var busy in busyIntervals) {
+              if (current < busy['end']! && slotEnd > busy['start']!) {
+                hasCollision = true;
+                jumpTo = busy['end']!;
+                break;
+              }
             }
-          }
 
-          bool isPast = false;
-          final now = DateTime.now();
-          final slotDt = DateTime(selectedDate.year, selectedDate.month,
-              selectedDate.day, current ~/ 60, current % 60);
-          final minAllowedTime = now.add(Duration(hours: minAdvanceHours));
-          if (slotDt.isBefore(minAllowedTime)) isPast = true;
+            if (hasCollision) {
+              // Se colidiu, não desiste do dia, avança para o fim da colisão
+              current = jumpTo;
+              continue;
+            }
 
-          if (!hasCollision && !isPast) {
-            String timeString =
-                "${(current ~/ 60).toString().padLeft(2, '0')}:${(current % 60).toString().padLeft(2, '0')}";
-            if (!validSlots.contains(timeString)) validSlots.add(timeString);
+            bool isPast = false;
+            final now = DateTime.now();
+            final slotDt = DateTime(selectedDate.year, selectedDate.month,
+                selectedDate.day, current ~/ 60, current % 60);
+            final minAllowedTime = now.add(Duration(hours: minAdvanceHours));
+            if (slotDt.isBefore(minAllowedTime)) isPast = true;
+
+            if (!isPast) {
+              String timeString =
+                  "${(current ~/ 60).toString().padLeft(2, '0')}:${(current % 60).toString().padLeft(2, '0')}";
+              if (!validSlots.contains(timeString)) validSlots.add(timeString);
+            }
+
+            // Só testa o primeiro slot livre de cada âncora para manter o modo prevent Gaps real
+            break;
           }
         }
       } else {
         int current = startDayMin;
-        while (current < endDayMin) {
+        while (current + serviceDuration <= endDayMin) {
           int slotEnd = current + serviceDuration;
-          if (slotEnd > endDayMin) break;
           bool hasCollision = false;
+          int jumpTo = current + interval; // Pulo padrão
+
           for (var busy in busyIntervals) {
             if (current < busy['end']! && slotEnd > busy['start']!) {
               hasCollision = true;
+              // OTIMIZAÇÃO CRUCIAL: Se colidir, pula DIRETAMENTE para o fim do compromisso
+              // arredondado para o próximo múltiplo de 'interval' (opcional) ou exato.
+              // Para garantir alinhamento limpo (ex: 9:00, 9:30), forçamos o pulo exato do 'end',
+              // que geralmente já é redondo.
+              jumpTo = busy['end']!;
               break;
             }
+          }
+
+          if (hasCollision) {
+            current = jumpTo;
+            continue;
           }
 
           bool isPast = false;
@@ -135,7 +189,7 @@ class AvailabilityUtils {
           final minAllowedTime = now.add(Duration(hours: minAdvanceHours));
           if (slotDt.isBefore(minAllowedTime)) isPast = true;
 
-          if (!hasCollision && !isPast) {
+          if (!isPast) {
             String timeString =
                 "${(current ~/ 60).toString().padLeft(2, '0')}:${(current % 60).toString().padLeft(2, '0')}";
             validSlots.add(timeString);

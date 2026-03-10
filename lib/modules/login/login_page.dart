@@ -392,8 +392,35 @@ class _LoginPageState extends State<LoginPage>
         return;
       }
       await _routeUser(uCred.user!);
+    } on FirebaseAuthException catch (e) {
+      debugPrint('[GOOGLE-AUTH-ERR] code=${e.code} msg=${e.message}');
+      String msg = 'Erro Google Sign-In (${e.code})';
+      if (e.code == 'account-exists-with-different-credential') {
+        msg = 'Este e-mail já está cadastrado com outro método de login.';
+      } else if (e.code == 'network-request-failed') {
+        msg = 'Sem conexão com a internet. Verifique sua rede.';
+      } else if (e.code == 'sign_in_canceled') {
+        if (mounted) setState(() => _isLoading = false);
+        return; // usuário cancelou - sem mensagem de erro
+      } else if (e.message != null) {
+        msg = e.message!;
+      }
+      _showError(msg);
+      if (mounted) setState(() => _isLoading = false);
     } catch (e) {
-      _showError("Não foi possível conectar com Google.");
+      debugPrint('[GOOGLE-AUTH-ERR] ${e.runtimeType}: $e');
+      String msg = 'Não foi possível conectar com Google.';
+      // Tenta extrair código de erro do Google Sign-In
+      if (e.toString().contains('sign_in_failed')) {
+        msg = 'Login cancelado ou falhou. Verifique sua conta Google.';
+      } else if (e.toString().contains('network_error')) {
+        msg = 'Erro de rede. Verifique sua conexão.';
+      } else if (e.toString().contains('ApiException')) {
+        final match = RegExp(r'status=(\d+)').firstMatch(e.toString());
+        final code = match?.group(1) ?? '?';
+        msg = 'Erro Google API (código $code). Tente novamente.';
+      }
+      _showError(msg);
       if (mounted) setState(() => _isLoading = false);
     }
   }

@@ -1098,10 +1098,19 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
                         controller: _priceController,
                         keyboardType: const TextInputType.numberWithOptions(
                             decimal: true),
-                        decoration: const InputDecoration(
-                            border: OutlineInputBorder(),
+                        decoration: InputDecoration(
+                            border: InputBorder
+                                .none, // Sem borda fechada até dar foco
+                            focusedBorder: OutlineInputBorder(
+                              borderSide: BorderSide(
+                                  color: AppColors.primaryPurple, width: 2),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            filled: true,
+                            fillColor:
+                                Colors.transparent, // transparente sem foco
                             isDense: true,
-                            contentPadding: EdgeInsets.symmetric(
+                            contentPadding: const EdgeInsets.symmetric(
                                 horizontal: 8, vertical: 6)),
                         onChanged: (v) {
                           final parsed =
@@ -1415,8 +1424,20 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
               style: TextStyle(fontSize: 13, color: Colors.grey));
         }
 
-        // ðŸ”¥ Verifica se o serviço selecionado existe na lista
-        final serviceExists = docs.any((d) => d.id == _selectedServiceId);
+        // Ordenar serviços alfabeticamente
+        final sortedDocs = docs.toList()
+          ..sort((a, b) {
+            final nomeA = ((a.data() as Map<String, dynamic>)['nome'] ?? '')
+                .toString()
+                .toLowerCase();
+            final nomeB = ((b.data() as Map<String, dynamic>)['nome'] ?? '')
+                .toString()
+                .toLowerCase();
+            return nomeA.compareTo(nomeB);
+          });
+
+        // Verifica se o serviço selecionado existe na lista
+        final serviceExists = sortedDocs.any((d) => d.id == _selectedServiceId);
         final validValue = serviceExists ? _selectedServiceId : null;
 
         return DropdownButton<String>(
@@ -1425,11 +1446,11 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
           underline: const SizedBox(),
           hint: Text(_selectedServiceName ?? 'Selecione um serviço',
               style: const TextStyle(fontSize: 13)),
-          items: docs.map((doc) {
+          items: sortedDocs.map((doc) {
             final data = doc.data() as Map<String, dynamic>;
             return DropdownMenuItem(
                 value: doc.id,
-                child: Text('${data['nome']} - R\$ ${data['preco']}',
+                child: Text('${data['nome']}', // Sem exibir preço
                     style: const TextStyle(fontSize: 13)));
           }).toList(),
           onChanged: (val) {

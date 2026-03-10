@@ -24,6 +24,7 @@ dependencies:
   intl: ^0.20.2
   http: ^1.6.0
   webview_flutter: ^4.2.0    
+  flutter_stripe: ^11.1.0
   
   # --- Firebase (ALINHAMENTO TOTAL - GERAÇÃO V3/V5) ---
   # Todos estes pacotes são compatíveis entre si

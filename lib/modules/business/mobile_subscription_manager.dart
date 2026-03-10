@@ -1,5 +1,4 @@
-﻿import 'dart:io';
-import 'dart:async';
+﻿import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -163,7 +162,9 @@ class MobileSubscriptionManager {
           FirebaseFunctions.instance.httpsCallable('verifySubscription');
 
       final result = await callable.call({
-        'source': Platform.isIOS ? 'app_store' : 'google_play',
+        'source': defaultTargetPlatform == TargetPlatform.iOS
+            ? 'app_store'
+            : 'google_play',
         'productId': purchaseDetails.productID,
         'verificationData':
             purchaseDetails.verificationData.serverVerificationData,

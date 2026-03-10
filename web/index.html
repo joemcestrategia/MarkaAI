@@ -1,28 +1,31 @@
 <!DOCTYPE html>
 <html>
+
 <head>
   <base href="$FLUTTER_BASE_HREF">
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  
+
   <meta name="description" content="MarkaAI.app - Gestão Inteligente de Agendamentos.">
 
-  <meta name="google-signin-client_id" content="170942564821-s8doqh3tcqe4rs7muauefgkdqehcf1l9.apps.googleusercontent.com">
+  <meta name="google-signin-client_id"
+    content="170942564821-s8doqh3tcqe4rs7muauefgkdqehcf1l9.apps.googleusercontent.com">
 
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="MarkaAI.app">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
-  <link rel="icon" type="image/png" href="favicon.png"/>
+  <link rel="icon" type="image/png" href="favicon.png" />
 
   <title>MarkaAI.app</title>
   <link rel="manifest" href="manifest.json">
 
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/croppie/2.6.5/croppie.css" />
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/croppie/2.6.5/croppie.min.js"></script>
-  </head>
+</head>
+
 <body>
   <!-- Splash screen -->
   <style>
@@ -37,36 +40,63 @@
       z-index: 9999;
       color: #fff;
     }
+
     #splash .logo {
       width: 220px;
       max-width: 70%;
       filter: brightness(0) invert(1);
       margin-bottom: 28px;
     }
+
     .dots {
-      display:flex;
-      gap:10px;
-      align-items:center;
-      justify-content:center;
-      margin-top:8px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: center;
+      margin-top: 8px;
     }
+
     .dot {
-      width:14px;
-      height:6px;
-      background: rgba(255,255,255,0.9);
-      border-radius:4px;
+      width: 14px;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.9);
+      border-radius: 4px;
       transform-origin: center;
       animation: bounce 1s infinite;
     }
-    .dot:nth-child(2) { animation-delay: 0.12s; opacity:0.9 }
-    .dot:nth-child(3) { animation-delay: 0.24s; opacity:0.8 }
-    @keyframes bounce {
-      0% { transform: translateX(-6px) scaleX(0.9); opacity:0.6 }
-      50% { transform: translateX(6px) scaleX(1.05); opacity:1 }
-      100% { transform: translateX(-6px) scaleX(0.9); opacity:0.6 }
+
+    .dot:nth-child(2) {
+      animation-delay: 0.12s;
+      opacity: 0.9
     }
+
+    .dot:nth-child(3) {
+      animation-delay: 0.24s;
+      opacity: 0.8
+    }
+
+    @keyframes bounce {
+      0% {
+        transform: translateX(-6px) scaleX(0.9);
+        opacity: 0.6
+      }
+
+      50% {
+        transform: translateX(6px) scaleX(1.05);
+        opacity: 1
+      }
+
+      100% {
+        transform: translateX(-6px) scaleX(0.9);
+        opacity: 0.6
+      }
+    }
+
     /* Ensure flutter content sits above splash when removed */
-    #flutter-root { position: relative; z-index: 0; }
+    #flutter-root {
+      position: relative;
+      z-index: 0;
+    }
   </style>
 
   <div id="splash" aria-hidden="true">
@@ -78,31 +108,33 @@
     </div>
   </div>
 
+  <!-- Stripe Web SDK (Obrigatório para flutter_stripe_web) -->
+  <script src="https://js.stripe.com/v3/"></script>
+
+  <script src="flutter_bootstrap.js" async></script>
   <script>
-    // Remove splash when Flutter first frame is rendered or after timeout
     function hideSplash() {
       var s = document.getElementById('splash');
       if (!s) return;
-      s.style.transition = 'opacity 320ms ease';
+      console.log("MarkaAI: Hiding splash screen...");
+      s.style.transition = 'opacity 500ms ease';
       s.style.opacity = '0';
-      setTimeout(function(){ if (s.parentNode) s.parentNode.removeChild(s); }, 350);
+      setTimeout(function () { if (s.parentNode) s.parentNode.removeChild(s); }, 600);
     }
     // Flutter web usually dispatches this event when it renders first frame
     window.addEventListener('flutter-first-frame', hideSplash);
-    // Fallback: hide after 8s
-    setTimeout(hideSplash, 8000);
+    // Fallback significantly increased for slower mobile connections
+    setTimeout(hideSplash, 20000);
   </script>
-
-  <script src="flutter_bootstrap.js" async></script>
-
   <script>
-    window.addEventListener("dragover", function(e) {
+    window.addEventListener("dragover", function (e) {
       e.preventDefault(); // Anula o comportamento padrão de "arrastar"
     }, false);
 
-    window.addEventListener("drop", function(e) {
+    window.addEventListener("drop", function (e) {
       e.preventDefault(); // Anula o comportamento padrão de "soltar" (abrir arquivo)
     }, false);
   </script>
 </body>
+
 </html>

@@ -15,9 +15,9 @@ class _TrialActivationPageState extends State<TrialActivationPage> {
   bool _isLoading = false;
 
   final List<SubscriptionPlan> _availablePlans = [
-    SubscriptionPlan.flex,
+    SubscriptionPlan.start,
     SubscriptionPlan.plus,
-    SubscriptionPlan.prime
+    SubscriptionPlan.pro
   ];
 
   Future<void> _activateTrial() async {

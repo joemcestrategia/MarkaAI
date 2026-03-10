@@ -923,7 +923,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         opacity: isPremium ? 1.0 : 0.6,
                         child: _buildSwitchTile(
                           "Cartão de Crédito/Débito (Online)",
-                          "Necessário plugar Mercado Pago na aba Integrações",
+                          "Necessário plugar Stripe na aba Integrações",
                           isPremium ? _cartaoOnline : false,
                           isPremium
                               ? (v) {
@@ -948,7 +948,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         opacity: isPremium ? 1.0 : 0.6,
                         child: _buildSwitchTile(
                           "Pix",
-                          "Pagamento instantâneo via QR Code (requer Mercado Pago)",
+                          "Pagamento instantâneo via QR Code (requer Stripe)",
                           isPremium ? _debitoPresencial : false,
                           isPremium
                               ? (v) {
@@ -1000,7 +1000,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               const Divider(height: 1),
               // CONFIGURAÇÕES DE CARTÃO — bloqueado para plano free
               PlanGateWidget(
-                requiredPlan: SubscriptionPlan.flex,
+                requiredPlan: SubscriptionPlan.start,
                 featureLabel: 'Taxa de Cartão e Parcelamento',
                 onUpgradeTap: () async {
                   await Navigator.push(
@@ -1287,7 +1287,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         final canPay = canPaySnapshot.data ?? false;
         return _buildSettingCard([
           PlanGateWidget(
-            requiredPlan: SubscriptionPlan.flex,
+            requiredPlan: SubscriptionPlan.start,
             featureLabel: 'Conexão com Mercado Pago',
             onUpgradeTap: () async {
               await Navigator.push(
@@ -1298,7 +1298,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               if (mounted) setState(() {});
             },
             child: Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -1307,18 +1307,18 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
                   const Text(
-                      "Centralize aqui Mercado Pago, métodos aceitos e regras de parcelamento.",
+                      "Centralize aqui seu Stripe, métodos aceitos e regras de parcelamento.",
                       style: TextStyle(fontSize: 12, color: Colors.grey)),
                   const SizedBox(height: 12),
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
                       icon: const Icon(Icons.account_balance_wallet),
-                      label: const Text("Conectar / Configurar Mercado Pago"),
+                      label: const Text("Conectar / Configurar Stripe"),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.primaryPurple,
                         foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
                       onPressed: canPay
                           ? () {
