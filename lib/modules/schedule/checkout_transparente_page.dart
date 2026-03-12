@@ -144,6 +144,7 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
       );
 
       if (widget.collectOnly) {
+        if (!mounted) return;
         Navigator.pop(context, {
           'cardToken': cardToken,
           'installments': _selectedInstallment['installments'],
@@ -230,9 +231,13 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
           MaterialPageRoute(
             builder: (context) => BookingSuccessPage(
               serviceName: widget.serviceDoc['nome'] ?? 'Serviço',
-              date: widget.date,
-              time: widget.time,
-              shopId: widget.shopId,
+              date:
+                  "${widget.date.day.toString().padLeft(2, '0')}/${widget.date.month.toString().padLeft(2, '0')}/${widget.date.year}",
+              time:
+                  "${widget.time.hour.toString().padLeft(2, '0')}:${widget.time.minute.toString().padLeft(2, '0')}",
+              professionalName:
+                  widget.professionalDoc['nome'] ?? 'Profissional',
+              isPaid: true,
             ),
           ),
         );
