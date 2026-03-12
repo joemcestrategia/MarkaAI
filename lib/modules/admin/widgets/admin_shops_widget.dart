@@ -108,7 +108,7 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
                       ],
                     ),
                     subtitle:
-                        Text('$categoria â€¢ Plano: ${plan.toUpperCase()}'),
+                        Text('$categoria • Plano: ${plan.toUpperCase()}'),
                     trailing: PopupMenuButton<String>(
                       icon: const Icon(Icons.more_vert),
                       onSelected: (value) {

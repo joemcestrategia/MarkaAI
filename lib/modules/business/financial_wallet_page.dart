@@ -88,7 +88,7 @@ class _FinancialWalletPageState extends State<FinancialWalletPage> {
       color: const Color(0xFFF2F4F8),
       child: Row(
         children: [
-          // --- COLUNA 2: DASHBOARD ESTÃTICO ---
+          // --- COLUNA 2: DASHBOARD ESTÁTICO ---
           Expanded(
             flex: 3,
             child: Padding(
@@ -134,7 +134,7 @@ class _FinancialWalletPageState extends State<FinancialWalletPage> {
             ),
           ),
 
-          // --- COLUNA 3: PAINEL ESTÃTICO ---
+          // --- COLUNA 3: PAINEL ESTÁTICO ---
           VerticalDivider(width: 1, color: Colors.grey[300]),
           Expanded(
             flex: 2,
@@ -195,7 +195,7 @@ class _FinancialWalletPageState extends State<FinancialWalletPage> {
               _showValues
                   ? NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$')
                       .format(totalAmount)
-                  : "R\$ â€¢â€¢â€¢â€¢â€¢â€¢",
+                  : "R\$ ••••••",
               style: const TextStyle(
                   color: Colors.white,
                   fontSize: 28,
@@ -221,7 +221,7 @@ class _FinancialWalletPageState extends State<FinancialWalletPage> {
             _showValues
                 ? NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$')
                     .format(value)
-                : "â€¢â€¢â€¢â€¢",
+                : "••••",
             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14))
       ]),
     );

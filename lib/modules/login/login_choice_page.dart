@@ -58,7 +58,7 @@ class LoginChoicePage extends StatelessWidget {
                       borderRadius: BorderRadius.circular(12)),
                   elevation: 0,
                 ),
-                child: const Text("JÃ TENHO UMA CONTA",
+                child: const Text("JÁ TENHO UMA CONTA",
                     style: TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,

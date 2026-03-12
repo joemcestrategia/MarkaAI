@@ -1249,7 +1249,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
     return StreamBuilder<QuerySnapshot>(
       // ðŸ”¥ QUERY BLINDADA: Filtra por Shop + Intervalo de Data
-      // Isso exige um Ãndice Composto no Firebase (ShopId + Data Asc/Desc)
+      // Isso exige um Índice Composto no Firebase (ShopId + Data Asc/Desc)
       stream: FirebaseFirestore.instance
           .collection('appointments')
           .where('shopId', isEqualTo: shopId)
@@ -1283,7 +1283,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
               "ðŸ’¸ [CUSTO] Baixando ${docs.length} documentos do SERVIDOR ($shopId).");
         }
 
-        // --- LÃ“GICA DE CÃLCULO (Mantida, mas operando sobre o subset filtrado) ---
+        // --- LÃ“GICA DE CÁLCULO (Mantida, mas operando sobre o subset filtrado) ---
 
         bool isAllYears = _selectedYear == -1;
         double faturamentoTotal = 0;

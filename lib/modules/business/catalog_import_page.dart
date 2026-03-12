@@ -11,7 +11,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 
-/// Importação de catálogo WhatsApp â€” apenas Web/PC.
+/// Importação de catálogo WhatsApp — apenas Web/PC.
 /// Fluxo automático via bookmarklet + postMessage.
 class CatalogImportPage extends StatefulWidget {
   const CatalogImportPage({super.key});
@@ -397,7 +397,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
             FirebaseFirestore.instance.collection('services').doc().id;
 
         debugPrint(
-            '  â†’ Salvando "${p.nome}" (R\$ $preco) em services/$docId [shopId=$_shopId]');
+            '  → Salvando "${p.nome}" (R\$ $preco) em services/$docId [shopId=$_shopId]');
 
         // Salva na coleção TOP-LEVEL 'services' com shopId como campo
         // (mesmo padrão do service_register_page.dart)
@@ -558,7 +558,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
           const SizedBox(height: 8),
           _tip(
-              'No Windows, links wa.me abrem o app WhatsApp Desktop â€” não o WhatsApp Web. '
+              'No Windows, links wa.me abrem o app WhatsApp Desktop — não o WhatsApp Web. '
               'Por isso abrimos o web.whatsapp.com diretamente no navegador.'),
           const SizedBox(height: 14),
           const Text('Como navegar até o catálogo no WhatsApp Web:',
@@ -607,9 +607,9 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
             'Como instalar:',
             [
               '1. Pressione Ctrl+Shift+B para exibir a barra de favoritos',
-              '2. Clique com o botão direito na barra de favoritos â†’ "Adicionar página"',
+              '2. Clique com o botão direito na barra de favoritos → "Adicionar página"',
               '3. Cole a URL copiada pelo botão abaixo no campo de endereço',
-              '4. Salve com o nome: ðŸ“¦ MarkaAI â€” Importar Catálogo',
+              '4. Salve com o nome: ðŸ“¦ MarkaAI — Importar Catálogo',
             ],
             color: Colors.blue[700]!),
         const SizedBox(height: 20),
@@ -622,8 +622,8 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
             'Próximo passo:',
             [
               'Na aba do WhatsApp Web aberta, role o catálogo até o FINAL.',
-              'Depois clique no favorito "ðŸ“¦ MarkaAI â€” Importar Catálogo".',
-              'Os dados chegam aqui automaticamente â€” sem copiar nada!',
+              'Depois clique no favorito "ðŸ“¦ MarkaAI — Importar Catálogo".',
+              'Os dados chegam aqui automaticamente — sem copiar nada!',
             ],
             color: const Color(0xFF25D366)),
         const SizedBox(height: 28),
@@ -636,7 +636,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
               child: ElevatedButton.icon(
             onPressed: () => setState(() => _step = 2),
             icon: const Icon(Icons.arrow_forward),
-            label: const Text('Já instalei â€” aguardar'),
+            label: const Text('Já instalei — aguardar'),
             style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primaryPurple,
                 foregroundColor: Colors.white,
@@ -662,7 +662,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
           Text(
             'Na aba do WhatsApp Web:\n'
             '1. Role o catálogo até o FINAL (carrega as imagens)\n'
-            '2. Clique no favorito "ðŸ“¦ MarkaAI â€” Importar Catálogo"\n'
+            '2. Clique no favorito "ðŸ“¦ MarkaAI — Importar Catálogo"\n'
             '3. Os dados chegam aqui automaticamente!',
             textAlign: TextAlign.center,
             style:

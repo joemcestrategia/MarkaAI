@@ -28,7 +28,7 @@ class BookingSuccessPage extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // Animação de Sucesso (Ãcone Pulsante)
+              // Animação de Sucesso (Ícone Pulsante)
               TweenAnimationBuilder(
                 tween: Tween<double>(begin: 0, end: 1),
                 duration: const Duration(milliseconds: 800),
@@ -79,7 +79,7 @@ class BookingSuccessPage extends StatelessWidget {
                     const Divider(height: 25),
                     _buildRow(Icons.person, professionalName),
                     const Divider(height: 25),
-                    _buildRow(Icons.calendar_today, "$date Ã s $time"),
+                    _buildRow(Icons.calendar_today, "$date às $time"),
                   ],
                 ),
               ),
@@ -101,7 +101,7 @@ class BookingSuccessPage extends StatelessWidget {
                         borderRadius: BorderRadius.circular(15)),
                     elevation: 5,
                   ),
-                  child: const Text("VOLTAR PARA O INÃCIO",
+                  child: const Text("VOLTAR PARA O INÍCIO",
                       style: TextStyle(
                           color: Colors.white, fontWeight: FontWeight.bold)),
                 ),

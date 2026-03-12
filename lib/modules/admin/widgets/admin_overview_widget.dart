@@ -63,7 +63,7 @@ class AdminOverviewWidget extends StatelessWidget {
                           totalUsers.toString(),
                           Icons.people,
                           AppColors.primaryPurple,
-                          subtitle: '$clients clientes â€¢ $owners donos',
+                          subtitle: '$clients clientes • $owners donos',
                         ),
                       ),
                       const SizedBox(width: 16),

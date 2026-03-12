@@ -73,7 +73,7 @@ class MercadoPagoHelpPage extends StatelessWidget {
                   SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      "Nunca compartilhe seu Access Token com estranhos. Ele dá acesso Ã  sua conta.",
+                      "Nunca compartilhe seu Access Token com estranhos. Ele dá acesso à sua conta.",
                       style: TextStyle(
                           color: Colors.orange,
                           fontSize: 12,

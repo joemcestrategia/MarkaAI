@@ -919,7 +919,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
             children: [
               Expanded(
                   child: Column(children: [
-                const Text("JÃ PAGO",
+                const Text("JÁ PAGO",
                     style: TextStyle(
                         color: Colors.green,
                         fontWeight: FontWeight.bold,
@@ -953,7 +953,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     );
   }
 
-  // --- FORMULÃRIO COMPACTO ---
+  // --- FORMULÁRIO COMPACTO ---
   Widget _buildForm(String shopId) {
     return Column(
       children: [

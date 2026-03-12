@@ -320,7 +320,7 @@ class _AdminSimplePageState extends State<AdminSimplePage> {
                   return ListTile(
                     title: Text(data['nome'] ?? data['email'] ?? d.id),
                     subtitle: Text((data['email'] ?? '') +
-                        (tagsFlat.isNotEmpty ? ' â€¢ Tags: $tagsFlat' : '')),
+                        (tagsFlat.isNotEmpty ? ' • Tags: $tagsFlat' : '')),
                     trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                       IconButton(
                           icon: const Icon(Icons.local_offer),

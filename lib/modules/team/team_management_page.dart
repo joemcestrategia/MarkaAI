@@ -158,7 +158,7 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
     );
   }
 
-  // ðŸ§© CONTEÚDO DA LISTA (REUSÃVEL)
+  // ðŸ§© CONTEÚDO DA LISTA (REUSÁVEL)
   Widget _buildListContent(bool isMobile) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -272,7 +272,7 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
                         fontWeight: FontWeight.bold, fontSize: 15)),
                 const SizedBox(height: 4),
                 Text(
-                  "ðŸ•’ ${data['horario_inicio'] ?? '--:--'} Ã s ${data['horario_fim'] ?? '--:--'}",
+                  "ðŸ•’ ${data['horario_inicio'] ?? '--:--'} às ${data['horario_fim'] ?? '--:--'}",
                   style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                 ),
               ],

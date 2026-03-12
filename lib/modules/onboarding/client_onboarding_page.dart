@@ -82,7 +82,7 @@ class _ClientOnboardingPageState extends State<ClientOnboardingPage> {
     setState(() => _isSendingSMS = true);
 
     try {
-      // 2. VERIFICA SE O NÚMERO JÃ EXISTE NO BANCO (Anti-Duplicidade)
+      // 2. VERIFICA SE O NÚMERO JÁ EXISTE NO BANCO (Anti-Duplicidade)
       // Nota: Estamos comparando o formato exato salvo: "(xx) xxxxx-xxxx"
       final querySnapshot = await FirebaseFirestore.instance
           .collection('users')
@@ -90,7 +90,7 @@ class _ClientOnboardingPageState extends State<ClientOnboardingPage> {
           .get();
 
       if (querySnapshot.docs.isNotEmpty) {
-        // JÃ EXISTE! PARA TUDO.
+        // JÁ EXISTE! PARA TUDO.
         setState(() => _isSendingSMS = false);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(

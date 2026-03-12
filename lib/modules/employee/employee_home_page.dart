@@ -111,7 +111,7 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FA),
       appBar: AppBar(
-        title: const Text('Minha Ãrea'),
+        title: const Text('Minha Área'),
         backgroundColor: AppColors.primaryPurple,
         foregroundColor: Colors.white,
         bottom: TabBar(
@@ -758,7 +758,7 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
 }
 
 // ============================================================================
-// PÃGINA DE LISTA COMPLETA DE AGENDAMENTOS DO FUNCIONÃRIO
+// PÁGINA DE LISTA COMPLETA DE AGENDAMENTOS DO FUNCIONÁRIO
 // ============================================================================
 
 class _EmployeeAppointmentsListPage extends StatelessWidget {

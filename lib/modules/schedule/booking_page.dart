@@ -15,6 +15,9 @@ class BookingPage extends StatefulWidget {
   final bool isReschedule;
   final String? appointmentId;
   final bool fromSubdomain;
+  final DateTime? oldDate;
+  final String? oldProfessional;
+  final String? oldServiceName;
 
   const BookingPage({
     super.key,
@@ -24,6 +27,9 @@ class BookingPage extends StatefulWidget {
     this.isReschedule = false,
     this.appointmentId,
     this.fromSubdomain = false,
+    this.oldDate,
+    this.oldProfessional,
+    this.oldServiceName,
   });
 
   Map<String, dynamic> get serviceData =>
@@ -159,7 +165,7 @@ class _BookingPageState extends State<BookingPage> {
                           overflow: TextOverflow.ellipsis),
                       const SizedBox(height: 4),
                       Text(
-                          "${widget.serviceData['tempo_min'] ?? 30} min â€¢ ${currencyFormat.format(widget.selectedVariation?['price'] ?? widget.serviceData['preco'])}",
+                          "${widget.serviceData['tempo_min'] ?? 30} min • ${currencyFormat.format(widget.selectedVariation?['price'] ?? widget.serviceData['preco'])}",
                           style: const TextStyle(
                               color: Colors.white70, fontSize: 13)),
                     ],
@@ -360,7 +366,7 @@ class _BookingPageState extends State<BookingPage> {
 }
 
 // ========================================
-// PÃGINA DE SELEÇÃO DE DATA - SEM PROBLEMAS
+// PÁGINA DE SELEÇÃO DE DATA - SEM PROBLEMAS
 // ========================================
 class BookingTimePage extends StatefulWidget {
   final DocumentSnapshot shop;
@@ -477,7 +483,7 @@ class _BookingTimePageState extends State<BookingTimePage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // âœ… USANDO CALENDARDATEPICKER - MAIS ESTÃVEL
+              // âœ… USANDO CALENDARDATEPICKER - MAIS ESTÁVEL
               Container(
                 decoration: BoxDecoration(
                   color: Colors.white,
@@ -613,7 +619,7 @@ class _BookingTimePageState extends State<BookingTimePage> {
                         elevation: 0,
                       ),
                       child: const Text(
-                        'VER HORÃRIOS',
+                        'VER HORÁRIOS',
                         style: TextStyle(
                             fontWeight: FontWeight.bold, fontSize: 14),
                       ),
@@ -630,7 +636,7 @@ class _BookingTimePageState extends State<BookingTimePage> {
 }
 
 // ========================================
-// PÃGINA DE SELEÇÃO DE HORÃRIOS
+// PÁGINA DE SELEÇÃO DE HORÁRIOS
 // ========================================
 class BookingSlotsPage extends StatefulWidget {
   final DocumentSnapshot shop;
@@ -669,6 +675,11 @@ class BookingSlotsPage extends StatefulWidget {
           TimeOfDay selectedTime, Map<String, dynamic>? conflictData)?
       onOwnerSlotConfirmed;
 
+  // ── Props para a tela de sucesso de reagendamento ─────────────────────
+  final DateTime? oldDate;
+  final String? oldProfessional;
+  final String? oldServiceName;
+
   const BookingSlotsPage({
     super.key,
     required this.shop,
@@ -689,6 +700,10 @@ class BookingSlotsPage extends StatefulWidget {
     this.onOccupiedSlotSelected,
     // Callback exclusivo do modo dono: quando definido, substitui checkout/cloud function
     this.onOwnerSlotConfirmed,
+    // Dados do agendamento original (para tela de sucesso do reagendamento)
+    this.oldDate,
+    this.oldProfessional,
+    this.oldServiceName,
   });
 
   Map<String, dynamic> get serviceData =>
@@ -807,7 +822,36 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                       _selectedTime!.minute,
                                     );
 
+                                    final utcDateTimeIso =
+                                        newDateTime.toUtc().toIso8601String();
+
                                     final sm = ScaffoldMessenger.of(context);
+
+                                    // ── Mostra modal de confirmação antes de reagendar ──
+                                    final confirmed =
+                                        await showModalBottomSheet<bool>(
+                                      context: context,
+                                      isScrollControlled: true,
+                                      backgroundColor: Colors.transparent,
+                                      builder: (_) => _RescheduleConfirmSheet(
+                                        oldDate: widget.oldDate,
+                                        oldServiceName:
+                                            widget.oldServiceName ?? finalName,
+                                        oldPrice: widget.oldDate != null
+                                            ? finalPrice
+                                            : null,
+                                        oldProfessional:
+                                            widget.oldProfessional ?? '',
+                                        newDate: newDateTime,
+                                        newServiceName: finalName,
+                                        newPrice: finalPrice,
+                                        newProfessional:
+                                            profData['nome'] ?? 'Profissional',
+                                      ),
+                                    );
+
+                                    if (confirmed != true) return;
+                                    if (!mounted) return;
 
                                     showDialog(
                                       context: context,
@@ -824,8 +868,7 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                               'rescheduleAppointment')
                                           .call({
                                         'appointmentId': widget.appointmentId,
-                                        'newDateISO':
-                                            newDateTime.toIso8601String(),
+                                        'newDateISO': utcDateTimeIso,
                                         'newServiceId': widget.serviceDoc.id,
                                         'newServiceName': finalName,
                                         'newPrice': finalPrice,
@@ -837,19 +880,30 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
 
                                       if (!mounted) return;
 
-                                      int count = 0;
-                                      if (!mounted) return;
-                                      Navigator.popUntil(context, (route) {
-                                        return count++ >= 3;
-                                      });
+                                      // Em vez de voltar 3 telas, vamos direcionar para a página de sucesso
+                                      // passando os dados antigos e novos
 
-                                      sm.showSnackBar(
-                                        const SnackBar(
-                                          content: Text(
-                                              'Reagendamento confirmado! ✅'),
-                                          backgroundColor: Colors.green,
-                                        ),
-                                      );
+                                      Navigator.of(context)
+                                          .pop(); // tira o loading dialog
+
+                                      Navigator.pushReplacementNamed(
+                                          context, '/reschedule_success',
+                                          arguments: {
+                                            'appointmentId':
+                                                widget.appointmentId,
+                                            'newDate': newDateTime,
+                                            'newProfessional':
+                                                profData['nome'] ??
+                                                    'Profissional',
+                                            'newServiceName': finalName,
+                                            'oldDate': widget.oldDate,
+                                            'oldProfessional':
+                                                widget.oldProfessional ?? '',
+                                            'oldServiceName': widget
+                                                    .oldServiceName ??
+                                                widget.serviceData['nome'] ??
+                                                '',
+                                          });
                                     } catch (e) {
                                       if (!mounted) return;
                                       if (Navigator.canPop(context)) {
@@ -1317,6 +1371,242 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
           ),
         );
       },
+    );
+  }
+}
+
+// ── Widget: Modal de Confirmação de Reagendamento ─────────────────────────
+class _RescheduleConfirmSheet extends StatelessWidget {
+  final DateTime? oldDate;
+  final String oldServiceName;
+  final double? oldPrice;
+  final String oldProfessional;
+  final DateTime newDate;
+  final String newServiceName;
+  final double newPrice;
+  final String newProfessional;
+
+  const _RescheduleConfirmSheet({
+    required this.oldDate,
+    required this.oldServiceName,
+    required this.oldPrice,
+    required this.oldProfessional,
+    required this.newDate,
+    required this.newServiceName,
+    required this.newPrice,
+    required this.newProfessional,
+  });
+
+  String _fmt(DateTime d) {
+    const days = [
+      'Segunda',
+      'Terça',
+      'Quarta',
+      'Quinta',
+      'Sexta',
+      'Sábado',
+      'Domingo'
+    ];
+    final day = days[d.weekday - 1];
+    final date =
+        '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+    final time =
+        '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+    return '$day, $date às $time';
+  }
+
+  String _fmtPrice(double p) =>
+      'R\$ ${p.toStringAsFixed(2).replaceAll('.', ',')}';
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      padding: EdgeInsets.fromLTRB(
+          20, 20, 20, MediaQuery.of(context).viewInsets.bottom + 20),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Handle
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2)),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          const Text(
+            "Confirmar Reagendamento",
+            style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.black87),
+            textAlign: TextAlign.center,
+          ),
+          const Text(
+            "Confira as informações antes de confirmar",
+            style: TextStyle(fontSize: 13, color: Colors.grey),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 20),
+
+          // Card: Agendamento ATUAL (antes)
+          if (oldDate != null) ...[
+            _buildCard(
+              label: "AGENDAMENTO ATUAL",
+              labelColor: Colors.orange.shade700,
+              bgColor: Colors.orange.shade50,
+              date: oldDate!,
+              serviceName: oldServiceName,
+              price: oldPrice ?? newPrice,
+              professional: oldProfessional,
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              child: Row(
+                children: [
+                  Expanded(child: Divider(color: Colors.grey.shade200)),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: AppColors.primaryPurple.withValues(alpha: 0.08),
+                      ),
+                      child: Icon(Icons.arrow_downward_rounded,
+                          color: AppColors.primaryPurple, size: 18),
+                    ),
+                  ),
+                  Expanded(child: Divider(color: Colors.grey.shade200)),
+                ],
+              ),
+            ),
+          ],
+
+          // Card: NOVO HORÁRIO (depois)
+          _buildCard(
+            label: "NOVO HORÁRIO",
+            labelColor: Colors.green.shade700,
+            bgColor: Colors.green.shade50,
+            date: newDate,
+            serviceName: newServiceName,
+            price: newPrice,
+            professional: newProfessional,
+          ),
+          const SizedBox(height: 24),
+
+          // Botões
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    side: BorderSide(color: Colors.grey.shade300),
+                    foregroundColor: Colors.black54,
+                  ),
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text("VOLTAR",
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 2,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    backgroundColor: AppColors.primaryPurple,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    elevation: 0,
+                  ),
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text("CONFIRMAR REAGENDAMENTO",
+                      style:
+                          TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCard({
+    required String label,
+    required Color labelColor,
+    required Color bgColor,
+    required DateTime date,
+    required String serviceName,
+    required double price,
+    required String professional,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(14),
+        border:
+            Border.all(color: labelColor.withValues(alpha: 0.25), width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+            decoration: BoxDecoration(
+              color: labelColor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(label,
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: labelColor,
+                    letterSpacing: 0.5)),
+          ),
+          const SizedBox(height: 10),
+          _row(Icons.event_rounded, _fmt(date), labelColor),
+          const SizedBox(height: 5),
+          _row(Icons.cut_rounded, serviceName, labelColor),
+          const SizedBox(height: 5),
+          _row(Icons.attach_money_rounded, _fmtPrice(price), labelColor),
+          if (professional.isNotEmpty) ...[
+            const SizedBox(height: 5),
+            _row(Icons.person_rounded, professional, labelColor),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _row(IconData icon, String text, Color accentColor) {
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: accentColor.withValues(alpha: 0.7)),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(text,
+              style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.black87)),
+        ),
+      ],
     );
   }
 }

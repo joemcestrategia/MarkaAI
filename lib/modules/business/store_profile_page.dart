@@ -297,7 +297,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
   String _normalizeSlug(String input) {
     // Remove espaços, acentos e caracteres especiais
     String slug = input.toLowerCase().trim();
-    slug = slug.replaceAll(RegExp(r'[áÃ âãä]'), 'a');
+    slug = slug.replaceAll(RegExp(r'[áàâãä]'), 'a');
     slug = slug.replaceAll(RegExp(r'[éèêë]'), 'e');
     slug = slug.replaceAll(RegExp(r'[íìîï]'), 'i');
     slug = slug.replaceAll(RegExp(r'[óòôõö]'), 'o');
@@ -809,7 +809,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                   ),
                 ),
 
-                // â”€â”€â”€ FORMULÃRIO â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // â”€â”€â”€ FORMULÁRIO â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 SliverToBoxAdapter(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
@@ -1156,7 +1156,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
               const SizedBox(width: 8),
               Text(
                 highlight
-                    ? 'Localização incompleta â€” Preencha para aparecer nas buscas!'
+                    ? 'Localização incompleta — Preencha para aparecer nas buscas!'
                     : 'Cidade e Estado',
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
@@ -1406,7 +1406,7 @@ class _ImageAdjustmentPageState extends State<_ImageAdjustmentPage> {
               ),
               const SizedBox(height: 6),
               const Text(
-                "Arraste para reposicionar â€¢ Pinçar para zoom",
+                "Arraste para reposicionar • Pinçar para zoom",
                 style: TextStyle(color: Colors.white70, fontSize: 12),
               ),
             ],

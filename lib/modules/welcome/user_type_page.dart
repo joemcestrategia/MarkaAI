@@ -53,10 +53,10 @@ class UserTypePage extends StatelessWidget {
 
             const SizedBox(height: 20),
 
-            // BOTÃO PROPRIETÃRIO
+            // BOTÃO PROPRIETÁRIO
             _buildButton(
               context,
-              title: "SOU PROPRIETÃRIO",
+              title: "SOU PROPRIETÁRIO",
               subtitle: "Quero gerenciar meu studio e equipe",
               icon: Icons.business_center,
               color: AppColors.primaryPurple,

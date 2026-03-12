@@ -8,7 +8,7 @@ import '../../core/theme/app_colors.dart';
 import '../../core/services/mercado_pago_service.dart';
 import '../schedule/checkout_transparente_page.dart';
 import '../schedule/booking_page.dart';
-import 'dart:convert';
+import '../../pages/pix_payment_page.dart';
 import 'dart:async';
 import '../public/public_shop_page.dart';
 
@@ -249,10 +249,45 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
           result['point_of_interaction']['transaction_data']['qr_code'];
       final paymentId = result['id'].toString();
 
-      if (mounted) {
-        _startPixMonitoring(appointment, paymentId, amount);
-        _showPixModal(qrCode64, copyPaste, appointment, amount);
-      }
+      if (!mounted) return;
+
+      // Inicia polling de status
+      _startPixMonitoring(appointment, paymentId, amount);
+
+      // Abre a mesma tela de PIX usada no checkout
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PixPaymentPage(
+            qrBase64: qrCode64,
+            copyPaste: copyPaste,
+            paymentId: paymentId,
+            amount: amount,
+            onManualCheck: () async {
+              try {
+                final status = await MercadoPagoService.verificarStatusPix(
+                  shopId: shopId,
+                  paymentId: paymentId,
+                );
+                return status == 'approved';
+              } catch (e) {
+                return false;
+              }
+            },
+            onPaid: () {
+              _timerPolling?.cancel();
+              Navigator.pop(context);
+              _updateAppointmentPayment(appointment, amount, 'Pix', paymentId);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Pagamento aprovado!'),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            },
+          ),
+        ),
+      );
     } catch (e) {
       _showError("Erro ao gerar PIX: $e");
     }
@@ -291,85 +326,7 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
     });
   }
 
-  void _showPixModal(String qr64, String copyPaste,
-      DocumentSnapshot appointment, double amount) {
-    showModalBottomSheet(
-      context: context,
-      useSafeArea: true,
-      isScrollControlled: true,
-      isDismissible: false,
-      builder: (ctx) => Container(
-        padding: const EdgeInsets.all(25),
-        height: MediaQuery.of(context).size.height * 0.85,
-        child: Column(
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text("Pague via Pix",
-                    style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.primaryPurple)),
-                IconButton(
-                  onPressed: () {
-                    _timerPolling?.cancel();
-                    Navigator.pop(ctx);
-                  },
-                  icon: const Icon(Icons.close),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Text("Valor: ${currencyFormat.format(amount)}",
-                style: const TextStyle(fontSize: 18)),
-            const SizedBox(height: 20),
-            if (qr64.isNotEmpty)
-              Expanded(child: Image.memory(base64Decode(qr64)))
-            else
-              const Expanded(child: Center(child: Text('Erro ao gerar QR'))),
-            const SizedBox(height: 20),
-            const Text("Pix Copia e Cola:",
-                style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 5),
-            Container(
-              decoration: BoxDecoration(
-                color: Colors.grey[100],
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.grey.shade300),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Text(
-                        copyPaste,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontFamily: 'monospace'),
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    icon:
-                        const Icon(Icons.copy, color: AppColors.primaryPurple),
-                    onPressed: () {
-                      // Copiar para clipboard
-                      if (!mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text("Código copiado!")),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  // _showPixModal removido — agora usa PixPaymentPage diretamente em _processPixPayment
 
   Future<void> _processCardPayment(
       DocumentSnapshot appointment, double amount) async {
@@ -380,7 +337,6 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
         .doc(data['servicoId'])
         .get();
 
-    // Buscar shop e professional docs
     final shopDoc =
         await FirebaseFirestore.instance.collection('shops').doc(shopId).get();
     final professionalDoc = data['profissionalId'] != null
@@ -406,6 +362,8 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
           date: appointmentDate,
           time: TimeOfDay.fromDateTime(appointmentDate),
           collectOnly: false,
+          skipPlanCheck:
+              true, // o plano já foi validado antes de oferecer o opção
         ),
       ),
     );

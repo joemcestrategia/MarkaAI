@@ -559,7 +559,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                   title: Text('Compra ${d.id.substring(0, 8)}',
                       style: const TextStyle(
                           fontWeight: FontWeight.w600, fontSize: 13)),
-                  subtitle: Text('$dateStr â€¢ ${items.length} itens',
+                  subtitle: Text('$dateStr • ${items.length} itens',
                       style: const TextStyle(fontSize: 12)),
                   children: [
                     Padding(

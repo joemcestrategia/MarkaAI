@@ -17,7 +17,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
   String _normalize(String s) {
     final map = {
       'á': 'a',
-      'Ã ': 'a',
+      'à': 'a',
       'ã': 'a',
       'â': 'a',
       'ä': 'a',
@@ -145,7 +145,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
                         final names = group.map((d) {
                           final m = d.data() as Map<String, dynamic>?;
                           return m?['name'] ?? d.id;
-                        }).join(' â€¢ ');
+                        }).join(' • ');
                         return ListTile(
                             title: Text('Grupo ${e.key + 1}'),
                             subtitle: Text(names),
@@ -168,7 +168,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
                         final nb =
                             (b.data() as Map<String, dynamic>?)?['name'] ?? '';
                         return ListTile(
-                            title: Text('$na  â†”  $nb'),
+                            title: Text('$na  ↔  $nb'),
                             subtitle: Text('Toque para mesclar ambos'),
                             onTap: () {
                               Navigator.pop(context);

@@ -23,6 +23,9 @@ class CheckoutTransparentePage extends StatefulWidget {
   /// Se true, só coleta dados do cartão e volta para revisão; a cobrança é feita depois ao concluir.
   final bool collectOnly;
 
+  /// Se true, pula a verificação de plano (plano já verificado antes de abrir).
+  final bool skipPlanCheck;
+
   const CheckoutTransparentePage({
     super.key,
     required this.shopId,
@@ -33,6 +36,7 @@ class CheckoutTransparentePage extends StatefulWidget {
     required this.date,
     required this.time,
     this.collectOnly = false,
+    this.skipPlanCheck = false,
   });
 
   @override
@@ -55,8 +59,22 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
   }
 
   Future<void> _checkPlanRestriction() async {
-    // Usa getShopPlan(shopId) â€” não canUseOnlinePayment() â€” pois o usuário
+    // Usa getShopPlan(shopId) — não canUseOnlinePayment() — pois o usuário
     // logado aqui é o CLIENTE, não o dono da loja.
+    // Se skipPlanCheck=true, plano ja foi verificado antes de abrir esta tela.
+    if (widget.skipPlanCheck) {
+      if (kIsWeb) {
+        _prepareWebInitialData();
+      } else {
+        _loadShopPaymentConfigLocal().whenComplete(() {
+          Future.delayed(const Duration(milliseconds: 2500), () async {
+            if (!mounted || !_isLoading || _didInject) return;
+            await _injectAllAndHideLoading();
+          });
+        });
+      }
+      return;
+    }
     final shopPlan = await SubscriptionService.getShopPlan(widget.shopId);
     final canPay = SubscriptionService.planSupportsOnlinePayment(shopPlan);
     if (!canPay) {
@@ -325,7 +343,7 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
       }
       setState(() {
         _webClientData = {
-          'publicKey': key, // CRÃTICO: passar public_key na URL para Web
+          'publicKey': key, // CRÍTICO: passar public_key na URL para Web
           'amount': widget.valor.toString(),
           'orderId': widget.orderId,
           'clientEmail': email,
@@ -507,11 +525,13 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
           .collection('shops')
           .doc(widget.shopId)
           .get();
-      final mp = doc.data()?['mercadopago'] as Map<String, dynamic>?;
-      final key = mp?['public_key'] as String?;
+      final data = doc.data() ?? {};
+      final mp = data['mercadopago'] as Map<String, dynamic>?;
+      final key = (mp?['public_key'] as String?) ??
+          (data['mp_public_key'] as String?);
       if (key == null || key.isEmpty) {
         throw Exception(
-            'Loja sem Mercado Pago configurado. Acesse Configurações â†’ Pagamentos para conectar sua conta.');
+            'Loja sem Mercado Pago configurado. Acesse Configurações → Pagamentos para conectar sua conta.');
       }
       return key;
     } catch (e) {
@@ -575,9 +595,9 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
                 {'amount': amount, 'bin': bin, 'shopId': widget.shopId}),
           );
           debugPrint(
-              'â†’ installments endpoint response status: ${resp.statusCode}');
+              '→ installments endpoint response status: ${resp.statusCode}');
           final respBody = resp.body;
-          debugPrint('â†’ installments endpoint response body: $respBody');
+          debugPrint('→ installments endpoint response body: $respBody');
           if (resp.statusCode == 200) {
             final body = jsonDecode(resp.body);
             final dynamic mpData = body['data'] ?? body;
@@ -715,8 +735,8 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
           }
         }),
       );
-      debugPrint('â†’ criarPagamento response status: ${response.statusCode}');
-      debugPrint('â†’ criarPagamento response body: ${response.body}');
+      debugPrint('→ criarPagamento response status: ${response.statusCode}');
+      debugPrint('→ criarPagamento response body: ${response.body}');
 
       if (response.statusCode == 200) {
         final result = jsonDecode(response.body);

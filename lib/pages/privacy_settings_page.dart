@@ -33,7 +33,7 @@ class _PrivacySettingsPageState extends State<PrivacySettingsPage> {
           .collection('users')
           .doc(user.uid)
           .get();
-      Map<String, dynamic> data = doc.data() ?? {};
+      Map<String, dynamic> data = Map<String, dynamic>.from(doc.data() ?? {});
 
       // Sanitizar dados
       data['exportado_em'] = DateTime.now().toIso8601String();

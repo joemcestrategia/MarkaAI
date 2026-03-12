@@ -46,7 +46,7 @@ void main() async {
     // 3. Inicializar Stripe
     if (!kIsWeb) {
       Stripe.publishableKey =
-          "pk_test_51T97xzFzh8r5AMGzFUh6FoEmFia9Q0w1QftuKEJJHv5gY7yxvCQREukvqPtCCufP4ZaRmYtCTZG5rswephuyEfQh00IxX3VrYP";
+          'pk_live_51T97xzFzh8r5AMGzlcuoTt9mxupvYn3fD9UznF7pdPNxxZI4W0Jn6xb36tYKlSvtUnb7544CeIXtDX84XshUk6dF00d10axLwi';
       try {
         await Stripe.instance.applySettings();
         debugPrint("=== BOOT STEP 3: Stripe API (Mobile) Configurado ===");

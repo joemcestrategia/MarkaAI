@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import '../../core/theme/app_colors.dart';
 import '../business/business_home_page.dart';
 import '../clients/client_home_page.dart';
+import '../auth/forgot_password_page.dart';
 
 // --- SERVIÇO AUXILIAR (MANTIDO) ---
 class ViaCepService {
@@ -510,7 +511,7 @@ class _LoginPageState extends State<LoginPage>
                         const SizedBox(height: 18),
                         const SizedBox(height: 12),
                         const Text(
-                          "Domine sua agenda â€” organize seu negócio e aumente seu faturamento.",
+                          "Domine sua agenda — organize seu negócio e aumente seu faturamento.",
                           style: TextStyle(
                               color: Colors.white,
                               fontSize: 32,
@@ -527,7 +528,7 @@ class _LoginPageState extends State<LoginPage>
                               border: Border.all(
                                   color: Colors.white.withValues(alpha: 0.2))),
                           child: const Text(
-                              "ðŸš€ Agendamento Inteligente â€¢ Gestão Financeira",
+                              "ðŸš€ Agendamento Inteligente • Gestão Financeira",
                               style:
                                   TextStyle(color: Colors.white, fontSize: 14)),
                         )
@@ -561,7 +562,7 @@ class _LoginPageState extends State<LoginPage>
     );
   }
 
-  // --- FORMULÃRIO DE LOGIN (SIMPLES E ELEGANTE) ---
+  // --- FORMULÁRIO DE LOGIN (SIMPLES E ELEGANTE) ---
   Widget _buildLoginForm() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -610,7 +611,10 @@ class _LoginPageState extends State<LoginPage>
         Align(
           alignment: Alignment.centerRight,
           child: TextButton(
-            onPressed: _showResetPasswordDialog,
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const ForgotPasswordPage()),
+            ),
             child: const Text("Esqueceu a senha?",
                 style: TextStyle(
                     color: AppColors.primaryPurple,
@@ -674,67 +678,6 @@ class _LoginPageState extends State<LoginPage>
     } catch (e) {
       _showError("Erro ao fazer login.");
       setState(() => _isLoading = false);
-    }
-  }
-
-  Future<void> _showResetPasswordDialog() async {
-    final ctrl = TextEditingController(text: _emailCtrl.text.trim());
-    final formKey = GlobalKey<FormState>();
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Recuperar senha'),
-        content: Form(
-          key: formKey,
-          child: TextFormField(
-            controller: ctrl,
-            keyboardType: TextInputType.emailAddress,
-            decoration: const InputDecoration(
-              labelText: 'E-mail',
-              hintText: 'seu@email.com',
-            ),
-            validator: (v) {
-              final value = (v ?? '').trim();
-              if (value.isEmpty) return 'Informe seu e-mail';
-              if (!value.contains('@')) return 'E-mail inválido';
-              return null;
-            },
-          ),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancelar')),
-          ElevatedButton(
-            onPressed: () {
-              if (formKey.currentState?.validate() != true) return;
-              Navigator.pop(ctx, true);
-            },
-            child: const Text('Enviar'),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) return;
-
-    setState(() => _isLoading = true);
-    try {
-      await FirebaseAuth.instance
-          .sendPasswordResetEmail(email: ctrl.text.trim());
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Enviamos um e-mail para redefinir sua senha.'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } on FirebaseAuthException catch (e) {
-      _handleFirebaseError(e);
-    } catch (e) {
-      _showError('Erro ao enviar e-mail de recuperação.');
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -1048,7 +991,6 @@ class _LoginPageState extends State<LoginPage>
           controller: _ruaCtrl,
           label: "Rua",
           icon: Icons.location_on_outlined,
-          readOnly: true,
         ),
         const SizedBox(height: 16),
         Row(
@@ -1058,7 +1000,6 @@ class _LoginPageState extends State<LoginPage>
                 controller: _bairroCtrl,
                 label: "Bairro",
                 icon: Icons.holiday_village,
-                readOnly: true,
               ),
             ),
             const SizedBox(width: 10),
@@ -1067,7 +1008,6 @@ class _LoginPageState extends State<LoginPage>
                 controller: _cidadeCtrl,
                 label: "Cidade",
                 icon: Icons.location_city,
-                readOnly: true,
               ),
             ),
           ],
@@ -1194,7 +1134,7 @@ class _LoginPageState extends State<LoginPage>
 }
 
 // =============================================================================
-// ðŸ§± WIDGETS REUTILIZÃVEIS
+// ðŸ§± WIDGETS REUTILIZÁVEIS
 // =============================================================================
 
 class _ModernInput extends StatelessWidget {

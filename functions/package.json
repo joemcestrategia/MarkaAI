@@ -20,6 +20,7 @@
     "firebase-functions": "^7.0.5",
     "googleapis": "^171.4.0",
     "jsonwebtoken": "^9.0.3",
+    "nodemailer": "^8.0.2",
     "qs": "^6.15.0",
     "stripe": "^15.12.0"
   },

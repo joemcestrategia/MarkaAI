@@ -1,4 +1,4 @@
-﻿/// Web helper â€” STUB for non-web platforms (Android/iOS).
+﻿/// Web helper — STUB for non-web platforms (Android/iOS).
 /// The real implementation lives in [web_helper_real.dart].
 ///
 /// Every function here returns a safe no-op / empty value so that the

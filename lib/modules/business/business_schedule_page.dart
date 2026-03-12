@@ -18,7 +18,7 @@ class BusinessSchedulePage extends StatefulWidget {
 }
 
 class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
-  // --- CALENDÃRIO ---
+  // --- CALENDÁRIO ---
   DateTime _focusedDay = DateTime.now();
   DateTime _selectedDay = DateTime.now();
   CalendarFormat _calendarFormat = CalendarFormat.month;
@@ -1709,7 +1709,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
         ),
         const SizedBox(height: 12),
 
-        // Removed Ativos/Histórico tabs â€” schedule shows active appointments by default.
+        // Removed Ativos/Histórico tabs — schedule shows active appointments by default.
 
         if (_showOnlySelectedDay)
           Padding(

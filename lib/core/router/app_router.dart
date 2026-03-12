@@ -11,6 +11,8 @@ import '../../modules/admin/admin_page.dart';
 import '../../core/theme/app_colors.dart';
 import '../../modules/inventory/inventory_home_page.dart';
 import '../../modules/business/subscription_plans_page.dart';
+import '../../modules/auth/reset_password_page.dart';
+import '../../modules/clients/rescheduling_success_page.dart';
 
 class AppRouter {
   static Route<dynamic> generateRoute(RouteSettings settings) {
@@ -49,8 +51,55 @@ class AppRouter {
       );
     }
 
+    // Tratamento estrito do Firebase Link Action caso seja pego apenas aqui
+    if (uri.path == '/__/') {
+      final mode = uri.queryParameters['mode'];
+      final oobCode = uri.queryParameters['oobCode'];
+      if (mode == 'resetPassword' && oobCode != null) {
+        return MaterialPageRoute(
+          builder: (_) => ResetPasswordPage(oobCode: oobCode),
+          settings: settings,
+        );
+      }
+    }
+
+    // Capture Firebase Action Link (Password Reset)
+    final mode = uri.queryParameters['mode'];
+    final oobCode = uri.queryParameters['oobCode'];
+
+    if (mode == 'resetPassword' && oobCode != null && oobCode.isNotEmpty) {
+      return MaterialPageRoute(
+        builder: (_) => ResetPasswordPage(oobCode: oobCode),
+        settings: settings,
+      );
+    }
+
+    if (cleanPath == 'reschedule_success') {
+      final args = settings.arguments as Map<String, dynamic>? ?? {};
+      return MaterialPageRoute(
+        builder: (_) => RescheduleSuccessPage(
+          appointmentId: args['appointmentId'] ?? '',
+          newDate: args['newDate'] ?? DateTime.now(),
+          newProfessional: args['newProfessional'] ?? '',
+          newServiceName: args['newServiceName'] ?? '',
+          oldDate: args['oldDate'],
+          oldProfessional: args['oldProfessional'] ?? '',
+          oldServiceName: args['oldServiceName'] ?? '',
+        ),
+        settings: settings,
+      );
+    }
+
     // 3. Rota Raiz (Home)
     if (cleanPath.isEmpty) {
+      return MaterialPageRoute(
+        builder: (_) => const AuthGate(),
+        settings: settings,
+      );
+    }
+
+    // 3b. Rota client_home → vai direto para o AuthGate que redireciona o cliente logado
+    if (cleanPath == 'client_home') {
       return MaterialPageRoute(
         builder: (_) => const AuthGate(),
         settings: settings,
@@ -134,6 +183,7 @@ class AppRouter {
       'home',
       'business',
       'client',
+      'client_home',
       'admin',
       'settings',
       'profile',
@@ -142,6 +192,7 @@ class AppRouter {
       'success',
       'error',
       'subscription_plans',
+      'reschedule_success',
     ];
     return knownRoutes.contains(route.toLowerCase());
   }

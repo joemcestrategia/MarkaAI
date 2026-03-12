@@ -546,7 +546,7 @@ class _SeletorDeCidadeModalState extends State<SeletorDeCidadeModal> {
                             style: const TextStyle(fontWeight: FontWeight.bold),
                           ),
                           TextSpan(
-                            text: ' â€” ${suggestion.estado}',
+                            text: ' — ${suggestion.estado}',
                             style: TextStyle(color: Colors.grey[600]),
                           ),
                         ],
@@ -735,7 +735,7 @@ class _SeletorDeCidadeModalState extends State<SeletorDeCidadeModal> {
   }
 }
 
-/// Tela cheia para seleção de cidade â€” use Navigator.push para navegar a ela.
+/// Tela cheia para seleção de cidade — use Navigator.push para navegar a ela.
 /// Equivalente ao [SeletorDeCidadeModal] mas ocupa a tela inteira.
 class SeletorDeCidadePage extends StatefulWidget {
   final void Function(CidadeSelecionada cidade) onCidadeSelecionada;
@@ -894,7 +894,7 @@ class _SeletorDeCidadePageState extends State<SeletorDeCidadePage> {
   /// Remove acentos para busca sem diacríticos
   String _normalize(String s) {
     const from =
-        'Ã áâãäÃ¥Ã¦çèéêëìíîïÃ°ñòóôõöùúûüÃ½Ã¿Ã€ÃÂÃÄÃ…Ã†ÇÈÉÊËÃŒÃÃŽÃÃÃ‘Ã’Ã“Ã”ÕÖÙÚÛÜÃ';
+        'àáâãäåæçèéêëìíîïðñòóôõöùúûüýÿÃ€ÁÂÃÄÃ…Ã†ÇÈÉÊËÃŒÍÃŽÏÐÃ‘Ã’Ã“Ã”ÕÖÙÚÛÜÝ';
     const to = 'aaaaaaaceeeeiiiidnoooooouuuuyy AAAAAAACEEEEIIIIDNOOOOOOUUUUY';
     var result = s.toLowerCase();
     for (var i = 0; i < from.length; i++) {
@@ -1156,7 +1156,7 @@ class _SeletorDeCidadePageState extends State<SeletorDeCidadePage> {
               ),
             ],
             const Divider(height: 16),
-            // Lista de sugestões â€” Expanded para preencher o restante da tela
+            // Lista de sugestões — Expanded para preencher o restante da tela
             Expanded(
               child: _firstLoad
                   ? const Center(

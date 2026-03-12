@@ -240,7 +240,7 @@ class _ExcelImportPageState extends State<ExcelImportPage> {
       setState(() {
         _isLoading = false;
         _logs +=
-            "\n\nðŸ—‘ï¸ LIMPEZA CONCLUÃDA!\n$deletedCount registros apagados.";
+            "\n\nðŸ—‘ï¸ LIMPEZA CONCLUÍDA!\n$deletedCount registros apagados.";
       });
 
       if (!mounted) return;

@@ -49,7 +49,7 @@ class ServiceDetailsPage extends StatelessWidget {
                             onPressed: onEdit,
                             tooltip: "Editar"),
                         const SizedBox(width: 4),
-                        // Ãcone X ou Seta dependendo de onde estiver, mas X é universal
+                        // Ícone X ou Seta dependendo de onde estiver, mas X é universal
                         IconButton(
                             icon: const Icon(Icons.close),
                             onPressed: onClose,
@@ -60,7 +60,7 @@ class ServiceDetailsPage extends StatelessWidget {
                 ),
               ),
 
-              // --- CONTEÚDO ROLÃVEL (Lista + Infos) ---
+              // --- CONTEÚDO ROLÁVEL (Lista + Infos) ---
               // Usamos Expanded aqui para que o Scroll ocupe o restão da tela
               Expanded(
                 child: SingleChildScrollView(

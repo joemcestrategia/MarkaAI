@@ -271,7 +271,7 @@ class ServiceDetailsPage extends StatelessWidget {
   }
 }
 
-// --- PÃGINA DE GESTÃO (AGORA RESPONSIVA) ---
+// --- PÁGINA DE GESTÃO (AGORA RESPONSIVA) ---
 class ServicesManagementPage extends StatefulWidget {
   const ServicesManagementPage({super.key});
 
@@ -524,7 +524,7 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
     );
   }
 
-  // ðŸ§© WIDGET DE LISTA REUSÃVEL
+  // ðŸ§© WIDGET DE LISTA REUSÁVEL
   Widget _buildListContent(bool isMobile) {
     return Column(
       children: [

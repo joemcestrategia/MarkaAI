@@ -13,17 +13,22 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const cors = require("cors")({ origin: true });
-const stripe = require("stripe")("sk_test_51T97xzFzh8r5AMGz5dDtbgzjOacC7aZ4vnTrUMW1fEu7ecxmkDIwYta1lJoKW9t1EmAIhi0GQeszwaCRVZgSYsVs0021hsHzB9");
+const stripe = require("stripe")("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");
+
+// Importando serviço de e-mail (SMTP)
+const emailService = require("./emailService");
 
 const PRICE_IDS = {
-  // IDs de Teste (sk_test) - criados via API para validação
-  'start': 'price_1T9BG1Fzh8r5AMGzr6o1Lck5', // Test - R$ 29,90/mês
-  'plus': 'price_1T9BG1Fzh8r5AMGz8gdRehFu',  // Test - R$ 59,90/mês
-  'pro': 'price_1T9BG2Fzh8r5AMGzKlwVOB1n',   // Test - R$ 99,90/mês
-  // Boosts (manter IDs antigos - podem ser Live, testar separadamente)
+  // TODO: INSERIR OS IDs DE PREÇO (price_...) REAIS DE PRODUÇÃO DOS PLANOS ABAIXO:
+  'start': 'price_1T98YSFzh8r5AMGzkMdAH2eq', // Live - R$ 29,90/mês
+  'plus': 'price_1T98ZPFzh8r5AMGzUHfVZRfC',  // Live - R$ 59,90/mês
+  'pro': 'price_1T98aHFzh8r5AMGzlgvM6eSZ',   // Live - R$ 99,90/mês
+
+  // Boosts (manter IDs antigos - podem ser Live, testar separadamente ou substituir)
   'boost_24h': 'price_1T98cJFzh8r5AMGzFOigUfSM',
   'boost_3d': 'price_1T98d6Fzh8r5AMGznhujEh4J',
   'boost_7d': 'price_1T98e3Fzh8r5AMGz4FJhXU3C',
+
   // Plano test_plan legado
   'test_plan': 'price_1T98SZFzh8r5AMGzPrzLG4c8'
 };
@@ -168,7 +173,7 @@ exports.createStripeSubscription = onCall(async (request) => {
       paymentIntentClientSecret: subscription.latest_invoice.payment_intent.client_secret,
       customer: customer.id,
       ephemeralKey: ephemeralKey.secret,
-      publishableKey: "pk_test_51T97xzFzh8r5AMGzFUh6FoEmFia9Q0w1QftuKEJJHv5gY7yxvCQREukvqPtCCufP4ZaRmYtCTZG5rswephuyEfQh00IxX3VrYP"
+      publishableKey: "pk_live_51T97xzFzh8r5AMGzlcuoTt9mxupvYn3fD9UznF7pdPNxxZI4W0Jn6xb36tYKlSvtUnb7544CeIXtDX84XshUk6dF00d10axLwi"
     };
   } catch (error) {
     console.error("Stripe Subscription Error:", error);
@@ -3979,5 +3984,140 @@ exports.upgradeSubscription = onCall(async (request) => {
     'subscription.updated_at': admin.firestore.FieldValue.serverTimestamp()
   });
 
-  return { success: true, message: `Upgrade para ${newPlanId} realizado! 🚀` };
+  return { success: true, message: `Plano alterado para ${newPlanId.toUpperCase()}` };
 });
+
+// ===================================================================
+// SISTEMA DE E-MAILS TRANSACIONAIS (NODEMAILER)
+// ===================================================================
+
+/**
+ * Disparado quando um NOVO agendamento é CRIADO.
+ */
+exports.onAppointmentCreatedEmail = onDocumentCreated('appointments/{appointmentId}', async (event) => {
+  const data = event.data.data();
+  if (!data) return;
+
+  const emailCliente = data.emailCliente;
+  if (!emailCliente || !emailCliente.includes('@')) {
+    console.log(`onAppointmentCreatedEmail ignorado: emailCliente inválido para ${event.params.appointmentId}`);
+    return;
+  }
+
+  try {
+    const shopDoc = await admin.firestore().collection('shops').doc(data.shopId).get();
+    const shopName = shopDoc.exists ? (shopDoc.data().nome || 'Barbearia/Salão') : 'MarkaAI';
+
+    const dateObj = data.data_agendamento.toDate();
+    const dateStr = dateObj.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) +
+      " às " + dateObj.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
+
+    await emailService.sendAppointmentEmail({
+      toEmail: emailCliente,
+      patientName: data.nomeCliente || 'Cliente',
+      shopName: shopName,
+      serviceName: data.servicoNome || 'Serviço',
+      dateStr: dateStr,
+      price: data.valor,
+      isCancellation: false,
+    });
+  } catch (error) {
+    console.error("Erro no gatilho onAppointmentCreatedEmail:", error);
+  }
+});
+
+/**
+ * Disparado quando um agendamento existente é ATUALIZADO (Ex: Cancelado / Reprogramado / Concluído).
+ */
+exports.onAppointmentUpdatedEmail = onDocumentUpdated('appointments/{appointmentId}', async (event) => {
+  const beforeData = event.data.before.data();
+  const afterData = event.data.after.data();
+  if (!afterData) return;
+
+  const emailCliente = afterData.emailCliente;
+  if (!emailCliente || !emailCliente.includes('@')) return;
+
+  // Verifica se o status mudou para 'cancelado' ou 'rejeitado'
+  const mudouStatusParaCancelado = (beforeData.status !== afterData.status) &&
+    (afterData.status === 'cancelado' || afterData.status === 'rejeitado');
+
+  // Verifica se a data mudou (reagendamento)
+  const mudouData = beforeData.data_agendamento.toMillis() !== afterData.data_agendamento.toMillis();
+
+  // Se não foi cancelado nem reagendado, não enviamos spam
+  if (!mudouStatusParaCancelado && !mudouData) return;
+
+  try {
+    const shopDoc = await admin.firestore().collection('shops').doc(afterData.shopId).get();
+    const shopName = shopDoc.exists ? (shopDoc.data().nome || 'Barbearia/Salão') : 'MarkaAI';
+
+    const dateObj = afterData.data_agendamento.toDate();
+    const dateStr = dateObj.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) +
+      " às " + dateObj.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
+
+    await emailService.sendAppointmentEmail({
+      toEmail: emailCliente,
+      patientName: afterData.nomeCliente || 'Cliente',
+      shopName: shopName,
+      serviceName: afterData.servicoNome || 'Serviço',
+      dateStr: dateStr,
+      price: afterData.valor,
+      isCancellation: mudouStatusParaCancelado,
+    });
+  } catch (error) {
+    console.error("Erro no gatilho onAppointmentUpdatedEmail:", error);
+  }
+});
+
+exports.deleteUserAccount = onCall(async (request) => {
+  if (!request.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Usuário não autenticado');
+  }
+
+  const uid = request.auth.uid;
+
+  try {
+    const userDoc = await admin.firestore().collection('users').doc(uid).get();
+
+    if (userDoc.exists) {
+      const userData = userDoc.data();
+      const shopId = userData.shopId;
+
+      // Se tiver loja vinculada (sendo dono)
+      if (shopId && userData.papel === 'dono') {
+        const shopDoc = await admin.firestore().collection('shops').doc(shopId).get();
+        if (shopDoc.exists) {
+          const customerId = shopDoc.data().stripeCustomerId;
+          // Se tiver um customer do Stripe, cancelar todas as assinaturas dele primeiro
+          if (customerId) {
+            try {
+              const subscriptions = await stripe.subscriptions.list({
+                customer: customerId,
+                status: 'active',
+              });
+              for (const sub of subscriptions.data) {
+                await stripe.subscriptions.cancel(sub.id);
+              }
+            } catch (e) {
+              console.warn("Stripe cancel warn (exclusão conta):", e.message);
+            }
+          }
+          // Deleta a loja
+          await admin.firestore().collection('shops').doc(shopId).delete();
+        }
+      }
+
+      // Deleta os dados do user 
+      await admin.firestore().collection('users').doc(uid).delete();
+    }
+
+    // E por fim, deleta o registro no Firebase Authentication
+    await admin.auth().deleteUser(uid);
+
+    return { success: true, message: "Conta excluída" };
+  } catch (error) {
+    console.error("Erro em deleteUserAccount:", error);
+    throw new functions.https.HttpsError('internal', "Erro ao excluir conta");
+  }
+});
+

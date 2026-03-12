@@ -238,7 +238,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
       // Ativa edge-to-edge ANTES de abrir o cropper. Isso faz com que a
       // Activity nativa do ImageCropper receba insets corretos do sistema,
       // posicionando a toolbar abaixo da status bar e os controles acima
-      // da navigation bar â€” sem nenhuma sobreposição.
+      // da navigation bar — sem nenhuma sobreposição.
       if (!kIsWeb) {
         _prepareSystemUIForCrop();
         // Aguarda o frame para garantir que o canal de plataforma aplicou
@@ -561,7 +561,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                 ),
               ),
 
-              // CORPO SCROLLÃVEL
+              // CORPO SCROLLÁVEL
               Expanded(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.all(24),
@@ -570,7 +570,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // ÃREA DE FOTOS
+                        // ÁREA DE FOTOS
                         AnimatedContainer(
                           duration: const Duration(milliseconds: 200),
                           height: 120,
@@ -737,7 +737,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                                 Text("$totalImages de 5 fotos",
                                     style: const TextStyle(
                                         fontSize: 12, color: Colors.grey)),
-                                Text(" â€¢ Clique no âœ‚ï¸ para recortar",
+                                Text(" • Clique no âœ‚ï¸ para recortar",
                                     style: TextStyle(
                                         fontSize: 11,
                                         color: Colors.grey.shade600,

@@ -216,7 +216,7 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
           .where('data', isLessThanOrEqualTo: Timestamp.fromDate(end))
           .get();
 
-      // ðŸ“Š LOG DE CUSTO - CÃLCULO MANUAL
+      // ðŸ“Š LOG DE CUSTO - CÁLCULO MANUAL
       if (!snapshot.metadata.isFromCache) {
         debugPrint(
             "âš ï¸ [MANUAL] Calculando totais lendo ${snapshot.docs.length} docs (Dica: Use o botão Otimizar)");
@@ -1261,7 +1261,7 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis),
                   subtitle: Text(
-                      '${DateFormat('dd/MM/yy').format(ts.toDate())} â€¢ ${d['banco_origem'] ?? ''}',
+                      '${DateFormat('dd/MM/yy').format(ts.toDate())} • ${d['banco_origem'] ?? ''}',
                       style: const TextStyle(fontSize: 11)),
                   trailing: Text(
                       NumberFormat.simpleCurrency(locale: 'pt_BR').format(val),

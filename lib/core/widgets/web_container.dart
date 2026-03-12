@@ -21,7 +21,7 @@ class WebContainer extends StatelessWidget {
         color: backgroundColor, // Fundo da página inteira
         child: Center(
           child: ConstrainedBox(
-            // TÃTICA: Limita a largura a 500px (tamanho de um tablet/celular grande)
+            // TÁTICA: Limita a largura a 500px (tamanho de um tablet/celular grande)
             constraints: const BoxConstraints(maxWidth: 500),
             child: Container(
               decoration: BoxDecoration(

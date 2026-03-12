@@ -64,7 +64,7 @@ class LocationService {
       return CepResult.fromMap(data);
     } on FirebaseFunctionsException catch (e) {
       debugPrint(
-          '[LocationService] fetchCep error: ${e.code} â€” ${e.message}');
+          '[LocationService] fetchCep error: ${e.code} — ${e.message}');
       return null;
     } catch (e) {
       debugPrint('[LocationService] fetchCep unexpected error: $e');

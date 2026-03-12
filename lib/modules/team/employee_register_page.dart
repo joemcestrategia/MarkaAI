@@ -23,7 +23,7 @@ class EmployeeRegisterPage extends StatefulWidget {
 class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
   final _formKey = GlobalKey<FormState>();
 
-  // Controladores (HORÃRIO CORRIGIDO PARA 08:00)
+  // Controladores (HORÁRIO CORRIGIDO PARA 08:00)
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _backupEmailController =

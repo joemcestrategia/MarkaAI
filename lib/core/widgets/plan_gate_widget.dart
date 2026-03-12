@@ -71,7 +71,7 @@ class _PlanGateWidgetState extends State<PlanGateWidget> {
 
     return Stack(
       children: [
-        // Conteúdo bloqueado â€” visual desfocado
+        // Conteúdo bloqueado — visual desfocado
         IgnorePointer(
           child: Opacity(
             opacity: 0.35,

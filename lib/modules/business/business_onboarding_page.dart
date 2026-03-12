@@ -65,6 +65,59 @@ class _BusinessOnboardingPageState extends State<BusinessOnboardingPage> {
   final _phoneMask = MaskTextInputFormatter(
       mask: '(##) #####-####', filter: {"#": RegExp(r'[0-9]')});
 
+  // Guarda os dados de endereco vindos do cadastro do usuario para nao perder
+  Map<String, dynamic>? _enderecoOriginal;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserData();
+  }
+
+  Future<void> _loadUserData() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      try {
+        final doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+        if (doc.exists && doc.data() != null) {
+          final data = doc.data()!;
+          if (mounted) {
+            setState(() {
+              _donoNomeController.text = data['nome'] ?? '';
+              _telefoneController.text = data['telefone'] ?? '';
+              _nomeLojaController.text = data['nome_negocio'] ?? '';
+
+              if (data['cidade'] != null) {
+                // Tenta extrair a Cidade e UF se vier no formato "Cidade - UF" (do login_page)
+                String cidadeRaw = data['cidade'];
+                if (cidadeRaw.contains(' - ')) {
+                  final parts = cidadeRaw.split(' - ');
+                  _cidadeController.text = parts[0];
+                  final ufRaw = parts[1].toUpperCase();
+                  if (_kOnboardingUFs.contains(ufRaw)) {
+                    _estadoSelecionado = ufRaw;
+                  }
+                } else {
+                  _cidadeController.text = cidadeRaw;
+                }
+              }
+
+              // Guarda o objeto de endereco inteiro se existir
+              if (data['endereco'] != null && data['endereco'] is Map) {
+                _enderecoOriginal = Map<String, dynamic>.from(data['endereco']);
+              }
+            });
+          }
+        }
+      } catch (e) {
+        debugPrint("Erro ao carregar dados do usuário: \$e");
+      }
+    }
+  }
+
   Future<void> _pickLogo() async {
     final ImagePicker picker = ImagePicker();
     final XFile? original = await picker.pickImage(source: ImageSource.gallery);
@@ -123,16 +176,35 @@ class _BusinessOnboardingPageState extends State<BusinessOnboardingPage> {
 
       String logoUrl = await _uploadLogo(newShopRef.id);
 
+      // Formata a string de endereco final para salvar no shop (padrao do store_profile)
+      String enderecoSalvo = '';
+      if (_enderecoOriginal != null) {
+        final cep = _enderecoOriginal!['cep'] ?? '';
+        final rua = _enderecoOriginal!['rua'] ?? '';
+        final numero = _enderecoOriginal!['numero'] ?? '';
+        final bairro = _enderecoOriginal!['bairro'] ?? '';
+        final cidadeFull =
+            "${_cidadeController.text.trim()} - ${_estadoSelecionado ?? ''}";
+
+        enderecoSalvo = "$rua, $numero, $bairro - $cidadeFull - CEP: $cep";
+      }
+
       // 1. Salva a Loja (Shop)
       await newShopRef.set({
         'id': newShopRef.id,
         'nome': _nomeLojaController.text.trim(),
         'categoria': _categoriaController.text.trim(),
+        'nicho':
+            _categoriaController.text.trim(), // Adicionado para consistencia
         'dono_id': uid,
         'telefone': _telefoneController.text.trim(),
+        'whatsapp':
+            _telefoneController.text.trim(), // Adicionado para consistencia
         'imageUrl': logoUrl, // Sincronizado com o nome usado na ClientHomePage
         'cidade': _cidadeController.text.trim(), // ?? NOVO
         'estado': _estadoSelecionado ?? '', // ?? NOVO
+        'endereco':
+            enderecoSalvo, // Salva o endereco formatado montado dos dados do user
         'sem_endereco_fixo': false,
         'criado_em': FieldValue.serverTimestamp(),
         // ?? Configuração de Assinatura (Trial de 90 dias)

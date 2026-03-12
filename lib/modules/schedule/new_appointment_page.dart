@@ -93,7 +93,7 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
                         color: isSelected
                             ? AppColors.primaryPurple
                             : Colors.black)),
-                subtitle: Text("R\$ $precoDisplay â€¢ $duracao min"),
+                subtitle: Text("R\$ $precoDisplay • $duracao min"),
                 trailing: isSelected
                     ? const Icon(Icons.check_circle,
                         color: AppColors.primaryPurple)
@@ -531,7 +531,7 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
     if (mounted) setState(() {});
   }
 
-  // --- CÃLCULO DE SLOTS COM DURAÇÃO ---
+  // --- CÁLCULO DE SLOTS COM DURAÇÃO ---
   List<String> _generateProfessionalSlotsWithDuration(
       String start, String end, int durationMin) {
     List<String> slots = [];
