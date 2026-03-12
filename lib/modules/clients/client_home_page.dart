@@ -2117,21 +2117,38 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
           .limit(20)
           .snapshots(),
       builder: (context, snap) {
+        if (widget.cidadeSelecionada == null) return const SizedBox.shrink();
+
         final now = DateTime.now();
-        final cidade = widget.cidadeSelecionada?.cidade.toLowerCase() ?? '';
+        final String selectedCityNormalized =
+            StringUtils.removeDiacritics(widget.cidadeSelecionada!.cidade)
+                .toLowerCase();
 
         final docs = (snap.data?.docs ?? []).where((doc) {
           final d = doc.data() as Map<String, dynamic>;
-          // Filtro de cidade
-          final shopCity =
-              (d['cidade'] ?? d['endereco'] ?? '').toString().toLowerCase();
-          final matchesCity = cidade.isEmpty ||
-              shopCity.contains(cidade) ||
-              cidade.contains(shopCity);
+
+          // Identificar cidade da loja com fallbacks
+          String shopCityRaw = '';
+          if (d['cidade'] != null && d['cidade'].toString().isNotEmpty) {
+            shopCityRaw = d['cidade'].toString();
+          } else if (d['endereco'] is Map) {
+            final endMap = d['endereco'] as Map;
+            shopCityRaw = (endMap['cidade'] ?? endMap['city'] ?? '').toString();
+          }
+
+          if (shopCityRaw.isEmpty) return false;
+
+          final String shopCityNormalized =
+              StringUtils.removeDiacritics(shopCityRaw).toLowerCase();
+
+          // Filtro rigoroso de cidade: deve ser igual à selecionada
+          final bool matchesCity = shopCityNormalized == selectedCityNormalized;
+
           // Filtro de boost expirado
           final expires = d['boost_expires_at'] as Timestamp?;
-          final isExpired = expires == null || expires.toDate().isBefore(now);
-          return !isExpired && matchesCity;
+          final isNotExpired = expires != null && expires.toDate().isAfter(now);
+
+          return isNotExpired && matchesCity;
         }).toList();
 
         if (docs.isEmpty) return const SizedBox.shrink();
