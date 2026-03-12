@@ -205,6 +205,7 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
                               style: TextStyle(
                                   color: Colors.black54, fontSize: 13)),
                         ),
+                        const SizedBox(height: 30),
                       ],
                     ),
                   ],

@@ -13,6 +13,7 @@ import '../../modules/inventory/inventory_home_page.dart';
 import '../../modules/business/subscription_plans_page.dart';
 import '../../modules/auth/reset_password_page.dart';
 import '../../modules/clients/rescheduling_success_page.dart';
+import '../../modules/business/price_adjustment_page.dart';
 
 class AppRouter {
   static Route<dynamic> generateRoute(RouteSettings settings) {
@@ -140,6 +141,10 @@ class AppRouter {
       return MaterialPageRoute(
           builder: (_) => const SubscriptionPlansPage(), settings: settings);
     }
+    if (cleanPath == 'business/price_adjustment') {
+      return MaterialPageRoute(
+          builder: (_) => const PriceAdjustmentPage(), settings: settings);
+    }
 
     // 6. Outras Rotas Conhecidas que devem passar pelo AuthGate (login, home, business, client)
     if (_isKnownRoute(baseRoute)) {
@@ -193,6 +198,7 @@ class AppRouter {
       'error',
       'subscription_plans',
       'reschedule_success',
+      'business/price_adjustment',
     ];
     return knownRoutes.contains(route.toLowerCase());
   }

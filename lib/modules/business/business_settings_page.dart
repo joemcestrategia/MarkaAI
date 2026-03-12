@@ -11,6 +11,7 @@ import 'payment_settings_page.dart';
 import 'subscription_service.dart';
 import 'subscription_plans_page.dart';
 import '../../core/widgets/plan_gate_widget.dart';
+import 'coupons/manage_coupons_page.dart';
 
 class BusinessSettingsPage extends StatefulWidget {
   const BusinessSettingsPage({super.key});
@@ -58,9 +59,17 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   bool _notifyClientAppointment = true;
   int _notifyDaysBefore = 1; // Padrão: 1 dia antes
 
-  // FASE 4 — Parcelamento no cartão de crédito
-  bool _acceptInstallments = true; // Aceitar parcelamento
-  int _maxInstallments = 6; // Máximo de parcelas (2-12)
+  // Novos Recursos: Proteção e Descontos
+  bool _trustedOnlyPayInPerson = false;
+  bool _birthdayPixDiscountEnabled = false;
+  double _birthdayPixDiscountPercent = 10.0;
+  double _vipExtraDays = 0.0; // Padrão: 0 dias extras
+  bool _restrictProblematicClients = false;
+
+  // Configurações de Automação de Tags (VIP/Sumido)
+  double _vipMinVisits = 15.0; // Padrão: 15 visitas
+  double _vipAvgInterval = 30.0; // Padrão: 30 dias de intervalo médio
+  double _sumidoMaxDays = 45.0; // Padrão: 45 dias sem agendar
 
   @override
   void initState() {
@@ -143,14 +152,24 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 if (_creditTaxPercent < 0) _creditTaxPercent = 0;
                 if (_creditTaxPercent > 20) _creditTaxPercent = 20;
 
-                // Notificações
-                _notifyClientAppointment =
-                    config['notificar_cliente_agendamento'] ?? true;
                 _notifyDaysBefore = config['notificar_dias_antes'] ?? 1;
 
-                // FASE 4 — Parcelamento
-                _acceptInstallments = config['aceitar_parcelas'] ?? true;
-                _maxInstallments = (config['max_parcelas'] ?? 6).clamp(2, 12);
+                _trustedOnlyPayInPerson =
+                    config['trusted_only_pay_in_person'] ?? false;
+                _birthdayPixDiscountEnabled =
+                    config['birthday_pix_discount_enabled'] ?? false;
+                _birthdayPixDiscountPercent =
+                    (config['birthday_pix_discount_percent'] ?? 10.0)
+                        .toDouble();
+                _vipExtraDays =
+                    (config['vip_extra_booking_days'] ?? 0).toDouble();
+                _restrictProblematicClients =
+                    config['restrict_problematic_clients'] ?? false;
+
+                // Automação de Tags
+                _vipMinVisits = (config['vip_min_visits'] ?? 15).toDouble();
+                _vipAvgInterval = (config['vip_avg_interval'] ?? 30).toDouble();
+                _sumidoMaxDays = (config['sumido_max_days'] ?? 45).toDouble();
               });
             }
           }
@@ -186,8 +205,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         _requireDeposit = false;
         _pagarPessoalmente = true;
         _creditTaxPercent = 0.0; // ? [FIX] não salvar taxa para plano free
-        _acceptInstallments =
-            false; // ? [FIX] não salvar parcelamento para plano free
       } else {
         // Paid Plan Validation: Ensure at least one payment method is enabled
         if (!(_cartaoOnline || _debitoPresencial || _pagarPessoalmente)) {
@@ -227,9 +244,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           'tax_percent': _creditTaxPercent,
           'notificar_cliente_agendamento': _notifyClientAppointment,
           'notificar_dias_antes': _notifyDaysBefore,
-          // FASE 4 — Parcelamento
-          'aceitar_parcelas': _acceptInstallments,
-          'max_parcelas': _acceptInstallments ? _maxInstallments : 1,
+          'trusted_only_pay_in_person': _trustedOnlyPayInPerson,
+          'birthday_pix_discount_enabled': _birthdayPixDiscountEnabled,
+          'birthday_pix_discount_percent': _birthdayPixDiscountPercent,
+          'vip_extra_booking_days': _vipExtraDays.round(),
+          'restrict_problematic_clients': _restrictProblematicClients,
+          'vip_min_visits': _vipMinVisits.round(),
+          'vip_avg_interval': _vipAvgInterval.round(),
+          'sumido_max_days': _sumidoMaxDays.round(),
           'atualizado_em': FieldValue.serverTimestamp(),
         }
       });
@@ -595,6 +617,18 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           "Pagamentos Online", Icons.account_balance_wallet),
                       _buildPaymentIntegrationCard(),
 
+                      // --- GESTÃO DE CUPONS (PIX ONLY) ---
+                      const SizedBox(height: 24),
+                      _buildSectionHeader("Cupons de Desconto",
+                          Icons.confirmation_number_outlined),
+                      _buildCouponSettingsCard(),
+
+                      // --- CONFIGURAÇÕES VIP E CONFIANÇA ---
+                      const SizedBox(height: 24),
+                      _buildSectionHeader(
+                          "Clientes VIP e de Confiança", Icons.stars_outlined),
+                      _buildVIPSettingsCard(),
+
                       // --- NOTIFICAÇÕES ---
                       const SizedBox(height: 24),
                       _buildSectionHeader(
@@ -608,11 +642,222 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               ),
 
               // --- INTEGRAÇÕES — sempre ativa ---
+              _buildSectionHeader("Ferramentas", Icons.construction),
+              _buildSettingCard([
+                ListTile(
+                  leading: const Icon(Icons.trending_up,
+                      color: AppColors.primaryPurple),
+                  title: const Text("Reajuste de Valores",
+                      style:
+                          TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                  subtitle: const Text(
+                      "Ajuste todos os preços anualmente de uma vez",
+                      style: TextStyle(fontSize: 12)),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () =>
+                      Navigator.pushNamed(context, 'business/price_adjustment'),
+                ),
+              ]),
+              const SizedBox(height: 24),
+
               _buildSectionHeader("Integrações", Icons.link),
               _buildIntegrationsCard(),
+
+              const SizedBox(height: 24),
             ],
           );
         });
+  }
+
+  Widget _buildVIPSettingsCard() {
+    return FutureBuilder<bool>(
+      future: SubscriptionService.canUseOnlinePayment(),
+      builder: (context, snapshot) {
+        final isPremium = snapshot.data ?? false;
+        return _buildSettingCard([
+          Opacity(
+            opacity: isPremium ? 1.0 : 0.6,
+            child: Column(
+              children: [
+                // Proteção de Pagamento Pessoalmente
+                _buildSwitchTile(
+                  "Restringir Pagamento Pessoalmente",
+                  "Somente VIPs podem escolher pagar na loja",
+                  isPremium ? _trustedOnlyPayInPerson : false,
+                  isPremium
+                      ? (v) => setState(() => _trustedOnlyPayInPerson = v)
+                      : (v) => _showUpgradeDialog(),
+                  trailing: !isPremium ? _buildPremiumBadge() : null,
+                ),
+                const Divider(height: 1),
+
+                // Janela de Agendamento Extra para VIP
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              const Text("Dias Extras para VIPs",
+                                  style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.bold)),
+                              if (!isPremium) _buildPremiumBadge(),
+                            ],
+                          ),
+                          Text("+${_vipExtraDays.round()} dias",
+                              style: const TextStyle(
+                                  color: AppColors.primaryPurple,
+                                  fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      _subtitled(Icons.star_outline,
+                          "Permite que clientes VIP vejam a agenda com X dias de antecedência extra."),
+                      Slider(
+                        value: isPremium ? _vipExtraDays : 0.0,
+                        min: 0,
+                        max: 60,
+                        divisions: 60,
+                        activeColor: AppColors.primaryPurple,
+                        onChanged: isPremium
+                            ? (v) => setState(() => _vipExtraDays = v)
+                            : (v) => _showUpgradeDialog(),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+
+                // Restrição de Clientes Problemáticos
+                _buildSwitchTile(
+                    "Restringir Clientes Problemáticos",
+                    "Impede que clientes marcados como 'problemáticos' agendem online",
+                    _restrictProblematicClients,
+                    (v) => setState(() => _restrictProblematicClients = v)),
+
+                const Divider(height: 1),
+
+                // Configurações de Automação VIP
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildAutomationHeader(
+                          "Automação VIP", Icons.auto_awesome),
+                      const SizedBox(height: 16),
+                      _buildSliderSetting(
+                        label: "Mínimo de Visitas",
+                        value: _vipMinVisits,
+                        min: 3,
+                        max: 50,
+                        suffix: "visitas",
+                        onChanged: (v) => setState(() => _vipMinVisits = v),
+                      ),
+                      const SizedBox(height: 12),
+                      _buildSliderSetting(
+                        label: "Intervalo Médio Máximo",
+                        value: _vipAvgInterval,
+                        min: 7,
+                        max: 90,
+                        suffix: "dias",
+                        onChanged: (v) => setState(() => _vipAvgInterval = v),
+                        subtitle: "Média de dias entre um agendamento e outro",
+                      ),
+                    ],
+                  ),
+                ),
+
+                const Divider(height: 1),
+
+                // Configurações de Automação Sumido
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildAutomationHeader(
+                          "Automação Sumido", Icons.timer_outlined),
+                      const SizedBox(height: 16),
+                      _buildSliderSetting(
+                        label: "Inatividade Máxima",
+                        value: _sumidoMaxDays,
+                        min: 15,
+                        max: 180,
+                        suffix: "dias",
+                        onChanged: (v) => setState(() => _sumidoMaxDays = v),
+                        subtitle:
+                            "Dias sem agendar para ser considerado sumido",
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ]);
+      },
+    );
+  }
+
+  Widget _buildAutomationHeader(String title, IconData icon) {
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: AppColors.primaryPurple),
+        const SizedBox(width: 8),
+        Text(title,
+            style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+                color: AppColors.primaryPurple)),
+      ],
+    );
+  }
+
+  Widget _buildSliderSetting({
+    required String label,
+    required double value,
+    required double min,
+    required double max,
+    required String suffix,
+    required ValueChanged<double> onChanged,
+    String? subtitle,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(label,
+                style:
+                    const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+            Text("${value.round()} $suffix",
+                style: const TextStyle(
+                    color: AppColors.primaryPurple,
+                    fontWeight: FontWeight.bold)),
+          ],
+        ),
+        if (subtitle != null) ...[
+          const SizedBox(height: 4),
+          Text(subtitle,
+              style: const TextStyle(fontSize: 12, color: Colors.grey)),
+        ],
+        Slider(
+          value: value,
+          min: min,
+          max: max,
+          divisions: (max - min).toInt(),
+          activeColor: AppColors.primaryPurple,
+          onChanged: onChanged,
+        ),
+      ],
+    );
   }
 
   Widget _buildPremiumBadge() {
@@ -695,41 +940,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             ),
           )
         ],
-      ),
-    );
-  }
-
-  Widget _buildSaveArea() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-          color: Colors.white,
-          border: Border(top: BorderSide(color: Colors.grey[200]!)),
-          boxShadow: [
-            BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                offset: const Offset(0, -2),
-                blurRadius: 10)
-          ]),
-      child: SafeArea(
-        top: false,
-        child: SizedBox(
-          width: double.infinity,
-          height: 50,
-          child: ElevatedButton(
-            style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primaryPurple,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12))),
-            onPressed: _saveSettings,
-            child: const Text("SALVAR ALTERAÇÕES",
-                style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16)),
-          ),
-        ),
       ),
     );
   }
@@ -923,7 +1133,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         opacity: isPremium ? 1.0 : 0.6,
                         child: _buildSwitchTile(
                           "Cartão de Crédito/Débito (Online)",
-                          "Necessário plugar Stripe na aba Integrações",
+                          "Necessário plugar Mercado Pago na aba Integrações",
                           isPremium ? _cartaoOnline : false,
                           isPremium
                               ? (v) {
@@ -948,7 +1158,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         opacity: isPremium ? 1.0 : 0.6,
                         child: _buildSwitchTile(
                           "Pix",
-                          "Pagamento instantâneo via QR Code (requer Stripe)",
+                          "Pagamento instantâneo via QR Code (requer Mercado Pago)",
                           isPremium ? _debitoPresencial : false,
                           isPremium
                               ? (v) {
@@ -993,6 +1203,53 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                 }
                                 setState(() => _pagarPessoalmente = v);
                               },
+                      ),
+
+                      const Divider(height: 1),
+                      const SizedBox(height: 12),
+
+                      // Desconto de Aniversário (PIX)
+                      Opacity(
+                        opacity: isPremium ? 1.0 : 0.6,
+                        child: Column(
+                          children: [
+                            _buildSwitchTile(
+                              "Desconto de Aniversário (PIX)",
+                              "Oferecer desconto automático no mês do aniversário",
+                              isPremium ? _birthdayPixDiscountEnabled : false,
+                              isPremium
+                                  ? (v) => setState(
+                                      () => _birthdayPixDiscountEnabled = v)
+                                  : (v) => _showUpgradeDialog(),
+                              trailing:
+                                  !isPremium ? _buildPremiumBadge() : null,
+                            ),
+                            if (_birthdayPixDiscountEnabled && isPremium)
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 16, vertical: 8),
+                                child: Row(children: [
+                                  const Text("Desconto:",
+                                      style: TextStyle(fontSize: 13)),
+                                  Expanded(
+                                    child: Slider(
+                                      value: _birthdayPixDiscountPercent,
+                                      min: 1,
+                                      max: 50,
+                                      divisions: 49,
+                                      activeColor: AppColors.primaryPurple,
+                                      onChanged: (v) => setState(() =>
+                                          _birthdayPixDiscountPercent = v),
+                                    ),
+                                  ),
+                                  Text(
+                                      "${_birthdayPixDiscountPercent.round()}%",
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.bold))
+                                ]),
+                              ),
+                          ],
+                        ),
                       ),
                     ]),
               ),
@@ -1051,47 +1308,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                 ),
                               ]),
                         ),
-                        const Divider(height: 1),
-                        const SizedBox(height: 8),
-                        const Text("Parcelamento",
-                            style: TextStyle(
-                                fontSize: 13, fontWeight: FontWeight.w600)),
-                        const SizedBox(height: 4),
-                        _subtitled(Icons.credit_card,
-                            "Defina se seus clientes podem parcelar e o máximo de parcelas permitidas."),
-                        SwitchListTile(
-                          dense: true,
-                          contentPadding: EdgeInsets.zero,
-                          title: const Text("Aceitar Parcelamento",
-                              style: TextStyle(fontSize: 13)),
-                          value: _acceptInstallments,
-                          activeThumbColor: AppColors.primaryPurple,
-                          onChanged: (v) =>
-                              setState(() => _acceptInstallments = v),
-                        ),
-                        if (_acceptInstallments) ...[
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              const Text("Máx. de Parcelas",
-                                  style: TextStyle(fontSize: 13)),
-                              Text("${_maxInstallments}x",
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      color: AppColors.primaryPurple)),
-                            ],
-                          ),
-                          Slider(
-                            value: _maxInstallments.toDouble(),
-                            min: 2,
-                            max: 12,
-                            divisions: 10,
-                            label: "${_maxInstallments}x",
-                            activeColor: AppColors.primaryPurple,
-                            onChanged: (v) =>
-                                setState(() => _maxInstallments = v.round()),
-                          ),
-                        ],
                       ]),
                 ),
               ),
@@ -1307,14 +1523,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
                   const Text(
-                      "Centralize aqui seu Stripe, métodos aceitos e regras de parcelamento.",
+                      "Centralize aqui seu Mercado Pago, métodos aceitos e regras de parcelamento.",
                       style: TextStyle(fontSize: 12, color: Colors.grey)),
                   const SizedBox(height: 12),
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
                       icon: const Icon(Icons.account_balance_wallet),
-                      label: const Text("Conectar / Configurar Stripe"),
+                      label: const Text("CONECTAR MERCADO PAGO"),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.primaryPurple,
                         foregroundColor: Colors.white,
@@ -1339,6 +1555,76 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           ),
         ]);
       },
+    );
+  }
+
+  Widget _buildCouponSettingsCard() {
+    return _buildSettingCard([
+      ListTile(
+        leading: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: AppColors.primaryPurple.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: const Icon(Icons.confirmation_number,
+              color: AppColors.primaryPurple, size: 24),
+        ),
+        title: const Text(
+          "Gerenciar Meus Cupons",
+          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+        ),
+        subtitle: const Text(
+          "Crie códigos de desconto exclusivos para pagamentos via PIX",
+          style: TextStyle(fontSize: 12),
+        ),
+        trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+        onTap: () {
+          if (shopId != null) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => ManageCouponsPage(shopId: shopId!),
+              ),
+            );
+          }
+        },
+      ),
+    ]);
+  }
+
+  Widget _buildSaveArea() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+          color: Colors.white,
+          border: Border(top: BorderSide(color: Colors.grey[200]!)),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                offset: const Offset(0, -2),
+                blurRadius: 10)
+          ]),
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          width: double.infinity,
+          height: 50,
+          child: ElevatedButton(
+            style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryPurple,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12))),
+            onPressed: _saveSettings,
+            child: const Text("SALVAR ALTERAÇÕES",
+                style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16)),
+          ),
+        ),
+      ),
     );
   }
 

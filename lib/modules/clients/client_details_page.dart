@@ -9,10 +9,9 @@ import '../../core/services/session_service.dart';
 // Tags pré-definidas para classificação de clientes
 const _kPresetTags = [
   {'label': 'VIP', 'emoji': '👑', 'color': 0xFFFFAB00},
-  {'label': 'Fiel', 'emoji': '⭐', 'color': 0xFF1565C0},
+  {'label': 'Sumido', 'emoji': '💨', 'color': 0xFF757575},
   {'label': 'Problemático', 'emoji': '⚠️', 'color': 0xFFE53935},
   {'label': 'Novo', 'emoji': '🆕', 'color': 0xFF2E7D32},
-  {'label': 'Inativo', 'emoji': '🔴', 'color': 0xFF757575},
 ];
 
 class ClientDetailsPage extends StatefulWidget {
@@ -88,12 +87,30 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
   Future<void> _saveTags() async {
     if (shopId == null) return;
     try {
+      // Deriva a classificação oficial baseada nas tags manuais
+      String? classification;
+      if (_manualTags.contains('Problemático')) {
+        classification = 'problematico';
+      } else if (_manualTags.contains('VIP')) {
+        classification = 'vip';
+      } else if (_manualTags.contains('Sumido')) {
+        classification = 'sumido';
+      } else if (_manualTags.contains('Novo')) {
+        classification = 'novo';
+      }
+
       await FirebaseFirestore.instance
           .collection('shops')
           .doc(shopId)
           .collection('clients')
           .doc(widget.clientId)
-          .set({'manualTags': _manualTags}, SetOptions(merge: true));
+          .set({
+        'manualTags': _manualTags,
+        if (classification != null) 'classification': classification,
+        // Se houver uma classificação manual definida, marcamos como override
+        'classificationOverride': classification != null,
+        'lastUpdated': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
     } catch (e) {
       debugPrint('Erro ao salvar tags: $e');
     }
@@ -104,6 +121,13 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
       if (_manualTags.contains(label)) {
         _manualTags.remove(label);
       } else {
+        // Regra de exclusividade: VIP e Problemático não podem coexistir
+        if (label == 'VIP') {
+          _manualTags.remove('Problemático');
+        } else if (label == 'Problemático') {
+          _manualTags.remove('VIP');
+        }
+
         _manualTags.add(label);
       }
     });

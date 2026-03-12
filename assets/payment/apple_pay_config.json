@@ -1,0 +1,17 @@
+{
+    "provider": "apple_pay",
+    "data": {
+        "merchantIdentifier": "merchant.com.markaai",
+        "displayName": "MarkaAI",
+        "merchantCapabilities": [
+            "3DS"
+        ],
+        "supportedNetworks": [
+            "amex",
+            "visa",
+            "masterCard"
+        ],
+        "countryCode": "BR",
+        "currencyCode": "BRL"
+    }
+}

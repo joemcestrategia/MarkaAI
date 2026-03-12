@@ -11,6 +11,8 @@ class StripeTextField extends StatelessWidget {
   final TextEditingController? controller;
   final void Function(String)? onChanged;
   final String? Function(String?)? validator;
+  final Iterable<String>? autofillHints;
+  final TextInputAction? textInputAction;
 
   const StripeTextField({
     super.key,
@@ -22,6 +24,8 @@ class StripeTextField extends StatelessWidget {
     this.controller,
     this.onChanged,
     this.validator,
+    this.autofillHints,
+    this.textInputAction,
   });
 
   @override
@@ -45,6 +49,8 @@ class StripeTextField extends StatelessWidget {
           inputFormatters: inputFormatters,
           onChanged: onChanged,
           validator: validator,
+          autofillHints: autofillHints,
+          textInputAction: textInputAction,
           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
           decoration: InputDecoration(
             hintText: hintText,

@@ -1,0 +1,508 @@
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
+import '../../core/theme/app_colors.dart';
+import 'booking_success_page.dart';
+
+class CheckoutReviewPage extends StatefulWidget {
+  final Map<String, dynamic> paymentData;
+  final DocumentSnapshot serviceDoc;
+  final DocumentSnapshot professionalDoc;
+  final DateTime date;
+  final String time;
+  final String shopId;
+  final String orderId;
+  final bool showProfessional;
+
+  const CheckoutReviewPage({
+    super.key,
+    required this.paymentData,
+    required this.serviceDoc,
+    required this.professionalDoc,
+    required this.date,
+    required this.time,
+    required this.shopId,
+    required this.orderId,
+    this.showProfessional = true,
+  });
+
+  @override
+  State<CheckoutReviewPage> createState() => _CheckoutReviewPageState();
+}
+
+class _CheckoutReviewPageState extends State<CheckoutReviewPage> {
+  bool _isProcessing = false;
+
+  Future<void> _confirmBooking() async {
+    setState(() => _isProcessing = true);
+
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) throw Exception('Usuário não autenticado');
+
+      final idToken = await user.getIdToken();
+
+      final response = await http.post(
+        Uri.parse(
+            'https://us-central1-wismart-118c3.cloudfunctions.net/criarPagamento'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'data': {
+            'cardToken': widget.paymentData['cardToken'],
+            'email': user.email ?? 'cliente@markaai.com.br',
+            'installments': widget.paymentData['installments'],
+            'valor': widget.paymentData['valor'],
+            'shopId': widget.shopId,
+            'orderId': widget.orderId,
+            'descricao': "Reserva: ${widget.serviceDoc['nome'] ?? 'Serviço'}",
+            'idToken': idToken,
+            'cpf': widget.paymentData['cpf'],
+            'paymentMethodId': widget.paymentData['paymentMethodId'],
+            'issuerId': widget.paymentData['issuerId'],
+          }
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final result =
+            jsonDecode(response.body)['data'] ?? jsonDecode(response.body);
+        if (result['success'] == true) {
+          await _saveAppointment(result['paymentId'].toString());
+        } else {
+          _showError(_getFriendlyErrorMessage(result['error']?.toString(),
+              statusDetail: result['status_detail']?.toString()));
+        }
+      } else {
+        final error = jsonDecode(response.body);
+        _showError(_getFriendlyErrorMessage(error['error']?.toString()));
+      }
+    } catch (e) {
+      _showError('Erro ao confirmar reserva: $e');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
+    }
+  }
+
+  Future<void> _saveAppointment(String paymentId) async {
+    final user = FirebaseAuth.instance.currentUser!;
+    final bookingDate = DateTime(
+      widget.date.year,
+      widget.date.month,
+      widget.date.day,
+      int.parse(widget.time.split(':')[0]),
+      int.parse(widget.time.split(':')[1]),
+    );
+
+    await FirebaseFirestore.instance.collection('appointments').add({
+      'shopId': widget.shopId,
+      'clientId': user.uid,
+      'serviceId': widget.serviceDoc.id,
+      'professionalId': widget.professionalDoc.id,
+      'date': Timestamp.fromDate(bookingDate),
+      'time': widget.time,
+      'status': 'confirmado',
+      'paymentId': paymentId,
+      'paymentMethod': 'Cartão de Crédito',
+      'valor': widget.paymentData['valor'],
+      'created_at': FieldValue.serverTimestamp(),
+    });
+
+    if (mounted) {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(
+          builder: (_) => BookingSuccessPage(
+            serviceName: widget.serviceDoc['nome'] ?? 'Serviço',
+            professionalName: widget.professionalDoc['nome'] ?? 'Profissional',
+            date: DateFormat('dd/MM/yyyy').format(widget.date),
+            time: widget.time,
+            isPaid: true,
+          ),
+        ),
+        (route) => false,
+      );
+    }
+  }
+
+  String _getFriendlyErrorMessage(String? code, {String? statusDetail}) {
+    // Check common raw error strings first (from Exception messages or API responses)
+    final lowerCode = code?.toLowerCase() ?? '';
+
+    if (lowerCode.contains('invalid transaction amount') ||
+        lowerCode.contains('amount must be greater')) {
+      return 'O valor desta reserva é inferior ao mínimo permitido para pagamentos online.';
+    }
+
+    if (lowerCode.contains('expiration_month') ||
+        lowerCode.contains('expiration_year') ||
+        lowerCode.contains('invalid parameter expiration')) {
+      return 'A data de expiração do cartão parece estar incorreta. Verifique o mês e o ano.';
+    }
+
+    if (lowerCode.contains('security_code') ||
+        lowerCode.contains('cvv') ||
+        lowerCode.contains('cvc')) {
+      return 'O código de segurança (CVV) do cartão é inválido. Verifique o número atrás do cartão.';
+    }
+
+    if (lowerCode.contains('card_number') ||
+        lowerCode.contains('invalid parameter card_number')) {
+      return 'O número do cartão é inválido ou incompleto.';
+    }
+
+    if (statusDetail != null) {
+      switch (statusDetail) {
+        case 'cc_rejected_bad_filled_card_number':
+          return 'O número do cartão é inválido. Verifique o número digitado.';
+        case 'cc_rejected_bad_filled_date':
+          return 'A data de expiração está incorreta. Verifique o mês e o ano.';
+        case 'cc_rejected_bad_filled_other':
+          return 'Alguns dados do cartão estão incorretos. Por favor, revise.';
+        case 'cc_rejected_bad_filled_security_code':
+          return 'O código de segurança (atrás do cartão) é inválido. Verifique o número digitado.';
+        case 'cc_rejected_blacklist':
+          return 'Não foi possível processar este cartão por regras de segurança. Tente usar outro.';
+        case 'cc_rejected_call_for_authorize':
+          return 'O pagamento não foi autorizado pelo seu banco. Entre em contato com eles para liberar a transação.';
+        case 'cc_rejected_card_disabled':
+          return 'Este cartão está desativado. Verifique com seu banco ou use outro cartão.';
+        case 'cc_rejected_card_error':
+          return 'Ocorreu um erro ao processar o cartão. Tente novamente em instantes.';
+        case 'cc_rejected_duplicated_payment':
+          return 'Identificamos um pagamento idêntico recente. Verifique se a cobrança já não foi realizada.';
+        case 'cc_rejected_high_risk':
+          return 'O sistema de segurança recusou o pagamento. Tente outro cartão ou método de pagamento.';
+        case 'cc_rejected_insufficient_amount':
+          return 'Saldo ou limite insuficiente no cartão. Verifique com seu banco.';
+        case 'cc_rejected_invalid_installments':
+          return 'Este cartão não aceita o número de parcelas selecionado.';
+        case 'cc_rejected_max_attempts':
+          return 'Limite de tentativas excedido para este cartão. Tente usar outro ou aguarde um momento.';
+        case 'cc_rejected_other_reason':
+          return 'A operadora do cartão não autorizou o pagamento por algum motivo interno. Verifique com seu banco.';
+      }
+    }
+
+    if (code != null) {
+      switch (code) {
+        case '205':
+        case 'E301':
+          return 'O número do cartão é inválido ou não foi informado.';
+        case '208':
+        case '209':
+        case '325':
+        case '326':
+          return 'A data de expiração do cartão é inválida.';
+        case '224':
+        case 'E302':
+          return 'O código de segurança (CVV) é inválido.';
+        case '221':
+        case '316':
+          return 'O nome do titular do cartão é inválido ou incompleto.';
+        case '324':
+          return 'O CPF informado é inválido.';
+        case '310':
+          return 'O valor não é válido para este cartão.';
+      }
+    }
+
+    return 'Não conseguimos processar seu pagamento. Verifique os dados do cartão e tente novamente.';
+  }
+
+  void _showError(String message) {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.error_outline, color: Colors.red),
+            SizedBox(width: 8),
+            Text('Ops! No Pagamento'),
+          ],
+        ),
+        content: Text(
+          message,
+          style: const TextStyle(fontSize: 16),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('ENTENDI',
+                style: TextStyle(
+                    color: AppColors.primaryPurple,
+                    fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dateFormat = DateFormat('dd/MM/yyyy');
+    final secondaryColor = Colors.grey[600];
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFF8F9FA), // Slightly off-white background
+      appBar: AppBar(
+        title: const Text('Revisar Reserva',
+            style: TextStyle(color: Colors.black, fontWeight: FontWeight.w700)),
+        backgroundColor: Colors.white,
+        elevation: 0,
+        centerTitle: true,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new,
+              color: Colors.black, size: 20),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 20.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 24),
+                  _buildSectionHeader('Detalhes da Reserva'),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: _cardDecoration(),
+                    child: Column(
+                      children: [
+                        _buildEnhancedReviewItem(
+                          icon: Icons.auto_awesome,
+                          label: 'Serviço',
+                          value: widget.serviceDoc['nome'] ?? 'Serviço',
+                        ),
+                        if (widget.showProfessional) ...[
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 16),
+                            child: Divider(height: 1),
+                          ),
+                          _buildEnhancedReviewItem(
+                            icon: Icons.person_outline,
+                            label: 'Profissional',
+                            value: widget.professionalDoc['nome'] ??
+                                'Profissional',
+                          ),
+                        ],
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 16),
+                          child: Divider(height: 1),
+                        ),
+                        _buildEnhancedReviewItem(
+                          icon: Icons.calendar_today_outlined,
+                          label: 'Data e Hora',
+                          value:
+                              '${dateFormat.format(widget.date)} às ${widget.time}',
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  _buildSectionHeader('Pagamento'),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: _cardDecoration(),
+                    child: Column(
+                      children: [
+                        _buildEnhancedReviewItem(
+                          icon: Icons.credit_card_outlined,
+                          label: 'Método Pagamento',
+                          value: 'Cartão de Crédito',
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: AppColors.primaryPurple
+                                    .withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Icon(Icons.credit_card,
+                                  color: AppColors.primaryPurple, size: 20),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '•••• •••• •••• ${widget.paymentData['lastFour']}',
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                      letterSpacing: 1.2,
+                                    ),
+                                  ),
+                                  Text(
+                                    '${widget.paymentData['installments']}x de R\$ ${(widget.paymentData['valor'] / widget.paymentData['installments']).toStringAsFixed(2)}',
+                                    style: TextStyle(
+                                        color: secondaryColor, fontSize: 13),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                ],
+              ),
+            ),
+          ),
+          // Resumo e Botão
+          Container(
+            padding: const EdgeInsets.fromLTRB(
+                24, 24, 24, 32), // 32px bottom padding as requested
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.05),
+                  offset: const Offset(0, -4),
+                  blurRadius: 10,
+                ),
+              ],
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(24),
+                topRight: Radius.circular(24),
+              ),
+            ),
+            child: SafeArea(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Valor Total',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w500),
+                      ),
+                      Text(
+                        'R\$ ${widget.paymentData['valor'].toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.primaryPurple,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 56,
+                    child: ElevatedButton(
+                      onPressed: _isProcessing ? null : _confirmBooking,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryPurple,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      child: _isProcessing
+                          ? const SizedBox(
+                              height: 24,
+                              width: 24,
+                              child: CircularProgressIndicator(
+                                color: Colors.white,
+                                strokeWidth: 2,
+                              ),
+                            )
+                          : const Text(
+                              'Confirmar e Reservar',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  BoxDecoration _cardDecoration() {
+    return BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(20),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: 0.03),
+          blurRadius: 10,
+          offset: const Offset(0, 4),
+        ),
+      ],
+      border: Border.all(color: Colors.white), // Better refinement
+    );
+  }
+
+  Widget _buildSectionHeader(String title) {
+    return Text(
+      title.toUpperCase(),
+      style: TextStyle(
+        fontSize: 12,
+        fontWeight: FontWeight.w800,
+        color: Colors.grey[500],
+        letterSpacing: 1.2,
+      ),
+    );
+  }
+
+  Widget _buildEnhancedReviewItem({
+    required IconData icon,
+    required String label,
+    required String value,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 20, color: Colors.grey[400]),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: TextStyle(fontSize: 13, color: Colors.grey[500]),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                value,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black87,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}

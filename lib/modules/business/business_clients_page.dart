@@ -335,103 +335,106 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
             ? const Center(child: Text("Erro: ID da Loja não encontrado"))
             : Expanded(
                 child: StreamBuilder<QuerySnapshot>(
-                    stream: FirebaseFirestore.instance
-                        .collection('shops')
-                        .doc(shopId)
-                        .collection('clients')
-                        .snapshots(),
-                    builder: (context, clientsSnapshot) {
-                      if (clientsSnapshot.hasError) {
-                        return const Center(
-                            child: Text(
-                                "Erro ao carregar configurações de clientes"));
-                      }
+                  stream: FirebaseFirestore.instance
+                      .collection('shops')
+                      .doc(shopId)
+                      .collection('clients')
+                      .snapshots(),
+                  builder: (context, clientsSnapshot) {
+                    if (clientsSnapshot.hasError) {
+                      return const Center(
+                          child: Text(
+                              "Erro ao carregar configurações de clientes"));
+                    }
 
-                      final clientSettingsDocs =
-                          clientsSnapshot.data?.docs ?? [];
-                      final Map<String, Map<String, dynamic>> clientSettings = {
-                        for (var doc in clientSettingsDocs)
-                          doc.id: doc.data() as Map<String, dynamic>
-                      };
+                    final clientSettingsDocs = clientsSnapshot.data?.docs ?? [];
+                    final Map<String, Map<String, dynamic>> clientSettings = {
+                      for (var doc in clientSettingsDocs)
+                        doc.id: doc.data() as Map<String, dynamic>
+                    };
 
-                      return StreamBuilder<QuerySnapshot>(
-                        stream: FirebaseFirestore.instance
-                            .collection('appointments')
-                            .where('shopId', isEqualTo: shopId)
-                            .orderBy('data_agendamento', descending: true)
-                            .snapshots(),
-                        builder: (context, snapshot) {
-                          if (snapshot.hasError) {
-                            debugPrint(
-                                "Erro ao carregar clientes: ${snapshot.error}");
-                            return Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  const Icon(Icons.error_outline,
-                                      color: Colors.red, size: 48),
-                                  const SizedBox(height: 16),
-                                  Text(
-                                    "Erro ao carregar clientes.\nVerifique sua conexão ou contate o suporte.",
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(color: Colors.red[700]),
-                                  ),
-                                  if (snapshot.error
-                                      .toString()
-                                      .contains('index'))
-                                    const Padding(
-                                      padding: EdgeInsets.only(top: 8.0),
-                                      child: Text(
-                                        "Requer índice do Firestore.",
-                                        style: TextStyle(
-                                            fontSize: 12, color: Colors.grey),
-                                      ),
+                    return StreamBuilder<DocumentSnapshot>(
+                      stream: FirebaseFirestore.instance
+                          .collection('shops')
+                          .doc(shopId)
+                          .snapshots(),
+                      builder: (context, shopSnapshot) {
+                        final shopConfig = (shopSnapshot.data?.data()
+                                as Map?)?['config'] as Map? ??
+                            {};
+
+                        return StreamBuilder<QuerySnapshot>(
+                          stream: FirebaseFirestore.instance
+                              .collection('appointments')
+                              .where('shopId', isEqualTo: shopId)
+                              .orderBy('data_agendamento', descending: true)
+                              .snapshots(),
+                          builder: (context, snapshot) {
+                            if (snapshot.hasError) {
+                              debugPrint(
+                                  "Erro ao carregar clientes: ${snapshot.error}");
+                              return Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    const Icon(Icons.error_outline,
+                                        color: Colors.red, size: 48),
+                                    const SizedBox(height: 16),
+                                    Text(
+                                      "Erro ao carregar clientes.\nVerifique sua conexão ou contate o suporte.",
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(color: Colors.red[700]),
                                     ),
-                                ],
-                              ),
+                                  ],
+                                ),
+                              );
+                            }
+                            if (!snapshot.hasData) {
+                              return const Center(
+                                  child: CircularProgressIndicator());
+                            }
+
+                            final processedData = _processAppointments(
+                                snapshot.data!.docs,
+                                clientSettings,
+                                shopConfig);
+                            List<Map<String, dynamic>> targetList =
+                                _selectedTabIndex == 0
+                                    ? processedData['app']!
+                                    : processedData['manual']!;
+
+                            final filteredDocs = targetList.where((client) {
+                              final nome = (client['nome'] ?? "").toString();
+                              final normalizedNome =
+                                  StringUtils.removeDiacritics(nome)
+                                      .toLowerCase();
+                              final normalizedSearch =
+                                  StringUtils.removeDiacritics(_searchText)
+                                      .toLowerCase();
+
+                              return normalizedNome.contains(normalizedSearch);
+                            }).toList();
+
+                            if (filteredDocs.isEmpty) return _buildEmptyState();
+
+                            return ListView.builder(
+                              padding: const EdgeInsets.all(20),
+                              itemCount: filteredDocs.length,
+                              itemBuilder: (context, index) {
+                                final client = filteredDocs[index];
+                                bool isSelected = !isMobile &&
+                                    _selectedClientId == client['id'];
+
+                                return _buildClientListItem(
+                                    client, isSelected, isMobile);
+                              },
                             );
-                          }
-                          if (!snapshot.hasData) {
-                            return const Center(
-                                child: CircularProgressIndicator());
-                          }
-
-                          final processedData = _processAppointments(
-                              snapshot.data!.docs, clientSettings);
-                          List<Map<String, dynamic>> targetList =
-                              _selectedTabIndex == 0
-                                  ? processedData['app']!
-                                  : processedData['manual']!;
-
-                          final filteredDocs = targetList.where((client) {
-                            final nome = (client['nome'] ?? "").toString();
-                            final normalizedNome =
-                                StringUtils.removeDiacritics(nome)
-                                    .toLowerCase();
-                            final normalizedSearch =
-                                StringUtils.removeDiacritics(_searchText)
-                                    .toLowerCase();
-
-                            return normalizedNome.contains(normalizedSearch);
-                          }).toList();
-
-                          if (filteredDocs.isEmpty) return _buildEmptyState();
-
-                          return ListView.builder(
-                            padding: const EdgeInsets.all(20),
-                            itemCount: filteredDocs.length,
-                            itemBuilder: (context, index) {
-                              final client = filteredDocs[index];
-                              bool isSelected = !isMobile &&
-                                  _selectedClientId == client['id'];
-
-                              return _buildClientListItem(
-                                  client, isSelected, isMobile);
-                            },
-                          );
-                        },
-                      );
-                    }),
+                          },
+                        );
+                      },
+                    );
+                  },
+                ),
               ),
       ],
     );
@@ -440,7 +443,8 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
   // ... (Mantenha o _processAppointments IGUAL ao anterior, não mudei nada nele) ...
   Map<String, List<Map<String, dynamic>>> _processAppointments(
       List<QueryDocumentSnapshot> docs,
-      Map<String, Map<String, dynamic>> clientSettings) {
+      Map<String, Map<String, dynamic>> clientSettings,
+      Map<dynamic, dynamic> shopConfig) {
     Map<String, Map<String, dynamic>> appClientsMap = {};
     Map<String, Map<String, dynamic>> manualClientsMap = {};
 
@@ -485,6 +489,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
           'origem': isManual ? 'manual' : 'app',
           'totalGasto': valor,
           'visitas': 1,
+          'primeiraVisita': dataVisita, // Keep track for avg interval
           'ultimaVisita': dataVisita,
           'email': "",
           'birthDate':
@@ -493,53 +498,74 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
       } else {
         targetMap[key]!['totalGasto'] += valor;
         targetMap[key]!['visitas'] += 1;
+
+        // Update range
+        if (dataVisita.isBefore(targetMap[key]!['primeiraVisita'])) {
+          targetMap[key]!['primeiraVisita'] = dataVisita;
+        }
         if (dataVisita.isAfter(targetMap[key]!['ultimaVisita'])) {
           targetMap[key]!['ultimaVisita'] = dataVisita;
         }
+
         if (nome != "Cliente Desconhecido") {
           targetMap[key]!['nome'] = nome;
         }
       }
     }
 
-    // --- RANKING CALCULATION ---
-    // 1. Sort by total spent to find VIPs (Top 20%)
     final allApps = appClientsMap.values.toList();
-    if (allApps.isNotEmpty) {
-      allApps.sort((a, b) =>
-          (b['totalGasto'] as double).compareTo(a['totalGasto'] as double));
-      int topCount = (allApps.length * 0.2).ceil(); // Top 20%
-      for (int i = 0; i < allApps.length; i++) {
-        if (i < topCount && (allApps[i]['totalGasto'] as double) > 0) {
-          allApps[i]['tags'] = [...(allApps[i]['tags'] ?? []), 'vip'];
-        }
-      }
-    }
 
-    // 2. Add 'Fiel' and 'Novo' tags AND Manual Classification Override
+    // 2. Add 'Vip', 'Novo', 'Sumido' tags AND Manual Classification Override
     final now = DateTime.now();
+
+    // Configurações da loja
+    final int vipMinVisits = shopConfig['vip_min_visits'] ?? 15;
+    final int vipAvgInterval = shopConfig['vip_avg_interval'] ?? 30;
+    final int sumidoMaxDays = shopConfig['sumido_max_days'] ?? 45;
+
     for (var c in allApps) {
       List<String> tags = List<String>.from(c['tags'] ?? []);
-
-      // Auto tags
-      if ((c['visitas'] as int) > 5) tags.add('fiel');
-      if ((c['visitas'] as int) == 1 &&
-          (c['ultimaVisita'] as DateTime).difference(now).inDays.abs() < 30) {
-        tags.add('novo');
-      }
-
-      // Manual Override
       final settings = clientSettings[c['id']];
-      if (settings != null && settings['classification'] != null) {
-        // Se houver classificação manual, ela pode ser adicionada ou substituir.
-        // Vamos adicionar como uma tag especial se não existir
-        String manualClass =
-            settings['classification'].toString().toLowerCase();
-        if (!tags.contains(manualClass)) {
-          tags.insert(0, manualClass); // Prioridade visual
+      final bool hasOverride =
+          settings != null && (settings['classificationOverride'] ?? false);
+
+      if (hasOverride) {
+        // RESPEITA MANUALMENTE DEFINIDO
+        String? manualClass =
+            settings['classification']?.toString().toLowerCase();
+        if (manualClass != null) {
+          tags = [manualClass]; // Limpa automáticos e mantém o manual
+          c['classification'] = manualClass;
         }
-        // Também injetamos no mapa para uso direto
-        c['classification'] = manualClass;
+      } else {
+        // LÓGICA AUTOMÁTICA
+        final int visits = c['visitas'] as int;
+        final DateTime lastVisit = c['ultimaVisita'] as DateTime;
+        final DateTime firstVisit = c['primeiraVisita'] as DateTime;
+
+        // Calcular intervalo médio
+        double avgInterval = 0;
+        if (visits > 1) {
+          final totalDays = lastVisit.difference(firstVisit).inDays;
+          avgInterval = totalDays / (visits - 1);
+        }
+
+        // Sumido check (sempre prioritário se não houver override)
+        final daysSinceLast = now.difference(lastVisit).inDays;
+        if (daysSinceLast > sumidoMaxDays) {
+          tags.add('sumido');
+        } else {
+          // VIP check
+          // Para VIP: Visitas >= threshold AND Intervalo Médio <= threshold
+          bool meetsVisits = visits >= vipMinVisits;
+          bool meetsInterval = visits == 1 || avgInterval <= vipAvgInterval;
+
+          if (meetsVisits && meetsInterval) {
+            tags.add('vip');
+          } else if (visits == 1 && daysSinceLast < 30) {
+            tags.add('novo');
+          }
+        }
       }
 
       c['tags'] = tags;
@@ -547,8 +573,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
 
     return {
       'app': allApps,
-      // ?? FILTRO DE LIMPEZA: Remove clientes manuais sem telefone (provavelmente apenas agendamentos rápidos)
-      // O usuário solicitou não mostrar esses registros pois não tem dados relevantes para CRM.
+      // ?? FILTRO DE LIMPEZA: Remove clientes manuais sem telefone
       'manual': manualClientsMap.values
           .where((c) =>
               c['telefone'] != null &&
@@ -596,6 +621,21 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
     final currency = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     bool isManual = client['origem'] == 'manual';
     Color themeColor = isManual ? Colors.orange : AppColors.primaryPurple;
+
+    Widget? manualTag;
+    if (client['classification'] != null &&
+        !['vip', 'fiel', 'novo'].contains(client['classification'])) {
+      final cClass = client['classification'].toString().toLowerCase();
+      if (cClass == 'problematico') {
+        manualTag = _buildTag(
+            "PROBLEMÁTICO", Colors.red.shade700, Icons.warning_amber_rounded);
+      } else if (cClass == 'sumido') {
+        manualTag = _buildTag("SUMIDO", Colors.grey, Icons.timer_off_outlined);
+      } else {
+        manualTag = _buildTag(client['classification'].toString().toUpperCase(),
+            Colors.purple, Icons.label);
+      }
+    }
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -649,15 +689,11 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
               children: [
                 if ((client['tags'] as List?)?.contains('vip') ?? false)
                   _buildTag("VIP", Colors.amber, Icons.star),
-                if ((client['tags'] as List?)?.contains('fiel') ?? false)
-                  _buildTag("Fiel", Colors.blue, Icons.thumb_up),
                 if ((client['tags'] as List?)?.contains('novo') ?? false)
                   _buildTag("Novo", Colors.green, Icons.new_releases),
-                // Exibe qualquer outra tag manual que não seja as automáticas acima (para flexibilidade)
-                if (client['classification'] != null &&
-                    !['vip', 'fiel', 'novo'].contains(client['classification']))
-                  _buildTag(client['classification'].toString().toUpperCase(),
-                      Colors.purple, Icons.label),
+                if ((client['tags'] as List?)?.contains('sumido') ?? false)
+                  _buildTag("Sumido", Colors.grey, Icons.timer_off_outlined),
+                if (manualTag != null) manualTag,
               ],
             )
           ],

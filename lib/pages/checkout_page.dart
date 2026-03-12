@@ -5,17 +5,18 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
-import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import '../../core/theme/app_colors.dart';
 import '../../core/services/mercado_pago_service.dart';
 import '../modules/business/subscription_service.dart';
 import '../modules/schedule/checkout_transparente_page.dart';
 import '../modules/schedule/booking_success_page.dart';
+import 'pix_payment_page.dart';
+import '../core/services/client_verification_service.dart';
+import '../core/services/coupon_service.dart';
 import '../core/widgets/loading_page.dart';
 import '../modules/clients/my_appointments_page.dart';
 import '../modules/clients/client_home_page.dart';
-import 'pix_payment_page.dart';
 
 class CheckoutPage extends StatefulWidget {
   final String shopId;
@@ -74,6 +75,20 @@ class _CheckoutPageState extends State<CheckoutPage> {
   bool aceitaDinheiro = true;
   String? shopAccessToken;
 
+  // Novos campos para VIP e Aniversário
+  bool _isBirthdayMonth = false;
+  bool _isProblematic = false;
+  String? _userPhone;
+  double _birthdayDiscountPercent = 0.0;
+  bool _birthdayDiscountEnabled = false;
+
+  // Cupons
+  final _couponController = TextEditingController();
+  bool _couponApplied = false;
+  double _couponDiscountPercent = 0.0;
+  String? _appliedCouponId;
+  String? _appliedCouponCode;
+
   Timer? _timerPolling;
 
   @override
@@ -87,6 +102,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
   @override
   void dispose() {
     _timerPolling?.cancel();
+    _couponController.dispose();
     super.dispose();
   }
 
@@ -129,30 +145,89 @@ class _CheckoutPageState extends State<CheckoutPage> {
       final planAllowsOnline =
           SubscriptionService.planSupportsOnlinePayment(shopPlan);
 
-      setState(() {
-        shopAccessToken = token;
-        // Habilita PIX apenas se o plano da loja suporta online E a loja ativou explicitamente.
-        // Default false: nova loja sem config não ativa PIX automática.
-        aceitaPix = planAllowsOnline && (config['pagamento_pix'] ?? false);
-        // Habilita cartão apenas se o plano da loja suporta online E a loja ativou explicitamente.
-        aceitaCartao =
-            planAllowsOnline && (config['pagamento_cartao'] ?? false);
+      // Extrai configurações de restrição e descontos
+      final bool birthdayEnabled =
+          config['birthday_pix_discount_enabled'] ?? false;
+      final double birthdayPercent = double.tryParse(
+              config['birthday_pix_discount_percent']?.toString() ?? "0.0") ??
+          0.0;
 
-        aceitaDinheiro = config['pagamento_dinheiro'] ?? true;
-        exigeSinal = config['exigir_sinal'] ?? false;
-        percentualSinalInt = percentualFinal;
+      // Pre-calcula as flags da loja antes de disparar o VIP check
+      final bool baseAceitaPix =
+          planAllowsOnline && (config['pagamento_pix'] ?? false);
+      final bool baseAceitaCartao =
+          planAllowsOnline && (config['pagamento_cartao'] ?? false);
+      bool baseAceitaDinheiro = config['pagamento_dinheiro'] ?? true;
+      final bool baseExigeSinal = config['exigir_sinal'] ?? false;
 
-        if (exigeSinal && (aceitaPix || aceitaCartao)) {
-          _selectedPaymentType = 'sinal';
-        } else if (aceitaDinheiro) {
-          _selectedPaymentType = 'local';
-        } else {
-          _selectedPaymentType = 'total';
+      // Carrega status do cliente (VIP/Aniversário) se logado antes de dar o setState final
+      final user = FirebaseAuth.instance.currentUser;
+      bool isBirthday = false;
+      bool isProblematic = false;
+      String? userPhone;
+
+      if (user != null) {
+        final status = await ClientVerificationService.getClientStatus(
+            user.uid, widget.shopId);
+        isProblematic = status['isProblematic'] ?? false;
+        isBirthday = await ClientVerificationService.isBirthdayMonth(user.uid);
+
+        if (isBirthday && birthdayEnabled) {
+          final hasUsed =
+              await ClientVerificationService.hasUsedBirthdayDiscountInYear(
+                  user.uid, widget.shopId);
+          if (hasUsed) isBirthday = false;
         }
-        _paymentConfigLoaded = true;
-      });
+
+        // Busca telefone do perfil para validação
+        final userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+        if (userDoc.exists) {
+          userPhone =
+              userDoc.data()?['telefone'] ?? userDoc.data()?['whatsapp'];
+          if (userPhone != null && userPhone.trim().isEmpty) userPhone = null;
+        }
+      }
+
+      if (mounted) {
+        debugPrint(
+            '👤 Status Cliente: Problemático=$isProblematic, Niver=$isBirthday');
+        debugPrint('🚫 Restrições: Aceita Dinheiro Final=$baseAceitaDinheiro');
+
+        setState(() {
+          shopAccessToken = token;
+          aceitaPix = baseAceitaPix;
+          aceitaCartao = baseAceitaCartao;
+          aceitaDinheiro = baseAceitaDinheiro;
+          exigeSinal = baseExigeSinal;
+          percentualSinalInt = percentualFinal;
+
+          // Atualiza flags de configuração no estado
+          _birthdayDiscountEnabled = birthdayEnabled;
+          _birthdayDiscountPercent = birthdayPercent;
+
+          // Atualiza status do cliente no estado
+          _isBirthdayMonth = isBirthday;
+          _isProblematic = isProblematic;
+          _userPhone = userPhone;
+
+          // Seleção inicial inteligente
+          if (exigeSinal && (aceitaPix || aceitaCartao)) {
+            _selectedPaymentType = 'sinal';
+          } else if (aceitaDinheiro) {
+            _selectedPaymentType = 'local';
+          } else {
+            _selectedPaymentType = 'total';
+          }
+
+          _paymentConfigLoaded = true;
+        });
+      }
     } catch (e) {
       debugPrint('❌ Erro config: $e');
+      if (mounted) setState(() => _paymentConfigLoaded = true);
     }
   }
 
@@ -167,11 +242,108 @@ class _CheckoutPageState extends State<CheckoutPage> {
   void _recalculateTotals() {
     setState(() {
       double base = (_selectedPaymentType == 'sinal') ? valorSinal : valorTotal;
+      double totalDiscountPercent = 0.0;
+
+      // Aplica desconto de aniversário se for PIX e estiver no mês
+      if (_selectedMethod == 'pix' &&
+          _isBirthdayMonth &&
+          _birthdayDiscountEnabled &&
+          _selectedPaymentType != 'local') {
+        totalDiscountPercent += _birthdayDiscountPercent;
+      }
+
+      // Aplica desconto de cupom se for PIX e estiver aplicado
+      if (_selectedMethod == 'pix' &&
+          _couponApplied &&
+          _selectedPaymentType != 'local') {
+        totalDiscountPercent += _couponDiscountPercent;
+      }
+
+      // Limita desconto a 100% (segurança)
+      if (totalDiscountPercent > 100) totalDiscountPercent = 100;
+
+      base = base * (1 - (totalDiscountPercent / 100.0));
       valorFinalComJuros = base;
     });
   }
 
+  Future<void> _applyCoupon() async {
+    final code = _couponController.text.trim();
+    if (code.isEmpty) return;
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    setState(() => _isLoading = true);
+    final result = await CouponService.validateCoupon(
+      shopId: widget.shopId,
+      code: code,
+      userId: user.uid,
+    );
+    setState(() => _isLoading = false);
+
+    if (result.isValid) {
+      setState(() {
+        _couponApplied = true;
+        _couponDiscountPercent = result.discountPercent ?? 0.0;
+        _appliedCouponId = result.couponId;
+        _appliedCouponCode = code.toUpperCase();
+      });
+      _recalculateTotals();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Cupom '$_appliedCouponCode' aplicado com sucesso!"),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result.message ?? "Cupom inválido."),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  void _removeCoupon() {
+    setState(() {
+      _couponApplied = false;
+      _couponDiscountPercent = 0.0;
+      _appliedCouponId = null;
+      _appliedCouponCode = null;
+      _couponController.clear();
+    });
+    _recalculateTotals();
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text("Cupom removido.")));
+  }
+
   void _handleNextStep() async {
+    debugPrint(
+        '🚩 Tentativa de Avançar | isProblematic: $_isProblematic | phone: $_userPhone');
+
+    // 1. Bloqueia Problemático
+    if (_isProblematic) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Sem disponibilidade para este horário."),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    // 2. Bloqueia sem Telefone
+    if (_userPhone == null || _userPhone!.isEmpty) {
+      _showMissingPhoneDialog();
+      return;
+    }
+
     switch (_currentStep) {
       case 0:
         setState(() => _currentStep = 1);
@@ -318,124 +490,276 @@ class _CheckoutPageState extends State<CheckoutPage> {
   }
 
   void _showConfirmationModal() {
-    String tituloPagamento = "Pagar no Local";
-    String detalhePagamento = "Dinheiro ou Cartão na hora";
-    String valorExibido = _currencyFormat.format(valorTotal);
-
-    // 🔄 Define o texto do botão baseado no tipo de pagamento
-    String textoBotao =
-        _selectedPaymentType == 'local' ? "FINALIZAR" : "FINALIZAR E PAGAR";
-
-    if (_selectedPaymentType != 'local') {
-      double valorReal =
-          (_selectedPaymentType == 'sinal') ? valorSinal : valorTotal;
-      valorExibido = _currencyFormat.format(valorReal);
-
-      if (_selectedMethod == 'pix') {
-        tituloPagamento = "Pix (QR Code)";
-        detalhePagamento = "Pagamento instantâneo";
-      } else {
-        tituloPagamento = "Cartão de Crédito";
-        detalhePagamento = "Processamento seguro via Mercado Pago";
-      }
-    }
-
     showModalBottomSheet(
       context: context,
       useSafeArea: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => Container(
-        height: MediaQuery.of(context).size.height * 0.75,
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
-        ),
-        padding: const EdgeInsets.all(25),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text("Resumo do Pedido",
-                    style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.primaryPurple)),
-                IconButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    icon: const Icon(Icons.close))
-              ],
-            ),
-            const SizedBox(height: 5),
-            const Text("Confira os detalhes antes de finalizar.",
-                style: TextStyle(color: Colors.grey)),
-            const SizedBox(height: 25),
-            _summaryItem(Icons.cut, "Serviço",
-                widget.serviceNameOverride ?? widget.serviceDoc['nome']),
-            _summaryItem(Icons.person, "Profissional",
-                widget.professionalDoc['nome'] ?? ''),
-            _summaryItem(Icons.calendar_today, "Data e Hora",
-                "${DateFormat('dd/MM').format(widget.date)} às ${widget.time.format(context)}"),
-            const Divider(height: 30),
-            _summaryItem(Icons.payment, "Forma de Pagamento", tituloPagamento,
-                subtitle: detalhePagamento),
-            const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.all(15),
-              decoration: BoxDecoration(
-                  color: AppColors.primaryPurple.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(10)),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text("TOTAL A PAGAR",
-                      style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.primaryPurple)),
-                  Text(valorExibido,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 18,
-                          color: AppColors.primaryPurple)),
-                ],
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) => Container(
+          height: MediaQuery.of(context).size.height * 0.9,
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
+          ),
+          child: Column(
+            children: [
+              // Header Fixo
+              Padding(
+                padding: const EdgeInsets.fromLTRB(25, 20, 15, 10),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text("Resumo do Pedido",
+                        style: TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.primaryPurple)),
+                    IconButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        icon: const Icon(Icons.close))
+                  ],
+                ),
               ),
-            ),
-            const Spacer(),
-            SizedBox(
-              width: double.infinity,
-              height: 55,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12))),
-                onPressed: () {
-                  debugPrint(
-                      '🖱️ CheckoutPage: Finalizar clicado | Tipo: $_selectedPaymentType');
-                  Navigator.pop(ctx);
-                  // Se pagamento local, finalize imediatamente sem fluxo de pagamento
-                  if (_selectedPaymentType == 'local') {
-                    _saveBooking(
-                        metodo: "No Local", status: "agendado", valorPago: 0);
-                  } else {
-                    _executeFinalAction();
-                  }
-                },
-                child: Text(textoBotao,
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16)),
+
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(horizontal: 25),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text("Confira os detalhes antes de finalizar.",
+                          style: TextStyle(color: Colors.grey)),
+                      const SizedBox(height: 25),
+                      _summaryItem(
+                          Icons.cut,
+                          "Serviço",
+                          widget.serviceNameOverride ??
+                              widget.serviceDoc['nome']),
+                      _summaryItem(Icons.person, "Profissional",
+                          widget.professionalDoc['nome'] ?? ''),
+                      _summaryItem(Icons.calendar_today, "Data e Hora",
+                          "${DateFormat('dd/MM').format(widget.date)} às ${widget.time.format(context)}"),
+                      const Divider(height: 30),
+
+                      // Detalhes Pagamento Scrollable
+                      Builder(builder: (context) {
+                        String tituloPagamento = "Pagar no Local";
+                        String detalhePagamento = "Dinheiro ou Cartão na hora";
+
+                        if (_selectedPaymentType != 'local') {
+                          if (_selectedMethod == 'pix') {
+                            tituloPagamento = "Pix (QR Code)";
+                            detalhePagamento = "Pagamento instantâneo";
+                          } else {
+                            tituloPagamento = "Cartão de Crédito";
+                            detalhePagamento =
+                                "Processamento seguro via Mercado Pago";
+                          }
+                        }
+                        return _summaryItem(Icons.payment, "Forma de Pagamento",
+                            tituloPagamento,
+                            subtitle: detalhePagamento);
+                      }),
+                      const Divider(height: 30),
+
+                      // CAMPO DE CUPOM (SOMENTE PIX OU TOTAL)
+                      if (_selectedMethod == 'pix' &&
+                          _selectedPaymentType != 'local') ...[
+                        const Text("Tem um cupom?",
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 13)),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: SizedBox(
+                                height: 45,
+                                child: TextField(
+                                  controller: _couponController,
+                                  decoration: InputDecoration(
+                                    hintText: "Código do Cupom",
+                                    hintStyle: const TextStyle(fontSize: 13),
+                                    enabled: !_couponApplied,
+                                    contentPadding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 8),
+                                    border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(8)),
+                                    fillColor: _couponApplied
+                                        ? Colors.grey[100]
+                                        : Colors.white,
+                                    filled: true,
+                                  ),
+                                  textCapitalization:
+                                      TextCapitalization.characters,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            SizedBox(
+                              height: 45,
+                              child: ElevatedButton(
+                                onPressed: () async {
+                                  if (_couponApplied) {
+                                    _removeCoupon();
+                                  } else {
+                                    await _applyCoupon();
+                                  }
+                                  setModalState(() {});
+                                },
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: _couponApplied
+                                      ? Colors.red.shade50
+                                      : AppColors.primaryPurple,
+                                  foregroundColor: _couponApplied
+                                      ? Colors.red
+                                      : Colors.white,
+                                  elevation: 0,
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8)),
+                                ),
+                                child: Text(
+                                    _couponApplied ? "REMOVER" : "APLICAR"),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (_couponApplied)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              "Cupom aplicado: -${_couponDiscountPercent.round()}%",
+                              style: const TextStyle(
+                                  color: Colors.green,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        const SizedBox(height: 20),
+                      ],
+
+                      // Espaçamento para o teclado se necessário
+                      SizedBox(
+                          height: MediaQuery.of(context).viewInsets.bottom),
+                    ],
+                  ),
+                ),
               ),
-            ),
-            const SizedBox(height: 10),
-            Center(
-                child: TextButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    child: const Text("Voltar e Editar")))
-          ],
+
+              // Rodapé Fixo com Botões (Sempre Visível)
+              Container(
+                padding: EdgeInsets.fromLTRB(
+                    25, 15, 25, MediaQuery.of(context).padding.bottom + 20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.08),
+                      offset: const Offset(0, -4),
+                      blurRadius: 10,
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Builder(builder: (context) {
+                      String valorExibido = _currencyFormat.format(valorTotal);
+                      String textoBotao = _selectedPaymentType == 'local'
+                          ? "FINALIZAR AGENDAMENTO"
+                          : "FINALIZAR E PAGAR AGORA";
+
+                      if (_selectedPaymentType != 'local') {
+                        valorExibido =
+                            _currencyFormat.format(valorFinalComJuros);
+                      }
+
+                      return Column(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(15),
+                            decoration: BoxDecoration(
+                                color: AppColors.primaryPurple
+                                    .withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(10)),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text("TOTAL A PAGAR",
+                                    style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: AppColors.primaryPurple)),
+                                Text(valorExibido,
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 20,
+                                        color: AppColors.primaryPurple)),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 15),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 55,
+                            child: ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.green,
+                                  elevation: 2,
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12))),
+                              onPressed: () {
+                                debugPrint(
+                                    '🏁 Clique em Finalizar Modal | isProblematic: $_isProblematic | phone: $_userPhone');
+
+                                // Segurança final: Problemático
+                                if (_isProblematic) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                          "Sem disponibilidade para este horário."),
+                                      backgroundColor: Colors.orange,
+                                    ),
+                                  );
+                                  return;
+                                }
+
+                                // Segurança final: Telefone
+                                if (_userPhone == null || _userPhone!.isEmpty) {
+                                  Navigator.pop(ctx);
+                                  _showMissingPhoneDialog();
+                                  return;
+                                }
+
+                                Navigator.pop(ctx);
+                                if (_selectedPaymentType == 'local') {
+                                  _saveBooking(
+                                      metodo: "No Local",
+                                      status: "agendado",
+                                      valorPago: 0);
+                                } else {
+                                  _executeFinalAction();
+                                }
+                              },
+                              child: Text(textoBotao,
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 16)),
+                            ),
+                          ),
+                        ],
+                      );
+                    }),
+                    const SizedBox(height: 8),
+                    TextButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        child: Text("Voltar e Editar",
+                            style: TextStyle(color: Colors.grey[600]))),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -661,8 +985,16 @@ class _CheckoutPageState extends State<CheckoutPage> {
                   children: [
                     _buildResumoHeader(valorExibido),
                     const SizedBox(height: 25),
-                    if (_currentStep == 0) _buildStep1TipoValor(),
-                    if (_currentStep == 1) _buildStep2MetodoPagamento(),
+                    if (_currentStep == 0) ...[
+                      if (_isBirthdayMonth && _birthdayDiscountEnabled)
+                        _buildBirthdayBanner(),
+                      _buildStep1TipoValor(),
+                    ],
+                    if (_currentStep == 1) ...[
+                      if (_isBirthdayMonth && _birthdayDiscountEnabled)
+                        _buildBirthdayBanner(),
+                      _buildStep2MetodoPagamento(),
+                    ],
                     if (_currentStep == 2) _buildStep3Confirmacao(),
                   ],
                 ),
@@ -794,6 +1126,73 @@ class _CheckoutPageState extends State<CheckoutPage> {
             badgeColor: Colors.blue,
           ),
       ],
+    );
+  }
+
+  Widget _buildBirthdayBanner() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 20),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFFFFD700), Color(0xFFFFA500)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(15),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.orange.withValues(alpha: 0.3),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          )
+        ],
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.cake, color: Colors.white, size: 30),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  "Parabéns! É seu mês!",
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                ),
+                Text(
+                  "Você ganhou ${_birthdayDiscountPercent.round()}% de desconto pagando com PIX.",
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text(
+                    "⚠️ Necessário apresentar documento com foto no dia do atendimento. Caso contrário, será cobrado o valor integral.",
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1464,12 +1863,30 @@ class _CheckoutPageState extends State<CheckoutPage> {
         'status': status,
         'metodo_pagamento': metodo,
         'payment_id': paymentId,
+        'birthday_discount_applied': (_selectedMethod == 'pix' &&
+            _isBirthdayMonth &&
+            _birthdayDiscountEnabled &&
+            _selectedPaymentType != 'local'),
+        'coupon_applied': _couponApplied,
+        'coupon_code': _appliedCouponCode,
+        'coupon_discount_percent': _couponDiscountPercent,
         'criado_em': FieldValue.serverTimestamp(),
         'valor_sinal':
             (metodo.contains('Sinal') || _selectedPaymentType == 'sinal')
                 ? valorPago
                 : 0,
       });
+
+      // Se usou cupom, marca como usado para o cliente
+      if (_couponApplied && _appliedCouponId != null) {
+        await CouponService.markCouponAsUsed(
+          shopId: widget.shopId,
+          couponId: _appliedCouponId!,
+          userId: user.uid,
+          appointmentId:
+              "", // Será preenchido pelo backend se necessário ou deixamos vazio já que o doc é o ID do usuário
+        );
+      }
 
       if (mounted) {
         final svcName = widget.serviceNameOverride ??
@@ -1582,6 +1999,43 @@ class _CheckoutPageState extends State<CheckoutPage> {
           ),
         );
       },
+    );
+  }
+
+  void _showMissingPhoneDialog() {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.contact_phone, color: Colors.orange),
+            SizedBox(width: 10),
+            Text("Telefone Obrigatório"),
+          ],
+        ),
+        content: const Text(
+            "Para realizar um agendamento, você precisa ter um telefone cadastrado em seu perfil.\n\nPor favor, atualize seus dados antes de continuar."),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("CANCELAR", style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.pop(context, 'edit_profile');
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primaryPurple,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text("EDITAR PERFIL"),
+          ),
+        ],
+      ),
     );
   }
 }

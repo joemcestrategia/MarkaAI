@@ -173,7 +173,7 @@ class MercadoPagoService {
   // ===========================================================================
   // 5. NATIVO: GERAR CARD TOKEN (DIRETO API MP)
   // ===========================================================================
-  static Future<String> getCardToken({
+  static Future<Map<String, dynamic>> getCardToken({
     required String publicKey,
     required String cardNumber,
     required String cardholderName,
@@ -203,7 +203,11 @@ class MercadoPagoService {
 
       if (response.statusCode == 201 || response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        return data['id'];
+        return {
+          'id': data['id'],
+          'payment_method_id': data['payment_method_id'],
+          'issuer_id': data['issuer_id'],
+        };
       } else {
         final data = jsonDecode(response.body);
         throw Exception(data['message'] ?? 'Erro ao gerar token do cartão');
@@ -254,11 +258,8 @@ class MercadoPagoService {
       final response = await http.get(Uri.parse(url));
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as List<dynamic>;
-        // A lógica do MP geralmente requer bater o BIN contra uma lista ou usar endpoint específico.
-        // Simplificando: o MP retorna o ID correto quando você tenta tokenizar ou via endpoint de guesser.
-        // Como o foco é Stripe-like, podemos inferir localmente para UI ou usar o retorno da API.
-        return null; // Implementaremos lógica de guesser se necessário ou usaremos o retorno do token
+        // final data = jsonDecode(response.body) as List<dynamic>;
+        return null;
       }
       return null;
     } catch (e) {

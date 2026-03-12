@@ -1128,6 +1128,10 @@ exports.criarPagamento = onRequest({ cors: true }, async (req, res) => {
     // Chamar API Mercado Pago
     console.log('💳 Chamando API Mercado Pago...');
 
+    const baseUrl = (accessToken && accessToken.startsWith && accessToken.startsWith('TEST-'))
+      ? 'https://api.sandbox.mercadopago.com'
+      : 'https://api.mercadopago.com';
+
     // CORREÇÃO 1: payer.identification (CPF) incluído no payload para evitar rejeição antifraude do MP
     const payerObj = { email: email };
     if (cpf && cpf.length === 11) {
@@ -1139,7 +1143,7 @@ exports.criarPagamento = onRequest({ cors: true }, async (req, res) => {
 
     const mpPayload = {
       token: cardToken,
-      transaction_amount: Number(valor),
+      transaction_amount: Number(Number(valor).toFixed(2)),
       installments: Number(installments) || 1,
       payer: payerObj,
       description: descricao,
@@ -1158,7 +1162,7 @@ exports.criarPagamento = onRequest({ cors: true }, async (req, res) => {
     const idempotencyKey = `payment-${orderId}-${Date.now()}`;
 
     const mpResponse = await axios.post(
-      'https://api.mercadopago.com/v1/payments',
+      `${baseUrl}/v1/payments`,
       mpPayload,
       {
         headers: {
@@ -1239,10 +1243,13 @@ exports.criarPagamento = onRequest({ cors: true }, async (req, res) => {
       const mpError = error.response.data;
       console.error('Detalhes MP:', mpError);
 
+      const statusDetail = mpError.status_detail || mpError.message || '';
+
       return res.status(400).json({
         success: false,
-        error: mpError.message || 'Erro ao processar',
+        error: traduzirErro(statusDetail),
         details: mpError.cause,
+        raw_error: mpError.message
       });
     }
 
@@ -1256,18 +1263,38 @@ exports.criarPagamento = onRequest({ cors: true }, async (req, res) => {
 
 // Função auxiliar para traduzir erros
 function traduzirErro(statusDetail) {
+  if (!statusDetail) return 'Pagamento recusado';
+
+  const detail = statusDetail.toLowerCase();
+
   const erros = {
-    'cc_rejected_insufficient_amount': 'Saldo insuficiente',
-    'cc_rejected_bad_filled_security_code': 'CVV incorreto',
-    'cc_rejected_bad_filled_date': 'Data de validade incorreta',
-    'cc_rejected_other_reason': 'Recusado pelo banco',
-    'cc_rejected_call_for_authorize': 'Ligue para seu banco',
-    'cc_rejected_card_error': 'Erro no cartão',
-    'cc_rejected_duplicated_payment': 'Pagamento duplicado',
-    'cc_rejected_fraud': 'Transação suspeita de fraude',
+    'cc_rejected_insufficient_amount': 'Saldo insuficiente no cartão.',
+    'cc_rejected_bad_filled_security_code': 'O código de segurança (CVV) está incorreto.',
+    'cc_rejected_bad_filled_date': 'A data de validade é inválida ou expirou.',
+    'cc_rejected_other_reason': 'O pagamento foi recusado pelo banco emissor.',
+    'cc_rejected_call_for_authorize': 'O banco requer autorização por telefone para esta compra.',
+    'cc_rejected_card_error': 'Houve um erro ao processar o cartão. Tente outro.',
+    'cc_rejected_duplicated_payment': 'Pagamento duplicado detectado. Verifique seu extrato.',
+    'cc_rejected_fraud': 'Transação não aprovada por motivos de segurança (antifraude).',
+    'cc_rejected_high_risk': 'Transação recusada por precaução. Tente outro meio de pagamento.',
+    'cc_rejected_card_disabled': 'O cartão está desativado ou bloqueado.',
+    'cc_rejected_max_attempts': 'Limite de tentativas excedido para este cartão.',
+    'cc_rejected_invalid_installments': 'O número de parcelas não é permitido para este cartão.',
+    'cc_rejected_blacklist': 'Cartão bloqueado para compras online.',
+    'invalid_amount': 'O valor da transação é inválido ou inferior ao mínimo permitido.',
+    'invalid transaction amount': 'O valor da transação é inválido ou inferior ao mínimo permitido.',
+    'amount must be greater': 'O valor da transação é inferior ao mínimo permitido.'
   };
 
-  return erros[statusDetail] || 'Pagamento recusado';
+  if (erros[detail]) return erros[detail];
+
+  // Buscas parciais para mensagens comuns
+  if (detail.includes('amount') || detail.includes('valor')) return 'O valor da transação é inválido.';
+  if (detail.includes('security code') || detail.includes('cvv')) return 'Código de segurança incorreto.';
+  if (detail.includes('expiry') || detail.includes('expiration')) return 'Data de validade incorreta.';
+  if (detail.includes('token')) return 'Erro na comunicação segura. Tente novamente.';
+
+  return 'Pagamento não aprovado. Por favor, verifique os dados ou tente outro cartão.';
 }
 
 // ============================================================

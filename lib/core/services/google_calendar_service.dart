@@ -4,7 +4,7 @@ import 'package:googleapis_auth/auth_io.dart';
 import 'package:http/http.dart' as http;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 /// Serviço para integração com Google Calendar
 /// Permite backup e sincronização de agendamentos
@@ -16,49 +16,53 @@ class GoogleCalendarService {
   // Nome do calendário de backup
   static const String _calendarName = 'MarkaAI - Agendamentos';
 
-  /// Inicia o fluxo de autenticação OAuth2
+  /// Inicia o fluxo de autenticação OAuth2 usando o plugin nativo google_sign_in
   static Future<Map<String, dynamic>?> authenticateUser() async {
     try {
-      // Credenciais OAuth2 do Google Cloud Console
-      final clientId = ClientId(
-        '439682458293-r1kmpqq7l8qr79m68acsrm5cbulnpkrq.apps.googleusercontent.com',
-        '', // Client secret não é necessário para apps mobile
+      // Usamos o GoogleSignIn para garantir que o fluxo nativo seja usado
+      // Isso resolve o erro "OAuth client not found" e permite escolher a conta
+      final googleSignIn = GoogleSignIn(
+        scopes: _scopes,
       );
 
-      // Redireciona para autorização
-      final client = await clientViaUserConsent(
-        clientId,
-        _scopes,
-        (url) async {
-          final uri = Uri.parse(url);
-          if (await canLaunchUrl(uri)) {
-            await launchUrl(uri, mode: LaunchMode.externalApplication);
-          }
-        },
-      );
+      // Sempre desconecta antes para forçar a escolha da conta, conforme solicitado pelo usuário
+      if (await googleSignIn.isSignedIn()) {
+        await googleSignIn.signOut();
+      }
+
+      final GoogleSignInAccount? gUser = await googleSignIn.signIn();
+
+      if (gUser == null) {
+        return null;
+      }
+
+      final GoogleSignInAuthentication gAuth = await gUser.authentication;
 
       // Salva tokens no Firestore
       final user = FirebaseAuth.instance.currentUser;
       if (user != null) {
-        final credentials = client.credentials;
         await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
           'googleCalendar': {
             'connected': true,
-            'accessToken': credentials.accessToken.data,
-            'refreshToken': credentials.refreshToken,
-            'expiry': credentials.accessToken.expiry.toIso8601String(),
+            'accessToken': gAuth.accessToken,
+            'idToken': gAuth.idToken,
+            // Nota: O refresh token não é fornecido diretamente pelo google_sign_in no mobile
+            // O plugin gerencia o refresh internamente quando solicitamos gUser.authentication
+            'expiry': DateTime.now()
+                .add(const Duration(hours: 1))
+                .toIso8601String(), // Estimativa
             'connectedAt': FieldValue.serverTimestamp(),
+            'email': gUser.email,
+            'displayName': gUser.displayName,
           }
         }, SetOptions(merge: true));
 
         return {
-          'accessToken': credentials.accessToken.data,
-          'refreshToken': credentials.refreshToken,
-          'expiry': credentials.accessToken.expiry.toIso8601String(),
+          'accessToken': gAuth.accessToken,
+          'idToken': gAuth.idToken,
         };
       }
 
-      client.close();
       return null;
     } catch (e) {
       if (kDebugMode) debugPrint('Erro ao autenticar com Google Calendar: $e');
@@ -116,9 +120,42 @@ class GoogleCalendarService {
           calendarData['accessToken'],
           DateTime.parse(calendarData['expiry']),
         ),
-        calendarData['refreshToken'],
+        calendarData['refreshToken'], // Pode ser nulo agora
         _scopes,
       );
+
+      // Se o token expirou e não temos refresh token (comum no mobile),
+      // tentamos obter um novo token via GoogleSignIn
+      if (credentials.accessToken.hasExpired &&
+          credentials.refreshToken == null) {
+        final googleSignIn = GoogleSignIn(scopes: _scopes);
+        final gUser = await googleSignIn.signInSilently();
+        if (gUser != null) {
+          final gAuth = await gUser.authentication;
+          // Atualiza no Firestore para próximas chamadas
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .update({
+            'googleCalendar.accessToken': gAuth.accessToken,
+            'googleCalendar.idToken': gAuth.idToken,
+            'googleCalendar.expiry':
+                DateTime.now().add(const Duration(hours: 1)).toIso8601String(),
+          });
+
+          final newCredentials = AccessCredentials(
+            AccessToken(
+              'Bearer',
+              gAuth.accessToken!,
+              DateTime.now().add(const Duration(hours: 1)),
+            ),
+            null,
+            _scopes,
+          );
+          final client = authenticatedClient(http.Client(), newCredentials);
+          return calendar.CalendarApi(client);
+        }
+      }
 
       final client = authenticatedClient(http.Client(), credentials);
       return calendar.CalendarApi(client);

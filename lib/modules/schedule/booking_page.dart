@@ -7,6 +7,8 @@ import '../../core/theme/app_colors.dart';
 import '../../pages/checkout_page.dart';
 
 import '../../core/utils/availability_utils.dart';
+import '../../core/services/client_verification_service.dart';
+import '../clients/widgets/restricted_client_view.dart';
 
 class BookingPage extends StatefulWidget {
   final DocumentSnapshot shop;
@@ -55,12 +57,42 @@ class _BookingPageState extends State<BookingPage> {
   int _bookingWindowDays = 90;
   int _minAdvanceHours = 7;
 
+  bool _isRestricted = false;
+  bool _loadingRestriction = true;
+
   @override
   void initState() {
     super.initState();
     shopId = widget.shop.id;
     shopData = widget.shop.data() as Map<String, dynamic>;
     _loadShopSettings();
+    _checkRestriction();
+  }
+
+  Future<void> _checkRestriction() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null && !user.isAnonymous) {
+      try {
+        final status =
+            await ClientVerificationService.getClientStatus(user.uid, shopId);
+        if (status['isProblematic'] == true) {
+          if (mounted) {
+            setState(() {
+              _isRestricted = true;
+              _loadingRestriction = false;
+            });
+          }
+          return;
+        }
+      } catch (e) {
+        debugPrint('❌ Erro checkRestriction: $e');
+      }
+    }
+    if (mounted) {
+      setState(() {
+        _loadingRestriction = false;
+      });
+    }
   }
 
   void _loadShopSettings() {
@@ -353,6 +385,26 @@ class _BookingPageState extends State<BookingPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (_loadingRestriction) {
+      return const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(color: AppColors.primaryPurple),
+        ),
+      );
+    }
+
+    if (_isRestricted) {
+      return RestrictedClientView(
+        onRefresh: () async {
+          setState(() {
+            _isRestricted = false;
+            _loadingRestriction = true;
+          });
+          await _checkRestriction();
+        },
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FD),
       body: Column(
@@ -404,6 +456,9 @@ class BookingTimePage extends StatefulWidget {
 class _BookingTimePageState extends State<BookingTimePage> {
   DateTime? _selectedDate;
   int _bookingWindowDays = 90;
+  bool _isVip = false;
+  int _vipExtraDays = 0;
+  bool _isRestricted = false;
 
   @override
   void initState() {
@@ -422,7 +477,44 @@ class _BookingTimePageState extends State<BookingTimePage> {
     });
 
     _bookingWindowDays = widget.shopConfig['janela_agendamento_dias'] ?? 90;
-    _autoSelectFirstAvailableDate(widget.professionalDoc);
+    _vipExtraDays = (widget.shopConfig['vip_extra_booking_days'] ?? 0).toInt();
+    _checkVipStatus();
+    _checkRestriction();
+  }
+
+  Future<void> _checkRestriction() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null && !user.isAnonymous) {
+      final status = await ClientVerificationService.getClientStatus(
+          user.uid, widget.shop.id);
+      if (status['isProblematic'] == true) {
+        if (mounted) {
+          setState(() {
+            _isRestricted = true;
+          });
+        }
+      }
+    }
+  }
+
+  Future<void> _checkVipStatus() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null && !user.isAnonymous) {
+      final status = await ClientVerificationService.getClientStatus(
+          user.uid, widget.shop.id);
+      if (mounted) {
+        setState(() {
+          _isVip = status['isVip'] ?? false;
+          if (_isVip) {
+            _bookingWindowDays += _vipExtraDays;
+          }
+        });
+        // Reinicializa a data automática se o status VIP mudar a janela
+        _autoSelectFirstAvailableDate(widget.professionalDoc);
+      }
+    } else {
+      _autoSelectFirstAvailableDate(widget.professionalDoc);
+    }
   }
 
   void _autoSelectFirstAvailableDate(DocumentSnapshot profDoc) {
@@ -450,6 +542,17 @@ class _BookingTimePageState extends State<BookingTimePage> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isRestricted) {
+      return RestrictedClientView(
+        onRefresh: () async {
+          setState(() {
+            _isRestricted = false;
+          });
+          await _checkRestriction();
+        },
+      );
+    }
+
     final svcName = widget.serviceData['nome'] ?? 'Serviço';
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);

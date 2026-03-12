@@ -1,15 +1,13 @@
-﻿import 'dart:convert';
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:http/http.dart' as http;
 import 'package:brasil_fields/brasil_fields.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/services/mercado_pago_service.dart';
 import '../../widgets/stripe_text_field.dart';
-import 'booking_success_page.dart';
+import 'checkout_review_page.dart';
 
 class CheckoutTransparentePage extends StatefulWidget {
   final String shopId;
@@ -53,6 +51,12 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
   List<dynamic> _installments = [];
   dynamic _selectedInstallment;
 
+  double _taxaCredito = 0.0;
+  double _valorComTaxa = 0.0;
+  bool _showProfessional = true;
+
+  final List<dynamic> _paymentItems = [];
+
   @override
   void initState() {
     super.initState();
@@ -74,6 +78,20 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
       if (_publicKey == null) {
         throw Exception('Mercado Pago não configurado para esta loja.');
       }
+
+      final config = data['config'] as Map<String, dynamic>? ?? {};
+      _showProfessional = config['cliente_escolhe_prof'] ?? true;
+      _taxaCredito =
+          (config['tax_percent'] ?? config['porcentagem_a_vista'] ?? 0)
+              .toDouble();
+
+      final rawTotal = widget.valor * (1 + (_taxaCredito / 100));
+      _valorComTaxa = double.parse(rawTotal.toStringAsFixed(2));
+
+      _paymentItems.add({
+        'label': 'Reserva na ${data['nome'] ?? 'Loja'}',
+        'amount': _valorComTaxa.toStringAsFixed(2),
+      });
 
       // Pre-fill user data
       final user = FirebaseAuth.instance.currentUser;
@@ -103,7 +121,7 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
       if (_publicKey != null) {
         final costs = await MercadoPagoService.getInstallmentsWithBin(
           publicKey: _publicKey!,
-          amount: widget.valor,
+          amount: _valorComTaxa,
           bin: bin,
         );
         setState(() {
@@ -134,122 +152,237 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
       final month = expiry[0];
       final year = '20${expiry[1]}';
 
-      final cardToken = await MercadoPagoService.getCardToken(
+      final tokenData = await MercadoPagoService.getCardToken(
         publicKey: _publicKey!,
-        cardNumber: _cardNumberController.text,
+        cardNumber: _cardNumberController.text.replaceAll(' ', ''),
         cardholderName: _holderNameController.text,
         expirationMonth: month,
         expirationYear: year,
         securityCode: _cvvController.text,
       );
 
-      if (widget.collectOnly) {
-        if (!mounted) return;
-        Navigator.pop(context, {
-          'cardToken': cardToken,
-          'installments': _selectedInstallment['installments'],
-          'email': FirebaseAuth.instance.currentUser?.email ?? '',
-          'paymentMethodId': 'credit_card', // For simplification
-        });
+      final cardToken = tokenData['id']?.toString() ?? '';
+
+      if (cardToken.isEmpty) {
+        _showError('Não conseguimos validar seu cartão. Verifique os dados.');
         return;
       }
 
-      // Full payment logic
-      final idToken = await _getPaymentIdToken();
-      if (idToken == null) return;
+      if (!mounted) return;
 
-      final response = await http.post(
-        Uri.parse(
-            'https://us-central1-wismart-118c3.cloudfunctions.net/criarPagamento'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'data': {
-            'cardToken': cardToken,
-            'email': FirebaseAuth.instance.currentUser?.email ?? '',
-            'installments': _selectedInstallment['installments'],
-            'valor': widget.valor,
-            'shopId': widget.shopId,
-            'orderId': widget.orderId,
-            'descricao': "Reserva: ${widget.serviceDoc['nome'] ?? 'Serviço'}",
-            'idToken': idToken,
-            'cpf': _cpfController.text.replaceAll(RegExp(r'[^0-9]'), ''),
-            'paymentMethodId': 'credit_card',
-          }
-        }),
+      final lastFour = _cardNumberController.text
+          .replaceAll(' ', '')
+          .substring(_cardNumberController.text.replaceAll(' ', '').length - 4);
+
+      final user = FirebaseAuth.instance.currentUser;
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => CheckoutReviewPage(
+            paymentData: {
+              'cardToken': cardToken,
+              'valor': _valorComTaxa,
+              'email': user?.email ?? 'cliente@markaai.com.br',
+              'installments': _selectedInstallment['installments'],
+              'lastFour': lastFour,
+              'paymentMethodId': tokenData['payment_method_id'],
+              'issuerId': tokenData['issuer_id'],
+              'cpf': _cpfController.text,
+            },
+            serviceDoc: widget.serviceDoc,
+            professionalDoc: widget.professionalDoc,
+            date: widget.date,
+            time:
+                '${widget.time.hour.toString().padLeft(2, '0')}:${widget.time.minute.toString().padLeft(2, '0')}',
+            shopId: widget.shopId,
+            orderId: widget.orderId,
+            showProfessional: _showProfessional,
+          ),
+        ),
       );
 
-      if (response.statusCode == 200) {
-        final result = jsonDecode(response.body);
-        if (result['success'] == true) {
-          await _salvarAgendamento(result['paymentId'].toString());
-        } else {
-          _showError(result['error'] ?? 'Pagamento recusado');
-        }
-      } else {
-        final error = jsonDecode(response.body);
-        _showError(error['error']?.toString() ?? 'Erro no pagamento');
-      }
+      // Notify the system that autofill is complete
+      TextInput.finishAutofillContext();
     } catch (e) {
-      _showError('Erro ao processar pagamento: $e');
+      _showError(_getFriendlyErrorMessage(e.toString()));
     } finally {
       setState(() => _isLoading = false);
     }
   }
 
-  Future<String?> _getPaymentIdToken() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return null;
-    return await user.getIdToken();
+  bool _isValidCpf(String cpf) {
+    cpf = cpf.replaceAll(RegExp(r'[^0-9]'), '');
+    if (cpf.length != 11) return false;
+    if (RegExp(r'^(\d)\1{10}$').hasMatch(cpf)) return false;
+
+    List<int> digits = cpf.split('').map(int.parse).toList();
+
+    int sum1 = 0;
+    for (int i = 0; i < 9; i++) {
+      sum1 += digits[i] * (10 - i);
+    }
+    int rest1 = (sum1 * 10) % 11;
+    if (rest1 == 10) rest1 = 0;
+    if (digits[9] != rest1) return false;
+
+    int sum2 = 0;
+    for (int i = 0; i < 10; i++) {
+      sum2 += digits[i] * (11 - i);
+    }
+    int rest2 = (sum2 * 10) % 11;
+    if (rest2 == 10) rest2 = 0;
+    if (digits[10] != rest2) return false;
+
+    return true;
   }
 
-  Future<void> _salvarAgendamento(String paymentId) async {
-    try {
-      final user = FirebaseAuth.instance.currentUser!;
-      final bookingDate = DateTime(widget.date.year, widget.date.month,
-          widget.date.day, widget.time.hour, widget.time.minute);
+  String _getFriendlyErrorMessage(String? code, {String? statusDetail}) {
+    // Check common raw error strings first (from Exception messages or API responses)
+    final lowerCode = code?.toLowerCase() ?? '';
 
-      final timeStr =
-          '${widget.time.hour.toString().padLeft(2, '0')}:${widget.time.minute.toString().padLeft(2, '0')}';
-
-      await FirebaseFirestore.instance.collection('appointments').add({
-        'shopId': widget.shopId,
-        'clientId': user.uid,
-        'serviceId': widget.serviceDoc.id,
-        'professionalId': widget.professionalDoc.id,
-        'date': Timestamp.fromDate(bookingDate),
-        'time': timeStr,
-        'status': 'confirmado',
-        'paymentId': paymentId,
-        'paymentMethod': 'Cartão de Crédito',
-        'valor': widget.valor,
-        'created_at': FieldValue.serverTimestamp(),
-      });
-
-      if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => BookingSuccessPage(
-              serviceName: widget.serviceDoc['nome'] ?? 'Serviço',
-              date:
-                  "${widget.date.day.toString().padLeft(2, '0')}/${widget.date.month.toString().padLeft(2, '0')}/${widget.date.year}",
-              time:
-                  "${widget.time.hour.toString().padLeft(2, '0')}:${widget.time.minute.toString().padLeft(2, '0')}",
-              professionalName:
-                  widget.professionalDoc['nome'] ?? 'Profissional',
-              isPaid: true,
-            ),
-          ),
-        );
-      }
-    } catch (e) {
-      _showError('Erro ao agendar: $e');
+    if (lowerCode.contains('invalid transaction amount') ||
+        lowerCode.contains('amount must be greater')) {
+      return 'O valor desta reserva é inferior ao mínimo permitido para pagamentos online.';
     }
+
+    if (lowerCode.contains('expiration_month') ||
+        lowerCode.contains('expiration_year') ||
+        lowerCode.contains('invalid parameter expiration')) {
+      return 'A data de expiração do cartão parece estar incorreta. Verifique o mês e o ano.';
+    }
+
+    if (lowerCode.contains('security_code') ||
+        lowerCode.contains('cvv') ||
+        lowerCode.contains('cvc')) {
+      return 'O código de segurança (CVV) do cartão é inválido. Verifique o número atrás do cartão.';
+    }
+
+    if (lowerCode.contains('card_number') ||
+        lowerCode.contains('invalid parameter card_number')) {
+      return 'O número do cartão é inválido ou incompleto.';
+    }
+
+    if (statusDetail != null) {
+      switch (statusDetail) {
+        case 'cc_rejected_bad_filled_card_number':
+          return 'O número do cartão é inválido. Verifique o número digitado.';
+        case 'cc_rejected_bad_filled_date':
+          return 'A data de expiração está incorreta. Verifique o mês e o ano.';
+        case 'cc_rejected_bad_filled_other':
+          return 'Alguns dados do cartão estão incorretos. Por favor, revise.';
+        case 'cc_rejected_bad_filled_security_code':
+          return 'O código de segurança (atrás do cartão) é inválido. Verifique o número digitado.';
+        case 'cc_rejected_blacklist':
+          return 'Não foi possível processar este cartão por regras de segurança. Tente usar outro.';
+        case 'cc_rejected_call_for_authorize':
+          return 'O pagamento não foi autorizado pelo seu banco. Entre em contato com eles para liberar a transação.';
+        case 'cc_rejected_card_disabled':
+          return 'Este cartão está desativado. Verifique com seu banco ou use outro cartão.';
+        case 'cc_rejected_card_error':
+          return 'Ocorreu um erro ao processar o cartão. Tente novamente em instantes.';
+        case 'cc_rejected_duplicated_payment':
+          return 'Identificamos um pagamento idêntico recente. Verifique se a cobrança já não foi realizada.';
+        case 'cc_rejected_high_risk':
+          return 'O sistema de segurança recusou o pagamento. Tente outro cartão ou método de pagamento.';
+        case 'cc_rejected_insufficient_amount':
+          return 'Saldo ou limite insuficiente no cartão. Verifique com seu banco.';
+        case 'cc_rejected_invalid_installments':
+          return 'Este cartão não aceita o número de parcelas selecionado.';
+        case 'cc_rejected_max_attempts':
+          return 'Limite de tentativas excedido para este cartão. Tente usar outro ou aguarde um momento.';
+        case 'cc_rejected_other_reason':
+          return 'A operadora do cartão não autorizou o pagamento por algum motivo interno. Verifique com seu banco.';
+      }
+    }
+
+    if (code != null) {
+      switch (code) {
+        case '205':
+        case 'E301':
+          return 'O número do cartão é inválido ou não foi informado.';
+        case '208':
+        case '209':
+        case '325':
+        case '326':
+          return 'A data de expiração do cartão é inválida.';
+        case '224':
+        case 'E302':
+          return 'O código de segurança (CVV) é inválido.';
+        case '221':
+        case '316':
+          return 'O nome do titular do cartão é inválido ou incompleto.';
+        case '324':
+          return 'O CPF informado é inválido.';
+        case '310':
+          return 'O valor não é válido para este cartão.';
+      }
+    }
+
+    return 'Não conseguimos processar seu pagamento. Verifique os dados do cartão e tente novamente.';
   }
 
   void _showError(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), backgroundColor: Colors.red),
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.red.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.error_outline,
+                    color: Colors.red, size: 48),
+              ),
+              const SizedBox(height: 24),
+              const Text(
+                'Ops! No momento não\nconseguimos prosseguir',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1A1A1A),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey[600],
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 32),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF1A1A1A),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    elevation: 0,
+                  ),
+                  child: const Text('Tentar Novamente',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -269,166 +402,258 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
       ),
       body: _isLoading && _publicKey == null
           ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
+          : Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
               child: Form(
                 key: _formKey,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'TOTAL A PAGAR',
-                      style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.grey[600],
-                          letterSpacing: 1.1),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'R\$ ${widget.valor.toStringAsFixed(2).replaceFirst('.', ',')}',
-                      style: const TextStyle(
-                          fontSize: 32,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.primaryPurple),
-                    ),
-                    const SizedBox(height: 32),
-                    StripeTextField(
-                      label: 'Número do Cartão',
-                      hintText: '0000 0000 0000 0000',
-                      keyboardType: TextInputType.number,
-                      inputFormatters: [
-                        FilteringTextInputFormatter.digitsOnly,
-                        CartaoBancarioInputFormatter(),
-                      ],
-                      controller: _cardNumberController,
-                      onChanged: _onCardNumberChanged,
-                      validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
-                      suffixIcon:
-                          const Icon(Icons.credit_card, color: Colors.grey),
-                    ),
-                    const SizedBox(height: 20),
-                    StripeTextField(
-                      label: 'Nome no Cartão',
-                      hintText: 'COMO ESTA NO CARTÃO',
-                      controller: _holderNameController,
-                      validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
-                    ),
-                    const SizedBox(height: 20),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: StripeTextField(
-                            label: 'Validade',
-                            hintText: 'MM/AA',
-                            keyboardType: TextInputType.number,
-                            inputFormatters: [
-                              FilteringTextInputFormatter.digitsOnly,
-                              ValidadeCartaoInputFormatter(),
-                            ],
-                            controller: _expiryController,
-                            validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: StripeTextField(
-                            label: 'CVC',
-                            hintText: '123',
-                            keyboardType: TextInputType.number,
-                            inputFormatters: [
-                              FilteringTextInputFormatter.digitsOnly,
-                              LengthLimitingTextInputFormatter(4),
-                            ],
-                            controller: _cvvController,
-                            validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-                    StripeTextField(
-                      label: 'CPF do Titular',
-                      hintText: '000.000.000-00',
-                      keyboardType: TextInputType.number,
-                      inputFormatters: [
-                        FilteringTextInputFormatter.digitsOnly,
-                        CpfInputFormatter(),
-                      ],
-                      controller: _cpfController,
-                      validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
-                    ),
-                    const SizedBox(height: 32),
-                    if (_installments.isNotEmpty) ...[
-                      Text(
-                        'PARCELAMENTO',
-                        style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.grey[600],
-                            letterSpacing: 1.1),
-                      ),
-                      const SizedBox(height: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(8),
-                          border:
-                              Border.all(color: Colors.grey[200]!, width: 1.5),
-                        ),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<dynamic>(
-                            value: _selectedInstallment,
-                            isExpanded: true,
-                            items: _installments.map((inst) {
-                              return DropdownMenuItem<dynamic>(
-                                value: inst,
-                                child: Text(inst['recommended_message']),
-                              );
-                            }).toList(),
-                            onChanged: (val) =>
-                                setState(() => _selectedInstallment = val),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 40),
-                    ],
-                    SizedBox(
-                      width: double.infinity,
-                      height: 56,
-                      child: ElevatedButton(
-                        onPressed: _isLoading ? null : _processPayment,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primaryPurple,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8)),
-                          elevation: 0,
-                        ),
-                        child: _isLoading
-                            ? const CircularProgressIndicator(
-                                color: Colors.white)
-                            : const Text(
-                                'Pagar Agora',
-                                style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.white),
+                    AutofillGroup(
+                      child: Expanded(
+                        child: SingleChildScrollView(
+                          physics: const ClampingScrollPhysics(),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'TOTAL A PAGAR',
+                                        style: TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.grey[600],
+                                            letterSpacing: 1.1),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'R\$ ${_valorComTaxa.toStringAsFixed(2).replaceFirst('.', ',')}',
+                                        style: const TextStyle(
+                                            fontSize: 28,
+                                            fontWeight: FontWeight.bold,
+                                            color: AppColors.primaryPurple),
+                                      ),
+                                    ],
+                                  ),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 10, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color:
+                                          Colors.green.withValues(alpha: 0.1),
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.credit_card,
+                                            size: 14, color: Colors.green),
+                                        SizedBox(width: 4),
+                                        Text(
+                                          'Até 12x no cartão',
+                                          style: const TextStyle(
+                                              color: Colors.green,
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.bold),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
                               ),
+                              if (_taxaCredito > 0)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 2.0),
+                                  child: Text(
+                                    'Inclui ${_taxaCredito.toStringAsFixed(1)}% de taxa',
+                                    style: TextStyle(
+                                        fontSize: 11, color: Colors.grey[500]),
+                                  ),
+                                ),
+                              const SizedBox(height: 16),
+                              StripeTextField(
+                                label: 'Número do Cartão',
+                                hintText: '0000 0000 0000 0000',
+                                keyboardType: TextInputType.number,
+                                autofillHints: const [
+                                  AutofillHints.creditCardNumber
+                                ],
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.digitsOnly,
+                                  CartaoBancarioInputFormatter(),
+                                ],
+                                controller: _cardNumberController,
+                                onChanged: _onCardNumberChanged,
+                                textInputAction: TextInputAction.next,
+                                validator: (v) =>
+                                    v!.isEmpty ? 'Obrigatório' : null,
+                                suffixIcon: const Icon(Icons.credit_card,
+                                    color: Colors.grey),
+                              ),
+                              const SizedBox(height: 16),
+                              StripeTextField(
+                                label: 'Nome no Cartão',
+                                hintText: 'COMO ESTA NO CARTÃO',
+                                autofillHints: const [
+                                  AutofillHints.creditCardName
+                                ],
+                                controller: _holderNameController,
+                                textInputAction: TextInputAction.next,
+                                validator: (v) =>
+                                    v!.isEmpty ? 'Obrigatório' : null,
+                              ),
+                              const SizedBox(height: 12),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: StripeTextField(
+                                      label: 'Validade',
+                                      hintText: 'MM/AA',
+                                      keyboardType: TextInputType.number,
+                                      autofillHints: const [
+                                        AutofillHints.creditCardExpirationDate
+                                      ],
+                                      inputFormatters: [
+                                        FilteringTextInputFormatter.digitsOnly,
+                                        ValidadeCartaoInputFormatter(),
+                                      ],
+                                      controller: _expiryController,
+                                      textInputAction: TextInputAction.next,
+                                      validator: (v) =>
+                                          v!.isEmpty ? 'Obrigatório' : null,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 16),
+                                  Expanded(
+                                    child: StripeTextField(
+                                      label: 'CVC',
+                                      hintText: '123',
+                                      keyboardType: TextInputType.number,
+                                      autofillHints: const [
+                                        AutofillHints.creditCardSecurityCode
+                                      ],
+                                      inputFormatters: [
+                                        FilteringTextInputFormatter.digitsOnly,
+                                        LengthLimitingTextInputFormatter(4),
+                                      ],
+                                      controller: _cvvController,
+                                      textInputAction: TextInputAction.next,
+                                      validator: (v) =>
+                                          v!.isEmpty ? 'Obrigatório' : null,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              if (_installments.isNotEmpty) ...[
+                                Text(
+                                  'PARCELAMENTO',
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.grey[600],
+                                      letterSpacing: 1.1),
+                                ),
+                                const SizedBox(height: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 16),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                        color: Colors.grey[200]!, width: 1.5),
+                                  ),
+                                  child: DropdownButtonHideUnderline(
+                                    child: DropdownButton<dynamic>(
+                                      value: _selectedInstallment,
+                                      isExpanded: true,
+                                      items: _installments.map((inst) {
+                                        return DropdownMenuItem<dynamic>(
+                                          value: inst,
+                                          child:
+                                              Text(inst['recommended_message']),
+                                        );
+                                      }).toList(),
+                                      onChanged: (val) => setState(
+                                          () => _selectedInstallment = val),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                              ],
+                              StripeTextField(
+                                label: 'CPF do Titular',
+                                hintText: '000.000.000-00',
+                                keyboardType: TextInputType.number,
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.digitsOnly,
+                                  CpfInputFormatter(),
+                                ],
+                                controller: _cpfController,
+                                textInputAction: TextInputAction.done,
+                                validator: (v) {
+                                  if (v == null || v.isEmpty) {
+                                    return 'Obrigatório';
+                                  }
+                                  if (!_isValidCpf(v)) return 'CPF inválido';
+                                  return null;
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 24),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 16.0),
+                      child: SizedBox(
+                        width: double.infinity,
+                        height: 52,
+                        child: ElevatedButton(
+                          onPressed: _isLoading ? null : _processPayment,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primaryPurple,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8)),
+                            elevation: 0,
+                          ),
+                          child: _isLoading
+                              ? const CircularProgressIndicator(
+                                  color: Colors.white)
+                              : const Text(
+                                  'Continuar para Revisão',
+                                  style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white),
+                                ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
                     Center(
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(Icons.lock_outline,
-                              size: 16, color: Colors.grey[400]),
+                              size: 14, color: Colors.grey[400]),
                           const SizedBox(width: 4),
-                          Text(
-                            'Pagamento processado com segurança pelo Mercado Pago',
-                            style: TextStyle(
-                                fontSize: 12, color: Colors.grey[500]),
+                          Expanded(
+                            child: Text(
+                              'Pagamento seguro via Mercado Pago',
+                              style: TextStyle(
+                                  fontSize: 11, color: Colors.grey[500]),
+                              textAlign: TextAlign.center,
+                            ),
                           ),
                         ],
                       ),
