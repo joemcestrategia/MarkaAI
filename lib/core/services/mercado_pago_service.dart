@@ -1,5 +1,7 @@
 ﻿import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 
 class MercadoPagoService {
   // Singleton do Firebase Functions
@@ -165,6 +167,102 @@ class MercadoPagoService {
     } catch (e) {
       debugPrint("âŒ Erro Cartão Salvo: $e");
       rethrow;
+    }
+  }
+
+  // ===========================================================================
+  // 5. NATIVO: GERAR CARD TOKEN (DIRETO API MP)
+  // ===========================================================================
+  static Future<String> getCardToken({
+    required String publicKey,
+    required String cardNumber,
+    required String cardholderName,
+    required String expirationMonth,
+    required String expirationYear,
+    required String securityCode,
+  }) async {
+    try {
+      final url =
+          'https://api.mercadopago.com/v1/card_tokens?public_key=$publicKey';
+
+      final body = {
+        "card_number": cardNumber.replaceAll(' ', ''),
+        "cardholder": {
+          "name": cardholderName,
+        },
+        "expiration_month": int.parse(expirationMonth),
+        "expiration_year": int.parse(expirationYear),
+        "security_code": securityCode,
+      };
+
+      final response = await http.post(
+        Uri.parse(url),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(body),
+      );
+
+      if (response.statusCode == 201 || response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['id'];
+      } else {
+        final data = jsonDecode(response.body);
+        throw Exception(data['message'] ?? 'Erro ao gerar token do cartão');
+      }
+    } catch (e) {
+      debugPrint("❌ Erro getCardToken: $e");
+      rethrow;
+    }
+  }
+
+  // ===========================================================================
+  // 6. NATIVO: BUSCAR PARCELAS POR BIN (DIRETO API MP)
+  // ===========================================================================
+  static Future<List<dynamic>> getInstallmentsWithBin({
+    required String publicKey,
+    required double amount,
+    required String bin,
+  }) async {
+    try {
+      final url =
+          'https://api.mercadopago.com/v1/payment_methods/installments?public_key=$publicKey&amount=$amount&bin=$bin';
+
+      final response = await http.get(Uri.parse(url));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as List<dynamic>;
+        if (data.isNotEmpty) {
+          return data[0]['payer_costs'] as List<dynamic>;
+        }
+      }
+      return [];
+    } catch (e) {
+      debugPrint("❌ Erro getInstallmentsWithBin: $e");
+      return [];
+    }
+  }
+
+  // ===========================================================================
+  // 7. NATIVO: IDENTIFICAR MÉTODO DE PAGAMENTO (BANDEIRA)
+  // ===========================================================================
+  static Future<String?> getPaymentMethodId({
+    required String publicKey,
+    required String bin,
+  }) async {
+    try {
+      final url =
+          'https://api.mercadopago.com/v1/payment_methods?public_key=$publicKey';
+      final response = await http.get(Uri.parse(url));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as List<dynamic>;
+        // A lógica do MP geralmente requer bater o BIN contra uma lista ou usar endpoint específico.
+        // Simplificando: o MP retorna o ID correto quando você tenta tokenizar ou via endpoint de guesser.
+        // Como o foco é Stripe-like, podemos inferir localmente para UI ou usar o retorno da API.
+        return null; // Implementaremos lógica de guesser se necessário ou usaremos o retorno do token
+      }
+      return null;
+    } catch (e) {
+      return null;
     }
   }
 }

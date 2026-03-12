@@ -1,15 +1,15 @@
 ﻿import 'dart:convert';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:webview_flutter/webview_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:http/http.dart' as http;
+import 'package:brasil_fields/brasil_fields.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/theme/app_colors.dart';
-import '../schedule/booking_success_page.dart';
-import '../../widgets/universal_webview/universal_webview.dart';
-import '../business/subscription_service.dart';
+import '../../core/services/mercado_pago_service.dart';
+import '../../widgets/stripe_text_field.dart';
+import 'booking_success_page.dart';
 
 class CheckoutTransparentePage extends StatefulWidget {
   final String shopId;
@@ -19,11 +19,7 @@ class CheckoutTransparentePage extends StatefulWidget {
   final DocumentSnapshot professionalDoc;
   final DateTime date;
   final TimeOfDay time;
-
-  /// Se true, só coleta dados do cartão e volta para revisão; a cobrança é feita depois ao concluir.
   final bool collectOnly;
-
-  /// Se true, pula a verificação de plano (plano já verificado antes de abrir).
   final bool skipPlanCheck;
 
   const CheckoutTransparentePage({
@@ -45,481 +41,26 @@ class CheckoutTransparentePage extends StatefulWidget {
 }
 
 class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
-  WebViewController? _controller;
-  bool _isLoading = true;
-  bool _didInject = false;
-  Widget? _webViewWidget;
+  final _formKey = GlobalKey<FormState>();
+  final _cardNumberController = TextEditingController();
+  final _holderNameController = TextEditingController();
+  final _expiryController = TextEditingController();
+  final _cvvController = TextEditingController();
+  final _cpfController = TextEditingController();
 
-  bool _planRestricted = false;
+  bool _isLoading = false;
+  String? _publicKey;
+  List<dynamic> _installments = [];
+  dynamic _selectedInstallment;
 
   @override
   void initState() {
     super.initState();
-    _checkPlanRestriction();
+    _loadConfig();
   }
 
-  Future<void> _checkPlanRestriction() async {
-    // Usa getShopPlan(shopId) — não canUseOnlinePayment() — pois o usuário
-    // logado aqui é o CLIENTE, não o dono da loja.
-    // Se skipPlanCheck=true, plano ja foi verificado antes de abrir esta tela.
-    if (widget.skipPlanCheck) {
-      if (kIsWeb) {
-        _prepareWebInitialData();
-      } else {
-        _loadShopPaymentConfigLocal().whenComplete(() {
-          Future.delayed(const Duration(milliseconds: 2500), () async {
-            if (!mounted || !_isLoading || _didInject) return;
-            await _injectAllAndHideLoading();
-          });
-        });
-      }
-      return;
-    }
-    final shopPlan = await SubscriptionService.getShopPlan(widget.shopId);
-    final canPay = SubscriptionService.planSupportsOnlinePayment(shopPlan);
-    if (!canPay) {
-      if (mounted) setState(() => _planRestricted = true);
-      return;
-    }
-
-    if (kIsWeb) {
-      _prepareWebInitialData();
-    } else {
-      _loadShopPaymentConfigLocal().whenComplete(() {
-        Future.delayed(const Duration(milliseconds: 2500), () async {
-          if (!mounted || !_isLoading || _didInject) return;
-          await _injectAllAndHideLoading();
-        });
-      });
-    }
-  }
-
-  Future<void> _loadShopPaymentConfigLocal() async {
-    try {
-      final doc = await FirebaseFirestore.instance
-          .collection('shops')
-          .doc(widget.shopId)
-          .get();
-      final data = doc.data() ?? {};
-      final paymentOpts = (data['payment_options'] is Map)
-          ? Map<String, dynamic>.from(data['payment_options'])
-          : <String, dynamic>{};
-      final config = (data['config'] is Map)
-          ? Map<String, dynamic>.from(data['config'])
-          : <String, dynamic>{};
-      dynamic readRoot(String key) => data.containsKey(key) ? data[key] : null;
-      double parseDouble(dynamic v, [double fallback = 0.0]) {
-        if (v is num) return v.toDouble();
-        if (v is String) {
-          return double.tryParse(v.replaceAll(',', '.')) ?? fallback;
-        }
-        return fallback;
-      }
-
-      int parseInt(dynamic v, [int fallback = 1]) {
-        if (v is int) return v;
-        if (v is num) return v.toInt();
-        if (v is String) return int.tryParse(v) ?? fallback;
-        return fallback;
-      }
-
-      final creditoFromPaymentOpts = (paymentOpts['credito_config'] is Map)
-          ? Map<String, dynamic>.from(paymentOpts['credito_config'])
-          : <String, dynamic>{};
-      final creditoFromConfig = (config['credito_config'] is Map)
-          ? Map<String, dynamic>.from(config['credito_config'])
-          : <String, dynamic>{};
-
-      final mergedCredito = <String, dynamic>{};
-      mergedCredito['repasse_ao_cliente'] =
-          creditoFromPaymentOpts['repasse_ao_cliente'] ??
-              creditoFromConfig['repasse_ao_cliente'] ??
-              readRoot('repasse_ao_cliente') ??
-              false;
-      mergedCredito['aceitar_parcelas'] =
-          creditoFromPaymentOpts['aceitar_parcelas'] ??
-              creditoFromConfig['aceitar_parcelas'] ??
-              config['aceitar_parcelas'] ??
-              readRoot('aceitar_parcelas') ??
-              false;
-      mergedCredito['porcentagem_a_vista'] = parseDouble(
-          creditoFromPaymentOpts['porcentagem_a_vista'] ??
-              creditoFromConfig['porcentagem_a_vista'] ??
-              config['porcentagem_a_vista'] ??
-              readRoot('porcentagem_a_vista') ??
-              0.0,
-          0.0);
-      mergedCredito['max_parcelas'] = parseInt(
-          creditoFromPaymentOpts['max_parcelas'] ??
-              creditoFromConfig['max_parcelas'] ??
-              config['max_parcelas'] ??
-              readRoot('max_parcelas') ??
-              1,
-          1);
-
-      // sanitize
-      mergedCredito['max_parcelas'] =
-          (mergedCredito['max_parcelas'] as int).clamp(1, 12);
-      mergedCredito['porcentagem_a_vista'] =
-          (mergedCredito['porcentagem_a_vista'] as double).clamp(0.0, 20.0);
-
-      _shopPaymentConfig = {
-        'pix': paymentOpts['pix'] ??
-            config['pagamento_pix'] ??
-            readRoot('pagamento_pix') ??
-            false, // default off: loja nova precisa habilitar explicitamente
-        'credito': paymentOpts['credito'] ??
-            config['pagamento_cartao'] ??
-            readRoot('pagamento_cartao') ??
-            false, // default off
-        'presencial': paymentOpts['presencial'] ??
-            config['pagamento_dinheiro'] ??
-            readRoot('pagamento_dinheiro') ??
-            true, // presencial sempre habilitado por padrão
-        'credito_config': mergedCredito,
-      };
-      // Calcula parcelas para injeção no WebView (fallback local; MP API retorna os valores reais)
-      try {
-        final double amount = double.tryParse(widget.valor.toString()) ?? 0.0;
-        final int maxP = (mergedCredito['max_parcelas'] is int)
-            ? mergedCredito['max_parcelas'] as int
-            : 1;
-        final bool aceitaP = mergedCredito['aceitar_parcelas'] ?? false;
-        final bool repassa =
-            ((mergedCredito['porcentagem_a_vista'] as num?) ?? 0) > 0;
-        final double pctVista = (mergedCredito['porcentagem_a_vista'] is double)
-            ? mergedCredito['porcentagem_a_vista'] as double
-            : (double.tryParse(
-                    mergedCredito['porcentagem_a_vista']?.toString() ?? '') ??
-                0.0);
-        final int maxToUse = aceitaP ? maxP.clamp(1, 12) : 1;
-        final List<Map<String, dynamic>> comps = [];
-        for (int p = 1; p <= maxToUse; p++) {
-          final double pct = (p == 1) ? pctVista : 0.0;
-          final double total =
-              repassa ? (amount + (amount * (pct / 100.0))) : amount;
-          final double per = (total / p);
-          comps.add({
-            'installments': p,
-            'total': double.parse(total.toStringAsFixed(2)),
-            'per_installment': double.parse(per.toStringAsFixed(2)),
-            'percent': pct
-          });
-        }
-        _shopPaymentConfig['computed_installments'] = comps;
-      } catch (_) {}
-    } catch (e) {
-      _shopPaymentConfig = {};
-    }
-  }
-
-  Map<String, String>? _webClientData;
-  bool _webReady = false;
-  // payment config from shop (to drive installments UI)
-  Map<String, dynamic> _shopPaymentConfig = {};
-  // Endpoint do backend / Cloud Function já implantada
-  // Atualizado para a função existente no projeto (us-central1)
-  final String _installmentsEndpoint =
-      'https://us-central1-wismart-118c3.cloudfunctions.net/getInstallments';
-
-  Future<void> _prepareWebInitialData() async {
-    try {
-      final key = await _getPublicKey();
-      String email = '';
-      String nome = '';
-      String cpf = '';
-      // load shop payment options with fallbacks (payment_options -> config -> root)
-      try {
-        final doc = await FirebaseFirestore.instance
-            .collection('shops')
-            .doc(widget.shopId)
-            .get();
-        final data = doc.data() ?? {};
-        final paymentOpts = (data['payment_options'] is Map)
-            ? Map<String, dynamic>.from(data['payment_options'])
-            : <String, dynamic>{};
-        final config = (data['config'] is Map)
-            ? Map<String, dynamic>.from(data['config'])
-            : <String, dynamic>{};
-        // helper to read legacy root-level fields
-        dynamic readRoot(String key) =>
-            data.containsKey(key) ? data[key] : null;
-
-        // credito config may be present in several places; prefer payment_options.credito_config -> config -> root fields
-        final creditoFromPaymentOpts = (paymentOpts['credito_config'] is Map)
-            ? Map<String, dynamic>.from(paymentOpts['credito_config'])
-            : <String, dynamic>{};
-        final creditoFromConfig = (config['credito_config'] is Map)
-            ? Map<String, dynamic>.from(config['credito_config'])
-            : <String, dynamic>{};
-
-        double parseDouble(dynamic v, [double fallback = 0.0]) {
-          if (v is num) return v.toDouble();
-          if (v is String) {
-            return double.tryParse(v.replaceAll(',', '.')) ?? fallback;
-          }
-          return fallback;
-        }
-
-        int parseInt(dynamic v, [int fallback = 1]) {
-          if (v is int) return v;
-          if (v is num) return v.toInt();
-          if (v is String) return int.tryParse(v) ?? fallback;
-          return fallback;
-        }
-
-        final mergedCredito = <String, dynamic>{};
-        mergedCredito['repasse_ao_cliente'] =
-            creditoFromPaymentOpts['repasse_ao_cliente'] ??
-                creditoFromConfig['repasse_ao_cliente'] ??
-                readRoot('repasse_ao_cliente') ??
-                readRoot('config_repasse_taxa') ??
-                false;
-        mergedCredito['aceitar_parcelas'] =
-            creditoFromPaymentOpts['aceitar_parcelas'] ??
-                creditoFromConfig['aceitar_parcelas'] ??
-                config['aceitar_parcelas'] ??
-                readRoot('aceitar_parcelas') ??
-                false;
-        // prefer unified tax_percent if present
-        mergedCredito['porcentagem_a_vista'] = parseDouble(
-            creditoFromPaymentOpts['tax_percent'] ??
-                creditoFromConfig['tax_percent'] ??
-                config['tax_percent'] ??
-                creditoFromPaymentOpts['porcentagem_a_vista'] ??
-                creditoFromConfig['porcentagem_a_vista'] ??
-                config['porcentagem_a_vista'] ??
-                readRoot('porcentagem_a_vista') ??
-                readRoot('tax_percent') ??
-                0.0,
-            0.0);
-        mergedCredito['max_parcelas'] = parseInt(
-            creditoFromPaymentOpts['max_parcelas'] ??
-                creditoFromConfig['max_parcelas'] ??
-                config['max_parcelas'] ??
-                readRoot('max_parcelas') ??
-                readRoot('max_parcelas'),
-            1);
-
-        // sanitize limits
-        if (mergedCredito['max_parcelas'] is int) {
-          mergedCredito['max_parcelas'] =
-              (mergedCredito['max_parcelas'] as int).clamp(1, 12);
-        } else {
-          mergedCredito['max_parcelas'] = 1;
-        }
-        mergedCredito['porcentagem_a_vista'] =
-            (mergedCredito['porcentagem_a_vista'] as double).clamp(0.0, 20.0);
-        // parcelado percentage removed; Mercado Pago API will provide parcel fees when BIN is available
-
-        _shopPaymentConfig = {
-          'pix': paymentOpts['pix'] ??
-              config['pagamento_pix'] ??
-              readRoot('pagamento_pix') ??
-              false, // default off: loja nova precisa habilitar explicitamente
-          'credito': paymentOpts['credito'] ??
-              config['pagamento_cartao'] ??
-              readRoot('pagamento_cartao') ??
-              false, // default off
-          'presencial': paymentOpts['presencial'] ??
-              config['pagamento_dinheiro'] ??
-              readRoot('pagamento_dinheiro') ??
-              true, // presencial sempre habilitado por padrão
-          'credito_config': mergedCredito,
-        };
-      } catch (_) {
-        _shopPaymentConfig = {};
-      }
-      final user = FirebaseAuth.instance.currentUser;
-      if (user != null) {
-        final doc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .get();
-        final d = doc.data();
-        email = (user.email ?? d?['email'] ?? '').toString();
-        nome = (d?['nome'] ?? user.displayName ?? '').toString();
-        cpf = (d?['cpf'] ?? d?['documento'] ?? '').toString();
-      }
-      setState(() {
-        _webClientData = {
-          'publicKey': key, // CRÍTICO: passar public_key na URL para Web
-          'amount': widget.valor.toString(),
-          'orderId': widget.orderId,
-          'clientEmail': email,
-          'clientName': nome,
-          'clientCpf': cpf,
-          'paymentConfig': jsonEncode(_shopPaymentConfig),
-          if (widget.collectOnly) 'collectOnly': '1',
-        };
-        _webReady = true;
-        _isLoading = false;
-      });
-    } catch (_) {
-      if (mounted) setState(() => _webReady = true);
-    }
-  }
-
-  Future<void> _injectAllAndHideLoading() async {
-    if (_didInject) return;
-    _didInject = true;
-    // Clear WebView cache and cookies to avoid stale JS state on Android between reloads.
-    try {
-      await _controller?.clearCache();
-    } catch (_) {}
-    try {
-      // Attempt to clear cookies/localStorage inside the WebView context as fallback
-      await _controller?.runJavaScript(
-          "try{ document.cookie.split(';').forEach(function(c){ document.cookie = c.replace(/=.*/, '=;expires=' + new Date().toUTCString() + ';path=/'); }); localStorage.clear(); sessionStorage.clear(); }catch(e){}");
-    } catch (_) {}
-    final key = await _getPublicKey();
-    _injectVariables(key);
-    await _injectClientData();
-    // Inject variables and override carregarParcelas to ensure mobile WebView uses shop config
-    final overrideCarregar = r'''
-      try {
-        // override only if page didn't already define or to ensure behavior
-        window.__marka_override_carregar = function() {
-          try {
-            const installmentsSelect = document.getElementById('installments');
-            const infoDiv = document.getElementById('parcelamentInfo');
-            const lista = document.getElementById('parcelasLista');
-            const amount = (window.amount != null) ? Number(window.amount) : (window.VALOR != null ? Number(window.VALOR) : 0);
-            if (!installmentsSelect) return;
-            installmentsSelect.innerHTML = '<option value=\"\">Selecione...</option>';
-            if (!amount || amount <= 0) {
-              const opt = document.createElement('option'); opt.value = 1; opt.textContent = '1x (valor indisponível)'; installmentsSelect.appendChild(opt);
-              if(infoDiv) infoDiv.classList.remove('show');
-              return;
-            }
-            let shopCfg = null;
-            try {
-              if (window.paymentConfig) shopCfg = JSON.parse(window.paymentConfig);
-              else if (window.shopPaymentConfig) shopCfg = (typeof window.shopPaymentConfig === 'string') ? JSON.parse(window.shopPaymentConfig || '{}') : window.shopPaymentConfig;
-            } catch (e) { shopCfg = null; }
-            if (shopCfg) {
-              const cfg = shopCfg.credito_config || shopCfg.config || shopCfg || {};
-              try { const msgType = { action: 'debug_shopcfg', cfg: cfg, shopCfg: shopCfg, amount: amount }; if (typeof postMessageToFlutter === 'function') postMessageToFlutter(msgType); else if (typeof window.postMessageToApp === 'function') window.postMessageToApp(msgType); else if (typeof FlutterChannel !== 'undefined') FlutterChannel.postMessage(JSON.stringify(msgType)); else if (window.parent) window.parent.postMessage(JSON.stringify(msgType), '*'); } catch(e){}
-              const maxParc = (cfg.max_parcelas != null) ? parseInt(cfg.max_parcelas) : (shopCfg.max_parcelas || cfg.max_parcelas || 1);
-              const aceitaParcelas = (cfg.aceitar_parcelas === true) || (shopCfg.aceitar_parcelas === true) || (cfg.aceitar === true);
-              // tolerant numeric parsing
-              function toNum(v){
-                try {
-                  if (v == null) return 0;
-                  if (typeof v === 'number') return v;
-                  if (typeof v === 'string') {
-                    const cleaned = v.replace(',', '.').replace(/[^0-9.\\-]/g,'');
-                    const n = parseFloat(cleaned);
-                    return isNaN(n) ? 0 : n;
-                  }
-                  return 0;
-                } catch(e){ return 0; }
-              }
-              const percVista = toNum(cfg.porcentagem_a_vista || shopCfg.porcentagem_a_vista || cfg.porcentagem_a_vista || 0);
-              const percParcelado = 0; // removed local parcel percentage; MP API will provide accurate parcel fees when BIN is provided
-              const repassa = ((cfg.repasse_ao_cliente === true) || (String(cfg.repasse_ao_cliente || shopCfg.repasse_ao_cliente || cfg.repassa || '').toLowerCase() === 'true'));
-              const max = aceitaParcelas ? Math.min(maxParc, 12) : 1;
-              if (lista) lista.innerHTML = '';
-
-              // helper to update displayed total and pay button
-              function updateDisplayedTotal(total) {
-                try {
-                  const formatter = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
-                  const el = document.getElementById('valorTotal');
-                  if (el) el.textContent = formatter.format(total);
-                  const btn = document.getElementById('payButton');
-                  if (btn) btn.textContent = COLLECT_ONLY ? 'Confirmar e ir para revisão' : ('Pagar ' + formatter.format(total));
-                } catch (e) {}
-              }
-
-              for (let p=1;p<=max;p++){
-                const perc = (p===1)?percVista:percParcelado;
-                const total = repassa ? (amount + (amount*(perc/100))) : amount;
-                const installment_amount = total / p;
-                const opt = document.createElement('option'); opt.value = p; opt.textContent = `${p}x de R$ ${installment_amount.toFixed(2).replace('.',',')} (total R$ ${total.toFixed(2).replace('.',',')})`;
-                installmentsSelect.appendChild(opt);
-                if (lista) {
-                  const item = document.createElement('div'); item.className='parcela-item'; item.innerHTML = `<span>${p}x</span><span class="parcela-preco">R$ ${total.toFixed(2).replace('.',',')}</span>`; lista.appendChild(item);
-                }
-              }
-              // set default displayed total for 1x and attach change listener
-              try {
-                const total1 = repassa ? (amount + (amount*(percVista/100))) : amount;
-                updateDisplayedTotal(total1);
-                installmentsSelect.value = '1';
-                installmentsSelect.addEventListener('change', function() {
-                  try {
-                    const p = parseInt(this.value) || 1;
-                    const perc = (p === 1) ? percVista : percParcelado;
-                    const total = repassa ? (amount + (amount*(perc/100))) : amount;
-                    updateDisplayedTotal(total);
-                    try { const msgTot = {action:'computed_totals', installments: p, total: total}; if (typeof postMessageToFlutter === 'function') postMessageToFlutter(msgTot); else if (typeof window.postMessageToApp === 'function') window.postMessageToApp(msgTot); else if (typeof FlutterChannel !== 'undefined') FlutterChannel.postMessage(JSON.stringify(msgTot)); else if (window.parent) window.parent.postMessage(JSON.stringify(msgTot), '*'); } catch(e){}
-                  } catch(e) {}
-                });
-              } catch(e) {}
-              if (infoDiv) infoDiv.classList.add('show');
-            } else {
-              const opt = document.createElement('option'); opt.value=1; opt.textContent = `1x de R$ ${amount.toFixed(2).replace('.',',')}`; installmentsSelect.appendChild(opt);
-              if(infoDiv) infoDiv.classList.remove('show');
-            }
-          } catch(e) { console.warn('Override carregarParcelas erro', e); }
-        };
-        // wrap updateCheckoutValues to ensure parcels are rebuilt after any page update
-        try {
-          if (typeof window.updateCheckoutValues === 'function') {
-            window.__orig_updateCheckoutValues = window.updateCheckoutValues;
-          }
-          window.updateCheckoutValues = function() {
-            try { if (typeof window.__orig_updateCheckoutValues === 'function') window.__orig_updateCheckoutValues(); } catch(e) {}
-            try { if (typeof window.carregarParcelas === 'function') window.carregarParcelas(); } catch(e) {}
-          };
-        } catch(e) {}
-        // assign override to window.carregarParcelas so page will call it
-        window.carregarParcelas = window.__marka_override_carregar;
-      } catch(e){ console.warn('failed to inject override carregarParcelas', e); }
-    ''';
-
-    _controller?.runJavaScript(
-        "if (typeof window.setPublicKey === 'function') window.setPublicKey(\"$key\");"
-        "if (typeof window.updateCheckoutValues === 'function') window.updateCheckoutValues();"
-        "if (typeof window.setCollectOnly === 'function') window.setCollectOnly(${widget.collectOnly});"
-        "if (typeof window.applyClientPrefill === 'function') window.applyClientPrefill();");
-    // inject override function
-    _controller?.runJavaScript(overrideCarregar);
-    // reset last requested BIN and ensure parcels are rebuilt using injected shopPaymentConfig
-    _controller?.runJavaScript(
-        "try{ window.__lastRequestedBin = null; if (typeof window.carregarParcelas === 'function') window.carregarParcelas(); }catch(e){}");
-    if (mounted) setState(() => _isLoading = false);
-  }
-
-  Future<void> _injectClientData() async {
-    try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) return;
-      final doc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
-      final d = doc.data();
-      if (d == null) return;
-      final email =
-          (user.email ?? d['email'] ?? '').toString().replaceAll('"', '\\"');
-      final nome = (d['nome'] ?? user.displayName ?? '')
-          .toString()
-          .replaceAll('"', '\\"');
-      final cpf =
-          (d['cpf'] ?? d['documento'] ?? '').toString().replaceAll('"', '\\"');
-      _controller?.runJavaScript('''
-        window.clientEmail = "$email";
-        window.clientName = "$nome";
-        window.clientCpf = "$cpf";
-      ''');
-    } catch (_) {}
-  }
-
-  // --- LÃ“GICA DE NEGÃ“CIO MANTIDA ---
-
-  Future<String> _getPublicKey() async {
+  Future<void> _loadConfig() async {
+    setState(() => _isLoading = true);
     try {
       final doc = await FirebaseFirestore.instance
           .collection('shops')
@@ -527,188 +68,92 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
           .get();
       final data = doc.data() ?? {};
       final mp = data['mercadopago'] as Map<String, dynamic>?;
-      final key = (mp?['public_key'] as String?) ??
-          (data['mp_public_key'] as String?);
-      if (key == null || key.isEmpty) {
-        throw Exception(
-            'Loja sem Mercado Pago configurado. Acesse Configurações → Pagamentos para conectar sua conta.');
+      _publicKey =
+          (mp?['public_key'] as String?) ?? (data['mp_public_key'] as String?);
+
+      if (_publicKey == null) {
+        throw Exception('Mercado Pago não configurado para esta loja.');
       }
-      return key;
+
+      // Pre-fill user data
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        final userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+        final userData = userDoc.data();
+        if (userData != null) {
+          _holderNameController.text =
+              userData['nome'] ?? user.displayName ?? '';
+          _cpfController.text = userData['cpf'] ?? userData['documento'] ?? '';
+        }
+      }
     } catch (e) {
-      rethrow;
+      _showError(e.toString());
+    } finally {
+      setState(() => _isLoading = false);
     }
   }
 
-  void _injectVariables(String publicKey) {
-    if (kIsWeb) {
-      return; // Na web a injeção via controller é diferente, trataremos no HTML
-    }
-    final paymentConfigJson =
-        jsonEncode(_shopPaymentConfig).replaceAll("'", "\\'");
-    // Inject as a JSON string and parse inside the page to avoid quoting issues
-    final escaped = paymentConfigJson
-        .replaceAll(r'\', r'\\')
-        .replaceAll("'", r"\'")
-        .replaceAll('\n', r'\\n');
-    _controller?.runJavaScript('''
-      window.publicKey = "$publicKey";
-      window.amount = ${widget.valor};
-      window.orderId = "${widget.orderId}";
-      window.shopId = "${widget.shopId}";
-      try {
-        window.shopPaymentConfig = JSON.parse('$escaped');
-      } catch(e) {
-        try { window.shopPaymentConfig = $paymentConfigJson; } catch(e2) { window.shopPaymentConfig = {}; }
-      }
-    ''');
-  }
-
-  void _handleRawMessage(String message) async {
-    debugPrint('ðŸ“© WebView -> Flutter raw: $message');
-    try {
-      // Limpeza segura para payloads vindos do html.window.postMessageWeb
-      String cleanMessage = message;
-      if (cleanMessage.startsWith('"{') && cleanMessage.endsWith('}"')) {
-        cleanMessage =
-            jsonDecode(cleanMessage).toString(); // remove 1 layer of stringify
-      }
-      final data = jsonDecode(cleanMessage) as Map<String, dynamic>;
-      debugPrint(
-          'ðŸ“© WebView parsed action: ${data['action'] ?? '(no action)'}');
-      // Suporte para requisição de parcelas via WebView (HTML envia bin)
-      if (data['action'] == 'request_installments') {
-        final bin = (data['bin'] ?? '').toString();
-        final amount =
-            double.tryParse((data['amount'] ?? widget.valor).toString()) ??
-                widget.valor;
-        try {
-          debugPrint(
-              'ðŸ”” request_installments received: bin=$bin amount=$amount endpoint=$_installmentsEndpoint');
-          if (_installmentsEndpoint.contains('your-backend.example.com')) {
-            debugPrint(
-                'âš ï¸ _installmentsEndpoint is placeholder. Update _installmentsEndpoint to your deployed function URL.');
-          }
-          final resp = await http.post(
-            Uri.parse(_installmentsEndpoint),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode(
-                {'amount': amount, 'bin': bin, 'shopId': widget.shopId}),
-          );
-          debugPrint(
-              '→ installments endpoint response status: ${resp.statusCode}');
-          final respBody = resp.body;
-          debugPrint('→ installments endpoint response body: $respBody');
-          if (resp.statusCode == 200) {
-            final body = jsonDecode(resp.body);
-            final dynamic mpData = body['data'] ?? body;
-            final jsonStr = jsonEncode(mpData);
-            // Injeta diretamente na WebView chamando a função JS definida no HTML
-            _controller?.runJavaScript(
-                'try{ if (typeof populateInstallments === "function") populateInstallments($jsonStr); }catch(e){}');
-          } else {
-            // fallback: call local carregarParcelas(bin) in the webview (will try MP public endpoint)
-            _controller?.runJavaScript(
-                "try{ if (typeof carregarParcelas === 'function') carregarParcelas('$bin'); }catch(e){}");
-          }
-        } catch (e) {
-          debugPrint('Erro ao obter parcelas do backend: $e');
-          _controller?.runJavaScript(
-              "try{ if (typeof carregarParcelas === 'function') carregarParcelas('$bin'); }catch(e){}");
-        }
-        return;
-      }
-      if (data['action'] == 'clear_installments') {
-        // limpa/select exibe fallback 1x
-        _controller?.runJavaScript(
-            "try{ if (typeof populateInstallments === 'function') populateInstallments([]); }catch(e){}");
-        return;
-      }
-      if (data['action'] == 'card_data_confirmed') {
-        if (widget.collectOnly && mounted) {
-          // If client requested saveCard, persist token server-side (save minimal info in Firestore)
-          final saveCard = data['saveCard'] ?? false;
-          if (saveCard == true) {
-            try {
-              final user = FirebaseAuth.instance.currentUser;
-              if (user != null) {
-                await FirebaseFirestore.instance
-                    .collection('users')
-                    .doc(user.uid)
-                    .collection('saved_cards')
-                    .add({
-                  'cardToken': data['cardToken'],
-                  'paymentMethodId': data['paymentMethodId'],
-                  'issuerId': data['issuerId'],
-                  'maskedNumber': data['maskedNumber'] ?? '',
-                  'brand': data['brand'] ?? '',
-                  'created_at': FieldValue.serverTimestamp(),
-                });
-              }
-            } catch (_) {}
-          }
-          if (!mounted) return;
-          Navigator.of(context).pop({
-            'cardToken': data['cardToken'],
-            'installments': data['installments'],
-            'email': data['email'],
-            'saveCard': saveCard,
-            'paymentMethodId': data['paymentMethodId'],
-            'issuerId': data['issuerId'],
-          });
-        }
-        return;
-      }
-      if (data['action'] == 'process_payment') {
-        debugPrint(
-            'ðŸ”” process_payment received from WebView: installments=${data['installments']} paymentMethodId=${data['paymentMethodId']} issuerId=${data['issuerId']}');
-        if (widget.collectOnly) return;
-        await _processarPagamento(
-          cardToken: data['cardToken'],
-          saveToken: data['saveToken'],
-          saveCard: data['saveCard'] ?? false,
-          installments: data['installments'],
-          email: data['email'],
-          cpf: data['cpf'] ?? '',
-          paymentMethodId: data['paymentMethodId'],
-          issuerId: data['issuerId'],
+  void _onCardNumberChanged(String value) async {
+    final cleanValue = value.replaceAll(' ', '');
+    if (cleanValue.length >= 6) {
+      final bin = cleanValue.substring(0, 6);
+      if (_publicKey != null) {
+        final costs = await MercadoPagoService.getInstallmentsWithBin(
+          publicKey: _publicKey!,
+          amount: widget.valor,
+          bin: bin,
         );
-      } else if (data['action'] == 'error') {
-        _showError(data['message'] ?? 'Erro desconhecido');
-      } else if (data['action'] == 'loaded') {
-        await _injectAllAndHideLoading();
+        setState(() {
+          _installments = costs;
+          if (_installments.isNotEmpty) {
+            _selectedInstallment = _installments[0];
+          }
+        });
       }
-    } catch (e) {
-      debugPrint("Erro ao processar msg: $e");
+    } else {
+      setState(() {
+        _installments = [];
+        _selectedInstallment = null;
+      });
     }
   }
 
-  Future<void> _processarPagamento({
-    required String cardToken,
-    String? saveToken,
-    bool saveCard = false,
-    required int installments,
-    required String email,
-    String cpf = '',
-    String? paymentMethodId,
-    dynamic issuerId,
-  }) async {
+  Future<void> _processPayment() async {
+    if (!_formKey.currentState!.validate()) return;
+    if (_selectedInstallment == null) {
+      _showError('Selecione o número de parcelas.');
+      return;
+    }
+
     setState(() => _isLoading = true);
     try {
-      // Debug: log outgoing payment payload
-      final payloadDebug = {
-        'cardToken': cardToken,
-        'saveToken': saveToken,
-        'saveCard': saveCard,
-        'installments': installments,
-        'email': email,
-        'valor': widget.valor,
-        'shopId': widget.shopId,
-        'orderId': widget.orderId,
-        'paymentMethodId': paymentMethodId,
-        'issuerId': issuerId,
-      };
-      debugPrint(
-          'ðŸ”” _processarPagamento payload: ${jsonEncode(payloadDebug)}');
+      final expiry = _expiryController.text.split('/');
+      final month = expiry[0];
+      final year = '20${expiry[1]}';
+
+      final cardToken = await MercadoPagoService.getCardToken(
+        publicKey: _publicKey!,
+        cardNumber: _cardNumberController.text,
+        cardholderName: _holderNameController.text,
+        expirationMonth: month,
+        expirationYear: year,
+        securityCode: _cvvController.text,
+      );
+
+      if (widget.collectOnly) {
+        Navigator.pop(context, {
+          'cardToken': cardToken,
+          'installments': _selectedInstallment['installments'],
+          'email': FirebaseAuth.instance.currentUser?.email ?? '',
+          'paymentMethodId': 'credit_card', // For simplification
+        });
+        return;
+      }
+
+      // Full payment logic
       final idToken = await _getPaymentIdToken();
       if (idToken == null) return;
 
@@ -719,29 +164,23 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
         body: jsonEncode({
           'data': {
             'cardToken': cardToken,
-            'saveToken': saveToken,
-            'saveCard': saveCard,
-            'email': email,
-            'installments': installments,
+            'email': FirebaseAuth.instance.currentUser?.email ?? '',
+            'installments': _selectedInstallment['installments'],
             'valor': widget.valor,
             'shopId': widget.shopId,
             'orderId': widget.orderId,
             'descricao': "Reserva: ${widget.serviceDoc['nome'] ?? 'Serviço'}",
             'idToken': idToken,
-            // CORREÇÃO 1: CPF incluído para payer.identification no Mercado Pago
-            if (cpf.isNotEmpty) 'cpf': cpf,
-            if (paymentMethodId != null) 'paymentMethodId': paymentMethodId,
-            if (issuerId != null) 'issuerId': issuerId,
+            'cpf': _cpfController.text.replaceAll(RegExp(r'[^0-9]'), ''),
+            'paymentMethodId': 'credit_card',
           }
         }),
       );
-      debugPrint('→ criarPagamento response status: ${response.statusCode}');
-      debugPrint('→ criarPagamento response body: ${response.body}');
 
       if (response.statusCode == 200) {
         final result = jsonDecode(response.body);
         if (result['success'] == true) {
-          await _salvarAgendamento(result['paymentId'].toString(), cpf: cpf);
+          await _salvarAgendamento(result['paymentId'].toString());
         } else {
           _showError(result['error'] ?? 'Pagamento recusado');
         }
@@ -750,170 +189,249 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
         _showError(error['error']?.toString() ?? 'Erro no pagamento');
       }
     } catch (e) {
-      _showError('Erro ao processar pagamento');
+      _showError('Erro ao processar pagamento: $e');
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      setState(() => _isLoading = false);
     }
   }
 
   Future<String?> _getPaymentIdToken() async {
     final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      _showError(
-          'Não foi possível validar sua sessão para o pagamento. Tente novamente.');
-      return null;
-    }
-    try {
-      return await user.getIdToken(true);
-    } catch (_) {
-      try {
-        return await user.getIdToken();
-      } catch (_) {
-        _showError(
-            'Não foi possível validar sua sessão para o pagamento. Tente novamente.');
-        return null;
-      }
-    }
+    if (user == null) return null;
+    return await user.getIdToken();
   }
 
-  Future<void> _salvarAgendamento(String paymentId, {String cpf = ''}) async {
-    final user = FirebaseAuth.instance.currentUser!;
-    final bookingDate = DateTime(widget.date.year, widget.date.month,
-        widget.date.day, widget.time.hour, widget.time.minute);
+  Future<void> _salvarAgendamento(String paymentId) async {
+    try {
+      final user = FirebaseAuth.instance.currentUser!;
+      final bookingDate = DateTime(widget.date.year, widget.date.month,
+          widget.date.day, widget.time.hour, widget.time.minute);
 
-    // CORREÇÃO BUG 5: Usar formatação manual segura em vez de widget.time.format(context)
-    // para evitar erros ao chamar em contexto assíncrono
-    final timeStr =
-        '${widget.time.hour.toString().padLeft(2, '0')}:${widget.time.minute.toString().padLeft(2, '0')}';
+      final timeStr =
+          '${widget.time.hour.toString().padLeft(2, '0')}:${widget.time.minute.toString().padLeft(2, '0')}';
 
-    final serviceName = widget.serviceDoc['nome']?.toString() ?? 'Serviço';
-    final profData =
-        widget.professionalDoc.data() as Map<String, dynamic>? ?? {};
-    final professionalName = profData['nome']?.toString() ?? 'Profissional';
+      await FirebaseFirestore.instance.collection('appointments').add({
+        'shopId': widget.shopId,
+        'clientId': user.uid,
+        'serviceId': widget.serviceDoc.id,
+        'professionalId': widget.professionalDoc.id,
+        'date': Timestamp.fromDate(bookingDate),
+        'time': timeStr,
+        'status': 'confirmado',
+        'paymentId': paymentId,
+        'paymentMethod': 'Cartão de Crédito',
+        'valor': widget.valor,
+        'created_at': FieldValue.serverTimestamp(),
+      });
 
-    // CORREÇÃO BUG 2: formatar data para exibição
-    final dateStr =
-        '${widget.date.day.toString().padLeft(2, '0')}/${widget.date.month.toString().padLeft(2, '0')}/${widget.date.year}';
-
-    await FirebaseFirestore.instance.collection('appointments').add({
-      'shopId': widget.shopId,
-      'clientId': user.uid,
-      'client_nome': user.displayName ?? '',
-      'servico_nome': serviceName,
-      'profissionalId': widget.professionalDoc.id,
-      'profissional_nome': professionalName,
-      'valor_total': widget.valor,
-      'valor_pago': widget.valor,
-      'data_agendamento': Timestamp.fromDate(bookingDate),
-      'horario': timeStr,
-      'status': 'confirmado',
-      'metodo_pagamento': 'Cartão de Crédito',
-      'payment_id': paymentId,
-      // CORREÇÃO BUG 3: salvar CPF do cliente no agendamento
-      if (cpf.isNotEmpty) 'cpf_cliente': cpf,
-      'criado_em': FieldValue.serverTimestamp(),
-    });
-
-    if (mounted) {
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(
-            builder: (_) => BookingSuccessPage(
-                  // CORREÇÃO BUG 2: dados reais em vez de hardcoded
-                  serviceName: serviceName,
-                  professionalName: professionalName,
-                  date: dateStr,
-                  time: timeStr,
-                  isPaid: true,
-                )),
-        (r) => r.isFirst,
-      );
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => BookingSuccessPage(
+              serviceName: widget.serviceDoc['nome'] ?? 'Serviço',
+              date: widget.date,
+              time: widget.time,
+              shopId: widget.shopId,
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      _showError('Erro ao agendar: $e');
     }
   }
 
   void _showError(String message) {
-    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message), backgroundColor: Colors.red));
-  }
-
-  Map<String, String> _buildInitialData() {
-    // Para mobile retornamos minimal; para web usamos o preparado em _prepareWebInitialData
-    if (kIsWeb) {
-      return _webClientData ??
-          {
-            'amount': widget.valor.toString(),
-            'orderId': widget.orderId,
-            if (widget.collectOnly) 'collectOnly': '1',
-          };
-    }
-    return {
-      'amount': widget.valor.toString(),
-      'orderId': widget.orderId,
-      if (widget.collectOnly) 'collectOnly': '1',
-    };
+      SnackBar(content: Text(message), backgroundColor: Colors.red),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFFF8F9FB),
       appBar: AppBar(
-        title: const Text("Pagamento Seguro"),
-        backgroundColor: AppColors.primaryPurple,
-        foregroundColor: Colors.white,
+        title: const Text('Checkout Seguro',
+            style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+        backgroundColor: Colors.white,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.black),
+          onPressed: () => Navigator.pop(context),
+        ),
       ),
-      body: Stack(
-        children: [
-          // Se for Web e ainda não estamos prontos (busca de public_key / cliente), mostramos loader
-          if (kIsWeb && !_webReady)
-            const Center(child: CircularProgressIndicator()),
-          // USANDO O NOSSO COMPONENTE UNIVERSAL
-          if (_planRestricted)
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24.0),
+      body: _isLoading && _publicKey == null
+          ? const Center(child: CircularProgressIndicator())
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: Form(
+                key: _formKey,
                 child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(Icons.lock_outline,
-                        size: 64, color: Colors.grey),
-                    const SizedBox(height: 16),
-                    const Text(
-                      "Recurso Indisponível",
-                      style:
-                          TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                    Text(
+                      'TOTAL A PAGAR',
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.grey[600],
+                          letterSpacing: 1.1),
                     ),
                     const SizedBox(height: 8),
-                    const Text(
-                      "Seu plano atual não permite pagamentos online. Faça um upgrade para desbloquear.",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.grey),
+                    Text(
+                      'R\$ ${widget.valor.toStringAsFixed(2).replaceFirst('.', ',')}',
+                      style: const TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.primaryPurple),
+                    ),
+                    const SizedBox(height: 32),
+                    StripeTextField(
+                      label: 'Número do Cartão',
+                      hintText: '0000 0000 0000 0000',
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                        CartaoBancarioInputFormatter(),
+                      ],
+                      controller: _cardNumberController,
+                      onChanged: _onCardNumberChanged,
+                      validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
+                      suffixIcon:
+                          const Icon(Icons.credit_card, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 20),
+                    StripeTextField(
+                      label: 'Nome no Cartão',
+                      hintText: 'COMO ESTA NO CARTÃO',
+                      controller: _holderNameController,
+                      validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: StripeTextField(
+                            label: 'Validade',
+                            hintText: 'MM/AA',
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                              ValidadeCartaoInputFormatter(),
+                            ],
+                            controller: _expiryController,
+                            validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: StripeTextField(
+                            label: 'CVC',
+                            hintText: '123',
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                              LengthLimitingTextInputFormatter(4),
+                            ],
+                            controller: _cvvController,
+                            validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    StripeTextField(
+                      label: 'CPF do Titular',
+                      hintText: '000.000.000-00',
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                        CpfInputFormatter(),
+                      ],
+                      controller: _cpfController,
+                      validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
+                    ),
+                    const SizedBox(height: 32),
+                    if (_installments.isNotEmpty) ...[
+                      Text(
+                        'PARCELAMENTO',
+                        style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.grey[600],
+                            letterSpacing: 1.1),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          border:
+                              Border.all(color: Colors.grey[200]!, width: 1.5),
+                        ),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<dynamic>(
+                            value: _selectedInstallment,
+                            isExpanded: true,
+                            items: _installments.map((inst) {
+                              return DropdownMenuItem<dynamic>(
+                                value: inst,
+                                child: Text(inst['recommended_message']),
+                              );
+                            }).toList(),
+                            onChanged: (val) =>
+                                setState(() => _selectedInstallment = val),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 40),
+                    ],
+                    SizedBox(
+                      width: double.infinity,
+                      height: 56,
+                      child: ElevatedButton(
+                        onPressed: _isLoading ? null : _processPayment,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primaryPurple,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8)),
+                          elevation: 0,
+                        ),
+                        child: _isLoading
+                            ? const CircularProgressIndicator(
+                                color: Colors.white)
+                            : const Text(
+                                'Pagar Agora',
+                                style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white),
+                              ),
+                      ),
                     ),
                     const SizedBox(height: 24),
-                    ElevatedButton(
-                      onPressed: () => Navigator.pop(context),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primaryPurple,
-                        foregroundColor: Colors.white,
+                    Center(
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.lock_outline,
+                              size: 16, color: Colors.grey[400]),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Pagamento processado com segurança pelo Mercado Pago',
+                            style: TextStyle(
+                                fontSize: 12, color: Colors.grey[500]),
+                          ),
+                        ],
                       ),
-                      child: const Text("Voltar",
-                          style: TextStyle(color: Colors.white)),
-                    )
+                    ),
                   ],
                 ),
               ),
-            )
-          else if (!kIsWeb || _webReady)
-            _webViewWidget ??= buildWebView(
-              assetPath: 'assets/html/checkout_transparente.html',
-              onMessage: _handleRawMessage,
-              onControllerCreated: (controller) => _controller = controller,
-              initialData: _buildInitialData(),
             ),
-          if (_isLoading && !_planRestricted)
-            const Center(child: CircularProgressIndicator()),
-        ],
-      ),
     );
   }
 }

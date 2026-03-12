@@ -81,7 +81,6 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/
-    - assets/html/checkout_transparente.html
 
 flutter_icons:
   android: true
