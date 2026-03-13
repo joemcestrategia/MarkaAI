@@ -846,7 +846,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         color: Colors.grey[200],
         borderRadius: BorderRadius.circular(4),
       ),
-      child: const Text("Premium",
+      child: const Text("Upgrade",
           style: TextStyle(
               fontSize: 10,
               fontWeight: FontWeight.bold,

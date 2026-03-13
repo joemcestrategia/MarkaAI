@@ -1,134 +1,154 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
-import '../../../core/theme/app_colors.dart';
 
 class AdminSupportWidget extends StatelessWidget {
   const AdminSupportWidget({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Quick Actions
-          const Text(
-            'Ações Rápidas',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 16),
-
-          Wrap(
-            spacing: 16,
-            runSpacing: 16,
-            children: [
-              _buildActionCard(
-                context,
-                'Gerenciar Assinatura',
-                Icons.card_membership,
-                Colors.blue,
-                () => _showSubscriptionOverride(context),
-              ),
-              _buildActionCard(
-                context,
-                'Exportar Usuários CSV',
-                Icons.download,
-                Colors.green,
-                () => _exportUsers(context),
-              ),
-              _buildActionCard(
-                context,
-                'Exportar Negócios CSV',
-                Icons.file_download,
-                Colors.orange,
-                () => _exportShops(context),
-              ),
-              _buildActionCard(
-                context,
-                'Estatísticas Gerais',
-                Icons.analytics,
-                AppColors.primaryPurple,
-                () => _showGeneralStats(context),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 32),
-
-          // Manual Intervention Tools
-          const Text(
-            'Ferramentas de Intervenção Manual',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 16),
-
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.search, color: AppColors.primaryPurple),
-              title: const Text('Buscar Usuário por Email'),
-              subtitle: const Text('Encontrar e modificar dados de usuário'),
-              trailing: const Icon(Icons.arrow_forward),
-              onTap: () => _searchUserByEmail(context),
+    return Theme(
+      data: ThemeData.dark().copyWith(
+        scaffoldBackgroundColor: const Color(0xFF0F1117),
+        cardColor: const Color(0xFF1A1D27),
+      ),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Ações Rápidas de Suporte',
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white),
             ),
-          ),
-
-          const SizedBox(height: 8),
-
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.notifications, color: Colors.orange),
-              title: const Text('Enviar Notificação Manual'),
-              subtitle: const Text('Enviar push notification para usuários'),
-              trailing: const Icon(Icons.arrow_forward),
-              onTap: () => _sendManualNotification(context),
+            const SizedBox(height: 8),
+            Text(
+              'Gerenciamento manual, exportação de dados e utilitários administrativos.',
+              style: TextStyle(color: Colors.grey[500], fontSize: 14),
             ),
-          ),
-        ],
+            const SizedBox(height: 32),
+  
+            LayoutBuilder(builder: (context, constraints) {
+              final cols = constraints.maxWidth > 1000 ? 4 : (constraints.maxWidth > 600 ? 2 : 1);
+              return GridView.count(
+                crossAxisCount: cols,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                crossAxisSpacing: 20,
+                mainAxisSpacing: 20,
+                childAspectRatio: 1.5,
+                children: [
+                  _buildActionCard(
+                    context,
+                    'Gerenciar Assinatura',
+                    Icons.card_membership_rounded,
+                    const Color(0xFF4F8EF7),
+                    () => _showSubscriptionOverride(context),
+                  ),
+                  _buildActionCard(
+                    context,
+                    'Exportar Usuários',
+                    Icons.people_alt_rounded,
+                    const Color(0xFF22C55E),
+                    () => _exportUsers(context),
+                  ),
+                  _buildActionCard(
+                    context,
+                    'Exportar Negócios',
+                    Icons.storefront_rounded,
+                    const Color(0xFF7C5CFC),
+                    () => _exportShops(context),
+                  ),
+                  _buildActionCard(
+                    context,
+                    'Estatísticas Base',
+                    Icons.analytics_rounded,
+                    const Color(0xFFF59E0B),
+                    () => _showGeneralStats(context),
+                  ),
+                ],
+              );
+            }),
+  
+            const SizedBox(height: 40),
+            const Text(
+              'Ferramentas de Intervenção',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+            ),
+            const SizedBox(height: 16),
+  
+            _buildListItem(
+              context,
+              'Buscar Usuário por Email',
+              'Encontrar e modificar dados de usuário específicos.',
+              Icons.search_rounded,
+              const Color(0xFF4F8EF7),
+              () => _searchUserByEmail(context),
+            ),
+            const SizedBox(height: 12),
+            _buildListItem(
+              context,
+              'Enviar Notificação Manual',
+              'Enviar push notification para usuários selecionados.',
+              Icons.notifications_active_rounded,
+              const Color(0xFFF59E0B),
+              () => _sendManualNotification(context),
+            ),
+          ],
+        ),
       ),
     );
   }
-
-  Widget _buildActionCard(
-    BuildContext context,
-    String title,
-    IconData icon,
-    Color color,
-    VoidCallback onTap,
-  ) {
-    return SizedBox(
-      width: 200,
-      child: Card(
-        elevation: 2,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(12),
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(icon, color: color, size: 32),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  title,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
-                  ),
-                ),
-              ],
+  
+  Widget _buildListItem(BuildContext context, String title, String sub, IconData icon, Color color, VoidCallback onTap) {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1D27),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.04)),
+      ),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+        leading: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
+          child: Icon(icon, color: color),
+        ),
+        title: Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        subtitle: Text(sub, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+        trailing: const Icon(Icons.chevron_right_rounded, color: Colors.grey),
+        onTap: onTap,
+      ),
+    );
+  }
+  
+  Widget _buildActionCard(BuildContext context, String title, IconData icon, Color color, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1A1D27),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.white.withOpacity(0.04)),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: color.withOpacity(0.1), shape: BoxShape.circle),
+              child: Icon(icon, color: color, size: 28),
             ),
-          ),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+          ],
         ),
       ),
     );
@@ -158,7 +178,8 @@ class AdminSupportWidget extends StatelessWidget {
               decoration: const InputDecoration(labelText: 'Novo Plano'),
               items: const [
                 DropdownMenuItem(value: 'free', child: Text('Free')),
-                DropdownMenuItem(value: 'premium', child: Text('Premium')),
+                DropdownMenuItem(value: 'start', child: Text('Start')),
+                DropdownMenuItem(value: 'plus', child: Text('Plus')),
                 DropdownMenuItem(value: 'pro', child: Text('Pro')),
               ],
               onChanged: (value) => selectedPlan = value,

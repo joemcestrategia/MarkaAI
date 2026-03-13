@@ -1,4 +1,4 @@
-﻿class LegalDocuments {
+class LegalDocuments {
   static const String privacyPolicy = '''
 # POLÍTICA DE PRIVACIDADE
 
@@ -54,7 +54,7 @@ Bem-vindo à MarkaAI. Estes Termos de Uso regulam a sua utilização do nosso ap
 A MarkaAI é uma plataforma de gestão e agendamento que conecta clientes a profissionais e estabelecimentos (ex: barbearias, salões de beleza). O aplicativo oferece ferramentas para controle de agenda, gestão financeira, notificações e recebimento de pagamentos online.
 
 ## 2. PLANOS E ASSINATURAS
-O aplicativo oferece planos gratuitos e pagos (Premium). Os recursos específicos, limites e valores de cada plano estão descritos na plataforma.
+O aplicativo oferece planos gratuitos e pagos. Os recursos específicos, limites e valores de cada plano estão descritos na plataforma.
 - **Teste Gratuito (Trial):** Oferecemos um período de teste gratuito de 90 dias para os planos pagos. O trial é válido para **uso único por conta**. Ao término dos 90 dias, o acesso aos recursos premium será bloqueado automaticamente caso não haja contratação de um plano pago. Nenhuma cobrança automática será realizada sem o seu consentimento explícito prévio.
 
 ## 3. RESPONSABILIDADES DO USUÁRIO
@@ -91,7 +91,7 @@ Estes Termos são regidos pelas leis da República Federativa do Brasil, ficando
 A MarkaAI busca oferecer transparência e segurança em todas as transações realizadas no aplicativo.
 
 ## 1. ASSINATURAS E PLANOS PREMIUM
-- **Cancelamento:** Você pode cancelar a sua assinatura de planos Premium a qualquer momento na seção correspondente do aplicativo. O cancelamento interromperá a renovação automática para o próximo ciclo de faturamento.
+- **Cancelamento:** Você pode cancelar a sua assinatura de planos pagos a qualquer momento na seção correspondente do aplicativo. O cancelamento interromperá a renovação automática para o próximo ciclo de faturamento.
 - **Reembolso:** Em conformidade com o Código de Defesa do Consumidor brasileiro, você tem o direito de solicitar o reembolso integral da assinatura em até **7 (sete) dias** após a data da contratação inicial (Direito de Arrependimento).
 - **Após 7 dias:** Após o período de 7 dias, cancelamentos efetuados não resultarão em estorno proporcional ou integral dos valores já pagos pelo ciclo vigente. O acesso aos recursos pagos se manterá até o final do período já faturado.
 

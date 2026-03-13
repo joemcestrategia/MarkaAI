@@ -1,4 +1,4 @@
-﻿import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -922,7 +922,7 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text("Recurso Premium ?"),
+        title: const Text("Recurso Exclusivo ?"),
         content: const Text(
             "Receber pagamentos online via PIX e Cartão é exclusivo dos planos pagos.\n\nAssine agora para liberar!"),
         actions: [
