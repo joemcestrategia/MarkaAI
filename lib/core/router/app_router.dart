@@ -349,7 +349,7 @@ class AdminAuthGate extends StatelessWidget {
           return const AdminDashboardPage();
         }
 
-        return const LoginPage(avoidRedirect: true);
+        return const LoginPage(redirectPath: '/admin');
       },
     );
   }

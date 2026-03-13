@@ -42,37 +42,92 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
     if (!_isAdmin) {
       return Scaffold(
-        appBar: AppBar(
-          title: const Text('Acesso Negado'),
-          backgroundColor: AppColors.primaryPurple,
-          foregroundColor: Colors.white,
-        ),
+        backgroundColor: const Color(0xFF0F1117),
         body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.lock, size: 80, color: Colors.grey[400]),
-              const SizedBox(height: 20),
-              const Text(
-                'Acesso Restrito',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                'Você não tem permissão para acessar esta área.',
-                style: TextStyle(color: Colors.grey[600]),
-              ),
-              const SizedBox(height: 30),
-              ElevatedButton.icon(
-                onPressed: () => Navigator.pop(context),
-                icon: const Icon(Icons.arrow_back),
-                label: const Text('Voltar'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primaryPurple,
-                  foregroundColor: Colors.white,
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 500),
+            padding: const EdgeInsets.all(40),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1A1D27),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withValues(alpha: 0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.lock_person_rounded, size: 48, color: Colors.redAccent),
                 ),
-              ),
-            ],
+                const SizedBox(height: 32),
+                const Text(
+                  'Acesso Restrito',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.white,
+                    letterSpacing: -0.5,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Esta área é exclusiva para administradores oficiais do MarkaAI.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.grey[400], fontSize: 16, height: 1.5),
+                ),
+                const SizedBox(height: 32),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.withValues(alpha: 0.05),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.amber.withValues(alpha: 0.2)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.warning_amber_rounded, color: Colors.amber, size: 20),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Atenção: Por motivos de segurança, não é possível criar contas de administrador pela interface. O processo é 100% manual e direto no banco de dados.',
+                          style: TextStyle(color: Colors.amber[200], fontSize: 12, height: 1.4),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 40),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pushReplacementNamed(context, '/'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF4F8EF7),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 20),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      elevation: 0,
+                    ),
+                    child: const Text('VOLTAR PARA O INÍCIO', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextButton(
+                  onPressed: () async {
+                    await FirebaseAuth.instance.signOut();
+                    if (context.mounted) Navigator.pushReplacementNamed(context, '/login');
+                  },
+                  child: Text(
+                    'Trocar de Conta',
+                    style: TextStyle(color: Colors.grey[500], fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       );

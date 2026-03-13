@@ -34,11 +34,13 @@ class ViaCepService {
 class LoginPage extends StatefulWidget {
   final bool returnOnSuccess;
   final bool avoidRedirect;
+  final String? redirectPath;
   final String? contextMessage;
   const LoginPage(
       {super.key,
       this.returnOnSuccess = false,
       this.avoidRedirect = false,
+      this.redirectPath,
       this.contextMessage});
 
   @override
@@ -174,6 +176,11 @@ class _LoginPageState extends State<LoginPage>
 
         if (widget.avoidRedirect) {
           setState(() => _isLoading = false);
+          return;
+        }
+
+        if (widget.redirectPath != null) {
+          Navigator.pushReplacementNamed(context, widget.redirectPath!);
           return;
         }
 

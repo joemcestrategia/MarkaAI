@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class SessionService {
   static const String _keyUserId = 'userId';
@@ -129,14 +130,16 @@ class SessionService {
   // Check if current user is an admin
   static Future<bool> isAdmin() async {
     try {
-      final userId = await getUserId();
-      if (userId == null) return false;
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return false;
+      final userId = user.uid;
 
       final doc = await FirebaseFirestore.instance
           .collection('users')
           .doc(userId)
           .get();
 
+      if (!doc.exists) return false;
       final data = doc.data();
       final role = data?['role'] as String?;
       final roles = data?['roles'] as List?;
@@ -148,7 +151,7 @@ class SessionService {
 
       if (kDebugMode) {
         debugPrint(
-            'DEBUG SessionService: isAdmin checked - result: $isAnyAdmin');
+            'DEBUG SessionService: isAdmin checked for $userId - result: $isAnyAdmin');
       }
       return isAnyAdmin;
     } catch (e) {
