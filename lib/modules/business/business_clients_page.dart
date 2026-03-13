@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -9,7 +9,10 @@ import '../../core/utils/string_utils.dart';
 import '../clients/client_register_page.dart';
 import '../clients/client_details_page.dart';
 import 'subscription_service.dart';
-import 'subscription_plans_page.dart';
+import '../../core/services/client_cache_service.dart';
+import '../../core/services/plan_features_service.dart';
+import '../../core/constants/plan_features.dart';
+import '../../widgets/upgrade_modal.dart';
 
 class BusinessClientsScreen extends StatefulWidget {
   const BusinessClientsScreen({super.key});
@@ -28,10 +31,19 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
   // 0 = App (Vinculados), 1 = Manual (Walk-in)
   int _selectedTabIndex = 0;
 
+  // Filtro de Tags: "Todos", "VIP", "Sumido", "Problematico"
+  String _selectedTagFilter = "Todos";
+
   // --- CONTROLE DA COLUNA 3 (PC) ---
   Map<String, dynamic>? _selectedClientData;
   String? _selectedClientId;
   bool _showAddPanel = false;
+
+  // --- CACHE LOCAL ---
+  Map<String, List<Map<String, dynamic>>>? _cachedData;
+  int _lastAppointmentCount = -1;
+
+  PlanFeatures _currentFeatures = planFeaturesConfig[PlanKey.free]!;
 
   @override
   void initState() {
@@ -42,12 +54,29 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
   Future<void> _loadShopId() async {
     final id = await SessionService.getShopId();
     if (mounted) {
+      if (id != null) {
+        _loadFromCache(id);
+        _loadFeatures(id);
+      }
       setState(() {
         shopId = id;
         if (id == null) {
           debugPrint("Erro: ShopID é null ao carregar BusinessClientsScreen");
         }
         _isLoadingId = false;
+      });
+    }
+  }
+
+  Future<void> _loadFeatures(String sid) async {
+    // Features are now handled by StreamBuilder in build()
+  }
+
+  Future<void> _loadFromCache(String id) async {
+    final data = await ClientCacheService.getCachedClients(id);
+    if (data != null && mounted) {
+      setState(() {
+        _cachedData = data;
       });
     }
   }
@@ -115,7 +144,11 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
 
     if (!canAdd) {
       if (mounted) {
-        _showUpgradeDialog();
+        UpgradeModal.show(
+          context,
+          featureName: "Limite de Clientes",
+          requiredPlan: "Start",
+        );
       }
       return;
     }
@@ -200,51 +233,58 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
   Widget build(BuildContext context) {
     if (_isLoadingId) return const Center(child: CircularProgressIndicator());
 
-    // ??? O GUARDIÃO DO LAYOUT: Verifica a largura da tela
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        // Se a largura for menor que 850px, consideramos "Mobile/Tablet Pequeno"
-        bool isMobile = constraints.maxWidth < 850;
+    return StreamBuilder<PlanFeatures>(
+      stream: PlanFeaturesService.streamFeaturesByShopId(shopId!),
+      builder: (context, snapshot) {
+        if (snapshot.hasData) _currentFeatures = snapshot.data!;
 
-        if (isMobile) {
-          // --- LAYOUT MOBILE (Apenas Lista) ---
-          return Material(
-            color: const Color(0xFFF2F4F8),
-            child: _buildListContent(isMobile),
-          );
-        } else {
-          // --- LAYOUT DESKTOP (Split View) ---
-          return Material(
-            color: const Color(0xFFF2F4F8),
-            child: Row(
-              children: [
-                // COLUNA 2: LISTA DE CLIENTES
-                Expanded(
-                  flex: 3,
-                  child: _buildListContent(isMobile),
+        // ??? O GUARDIÃO DO LAYOUT: Verifica a largura da tela
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            // Se a largura for menor que 850px, consideramos "Mobile/Tablet Pequeno"
+            bool isMobile = constraints.maxWidth < 850;
+
+            if (isMobile) {
+              // --- LAYOUT MOBILE (Apenas Lista) ---
+              return Material(
+                color: const Color(0xFFF2F4F8),
+                child: _buildListContent(isMobile),
+              );
+            } else {
+              // --- LAYOUT DESKTOP (Split View) ---
+              return Material(
+                color: const Color(0xFFF2F4F8),
+                child: Row(
+                  children: [
+                    // COLUNA 2: LISTA DE CLIENTES
+                    Expanded(
+                      flex: 3,
+                      child: _buildListContent(isMobile),
+                    ),
+                    // COLUNA 3: PAINEL LATERAL
+                    VerticalDivider(width: 1, color: Colors.grey[300]),
+                    Expanded(
+                      flex: 2,
+                      child: Container(
+                        color: Colors.white,
+                        child: _showAddPanel
+                            ? const ClientRegisterPage(isBusinessAdding: true)
+                            : (_selectedClientData != null
+                                ? ClientDetailsPage(
+                                    key: ValueKey(_selectedClientId),
+                                    clientData: _selectedClientData!,
+                                    clientId: _selectedClientId!,
+                                    onClose: _closePanel,
+                                  )
+                                : _buildPlaceholder()),
+                      ),
+                    ),
+                  ],
                 ),
-                // COLUNA 3: PAINEL LATERAL
-                VerticalDivider(width: 1, color: Colors.grey[300]),
-                Expanded(
-                  flex: 2,
-                  child: Container(
-                    color: Colors.white,
-                    child: _showAddPanel
-                        ? const ClientRegisterPage(isBusinessAdding: true)
-                        : (_selectedClientData != null
-                            ? ClientDetailsPage(
-                                key: ValueKey(_selectedClientId),
-                                clientData: _selectedClientData!,
-                                clientId: _selectedClientId!,
-                                onClose: _closePanel,
-                              )
-                            : _buildPlaceholder()),
-                  ),
-                ),
-              ],
-            ),
-          );
-        }
+              );
+            }
+          },
+        );
       },
     );
   }
@@ -330,6 +370,31 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
           ),
         ),
 
+        // 2.5 FILTROS DE TAGS (VIP, SUMIDO, PROBLEMATICO)
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+          color: Colors.white,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _buildTagFilterChip("Todos"),
+                const SizedBox(width: 8),
+                _buildTagFilterChip("VIP", icon: Icons.star, color: Colors.amber, isLocked: !_currentFeatures.clientFilter),
+                const SizedBox(width: 8),
+                _buildTagFilterChip("Novo", icon: Icons.new_releases, color: Colors.green, isLocked: !_currentFeatures.clientFilter),
+                const SizedBox(width: 8),
+                _buildTagFilterChip("Sumido",
+                    icon: Icons.timer_off_outlined, color: Colors.grey, isLocked: !_currentFeatures.clientFilter),
+                const SizedBox(width: 8),
+                _buildTagFilterChip("Problemático",
+                    icon: Icons.warning_amber_rounded, color: Colors.red, isLocked: !_currentFeatures.clientFilter),
+              ],
+            ),
+          ),
+        ),
+
         // 3. LISTA FILTRADA
         shopId == null
             ? const Center(child: Text("Erro: ID da Loja não encontrado"))
@@ -394,16 +459,27 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                                   child: CircularProgressIndicator());
                             }
 
-                            final processedData = _processAppointments(
-                                snapshot.data!.docs,
-                                clientSettings,
-                                shopConfig);
+                            final int currentCount = snapshot.data!.docs.length;
+                            final bool dataChanged = currentCount != _lastAppointmentCount;
+
+                            if (dataChanged || _cachedData == null) {
+                              _cachedData = _processAppointments(
+                                  snapshot.data!.docs,
+                                  clientSettings,
+                                  shopConfig);
+                              _lastAppointmentCount = currentCount;
+                              
+                              // Salva em cache de forma assíncrona
+                              ClientCacheService.saveClients(shopId!, _cachedData!);
+                            }
+
                             List<Map<String, dynamic>> targetList =
                                 _selectedTabIndex == 0
-                                    ? processedData['app']!
-                                    : processedData['manual']!;
+                                    ? _cachedData!['app']!
+                                    : _cachedData!['manual']!;
 
                             final filteredDocs = targetList.where((client) {
+                              // Filtro de Texto
                               final nome = (client['nome'] ?? "").toString();
                               final normalizedNome =
                                   StringUtils.removeDiacritics(nome)
@@ -411,8 +487,30 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                               final normalizedSearch =
                                   StringUtils.removeDiacritics(_searchText)
                                       .toLowerCase();
+                              bool matchesSearch = normalizedNome.contains(normalizedSearch);
 
-                              return normalizedNome.contains(normalizedSearch);
+                              if (!matchesSearch) return false;
+
+                              // Filtro de Tags
+                              if (_selectedTagFilter == "Todos") return true;
+
+                              final List tags = client['tags'] as List? ?? [];
+                              final String? classification = client['classification']?.toString().toLowerCase();
+
+                              if (_selectedTagFilter == "VIP") {
+                                return tags.contains('vip') || classification == 'vip';
+                              }
+                              if (_selectedTagFilter == "Novo") {
+                                return tags.contains('novo') || classification == 'novo';
+                              }
+                              if (_selectedTagFilter == "Sumido") {
+                                return tags.contains('sumido') || classification == 'sumido';
+                              }
+                              if (_selectedTagFilter == "Problemático") {
+                                return classification == 'problematico' || tags.contains('problematico');
+                              }
+
+                              return true;
                             }).toList();
 
                             if (filteredDocs.isEmpty) return _buildEmptyState();
@@ -560,9 +658,9 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
           bool meetsVisits = visits >= vipMinVisits;
           bool meetsInterval = visits == 1 || avgInterval <= vipAvgInterval;
 
-          if (meetsVisits && meetsInterval) {
+          if (meetsVisits && meetsInterval && _currentFeatures.clientClassification) {
             tags.add('vip');
-          } else if (visits == 1 && daysSinceLast < 30) {
+          } else if (visits == 1 && daysSinceLast < 30 && _currentFeatures.clientClassification) {
             tags.add('novo');
           }
         }
@@ -583,10 +681,52 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
     };
   }
 
+  Widget _buildTagFilterChip(String label, {IconData? icon, Color? color, bool isLocked = false}) {
+    bool isSelected = _selectedTagFilter == label;
+    Color activeColor = color ?? AppColors.primaryPurple;
+
+    return ChoiceChip(
+      label: Text(label),
+      selected: isSelected,
+      labelStyle: TextStyle(
+        color: isSelected ? Colors.white : Colors.grey[700],
+        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+        fontSize: 12,
+      ),
+      avatar: isLocked 
+          ? const Icon(Icons.lock, size: 14, color: Colors.grey)
+          : (icon != null
+              ? Icon(icon, size: 14, color: isSelected ? Colors.white : color)
+              : null),
+      selectedColor: activeColor,
+      backgroundColor: Colors.grey[100],
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      side: BorderSide(
+          color: isSelected ? Colors.transparent : Colors.grey[300]!),
+      onSelected: (selected) {
+        if (isLocked) {
+          UpgradeModal.show(
+            context,
+            featureName: "Filtros de Clientes",
+            requiredPlan: "Plus",
+          );
+          return;
+        }
+        if (selected) {
+          setState(() => _selectedTagFilter = label);
+        }
+      },
+    );
+  }
+
+
   Widget _buildTabButton(int index, String label, IconData icon) {
     bool isSelected = _selectedTabIndex == index;
     return InkWell(
-      onTap: () => setState(() => _selectedTabIndex = index),
+      onTap: () => setState(() {
+        _selectedTabIndex = index;
+        _selectedTagFilter = "Todos"; // Reseta filtro ao mudar aba
+      }),
       borderRadius: BorderRadius.circular(20),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
@@ -758,37 +898,6 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
             style: TextStyle(
                 fontSize: 10, fontWeight: FontWeight.bold, color: color),
           ),
-        ],
-      ),
-    );
-  }
-
-  void _showUpgradeDialog() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Limite de Clientes Atingido"),
-        content: const Text(
-            "Você atingiu o limite de clientes do seu plano atual (Starter).\n\n"
-            "Faça um upgrade para adicionar ilimitados clientes e desbloquear recursos exclusivos!"),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text("Cancelar")),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primaryPurple,
-                foregroundColor: Colors.white),
-            onPressed: () async {
-              Navigator.pop(ctx);
-              await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (context) => const SubscriptionPlansPage()));
-              if (mounted) setState(() {});
-            },
-            child: const Text("Ver Planos"),
-          )
         ],
       ),
     );

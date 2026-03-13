@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -10,6 +10,7 @@ import '../../core/theme/app_colors.dart';
 import '../business/business_home_page.dart';
 import '../clients/client_home_page.dart';
 import '../auth/forgot_password_page.dart';
+import '../../core/services/session_service.dart';
 
 // --- SERVIÇO AUXILIAR (MANTIDO) ---
 class ViaCepService {
@@ -32,9 +33,13 @@ class ViaCepService {
 
 class LoginPage extends StatefulWidget {
   final bool returnOnSuccess;
+  final bool avoidRedirect;
   final String? contextMessage;
   const LoginPage(
-      {super.key, this.returnOnSuccess = false, this.contextMessage});
+      {super.key,
+      this.returnOnSuccess = false,
+      this.avoidRedirect = false,
+      this.contextMessage});
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -151,12 +156,24 @@ class _LoginPageState extends State<LoginPage>
         return;
       }
 
-      // Roteamento Sucesso
-      String tipo = data?['tipo'] ?? 'cliente';
+      String tipo = data?['tipo']?.toString() ?? 'cliente';
 
+      // Salva na sessão local
+      await SessionService.saveLogin(
+        userId: user.uid,
+        userType: tipo,
+        shopId: tipo == 'dono' || tipo == 'business' ? user.uid : null,
+      );
+
+      // Roteamento Sucesso
       if (mounted) {
         if (widget.returnOnSuccess) {
           Navigator.pop(context, true);
+          return;
+        }
+
+        if (widget.avoidRedirect) {
+          setState(() => _isLoading = false);
           return;
         }
 
@@ -337,6 +354,33 @@ class _LoginPageState extends State<LoginPage>
       }
 
       await FirebaseFirestore.instance.collection('users').doc(uid).set(data);
+
+      // Se for dono, replica dados essenciais para o documento da loja
+      if (_selectedRole != 'cliente') {
+        Map<String, dynamic> shopData = {
+          'uid': uid,
+          'nome': _bizCtrl.text.trim(), // Nome do negócio
+          'dono_nome': _nameCtrl.text.trim(),
+          'email': _emailCtrl.text.trim(),
+          'telefone': _phoneCtrl.text.replaceAll(RegExp(r'\D'), ''),
+          'cep': _cepCtrl.text,
+          'rua': _ruaCtrl.text,
+          'bairro': _bairroCtrl.text,
+          'cidade': _cidadeCtrl.text,
+          'numero': _numCtrl.text,
+          'endereco': '${_ruaCtrl.text}, ${_numCtrl.text} - ${_bairroCtrl.text}',
+          'criado_em': FieldValue.serverTimestamp(),
+          'tipo': 'business',
+          'verified': true,
+          // Garante plano inicial free se não tiver nada
+          'subscription': {
+            'plan_id': 'free',
+            'status': 'active',
+          }
+        };
+        await FirebaseFirestore.instance.collection('shops').doc(uid).set(shopData, SetOptions(merge: true));
+      }
+
       await _routeUser(user);
     } on FirebaseAuthException catch (e) {
       _handleFirebaseError(e);
@@ -461,7 +505,7 @@ class _LoginPageState extends State<LoginPage>
       backgroundColor: Colors.white,
       body: Row(
         children: [
-          // ðŸ’» PAINEL ESQUERDO (Apenas Desktop)
+          // 💻 PAINEL ESQUERDO (Apenas Desktop)
           if (isDesktop)
             Expanded(
               flex: 5,
@@ -528,7 +572,7 @@ class _LoginPageState extends State<LoginPage>
                               border: Border.all(
                                   color: Colors.white.withValues(alpha: 0.2))),
                           child: const Text(
-                              "ðŸš€ Agendamento Inteligente • Gestão Financeira",
+                              "🚀 Agendamento Inteligente • Gestão Financeira",
                               style:
                                   TextStyle(color: Colors.white, fontSize: 14)),
                         )
@@ -539,7 +583,7 @@ class _LoginPageState extends State<LoginPage>
               ),
             ),
 
-          // ðŸ“± PAINEL DIREITO (Formulário)
+          // 📱 PAINEL DIREITO (Formulário)
           Expanded(
             flex: isDesktop ? 6 : 1,
             child: Container(
@@ -753,7 +797,7 @@ class _LoginPageState extends State<LoginPage>
             if (_currentStep > 0) const SizedBox(width: 10),
             Expanded(
               child: _PrimaryButton(
-                text: _currentStep == 3 ? "CRIAR CONTA" : "PRÃ“XIMO",
+                text: _currentStep == 3 ? "CRIAR CONTA" : "PRÓXIMO",
                 isLoading: _isLoading,
                 onPressed: _handleAuth,
               ),

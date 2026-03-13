@@ -51,7 +51,7 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
     if (mounted) _animationController.forward();
   }
 
-  // ðŸ”„ LISTENER EM TEMPO REAL - Atualiza quando há mudanças no Firestore
+  // 🔄 LISTENER EM TEMPO REAL - Atualiza quando há mudanças no Firestore
   void _setupRealtimeListener() {
     Future.delayed(const Duration(seconds: 1), () {
       if (_shopId == null || !mounted) return;
@@ -75,7 +75,7 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
 
           // Se o status mudou, atualiza a UI
           if (isConnected != _isConnected) {
-            debugPrint("ðŸ”„ [REALTIME] Status de pagamento atualizado!");
+            debugPrint("🔄 [REALTIME] Status de pagamento atualizado!");
 
             setState(() {
               _isConnected = isConnected;
@@ -188,7 +188,7 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
       if (doc.metadata.isFromCache) {
         // Cache read
       } else {
-        debugPrint("ðŸ’¸ [SERVER] Baixando status de pagamento atualizado.");
+        debugPrint("💸 [SERVER] Baixando status de pagamento atualizado.");
       }
 
       if (!doc.exists) return;
@@ -735,7 +735,7 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
     );
   }
 
-  // ðŸ“– CONTEÚDO DE AJUDA (MELHORADO)
+  // 📖 CONTEÚDO DE AJUDA (MELHORADO)
   Widget _buildHelpContent() {
     final isMobile = MediaQuery.of(context).size.width < 600;
 

@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 
 class HelpGuidePage extends StatelessWidget {
@@ -72,6 +72,18 @@ class _StepsTab extends StatelessWidget {
         'desc':
             'Toda vez que concluir um atendimento, o valor será somado ao seu faturamento semanal na aba Financeiro.',
         'icon': Icons.account_balance_wallet_outlined
+      },
+      {
+        'title': '6. Crie Cupons para Fidelizar',
+        'desc':
+            'Em "Gerenciar Cupons", crie descontos exclusivos. Use o slider para definir a porcentagem e compartilhe a arte do cupom direto no WhatsApp.',
+        'icon': Icons.confirmation_number_outlined
+      },
+      {
+        'title': '7. Entenda suas Tags de Clientes',
+        'desc':
+            'O sistema classifica automaticamente seus clientes como VIP, Novo ou Sumido baseado na frequência de visitas, ajudando você a focar em quem importa.',
+        'icon': Icons.label_important_outline
       },
     ];
 
@@ -161,6 +173,18 @@ class _FeaturesTab extends StatelessWidget {
             'Cadastre produtos usados ou vendidos e receba avisos quando o estoque estiver baixo.',
         'icon': Icons.inventory_2_outlined
       },
+      {
+        'title': 'Cupons',
+        'desc':
+            'Gestão de descontos e promoções com geração de artes para compartilhamento.',
+        'icon': Icons.confirmation_number
+      },
+      {
+        'title': 'Tags Inteligentes',
+        'desc':
+            'O sistema monitora o comportamento dos clientes e aplica tags automáticas (VIP/Sumido).',
+        'icon': Icons.auto_awesome
+      },
     ];
 
     return GridView.builder(
@@ -219,7 +243,27 @@ class _FaqTab extends StatelessWidget {
       {
         'q': 'Como os clientes agendam comigo?',
         'a':
-            'Ao se cadastrar, sua loja aparece no App MarkaAI para todos os usuários da sua região. Eles escolhem o serviço e o horário livre.'
+            'O fluxo principal e RECOMENDADO é o agendamento pelo seu link público. Ao compartilhar seu link (no Instagram, WhatsApp), o cliente escolhe o serviço e o horário sozinho. Isso elimina trocas de mensagens e ativa lembretes automáticos.'
+      },
+      {
+        'q': 'Para que serve o Agendamento Manual?',
+        'a':
+            'O agendamento manual no painel deve ser usado para duas situações: \n1. LANÇAMENTO DE ATENDIMENTOS PASSADOS: registrar serviços já feitos para manter seu histórico e financeiro organizados. \n2. EXCEÇÕES: bloqueio de horários ou atendimentos que não passaram pelo fluxo online. \n\nDICA: Evite fazer do agendamento manual sua rotina principal. Incentive o autoagendamento fixando seu link na bio do Instagram e no WhatsApp.'
+      },
+      {
+        'q': 'Como aumentar meus agendamentos online?',
+        'a':
+            'Sugerimos ações práticas: \n- Fixe o link no WhatsApp (mensagem automática). \n- Adicione o link na bio do Instagram. \n- Envie o link para sua base de clientes atual. \n- Coloque um QR Code no seu estabelecimento. \n- Mencione o link ao terminar cada atendimento.'
+      },
+      {
+        'q': 'O sistema impede conflitos de horário?',
+        'a':
+            'Sim! O Markaai detecta automaticamente se um profissional já tem um compromisso e impede que dois clientes agendem no mesmo minuto, respeitando a duração de cada serviço.'
+      },
+      {
+        'q': 'Como editar ou cancelar um agendamento?',
+        'a':
+            'Na aba Agenda, localize o atendimento, clique nele e você poderá alterar o horário, o profissional ou mudar o status para "Cancelado". O cliente receberá uma notificação.'
       },
       {
         'q': 'Como recebo o pagamento?',
@@ -239,7 +283,27 @@ class _FaqTab extends StatelessWidget {
       {
         'q': 'O App é gratuito?',
         'a':
-            'O plano Starter é gratuito com anúncios. Temos planos profissionais para remover anúncios e liberar recursos avançados.'
+            'Temos um Plano Free para você começar e Planos Profissionais com recursos avançados para escalar seu negócio.'
+      },
+      {
+        'q': 'Como visualizar minha Agenda?',
+        'a':
+            'Na aba Agenda, você pode alternar entre as visões do dia e da semana. Se tiver funcionários, pode filtrar para ver a agenda de cada profissional separadamente clicando no filtro de equipe no topo.'
+      },
+      {
+        'q': 'Quando devo usar o Agendamento Manual?',
+        'a':
+            'O agendamento manual deve ser usado para: \n1. LANÇAMENTO DE PASSADOS: Registrar serviços já feitos para alimentar seu financeiro e histórico. Perfeito para quem está chegando agora no Markaai. \n2. EXCEÇÕES: Bloqueios de horários ou atendimentos imprevistos. \n\nLembre-se: O manual NÃO deve ser sua rotina principal. O ideal é o cliente agendar pelo link para que os lembretes automáticos funcionem e você tenha menos trabalho manual.'
+      },
+      {
+        'q': 'Dicas para seus clientes usarem o Link:',
+        'a':
+            '- Fixe o link na bio do Instagram. \n- Adicione como mensagem automática no WhatsApp Business. \n- Envie o link em massa para sua lista atual de clientes. \n- Imprima um QR Code na recepção. \n- Cite o link ao final de cada atendimento: "Na próxima, aproveite e agende pelo nosso link, é super rápido!"'
+      },
+      {
+        'q': 'Como funciona o histórico e desempenho?',
+        'a':
+            'Em "Meus Clientes" ou no "Financeiro", você acessa o histórico completo. Lá você vê quem são seus clientes VIPs, quanto cada serviço rendeu e o desempenho de cada profissional da sua equipe.'
       },
     ];
 

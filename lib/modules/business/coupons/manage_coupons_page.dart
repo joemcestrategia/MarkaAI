@@ -1,8 +1,12 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/services/coupon_share_service.dart';
+import '../../../core/services/plan_features_service.dart';
+import '../../../core/constants/plan_features.dart';
+import '../../../widgets/upgrade_modal.dart';
 
 class ManageCouponsPage extends StatefulWidget {
   final String shopId;
@@ -19,6 +23,7 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
   String? _logoUrl;
   String? _slug;
   bool _isGeneratingImage = false;
+  late PlanFeatures _currentFeatures = planFeaturesConfig[PlanKey.free]!;
 
   Map<String, dynamic>? _couponToShare;
 
@@ -37,7 +42,9 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
       setState(() {
         final data = doc.data();
         _shopName = data?['nome'] ?? "Minha Loja";
-        _logoUrl = data?['logoUrl'];
+        final String? logo = data?['logoUrl'];
+        final String? foto = data?['foto'];
+        _logoUrl = (logo != null && logo.isNotEmpty) ? logo : foto;
         _slug = data?['slug'];
       });
     }
@@ -49,8 +56,14 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
       _isGeneratingImage = true;
     });
 
+    // Precache o logo para garantir que ele esteja pronto para a captura
+    if (_logoUrl != null && _logoUrl!.isNotEmpty && mounted) {
+      precacheImage(CachedNetworkImageProvider(_logoUrl!), context);
+    }
+
     // Pequeno delay para o RepaintBoundary atualizar com os novos dados
-    await Future.delayed(const Duration(milliseconds: 300));
+    // Aumentado para 500ms para dar mais tempo ao motor de renderização
+    await Future.delayed(const Duration(milliseconds: 500));
 
     if (mounted) {
       await CouponShareService.shareCoupon(
@@ -70,117 +83,140 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
-      appBar: AppBar(
-        title: const Text('Meus Cupons'),
-        backgroundColor: AppColors.primaryPurple,
-        foregroundColor: Colors.white,
-      ),
-      body: Stack(
-        children: [
-          StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance
-                .collection('shops')
-                .doc(widget.shopId)
-                .collection('coupons')
-                .orderBy('createdAt', descending: true)
-                .snapshots(),
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(child: CircularProgressIndicator());
-              }
+    return StreamBuilder<PlanFeatures>(
+      stream: PlanFeaturesService.streamFeaturesByShopId(widget.shopId),
+      builder: (context, planSnapshot) {
+        if (planSnapshot.hasData) {
+          _currentFeatures = planSnapshot.data!;
+        }
 
-              if (snapshot.hasError) {
-                return const Center(child: Text('Erro ao carregar cupons.'));
-              }
-
-              final coupons = snapshot.data?.docs ?? [];
-
-              if (coupons.isEmpty) {
-                return Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.confirmation_number_outlined,
-                          size: 80, color: Colors.grey[300]),
-                      const SizedBox(height: 16),
-                      const Text('Nenhum cupom criado ainda.',
-                          style: TextStyle(color: Colors.grey)),
-                      const SizedBox(height: 24),
-                      ElevatedButton.icon(
-                        onPressed: () => _showCouponDialog(),
-                        icon: const Icon(Icons.add),
-                        label: const Text('CRIAR MEU PRIMEIRO CUPOM'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primaryPurple,
-                          foregroundColor: Colors.white,
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              }
-
-              return ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: coupons.length,
-                itemBuilder: (context, index) {
-                  final coupon = coupons[index];
-                  final data = coupon.data() as Map<String, dynamic>;
-                  return _buildCouponCard(coupon.id, data);
-                },
-              );
-            },
+        return Scaffold(
+          backgroundColor: const Color(0xFFF5F7FA),
+          appBar: AppBar(
+            title: const Text('Meus Cupons'),
+            backgroundColor: AppColors.primaryPurple,
+            foregroundColor: Colors.white,
           ),
+          body: Stack(
+            children: [
+              StreamBuilder<QuerySnapshot>(
+                stream: FirebaseFirestore.instance
+                    .collection('shops')
+                    .doc(widget.shopId)
+                    .collection('coupons')
+                    .orderBy('createdAt', descending: true)
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
 
-          // Widget "Invisível" para captura de imagem
-          if (_couponToShare != null)
-            Positioned(
-              left: -1000, // Fora da tela
-              child: RepaintBoundary(
-                key: _shareKey,
-                child: CouponShareService.buildShareableCoupon(
-                  shopName: _shopName,
-                  code: _couponToShare!['code'] ?? '',
-                  discount: _couponToShare!['discountPercent'] ?? 0,
-                  logoUrl: _logoUrl,
-                  description: _couponToShare!['descricao'],
-                  subdomain: _slug,
-                  validUntil: _couponToShare!['validUntil'] != null
-                      ? DateFormat('dd/MM/yyyy').format(
-                          (_couponToShare!['validUntil'] as Timestamp).toDate())
-                      : null,
-                ),
+                  if (snapshot.hasError) {
+                    return const Center(child: Text('Erro ao carregar cupons.'));
+                  }
+
+                  final coupons = snapshot.data?.docs ?? [];
+
+                  if (coupons.isEmpty) {
+                    return Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.confirmation_number_outlined,
+                              size: 80, color: Colors.grey[300]),
+                          const SizedBox(height: 16),
+                          const Text('Nenhum cupom criado ainda.',
+                              style: TextStyle(color: Colors.grey)),
+                          const SizedBox(height: 24),
+                          ElevatedButton.icon(
+                            onPressed: () {
+                              if (!_currentFeatures.coupons) {
+                                _showUpgradeDialog();
+                                return;
+                              }
+                              _showCouponDialog();
+                            },
+                            icon: const Icon(Icons.add),
+                            label: const Text('CRIAR MEU PRIMEIRO CUPOM'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primaryPurple,
+                              foregroundColor: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+
+                  return ListView.builder(
+                    padding: const EdgeInsets.all(16),
+                    itemCount: coupons.length,
+                    itemBuilder: (context, index) {
+                      final coupon = coupons[index];
+                      final data = coupon.data() as Map<String, dynamic>;
+                      return _buildCouponCard(coupon.id, data);
+                    },
+                  );
+                },
               ),
-            ),
 
-          if (_isGeneratingImage)
-            Container(
-              color: Colors.black26,
-              child: const Center(
-                child: Card(
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        CircularProgressIndicator(strokeWidth: 2),
-                        SizedBox(width: 16),
-                        Text("Gerando imagem..."),
-                      ],
+              // Widget "Invisível" para captura de imagem
+              if (_couponToShare != null)
+                Positioned(
+                  left: -1000, // Fora da tela
+                  child: RepaintBoundary(
+                    key: _shareKey,
+                    child: CouponShareService.buildShareableCoupon(
+                      shopName: _shopName,
+                      code: _couponToShare!['code'] ?? '',
+                      discount: _couponToShare!['discountPercent'] ?? 0,
+                      logoUrl: _logoUrl,
+                      description: _couponToShare!['descricao'],
+                      subdomain: _slug,
+                      validUntil: _couponToShare!['validUntil'] != null
+                          ? DateFormat('dd/MM/yyyy').format(
+                              (_couponToShare!['validUntil'] as Timestamp)
+                                  .toDate())
+                          : null,
                     ),
                   ),
                 ),
-              ),
-            ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _showCouponDialog(),
-        backgroundColor: AppColors.primaryPurple,
-        child: const Icon(Icons.add, color: Colors.white),
-      ),
+
+              if (_isGeneratingImage)
+                Container(
+                  color: Colors.black26,
+                  child: const Center(
+                    child: Card(
+                      child: Padding(
+                        padding:
+                            EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            CircularProgressIndicator(strokeWidth: 2),
+                            SizedBox(width: 16),
+                            Text("Gerando imagem..."),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          floatingActionButton: FloatingActionButton(
+            onPressed: () {
+              if (!_currentFeatures.coupons) {
+                _showUpgradeDialog();
+                return;
+              }
+              _showCouponDialog();
+            },
+            backgroundColor: AppColors.primaryPurple,
+            child: const Icon(Icons.add, color: Colors.white),
+          ),
+        );
+      },
     );
   }
 
@@ -200,19 +236,29 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         leading: Container(
-          padding: const EdgeInsets.all(10),
+          padding: _logoUrl != null ? EdgeInsets.zero : const EdgeInsets.all(10),
+          width: 44,
+          height: 44,
           decoration: BoxDecoration(
             color: (isActive && !isExpired)
                 ? AppColors.primaryPurple.withValues(alpha: 0.1)
                 : Colors.grey[100],
             shape: BoxShape.circle,
+            image: _logoUrl != null
+                ? DecorationImage(
+                    image: CachedNetworkImageProvider(_logoUrl!),
+                    fit: BoxFit.cover,
+                  )
+                : null,
           ),
-          child: Icon(
-            Icons.local_offer,
-            color: (isActive && !isExpired)
-                ? AppColors.primaryPurple
-                : Colors.grey,
-          ),
+          child: _logoUrl == null
+              ? Icon(
+                  Icons.local_offer,
+                  color: (isActive && !isExpired)
+                      ? AppColors.primaryPurple
+                      : Colors.grey,
+                )
+              : null,
         ),
         title: Row(
           children: [
@@ -273,13 +319,10 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
     final codeCtrl = TextEditingController(text: initialData?['code'] ?? '');
     final descCtrl =
         TextEditingController(text: initialData?['descricao'] ?? '');
-    final percentCtrl = TextEditingController(
-        text: initialData != null
-            ? initialData['discountPercent'].toString()
-            : '10');
     DateTime? selectedDate =
         (initialData?['validUntil'] as Timestamp?)?.toDate();
     int? selectedMonth = initialData?['validMonth'];
+    double discountValue = (initialData?['discountPercent'] as num?)?.toDouble() ?? 10.0;
     bool isActive = initialData?['isActive'] ?? true;
 
     showModalBottomSheet(
@@ -287,18 +330,20 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => Container(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom,
-          ),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
-          ),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(28),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
+          builder: (context, setDialogState) => SafeArea(
+          bottom: false,
+          child: Container(
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).viewInsets.bottom,
+            ),
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
+            ),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(28, 28, 28, 0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
@@ -340,7 +385,8 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
                         ),
                         Switch(
                           value: isActive,
-                          activeColor: AppColors.primaryPurple,
+                          activeTrackColor: AppColors.primaryPurple.withValues(alpha: 0.5),
+                          activeThumbColor: AppColors.primaryPurple,
                           onChanged: (val) =>
                               setDialogState(() => isActive = val),
                         ),
@@ -381,36 +427,55 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
                 ),
 
                 const SizedBox(height: 20),
-
-                // DESCONTO
-                const Text(
-                  "CENTUAL DE DESCONTO (%)",
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey,
-                  ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      "CENTUAL DE DESCONTO (%)",
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey,
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryPurple.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        "${discountValue.toInt()}%",
+                        style: const TextStyle(
+                          color: AppColors.primaryPurple,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 8),
-                TextField(
-                  controller: percentCtrl,
-                  decoration: InputDecoration(
-                    suffixIcon: const Padding(
-                      padding: EdgeInsets.all(12),
-                      child: Text("%",
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 18)),
-                    ),
-                    filled: true,
-                    fillColor: Colors.grey[50],
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: Colors.grey[200]!),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: Colors.grey[200]!),
-                    ),
+                SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    activeTrackColor: AppColors.primaryPurple,
+                    inactiveTrackColor: AppColors.primaryPurple.withValues(alpha: 0.1),
+                    thumbColor: AppColors.primaryPurple,
+                    overlayColor: AppColors.primaryPurple.withValues(alpha: 0.2),
+                    valueIndicatorColor: AppColors.primaryPurple,
+                    valueIndicatorTextStyle: const TextStyle(color: Colors.white),
+                  ),
+                  child: Slider(
+                    value: discountValue,
+                    min: 0,
+                    max: 100,
+                    divisions: 100,
+                    label: "${discountValue.toInt()}%",
+                    onChanged: (val) {
+                      setDialogState(() {
+                        discountValue = val;
+                      });
+                    },
                   ),
                 ),
                 const SizedBox(height: 20),
@@ -572,13 +637,14 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
                   height: 56,
                   child: ElevatedButton(
                     onPressed: () async {
-                      if (codeCtrl.text.isEmpty || percentCtrl.text.isEmpty)
+                      if (codeCtrl.text.isEmpty) {
                         return;
+                      }
 
                       final data = {
                         'code': codeCtrl.text.trim().toUpperCase(),
                         'descricao': descCtrl.text.trim(),
-                        'discountPercent': int.tryParse(percentCtrl.text) ?? 0,
+                        'discountPercent': discountValue.toInt(),
                         'isActive': isActive,
                         'validUntil': selectedDate != null
                             ? Timestamp.fromDate(selectedDate!)
@@ -647,14 +713,17 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
                     ),
                   ),
                 ],
-                const SizedBox(height: 40), // Espaço para barra do Android
+                const SizedBox(height: 12),
+                // Padding extra para garantir que não fique atrás da barra do Android
+                SizedBox(height: MediaQuery.of(context).padding.bottom + 20),
               ],
             ),
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
   void _confirmDelete(String id) {
     showDialog(
@@ -682,6 +751,18 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
             child: const Text('EXCLUIR'),
           ),
         ],
+      ),
+    );
+  }
+
+  void _showUpgradeDialog() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => const UpgradeModal(
+        featureName: "Gestão de Cupons",
+        requiredPlan: "Plus",
       ),
     );
   }

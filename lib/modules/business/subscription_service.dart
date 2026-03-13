@@ -1,4 +1,5 @@
-﻿import 'package:flutter/material.dart';
+import 'dart:async';
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -20,7 +21,7 @@ class SubscriptionService {
       'price': 0.00,
       'employeeLimit': 1,
       'clientLimit': 50,
-      'adEnabled': true,
+      'adEnabled': false,
       'onlinePayment': false,
       'financialModule': false,
       'commissionModule': false,
@@ -28,45 +29,51 @@ class SubscriptionService {
       'customLink': false,
       'maxServicePhotos': 1,
       'advancedScheduling': false,
-      'features': ['scheduling', 'ads'],
+      'features': ['scheduling'],
       'description': 'Ideal para conhecer a plataforma.',
     },
     SubscriptionPlan.start: {
       'name': 'Start',
       'price': 29.90,
-      'employeeLimit': 3,
+      'employeeLimit': 2,
       'clientLimit': 500,
       'adEnabled': false,
-      'onlinePayment': false,
+      'onlinePayment': true,
       'financialModule': false,
-      'commissionModule': false,
+      'commissionModule': true,
       'inventoryModule': false,
       'customLink': true,
       'maxServicePhotos': 3,
       'advancedScheduling': false,
-      'features': ['scheduling', 'custom_link'],
-      'description': 'Perfeito para autônomos.',
+      'features': ['Agendamento Online', 'Pagamento via PIX', 'Visualizar Comissões'],
+      'description': 'Perfeito para autônomos que estão começando.',
     },
     SubscriptionPlan.plus: {
       'name': 'Plus',
       'price': 59.90,
-      'employeeLimit': 5,
+      'employeeLimit': 3,
       'clientLimit': 999999,
       'adEnabled': false,
       'onlinePayment': true,
-      'financialModule': true,
-      'commissionModule': false,
+      'financialModule': false,
+      'commissionModule': true,
       'inventoryModule': true,
       'customLink': true,
       'maxServicePhotos': 5,
       'advancedScheduling': true,
-      'features': ['scheduling', 'financial'],
-      'description': 'Gestão completa com pagamentos online.',
+      'features': [
+        'Gestão de Estoque',
+        'Cupons de Desconto',
+        'Reajuste Automático de Valores',
+        'Classificação de Clientes (VIP)',
+        'Automações de Marketing'
+      ],
+      'description': 'Gestão completa com automações e estoque.',
     },
     SubscriptionPlan.pro: {
       'name': 'Pro',
       'price': 99.90,
-      'employeeLimit': 15,
+      'employeeLimit': 5,
       'clientLimit': 999999,
       'adEnabled': false,
       'onlinePayment': true,
@@ -74,9 +81,9 @@ class SubscriptionService {
       'commissionModule': true,
       'inventoryModule': true,
       'customLink': true,
-      'maxServicePhotos': 10,
+      'maxServicePhotos': 5,
       'advancedScheduling': true,
-      'features': ['all'],
+      'features': ['Painel Financeiro Completo (DRE/Caixa)', 'Todas as funções liberadas'],
       'description': 'Recursos ilimitados para o seu negócio.',
     },
   };
@@ -104,41 +111,59 @@ class SubscriptionService {
         }
       }
 
-      if (shopId == null) return SubscriptionPlan.start;
+      if (shopId == null) return SubscriptionPlan.free;
 
       final doc = await FirebaseFirestore.instance
           .collection(_collection)
           .doc(shopId)
           .get();
-      if (!doc.exists) return SubscriptionPlan.start;
+      if (!doc.exists) return SubscriptionPlan.free;
 
       final data = doc.data();
       final sub = data?['subscription'] as Map<String, dynamic>?;
 
-      if (sub == null) {
-        // Se a assinatura não existe, verifica o novo Sistema de Trial
-        final trialStatus = await TrialService.getTrialStatus();
-        if (trialStatus['trialActive'] == true) {
-          return _parsePlanId(trialStatus['trialPlan']);
-        }
-        if (trialStatus['trialExpired'] == true) {
-          await TrialService.checkAndDeactivateExpiredTrial(); // Lazy check
-        }
-        return SubscriptionPlan.start;
-      }
-
-      // Verifica Trial Clássico (legado)
-      if (sub['status'] == 'trial') {
-        final end = (sub['trial_ends_at'] as Timestamp?)?.toDate();
-        if (end != null && end.isAfter(DateTime.now())) {
-          return SubscriptionPlan.pro; // Trial dá acesso total
+      // 1. Verifica Novo Sistema de Trial (Prioridade se não houver assinatura paga ativa)
+      final trialActive = data?['trial_active'] == true;
+      if (trialActive) {
+        Timestamp? end = data?['trial_end_date'];
+        if (end != null && end.toDate().isAfter(DateTime.now())) {
+          return _parsePlanId(data?['trial_plan'] as String?);
+        } else if (end != null) {
+          await TrialService.checkAndDeactivateExpiredTrial();
         }
       }
 
-      final planId = sub['plan_id'] as String?;
-      return _parsePlanId(planId);
+      // 2. Verifica Assinatura Stripe/Paga (subscription object)
+      if (sub != null) {
+        // Verifica Trial Clássico (legado no objeto sub)
+        if (sub['status'] == 'trial') {
+          final end = (sub['trial_ends_at'] as Timestamp?)?.toDate();
+          if (end != null && end.isAfter(DateTime.now())) {
+            return SubscriptionPlan.pro;
+          }
+        }
+
+        if (sub['status'] == 'active') {
+          return _parsePlanId(sub['plan_id'] as String?);
+        }
+        
+        if (sub['status'] == 'canceled' || sub['status'] == 'cancelled') {
+           final accessUntil = (sub['access_until'] as Timestamp?)?.toDate();
+           if (accessUntil != null && accessUntil.isAfter(DateTime.now())) {
+             return _parsePlanId(sub['plan_id'] as String?);
+           }
+        }
+      }
+
+      // 3. Fallback final: campos plan/plan_id na raiz
+      final rootPlanId = (data?['plan'] as String?) ?? (data?['plan_id'] as String?);
+      if (rootPlanId != null && rootPlanId != 'free') {
+        return _parsePlanId(rootPlanId);
+      }
+
+      return SubscriptionPlan.free;
     } catch (e) {
-      return SubscriptionPlan.start;
+      return SubscriptionPlan.free;
     }
   }
 
@@ -218,62 +243,50 @@ class SubscriptionService {
           .collection(_collection)
           .doc(shopId)
           .get();
-      if (!doc.exists) return SubscriptionPlan.start;
+      if (!doc.exists) return SubscriptionPlan.free;
       final data = doc.data();
       final sub = data?['subscription'] as Map<String, dynamic>?;
 
-      if (sub == null) {
-        // Se a assinatura não existe, verifica o novo Sistema de Trial
-        final trialActive = data?['trial_active'] == true;
-        if (trialActive) {
-          Timestamp? end = data?['trial_end_date'];
-          if (end != null && end.toDate().isAfter(DateTime.now())) {
-            return _parsePlanId(data?['trial_plan'] as String?);
-          } else if (end != null) {
-            // Expirou
-            await TrialService.checkAndDeactivateExpiredTrial();
+      // 1. Verifica Novo Sistema de Trial
+      final trialActive = data?['trial_active'] == true;
+      if (trialActive) {
+        Timestamp? end = data?['trial_end_date'];
+        if (end != null && end.toDate().isAfter(DateTime.now())) {
+          return _parsePlanId(data?['trial_plan'] as String?);
+        } else if (end != null) {
+          await TrialService.checkAndDeactivateExpiredTrial();
+        }
+      }
+
+      // 2. Verifica Assinatura
+      if (sub != null) {
+        // Legado: trial clássico
+        if (sub['status'] == 'trial') {
+          final end = (sub['trial_ends_at'] as Timestamp?)?.toDate();
+          if (end != null && end.isAfter(DateTime.now())) {
+            return SubscriptionPlan.pro;
           }
         }
-        // Fallback: verifica campos plan/plan_id na raiz do documento
-        // (salvos por upgradeSubscription e reactivateSubscription)
-        final rootPlanId =
-            (data?['plan'] as String?) ?? (data?['plan_id'] as String?);
-        if (rootPlanId != null && rootPlanId != 'free') {
-          return _parsePlanId(rootPlanId);
-        }
-        return SubscriptionPlan.start;
-      }
 
-      // Legado: trial clássico
-      if (sub['status'] == 'trial') {
-        final end = (sub['trial_ends_at'] as Timestamp?)?.toDate();
-        if (end != null && end.isAfter(DateTime.now())) {
-          return SubscriptionPlan.pro;
+        // Assinatura cancelada
+        if (sub['status'] == 'canceled' || sub['status'] == 'cancelled') {
+          final accessUntil = (sub['access_until'] as Timestamp?)?.toDate();
+          if (accessUntil != null && accessUntil.isAfter(DateTime.now())) {
+            return _parsePlanId(sub['plan_id'] as String?);
+          }
+        } else {
+          // Ativa ou outros status que concedem plano
+          final planFromSub = _parsePlanId(sub['plan_id'] as String?);
+          if (planFromSub != SubscriptionPlan.free) return planFromSub;
         }
       }
 
-      // Assinatura cancelada: verificar se ainda está dentro do período de acesso
-      if (sub['status'] == 'canceled' || sub['status'] == 'cancelled') {
-        final accessUntil = (sub['access_until'] as Timestamp?)?.toDate();
-        if (accessUntil != null && accessUntil.isAfter(DateTime.now())) {
-          // Ainda tem acesso — retorna plano salvo
-          return _parsePlanId(sub['plan_id'] as String?);
-        }
-        // Acesso expirado após cancelamento
-        return SubscriptionPlan.start;
-      }
-
-      // Plano ativo: usa plan_id do subscription, com fallback para raiz do documento
-      final planFromSub = _parsePlanId(sub['plan_id'] as String?);
-      if (planFromSub != SubscriptionPlan.start) return planFromSub;
-
-      // Fallback final: campo plan/plan_id na raiz (set por algunas Cloud Functions)
-      final rootPlanId =
-          (data?['plan'] as String?) ?? (data?['plan_id'] as String?);
+      // 3. Fallback final: campos na raiz
+      final rootPlanId = (data?['plan'] as String?) ?? (data?['plan_id'] as String?);
       return _parsePlanId(rootPlanId);
     } catch (e) {
       debugPrint('getShopPlan error: $e');
-      return SubscriptionPlan.start;
+      return SubscriptionPlan.free;
     }
   }
 
@@ -347,10 +360,14 @@ class SubscriptionService {
       return false;
     }
 
-    // Detecta plano atual
+    // Detecta plano atual e status de trial
+    final doc = await FirebaseFirestore.instance.collection(_collection).doc(shopId).get();
+    final shopData = doc.data();
+    final isTrial = shopData?['trial_active'] == true;
+    
     final currentPlan = await getCurrentPlan();
     final currentPlanPrice = (_plans[currentPlan]!['price'] as num).toDouble();
-    final isCurrentlyPaid = currentPlanPrice > 0;
+    final isCurrentlyPaid = currentPlanPrice > 0 && !isTrial;
 
     // ── CENÁRIO 1: downgrade para FREE (cancelamento) ────────────────
     if (planPrice <= 0) {
@@ -399,7 +416,56 @@ class SubscriptionService {
       }
     }
 
-    // ── CENÁRIO 2: upgrade ou downgrade entre planos pagos ───────────
+    // ── CENÁRIO 2: Upgrade durante TRIAL ──────────────────────────────
+    if (isTrial) {
+      if (!context.mounted) return false;
+      
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.info_outline, color: AppColors.primaryPurple),
+              SizedBox(width: 8),
+              Text('Ativar Assinatura?'),
+            ],
+          ),
+          content: Text(
+            'Você está em período de teste gratuito. Ao assinar o plano $planName agora, '
+            'seu período de teste será encerrado e iniciaremos sua assinatura paga.\n\n'
+            'Valor: R\$ ${planPrice.toStringAsFixed(2).replaceAll(".", ",")}/mês.'
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Voltar'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryPurple,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Confirmar e Assinar'),
+            ),
+          ],
+        ),
+      );
+      if (confirm != true || !context.mounted) return false;
+
+      // Desativa trial antes ou durante a assinatura? 
+      // O melhor é deixar a ativação da assinatura sobrescrever o trial no backend via webhook do stripe,
+      // mas aqui vamos tratar como uma "Nova Assinatura".
+      return await _iniciarPagamentoAssinatura(
+        context: context,
+        shopId: shopId,
+        planId: planId,
+        planName: planName,
+        planPrice: planPrice,
+      );
+    }
+
+    // ── CENÁRIO 3: upgrade ou downgrade entre planos pagos ativos ───────────
     if (isCurrentlyPaid && currentPlan != plan) {
       if (!context.mounted) return false;
       final isUpgrade = planPrice > currentPlanPrice;
@@ -702,7 +768,7 @@ class SubscriptionService {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content:
-                Text(result.data?['message'] ?? 'Assinatura reativada! ðŸš€'),
+                Text(result.data?['message'] ?? 'Assinatura reativada! 🚀'),
             backgroundColor: Colors.green,
           ),
         );

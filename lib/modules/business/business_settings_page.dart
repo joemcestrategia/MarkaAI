@@ -1,17 +1,18 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../../core/theme/app_colors.dart';
-import '../../pages/privacy_settings_page.dart';
 import '../../core/services/session_service.dart';
+import '../../core/services/plan_features_service.dart';
+import '../../core/constants/plan_features.dart';
+import '../../widgets/upgrade_modal.dart';
 import 'link_google_business_page.dart';
 import '../backup/calendar_backup_page.dart';
 import 'payment_settings_page.dart';
-import 'subscription_service.dart';
 import 'subscription_plans_page.dart';
+import 'subscription_service.dart';
 import '../../core/widgets/plan_gate_widget.dart';
-import 'coupons/manage_coupons_page.dart';
 
 class BusinessSettingsPage extends StatefulWidget {
   const BusinessSettingsPage({super.key});
@@ -23,6 +24,7 @@ class BusinessSettingsPage extends StatefulWidget {
 class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   bool _isLoading = true;
   String? shopId;
+  PlanFeatures _currentFeatures = planFeaturesConfig[PlanKey.free]!;
 
   // --- ESTADOS DAS CONFIGURAÇÕES ---
   bool _allowMultiple = false;
@@ -95,6 +97,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       shopId = sId;
 
       if (shopId != null) {
+        _currentFeatures =
+            await PlanFeaturesService.loadFeaturesByShopId(shopId!);
+
         final doc = await FirebaseFirestore.instance
             .collection('shops')
             .doc(shopId)
@@ -196,7 +201,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           : (_cancelValue.round() * 24);
 
       // Payment validation for Free Plan
-      final canUseOnline = await SubscriptionService.canUseOnlinePayment();
+      final canUseOnline = _currentFeatures.mercadoPagoIntegration;
 
       if (!canUseOnline) {
         // Free plan: force cash only
@@ -308,73 +313,77 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   CircularProgressIndicator(color: AppColors.primaryPurple)));
     }
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF2F4F8),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          bool isMobile = constraints.maxWidth < 900;
+    return StreamBuilder<PlanFeatures>(
+      stream: PlanFeaturesService.streamFeaturesByShopId(shopId!),
+      builder: (context, snapshot) {
+        if (snapshot.hasData) {
+          _currentFeatures = snapshot.data!;
+        }
 
-          if (isMobile) {
-            return Column(
-              children: [
-                Expanded(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      children: [
-                        _buildMainSettingsForm(),
-                        const SizedBox(height: 20),
-                        _buildHelpPanel(),
-                      ],
-                    ),
-                  ),
-                ),
-                _buildSaveArea(),
-              ],
-            );
-          } else {
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  flex: 3,
-                  child: Column(
-                    children: [
-                      Expanded(
-                        child: SingleChildScrollView(
-                          padding: const EdgeInsets.all(30),
-                          child: _buildMainSettingsForm(),
+        return Scaffold(
+          backgroundColor: const Color(0xFFF2F4F8),
+          body: LayoutBuilder(
+            builder: (context, constraints) {
+              bool isMobile = constraints.maxWidth < 900;
+
+              if (isMobile) {
+                return Column(
+                  children: [
+                    Expanded(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          children: [
+                            _buildMainSettingsForm(),
+                            const SizedBox(height: 20),
+                            _buildHelpPanel(),
+                          ],
                         ),
                       ),
-                      _buildSaveArea(),
-                    ],
-                  ),
-                ),
-                VerticalDivider(width: 1, color: Colors.grey[300]),
-                Expanded(
-                  flex: 2,
-                  child: _buildHelpPanel(isDesktop: true),
-                ),
-              ],
-            );
-          }
-        },
-      ),
+                    ),
+                    _buildSaveArea(),
+                  ],
+                );
+              } else {
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: Column(
+                        children: [
+                          Expanded(
+                            child: SingleChildScrollView(
+                              padding: const EdgeInsets.all(30),
+                              child: _buildMainSettingsForm(),
+                            ),
+                          ),
+                          _buildSaveArea(),
+                        ],
+                      ),
+                    ),
+                    VerticalDivider(width: 1, color: Colors.grey[300]),
+                    Expanded(
+                      flex: 2,
+                      child: _buildHelpPanel(isDesktop: true),
+                    ),
+                  ],
+                );
+              }
+            },
+          ),
+        );
+      },
     );
   }
 
   // --- COMPONENTES DA UI ---
 
   Widget _buildMainSettingsForm() {
-    return FutureBuilder<bool>(
-        future: SubscriptionService.canUseAdvancedScheduling(),
-        builder: (context, snapshot) {
-          final isPremium = snapshot.data ?? false;
-
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // ----------- Toggle principal — SEMPRE ativo -----------
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // ----------- Toggle principal — SEMPRE ativo -----------
               _buildSettingCard([
                 _buildSwitchTile(
                     "Agendamento Online Ativo",
@@ -462,14 +471,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         ),
                         const Divider(height: 1),
 
-                        // EVITAR BURACOS (PREMIUM)
+                        // EVITAR BURACOS
                         Opacity(
-                          opacity: isPremium ? 1.0 : 0.6,
+                          opacity: _currentFeatures.agendaOptimization ? 1.0 : 0.6,
                           child: SwitchListTile(
-                            value: isPremium ? _preventGaps : false,
-                            onChanged: isPremium
+                            value: _currentFeatures.agendaOptimization ? _preventGaps : false,
+                            onChanged: _currentFeatures.agendaOptimization
                                 ? (v) => setState(() => _preventGaps = v)
-                                : (v) => _showUpgradeDialog(),
+                                : (v) => _showUpgradeDialog('Otimização de Agenda', PlanKey.starter),
                             activeThumbColor: AppColors.primaryPurple,
                             title: Row(
                               children: [
@@ -480,7 +489,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                           fontSize: 14,
                                           fontWeight: FontWeight.bold)),
                                 ),
-                                if (!isPremium) _buildPremiumBadge(),
+                                if (!_currentFeatures.agendaOptimization) _buildPremiumBadge(),
                               ],
                             ),
                             subtitle: const Text(
@@ -564,18 +573,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         ),
                         const Divider(height: 1),
 
-                        // MÚLTIPLOS AGENDAMENTOS (PREMIUM)
-                        Opacity(
-                          opacity: isPremium ? 1.0 : 0.6,
-                          child: _buildSwitchTile(
-                            "Múltiplos Agendamentos",
-                            "Cliente reserva vários serviços/horários",
-                            isPremium ? _allowMultiple : false,
-                            isPremium
-                                ? (v) => setState(() => _allowMultiple = v)
-                                : (v) => _showUpgradeDialog(),
-                            trailing: !isPremium ? _buildPremiumBadge() : null,
-                          ),
+                        // MÚLTIPLOS AGENDAMENTOS (Sempre disponivel)
+                        _buildSwitchTile(
+                          "Múltiplos Agendamentos",
+                          "Cliente reserva vários serviços/horários",
+                          _allowMultiple,
+                          (v) => setState(() => _allowMultiple = v),
                         ),
                         _buildSwitchTile(
                             "Reagendamento Livre",
@@ -583,18 +586,18 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                             _allowReschedule,
                             (v) => setState(() => _allowReschedule = v)),
 
-                        // ESCOLHA DE PROFISSIONAL (PREMIUM)
+                        // ESCOLHA DE PROFISSIONAL
                         Opacity(
-                          opacity: isPremium ? 1.0 : 0.6,
+                          opacity: _currentFeatures.clientChoosesProfessional ? 1.0 : 0.6,
                           child: _buildSwitchTile(
                             "Escolha de Profissional",
                             "Exibir lista de equipe no agendamento",
-                            isPremium ? _clientChoosesProfessional : true,
-                            isPremium
+                            _currentFeatures.clientChoosesProfessional ? _clientChoosesProfessional : false, // Fixed logical bug from old code (true -> false to enforce off)
+                            _currentFeatures.clientChoosesProfessional
                                 ? (v) => setState(
                                     () => _clientChoosesProfessional = v)
-                                : (v) => _showUpgradeDialog(),
-                            trailing: !isPremium ? _buildPremiumBadge() : null,
+                                : (v) => _showUpgradeDialog('Escolha de Profissional', PlanKey.starter),
+                            trailing: !_currentFeatures.clientChoosesProfessional ? _buildPremiumBadge() : null,
                           ),
                         ),
                       ]),
@@ -617,11 +620,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           "Pagamentos Online", Icons.account_balance_wallet),
                       _buildPaymentIntegrationCard(),
 
-                      // --- GESTÃO DE CUPONS (PIX ONLY) ---
-                      const SizedBox(height: 24),
-                      _buildSectionHeader("Cupons de Desconto",
-                          Icons.confirmation_number_outlined),
-                      _buildCouponSettingsCard(),
 
                       // --- CONFIGURAÇÕES VIP E CONFIANÇA ---
                       const SizedBox(height: 24),
@@ -642,43 +640,21 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               ),
 
               // --- INTEGRAÇÕES — sempre ativa ---
-              _buildSectionHeader("Ferramentas", Icons.construction),
-              _buildSettingCard([
-                ListTile(
-                  leading: const Icon(Icons.trending_up,
-                      color: AppColors.primaryPurple),
-                  title: const Text("Reajuste de Valores",
-                      style:
-                          TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-                  subtitle: const Text(
-                      "Ajuste todos os preços anualmente de uma vez",
-                      style: TextStyle(fontSize: 12)),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () =>
-                      Navigator.pushNamed(context, 'business/price_adjustment'),
-                ),
-              ]),
-              const SizedBox(height: 24),
-
               _buildSectionHeader("Integrações", Icons.link),
               _buildIntegrationsCard(),
 
               const SizedBox(height: 24),
             ],
           );
-        });
   }
 
   Widget _buildVIPSettingsCard() {
-    return FutureBuilder<bool>(
-      future: SubscriptionService.canUseOnlinePayment(),
-      builder: (context, snapshot) {
-        final isPremium = snapshot.data ?? false;
-        return _buildSettingCard([
-          Opacity(
-            opacity: isPremium ? 1.0 : 0.6,
-            child: Column(
-              children: [
+    final isPremium = _currentFeatures.clientClassification;
+    return _buildSettingCard([
+      Opacity(
+        opacity: isPremium ? 1.0 : 0.6,
+        child: Column(
+          children: [
                 // Proteção de Pagamento Pessoalmente
                 _buildSwitchTile(
                   "Restringir Pagamento Pessoalmente",
@@ -686,7 +662,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   isPremium ? _trustedOnlyPayInPerson : false,
                   isPremium
                       ? (v) => setState(() => _trustedOnlyPayInPerson = v)
-                      : (v) => _showUpgradeDialog(),
+                      : (v) => _showUpgradeDialog('Restringir Pagamentos a VIPs', PlanKey.plus),
                   trailing: !isPremium ? _buildPremiumBadge() : null,
                 ),
                 const Divider(height: 1),
@@ -726,7 +702,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         activeColor: AppColors.primaryPurple,
                         onChanged: isPremium
                             ? (v) => setState(() => _vipExtraDays = v)
-                            : (v) => _showUpgradeDialog(),
+                            : (v) => _showUpgradeDialog('Dias Extras para VIP', PlanKey.plus),
                       ),
                     ],
                   ),
@@ -737,8 +713,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 _buildSwitchTile(
                     "Restringir Clientes Problemáticos",
                     "Impede que clientes marcados como 'problemáticos' agendem online",
-                    _restrictProblematicClients,
-                    (v) => setState(() => _restrictProblematicClients = v)),
+                    isPremium ? _restrictProblematicClients : false,
+                    isPremium 
+                      ? (v) => setState(() => _restrictProblematicClients = v)
+                      : (v) => _showUpgradeDialog('Bloqueio de Clientes Problemáticos', PlanKey.plus),
+                    trailing: !isPremium ? _buildPremiumBadge() : null,
+                ),
 
                 const Divider(height: 1),
 
@@ -801,8 +781,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             ),
           ),
         ]);
-      },
-    );
   }
 
   Widget _buildAutomationHeader(String title, IconData icon) {
@@ -876,32 +854,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     );
   }
 
-  void _showUpgradeDialog() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Recurso Premium ?"),
-        content: const Text(
-            "Configurações avançadas de agenda são exclusivas de planos pagos.\n\nAssine para liberar!"),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text("Depois"),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              await Navigator.pushNamed(context, '/subscription_plans');
-              if (mounted) setState(() {});
-            },
-            style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primaryPurple,
-                foregroundColor: Colors.white),
-            child: const Text("Ver Planos"),
-          ),
-        ],
-      ),
-    );
+  void _showUpgradeDialog(String featureName, PlanKey requiredPlan) {
+    UpgradeModal.show(context, featureName: featureName, requiredPlan: requiredPlan.name.toUpperCase());
   }
 
   Widget _buildHelpPanel({bool isDesktop = false}) {
@@ -1054,40 +1008,26 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   }
 
   Widget _buildFinanceCard() {
-    return FutureBuilder<bool>(
-      future: SubscriptionService.canUseOnlinePayment(),
-      builder: (context, snapshot) {
-        final isPremium = snapshot.data ?? false;
+    final allowPayments = _currentFeatures.mercadoPagoIntegration;
+    final allowDeposit = _currentFeatures.requireDeposit;
+    final allowCreditCard = _currentFeatures.payments.contains('credit_card');
+    final allowPix = _currentFeatures.payments.contains('pix');
 
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Banner de upgrade para usuários free
-            if (snapshot.hasData && !isPremium)
-              PlanUpgradeBanner(
-                currentPlanName: 'Free',
-                featureDescription: 'pagamentos online (PIX e Cartão)',
-                onUpgradeTap: () async {
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => const SubscriptionPlansPage()),
-                  );
-                  if (mounted) setState(() {});
-                },
-              ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
             _buildSettingCard([
               // SINAL / ENTRADA
               SwitchListTile(
                 title: const Text("Exigir Sinal (Entrada)",
                     style:
                         TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-                value: _requireDeposit,
+                value: allowDeposit ? _requireDeposit : false,
                 activeThumbColor: AppColors.primaryPurple,
-                onChanged: isPremium
+                onChanged: allowDeposit
                     ? (v) => setState(() => _requireDeposit = v)
-                    : (v) => _showUpgradeDialog(),
-                subtitle: !isPremium
+                    : (v) => _showUpgradeDialog('Exigir Sinal', PlanKey.starter),
+                subtitle: !allowDeposit
                     ? Row(
                         children: [
                           _buildPremiumBadge(),
@@ -1130,12 +1070,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
 
                       // Cartão Online
                       Opacity(
-                        opacity: isPremium ? 1.0 : 0.6,
+                        opacity: allowCreditCard ? 1.0 : 0.6,
                         child: _buildSwitchTile(
                           "Cartão de Crédito/Débito (Online)",
                           "Necessário plugar Mercado Pago na aba Integrações",
-                          isPremium ? _cartaoOnline : false,
-                          isPremium
+                          allowCreditCard ? _cartaoOnline : false,
+                          allowCreditCard
                               ? (v) {
                                   int active = (v ? 1 : 0) +
                                       (_debitoPresencial ? 1 : 0) +
@@ -1148,19 +1088,19 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                   }
                                   setState(() => _cartaoOnline = v);
                                 }
-                              : (v) => _showUpgradeDialog(),
-                          trailing: !isPremium ? _buildPremiumBadge() : null,
+                              : (v) => _showUpgradeDialog('Pagamento Via Cartão de Crédito', PlanKey.plus),
+                          trailing: !allowCreditCard ? _buildPremiumBadge() : null,
                         ),
                       ),
 
                       // Pix Online
                       Opacity(
-                        opacity: isPremium ? 1.0 : 0.6,
+                        opacity: allowPix ? 1.0 : 0.6,
                         child: _buildSwitchTile(
                           "Pix",
                           "Pagamento instantâneo via QR Code (requer Mercado Pago)",
-                          isPremium ? _debitoPresencial : false,
-                          isPremium
+                          allowPix ? _debitoPresencial : false,
+                          allowPix
                               ? (v) {
                                   int active = (_cartaoOnline ? 1 : 0) +
                                       (v ? 1 : 0) +
@@ -1173,8 +1113,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                   }
                                   setState(() => _debitoPresencial = v);
                                 }
-                              : (v) => _showUpgradeDialog(),
-                          trailing: !isPremium ? _buildPremiumBadge() : null,
+                              : (v) => _showUpgradeDialog('Pagamento Via Pix Automático', PlanKey.starter),
+                          trailing: !allowPix ? _buildPremiumBadge() : null,
                         ),
                       ),
 
@@ -1182,8 +1122,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                       _buildSwitchTile(
                         "Pagar Pessoalmente",
                         "Dinheiro ou PIX direto na loja",
-                        !isPremium ? true : _pagarPessoalmente,
-                        !isPremium
+                        !allowPayments ? true : _pagarPessoalmente,
+                        !allowPayments
                             ? (v) {
                                 if (!v) {
                                   _showSnack(
@@ -1210,21 +1150,21 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
 
                       // Desconto de Aniversário (PIX)
                       Opacity(
-                        opacity: isPremium ? 1.0 : 0.6,
+                        opacity: _currentFeatures.birthdayDiscount ? 1.0 : 0.6,
                         child: Column(
                           children: [
                             _buildSwitchTile(
                               "Desconto de Aniversário (PIX)",
-                              "Oferecer desconto automático no mês do aniversário",
-                              isPremium ? _birthdayPixDiscountEnabled : false,
-                              isPremium
+                              "Oferecer automático no mês do aniversário",
+                              _currentFeatures.birthdayDiscount ? _birthdayPixDiscountEnabled : false,
+                              _currentFeatures.birthdayDiscount
                                   ? (v) => setState(
                                       () => _birthdayPixDiscountEnabled = v)
-                                  : (v) => _showUpgradeDialog(),
+                                  : (v) => _showUpgradeDialog('Desconto de Aniversário', PlanKey.starter),
                               trailing:
-                                  !isPremium ? _buildPremiumBadge() : null,
+                                  !_currentFeatures.birthdayDiscount ? _buildPremiumBadge() : null,
                             ),
-                            if (_birthdayPixDiscountEnabled && isPremium)
+                            if (_birthdayPixDiscountEnabled && _currentFeatures.birthdayDiscount)
                               Padding(
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 16, vertical: 8),
@@ -1314,8 +1254,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             ]),
           ],
         );
-      },
-    );
   }
 
   Widget _buildNotificationCard() {
@@ -1466,132 +1404,67 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
 
       const Divider(height: 1),
 
-      // --- OPÇÕES AVANÇADAS (final das configurações) ---
-      ListTile(
-        leading: Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: AppColors.primaryPurple.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: const Icon(Icons.privacy_tip_outlined,
-              color: AppColors.primaryPurple, size: 24),
-        ),
-        title: const Text(
-          "Privacidade e Segurança",
-          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-        ),
-        subtitle: const Text(
-          "Gerencie seus dados, exportação e políticas (LGPD)",
-          style: TextStyle(fontSize: 12),
-        ),
-        trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const PrivacySettingsPage()),
-          );
-        },
-      ),
     ]);
   }
 
   Widget _buildPaymentIntegrationCard() {
-    return FutureBuilder<bool>(
-      future: SubscriptionService.canUseOnlinePayment(),
-      builder: (context, canPaySnapshot) {
-        final canPay = canPaySnapshot.data ?? false;
-        return _buildSettingCard([
-          PlanGateWidget(
-            requiredPlan: SubscriptionPlan.start,
-            featureLabel: 'Conexão com Mercado Pago',
-            onUpgradeTap: () async {
-              await Navigator.push(
-                context,
-                MaterialPageRoute(
-                    builder: (_) => const SubscriptionPlansPage()),
-              );
-              if (mounted) setState(() {});
-            },
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text("Configurações de Pagamento",
-                      style:
-                          TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  const Text(
-                      "Centralize aqui seu Mercado Pago, métodos aceitos e regras de parcelamento.",
-                      style: TextStyle(fontSize: 12, color: Colors.grey)),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.account_balance_wallet),
-                      label: const Text("CONECTAR MERCADO PAGO"),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primaryPurple,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                      ),
-                      onPressed: canPay
-                          ? () {
-                              if (!mounted) return;
-                              Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                      builder: (_) => PaymentSettingsPage(
-                                          onClose: () =>
-                                              Navigator.pop(context))));
-                            }
-                          : null,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ]);
-      },
-    );
-  }
-
-  Widget _buildCouponSettingsCard() {
+    final canConnect = _currentFeatures.mercadoPagoIntegration;
     return _buildSettingCard([
-      ListTile(
-        leading: Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: AppColors.primaryPurple.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: const Icon(Icons.confirmation_number,
-              color: AppColors.primaryPurple, size: 24),
-        ),
-        title: const Text(
-          "Gerenciar Meus Cupons",
-          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-        ),
-        subtitle: const Text(
-          "Crie códigos de desconto exclusivos para pagamentos via PIX",
-          style: TextStyle(fontSize: 12),
-        ),
-        trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-        onTap: () {
-          if (shopId != null) {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => ManageCouponsPage(shopId: shopId!),
-              ),
-            );
-          }
+      PlanGateWidget(
+        requiredPlan: SubscriptionPlan.start,
+        featureLabel: 'Conexão com Mercado Pago',
+        onUpgradeTap: () async {
+          await Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const SubscriptionPlansPage()),
+          );
+          if (mounted) setState(() {});
         },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text("Configurações de Pagamento",
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
+              const Text(
+                  "Centralize aqui seu Mercado Pago e métodos aceitos.",
+                  style: TextStyle(fontSize: 12, color: Colors.grey)),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.account_balance_wallet, size: 20),
+                  label: const Text("CONECTAR MERCADO PAGO",
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primaryPurple,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                  onPressed: canConnect
+                      ? () {
+                          if (!mounted) return;
+                          Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (_) => PaymentSettingsPage(
+                                      onClose: () => Navigator.pop(context))));
+                        }
+                      : null,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     ]);
   }
+
 
   Widget _buildSaveArea() {
     return Container(

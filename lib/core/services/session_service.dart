@@ -1,4 +1,4 @@
-﻿import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -137,13 +137,20 @@ class SessionService {
           .doc(userId)
           .get();
 
-      final role = doc.data()?['role'] as String?;
+      final data = doc.data();
+      final role = data?['role'] as String?;
+      final roles = data?['roles'] as List?;
+      final isAdminDev = data?['is_admin_dev'] == true;
+
+      final isAnyAdmin = role == 'admin' || 
+                         (roles?.contains('admin') ?? false) || 
+                         isAdminDev;
 
       if (kDebugMode) {
         debugPrint(
-            'DEBUG SessionService: isAdmin checked - role: ${role ?? "NULL"}');
+            'DEBUG SessionService: isAdmin checked - result: $isAnyAdmin');
       }
-      return role == 'admin';
+      return isAnyAdmin;
     } catch (e) {
       if (kDebugMode) {
         debugPrint('ERROR SessionService: isAdmin check failed: $e');

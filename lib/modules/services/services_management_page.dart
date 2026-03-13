@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
@@ -335,11 +335,11 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
     }
   }
 
-  // ðŸ§  CÉREBRO DA NAVEGAÇÃO: Decide se abre painel (PC) ou navega (Mobile)
+  // 🧠 CÉREBRO DA NAVEGAÇÃO: Decide se abre painel (PC) ou navega (Mobile)
   void _handleServiceTap(
       BuildContext context, DocumentSnapshot doc, bool isMobile) {
     if (isMobile) {
-      // ðŸ“± MOBILE: Navega para nova tela
+      // 📱 MOBILE: Navega para nova tela
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -360,7 +360,7 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
         ),
       );
     } else {
-      // ðŸ’» DESKTOP: Abre painel lateral
+      // 💻 DESKTOP: Abre painel lateral
       _openDetailsModeDesktop(doc);
     }
   }
@@ -368,7 +368,7 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
   void _handleCreateTap(BuildContext context, bool isMobile,
       {DocumentSnapshot? docToEdit}) {
     if (isMobile) {
-      // ðŸ“± MOBILE: Navega para tela de cadastro
+      // 📱 MOBILE: Navega para tela de cadastro
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -388,7 +388,7 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
         ),
       );
     } else {
-      // ðŸ’» DESKTOP: Abre painel lateral
+      // 💻 DESKTOP: Abre painel lateral
       if (docToEdit != null) {
         _openEditModeDesktop(docToEdit);
       } else {
@@ -524,7 +524,7 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
     );
   }
 
-  // ðŸ§© WIDGET DE LISTA REUSÁVEL
+  // 🧩 WIDGET DE LISTA REUSÁVEL
   Widget _buildListContent(bool isMobile) {
     return Column(
       children: [
@@ -902,7 +902,7 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
   }
 }
 
-// âœ… WIDGET DE IMAGEM PEXELS (MANTIDO IGUAL)
+// ✅ WIDGET DE IMAGEM PEXELS (MANTIDO IGUAL)
 class _PexelsImage extends StatefulWidget {
   final String searchQuery;
   final int index;

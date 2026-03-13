@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:intl/intl.dart';
@@ -8,6 +8,8 @@ import '../../pages/checkout_page.dart';
 
 import '../../core/utils/availability_utils.dart';
 import '../../core/services/client_verification_service.dart';
+import '../../core/services/plan_features_service.dart';
+import '../../core/constants/plan_features.dart';
 import '../clients/widgets/restricted_client_view.dart';
 
 class BookingPage extends StatefulWidget {
@@ -56,6 +58,8 @@ class _BookingPageState extends State<BookingPage> {
   // o controle de evitar buracos é lido via shopConfig quando necessário
   int _bookingWindowDays = 90;
   int _minAdvanceHours = 7;
+  
+  late PlanFeatures _planFeatures;
 
   bool _isRestricted = false;
   bool _loadingRestriction = true;
@@ -98,10 +102,15 @@ class _BookingPageState extends State<BookingPage> {
   void _loadShopSettings() {
     if (shopData.containsKey('config')) {
       _shopConfig = shopData['config'] as Map<String, dynamic>;
+      _planFeatures = PlanFeaturesService.getFeaturesForShop(shopData);
       setState(() {
         _intervalMinutes = _shopConfig['intervalo_agenda_min'] ?? 60;
-        _clientChoosesProfessional =
-            _shopConfig['cliente_escolhe_prof'] ?? true;
+        
+        // A regra do plano sobrepõe a configuração da loja.
+        // Se o plano não permite escolha, forçamos false.
+        final configAllowsChoice = _shopConfig['cliente_escolhe_prof'] ?? true;
+        _clientChoosesProfessional = _planFeatures.clientChoosesProfessional ? configAllowsChoice : false;
+        
         _bookingWindowDays = _shopConfig['janela_agendamento_dias'] ?? 90;
         _minAdvanceHours = _shopConfig['limite_minimo_agendamento_horas'] ?? 7;
       });
@@ -464,7 +473,7 @@ class _BookingTimePageState extends State<BookingTimePage> {
   void initState() {
     super.initState();
     debugPrint(
-        'ðŸš€ BookingPage: initState | shopId: ${widget.shop.id} | serviceId: ${widget.serviceDoc.id}');
+        '🚀 BookingPage: initState | shopId: ${widget.shop.id} | serviceId: ${widget.serviceDoc.id}');
 
     // Proteção de Rota Direta (Web Bypass Prevention)
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -586,7 +595,7 @@ class _BookingTimePageState extends State<BookingTimePage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // âœ… USANDO CALENDARDATEPICKER - MAIS ESTÁVEL
+              // ✅ USANDO CALENDARDATEPICKER - MAIS ESTÁVEL
               Container(
                 decoration: BoxDecoration(
                   color: Colors.white,
@@ -645,7 +654,7 @@ class _BookingTimePageState extends State<BookingTimePage> {
                 ),
               ),
               const SizedBox(height: 24),
-              // âœ… DATA SELECIONADA
+              // ✅ DATA SELECIONADA
               if (_selectedDate != null)
                 Container(
                   padding: const EdgeInsets.all(16),
@@ -671,7 +680,7 @@ class _BookingTimePageState extends State<BookingTimePage> {
                   ),
                 ),
               const SizedBox(height: 24),
-              // âœ… BOTÕES
+              // ✅ BOTÕES
               Row(
                 children: [
                   Expanded(
@@ -826,7 +835,7 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
   void initState() {
     super.initState();
     debugPrint(
-        'ðŸš€ BookingSlotsPage: initState | date: ${widget.selectedDate}');
+        '🚀 BookingSlotsPage: initState | date: ${widget.selectedDate}');
   }
 
   @override

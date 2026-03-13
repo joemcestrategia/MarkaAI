@@ -56,7 +56,7 @@ class MercadoPagoHelpPage extends StatelessWidget {
               number: "4",
               title: "Copie e Cole",
               content:
-                  "Você verá dois códigos:\n\nðŸ”‘ Public Key (Chave Pública)\nðŸ”’ Access Token (Começa com APP_USR...)\n\nCopie esses códigos e cole nas configurações do App.",
+                  "Você verá dois códigos:\n\n🔑 Public Key (Chave Pública)\n🔐 Access Token (Começa com APP_USR...)\n\nCopie esses códigos e cole nas configurações do App.",
               isLast: true,
             ),
             const SizedBox(height: 30),

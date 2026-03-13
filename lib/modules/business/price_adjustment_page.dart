@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
+import '../../core/services/plan_features_service.dart';
+import '../../core/constants/plan_features.dart';
+import '../../widgets/upgrade_modal.dart';
 
 class PriceAdjustmentPage extends StatefulWidget {
   const PriceAdjustmentPage({super.key});
@@ -13,6 +16,7 @@ class PriceAdjustmentPage extends StatefulWidget {
 class _PriceAdjustmentPageState extends State<PriceAdjustmentPage> {
   bool _isLoading = false;
   String? shopId;
+  PlanFeatures _currentFeatures = planFeaturesConfig[PlanKey.free]!;
 
   double _percentage = 0.0;
   int _roundingStep = 0; // 0: None, 5: Round to 5, 10: Round to 10
@@ -40,6 +44,7 @@ class _PriceAdjustmentPageState extends State<PriceAdjustmentPage> {
       if (historyDoc.docs.isNotEmpty) {
         _lastAdjustment = historyDoc.docs.first.data();
       }
+      // Features are now handled by StreamBuilder in build()
     }
     setState(() => _isLoading = false);
   }
@@ -361,32 +366,60 @@ class _PriceAdjustmentPageState extends State<PriceAdjustmentPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("Reajuste de Valores"),
-        backgroundColor: AppColors.primaryPurple,
-        foregroundColor: Colors.white,
-      ),
-      body: _isLoading
-          ? const Center(
-              child: CircularProgressIndicator(color: AppColors.primaryPurple))
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildHeader(),
-                  const SizedBox(height: 32),
-                  _buildPercentageSlider(),
-                  const SizedBox(height: 32),
-                  _buildRoundingOptions(),
-                  const SizedBox(height: 32),
-                  _buildEffectiveMonthPicker(),
-                  const SizedBox(height: 48),
-                  _buildActionButtons(),
-                ],
-              ),
-            ),
+    if (shopId == null) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator(color: AppColors.primaryPurple)),
+      );
+    }
+
+    return StreamBuilder<PlanFeatures>(
+      stream: PlanFeaturesService.streamFeaturesByShopId(shopId!),
+      builder: (context, snapshot) {
+        if (snapshot.hasData) {
+          _currentFeatures = snapshot.data!;
+          
+          if (!_currentFeatures.automaticPriceAdjustment) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+               if (mounted) {
+                 UpgradeModal.show(
+                   context,
+                   featureName: "Reajuste de Valores",
+                   requiredPlan: "Plus",
+                 );
+                 Navigator.pop(context);
+               }
+            });
+          }
+        }
+
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text("Reajuste de Valores"),
+            backgroundColor: AppColors.primaryPurple,
+            foregroundColor: Colors.white,
+          ),
+          body: _isLoading
+              ? const Center(
+                  child: CircularProgressIndicator(color: AppColors.primaryPurple))
+              : SingleChildScrollView(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildHeader(),
+                      const SizedBox(height: 32),
+                      _buildPercentageSlider(),
+                      const SizedBox(height: 32),
+                      _buildRoundingOptions(),
+                      const SizedBox(height: 32),
+                      _buildEffectiveMonthPicker(),
+                      const SizedBox(height: 48),
+                      _buildActionButtons(),
+                    ],
+                  ),
+                ),
+        );
+      },
     );
   }
 

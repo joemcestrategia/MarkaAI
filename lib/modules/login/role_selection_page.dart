@@ -1,7 +1,7 @@
 ﻿import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 import '../clients/client_register_page.dart';
-// ðŸš¨ IMPORT CORRIGIDO: Removida a HomePage genérica e adicionada a Home de Negócios
+// 🚨 IMPORT CORRIGIDO: Removida a HomePage genérica e adicionada a Home de Negócios
 import '../business/business_home_page.dart';
 
 class RoleSelectionPage extends StatelessWidget {
@@ -63,7 +63,7 @@ class RoleSelectionPage extends StatelessWidget {
               icon: Icons.storefront,
               color: AppColors.primaryPurple,
               onTap: () {
-                // ðŸš¨ NAVEGAÇÃO CORRIGIDA: Agora aponta para a Home de Negócios real
+                // 🚨 NAVEGAÇÃO CORRIGIDA: Agora aponta para a Home de Negócios real
                 Navigator.pushAndRemoveUntil(
                   context,
                   MaterialPageRoute(

@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'core/utils/url_strategy_stub.dart'
     if (dart.library.html) 'core/utils/url_strategy_web.dart';
@@ -133,7 +133,7 @@ class MarkaAIApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       navigatorKey: navigatorKey,
-      title: 'MarkaAI.app',
+      title: 'MarkaAI.com.br',
       debugShowCheckedModeBanner: false,
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,

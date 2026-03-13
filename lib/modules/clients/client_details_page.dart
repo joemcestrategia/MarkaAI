@@ -1,10 +1,13 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
+import '../../core/services/plan_features_service.dart';
+import '../../core/constants/plan_features.dart';
+import '../../widgets/upgrade_modal.dart';
 
 // Tags pré-definidas para classificação de clientes
 const _kPresetTags = [
@@ -41,6 +44,8 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
   final TextEditingController _customTagController = TextEditingController();
   late TabController _tabController;
 
+  PlanFeatures _currentFeatures = planFeaturesConfig[PlanKey.free]!;
+
   @override
   void initState() {
     super.initState();
@@ -62,8 +67,15 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
         shopId = id;
         _isLoading = false;
       });
-      if (id != null) _loadTags(id);
+      if (id != null) {
+        _loadTags(id);
+        _loadFeatures(id);
+      }
     }
+  }
+
+  Future<void> _loadFeatures(String sid) async {
+    // Features are now handled by StreamBuilder in build()
   }
 
   Future<void> _loadTags(String sid) async {
@@ -424,16 +436,21 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
           child: CircularProgressIndicator(color: AppColors.primaryPurple));
     }
 
-    final nome = widget.clientData['nome'] ?? 'Cliente';
-    final telefone = widget.clientData['telefone'] ?? '';
-    final foto =
-        widget.clientData['foto'] ?? widget.clientData['foto_perfil'] ?? '';
-    final bool isManual = widget.clientData['origem'] == 'manual';
-    final Color themeColor = isManual ? Colors.orange : AppColors.primaryPurple;
-    final initials = nome.isNotEmpty ? nome[0].toUpperCase() : '?';
+    return StreamBuilder<PlanFeatures>(
+      stream: PlanFeaturesService.streamFeaturesByShopId(shopId!),
+      builder: (context, snapshot) {
+        if (snapshot.hasData) _currentFeatures = snapshot.data!;
 
-    return Column(
-      children: [
+        final nome = widget.clientData['nome'] ?? 'Cliente';
+        final telefone = widget.clientData['telefone'] ?? '';
+        final foto =
+            widget.clientData['foto'] ?? widget.clientData['foto_perfil'] ?? '';
+        final bool isManual = widget.clientData['origem'] == 'manual';
+        final Color themeColor = isManual ? Colors.orange : AppColors.primaryPurple;
+        final initials = nome.isNotEmpty ? nome[0].toUpperCase() : '?';
+
+        return Column(
+          children: [
         // ── HEADER COMPACTO ──────────────────────────────────────────
         Container(
           color: Colors.white,
@@ -687,37 +704,56 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
               ),
               // Botão editar tags
               InkWell(
-                onTap: () => setState(() => _showTagEditor = !_showTagEditor),
+                onTap: () {
+                  if (!_currentFeatures.clientClassification) {
+                    UpgradeModal.show(
+                      context,
+                      featureName: "Classificação de Clientes",
+                      requiredPlan: "Plus",
+                    );
+                    return;
+                  }
+                  setState(() => _showTagEditor = !_showTagEditor);
+                },
                 child: Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   decoration: BoxDecoration(
-                    color: AppColors.primaryPurple.withValues(alpha: 0.04),
+                    color: _currentFeatures.clientClassification 
+                      ? AppColors.primaryPurple.withValues(alpha: 0.04)
+                      : Colors.grey.withValues(alpha: 0.1),
                     border: Border(
                         top: BorderSide(
-                            color: AppColors.primaryPurple
+                            color: (_currentFeatures.clientClassification ? AppColors.primaryPurple : Colors.grey)
                                 .withValues(alpha: 0.1))),
                   ),
                   child: Row(
                     children: [
-                      Icon(_showTagEditor ? Icons.label : Icons.label_outline,
-                          size: 16, color: AppColors.primaryPurple),
+                      Icon(
+                          _currentFeatures.clientClassification
+                              ? (_showTagEditor ? Icons.label : Icons.label_outline)
+                              : Icons.lock,
+                          size: 16,
+                          color: _currentFeatures.clientClassification ? AppColors.primaryPurple : Colors.grey),
                       const SizedBox(width: 6),
                       Text(
-                          _showTagEditor
-                              ? 'Ocultar editor de tags'
-                              : 'Gerenciar Tags',
-                          style: const TextStyle(
+                          !_currentFeatures.clientClassification
+                              ? 'Classificação (Bloqueado)'
+                              : (_showTagEditor
+                                  ? 'Ocultar editor de tags'
+                                  : 'Gerenciar Tags'),
+                          style: TextStyle(
                               fontSize: 12,
-                              color: AppColors.primaryPurple,
+                              color: _currentFeatures.clientClassification ? AppColors.primaryPurple : Colors.grey,
                               fontWeight: FontWeight.w600)),
                       const Spacer(),
-                      Icon(
-                          _showTagEditor
-                              ? Icons.keyboard_arrow_up
-                              : Icons.keyboard_arrow_down,
-                          size: 16,
-                          color: AppColors.primaryPurple),
+                      if (_currentFeatures.clientClassification)
+                        Icon(
+                            _showTagEditor
+                                ? Icons.keyboard_arrow_up
+                                : Icons.keyboard_arrow_down,
+                            size: 16,
+                            color: AppColors.primaryPurple),
                     ],
                   ),
                 ),
@@ -788,6 +824,8 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
         ),
       ],
     );
+  },
+);
   }
 
   // ── WIDGETS AUXILIARES ────────────────────────────────────────────

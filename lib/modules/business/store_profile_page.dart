@@ -1,4 +1,4 @@
-﻿import 'dart:io';
+import 'dart:io' as io;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -231,7 +231,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
     }
   }
 
-  // ðŸŽ¨ FUNÇÃO CORRIGIDA: Abrir editor de imagem
+  // 🎉¨ FUNÇÃO CORRIGIDA: Abrir editor de imagem
   Future<void> _pickAndEditImage({required bool isCover}) async {
     final ImagePicker picker = ImagePicker();
     final XFile? image = await picker.pickImage(
@@ -273,7 +273,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
         SettableMetadata(contentType: 'image/jpeg'),
       );
     } else {
-      await ref.putFile(File(file.path));
+      await ref.putFile(io.File(file.path));
     }
 
     return await ref.getDownloadURL();
@@ -640,7 +640,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
               child: CircularProgressIndicator(color: AppColors.primaryPurple))
           : CustomScrollView(
               slivers: [
-                // â”€â”€â”€ APP BAR com CAPA e LOGO embutido â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ─── APP BAR com CAPA e LOGO embutido ────────────────────
                 SliverAppBar(
                   expandedHeight: 200.0,
                   pinned: true,
@@ -657,14 +657,14 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                     background: Stack(
                       fit: StackFit.expand,
                       children: [
-                        // â”€â”€ Imagem da Capa â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                        // ── Imagem da Capa ──────────────────────────────
                         GestureDetector(
                           onTap: () => _pickAndEditImage(isCover: true),
                           child: _newCoverFile != null
                               ? (kIsWeb
                                   ? Image.network(_newCoverFile!.path,
                                       fit: BoxFit.cover)
-                                  : Image.file(File(_newCoverFile!.path),
+                                  : Image.file(io.File(_newCoverFile!.path),
                                       fit: BoxFit.cover))
                               : (_coverUrl != null
                                   ? CachedNetworkImage(
@@ -709,7 +709,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                             ),
                           ),
                         ),
-                        // â”€â”€ Logo circular na esquerda inferior â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                        // ── Logo circular na esquerda inferior ──────────
                         Positioned(
                           left: 16,
                           bottom: 12,
@@ -741,7 +741,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                                             ? Image.network(_newLogoFile!.path,
                                                 fit: BoxFit.cover)
                                             : Image.file(
-                                                File(_newLogoFile!.path),
+                                                io.File(_newLogoFile!.path),
                                                 fit: BoxFit.cover))
                                         : (_logoUrl != null
                                             ? CachedNetworkImage(
@@ -776,7 +776,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                             ),
                           ),
                         ),
-                        // â”€â”€ Botão editar capa (direita inferior) â”€â”€â”€â”€â”€â”€â”€â”€
+                        // ── Botão editar capa (direita inferior) ────────
                         Positioned(
                           right: 14,
                           bottom: 14,
@@ -809,7 +809,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                   ),
                 ),
 
-                // â”€â”€â”€ FORMULÁRIO â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ─── FORMULÁRIO ───────────────────────────────────────────
                 SliverToBoxAdapter(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
@@ -826,7 +826,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                                 v!.isEmpty ? "Campo obrigatório" : null,
                           ),
                           const SizedBox(height: 12),
-                          // â”€â”€ Nicho / Categoria â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                          // ── Nicho / Categoria ──────────────────────────
                           _buildNichoField(),
                           const SizedBox(height: 12),
                           _buildTextField(
@@ -849,11 +849,11 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                             keyboardType: TextInputType.phone,
                           ),
                           const SizedBox(height: 12),
-                          // â”€â”€ Localização: Cidade + UF â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                          // ── Localização: Cidade + UF ───────────────────
                           _buildLocationSection(),
                           const SizedBox(height: 16),
 
-                          // â”€â”€ Link Personalizado â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                          // ── Link Personalizado ──────────────────────────
                           Container(
                             padding: const EdgeInsets.all(14),
                             decoration: BoxDecoration(
@@ -874,7 +874,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                                         size: 18),
                                     const SizedBox(width: 8),
                                     const Text(
-                                      "Link Personalizado da Loja",
+                                      "Mini Site Personalizado da Loja",
                                       style: TextStyle(
                                           fontWeight: FontWeight.bold,
                                           fontSize: 13),
@@ -891,7 +891,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                                 TextFormField(
                                   controller: _slugController,
                                   decoration: InputDecoration(
-                                    labelText: "Seu Link (ex: afroED)",
+                                    labelText: "Seu Mini Site (ex: afroED)",
                                     prefixIcon: const Icon(Icons.link,
                                         color: AppColors.primaryPurple),
                                     prefixText: "markaai.com.br/",
@@ -988,7 +988,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
 
                           const SizedBox(height: 14),
 
-                          // â”€â”€ Redes Sociais â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                          // ── Redes Sociais ────────────────────────────────
                           Container(
                             padding: const EdgeInsets.all(14),
                             decoration: BoxDecoration(
@@ -1044,7 +1044,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                   ),
                 ),
 
-                // â”€â”€ Vitrine de Serviços â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ── Vitrine de Serviços ─────────────────────────────────
                 SliverToBoxAdapter(
                   child: Container(
                     color: Colors.white,
@@ -1058,7 +1058,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
     );
   }
 
-  // â”€â”€ Nicho/Categoria field â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Nicho/Categoria field ─────────────────────────────────────────────────
   Widget _buildNichoField() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1115,7 +1115,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
     );
   }
 
-  // â”€â”€ Seção Localização: Cidade + UF â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Seção Localização: Cidade + UF ────────────────────────────────────────
   Widget _buildLocationSection() {
     final bool highlight = widget.highlightLocation &&
         (_cidadeController.text.trim().isEmpty || _estadoSelecionado == null);
@@ -1304,7 +1304,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
   }
 }
 
-// ðŸŽ¨ WIDGET DE AJUSTE DE IMAGEM (Mantido 100% igual)
+// 🎉¨ WIDGET DE AJUSTE DE IMAGEM (Mantido 100% igual)
 class _ImageAdjustmentPage extends StatefulWidget {
   final XFile imageFile;
   final double aspectRatio;
@@ -1367,7 +1367,7 @@ class _ImageAdjustmentPageState extends State<_ImageAdjustmentPage> {
                   scale: _scale,
                   child: kIsWeb
                       ? Image.network(widget.imageFile.path)
-                      : Image.file(File(widget.imageFile.path)),
+                      : Image.file(io.File(widget.imageFile.path)),
                 ),
               ),
             ),

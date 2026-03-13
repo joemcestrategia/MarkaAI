@@ -1,9 +1,12 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
+import '../../core/services/plan_features_service.dart';
+import '../../core/constants/plan_features.dart';
+import '../../widgets/upgrade_modal.dart';
 import 'employee_register_page.dart';
 
 class TeamManagementPage extends StatefulWidget {
@@ -16,6 +19,8 @@ class TeamManagementPage extends StatefulWidget {
 class _TeamManagementPageState extends State<TeamManagementPage> {
   String? shopId;
   bool _isLoading = true;
+  late PlanFeatures _currentFeatures = planFeaturesConfig[PlanKey.free]!;
+  int _currentEmployeeCount = 0;
 
   // Controle do Painel Lateral (Apenas Desktop)
   bool _showPanel = false;
@@ -43,6 +48,10 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
       }
     }
 
+    if (id != null) {
+      // Features are now handled by StreamBuilder in build()
+    }
+
     if (mounted) {
       setState(() {
         shopId = id;
@@ -51,11 +60,25 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
     }
   }
 
-  // ðŸ§  NAVEGAÇÃO INTELIGENTE (O Segredo da Responsividade)
+  // 🧠 NAVEGAÇÃO INTELIGENTE (O Segredo da Responsividade)
   void _handleMemberTap(
       BuildContext context, DocumentSnapshot? doc, bool isMobile) {
+    if (doc == null) {
+      // Validar Limite antes de permitir novo cadastro
+      if (_currentEmployeeCount >= _currentFeatures.maxProfessionals) {
+        UpgradeModal.show(context,
+            featureName: "Adicionar Profissionais",
+            requiredPlan: (_currentFeatures.maxProfessionals == 1)
+                ? "START"
+                : (_currentFeatures.maxProfessionals == 2)
+                    ? "PLUS"
+                    : "PRO");
+        return;
+      }
+    }
+
     if (isMobile) {
-      // ðŸ“± MODO CELULAR: Navega para nova tela
+      // 📱 MODO CELULAR: Navega para nova tela
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -75,7 +98,7 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
         ),
       );
     } else {
-      // ðŸ’» MODO PC: Abre painel lateral
+      // 💻 MODO PC: Abre painel lateral
       _openPanelDesktop(doc);
     }
   }
@@ -113,52 +136,61 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
       return const Center(child: Text("Erro: Loja não identificada."));
     }
 
-    // ðŸ›¡ï¸ O GUARDIÃO DO LAYOUT
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        bool isMobile = constraints.maxWidth < 850;
-
-        if (isMobile) {
-          // --- LAYOUT MOBILE (Só Lista) ---
-          return Material(
-            color: const Color(0xFFF2F4F8),
-            child: _buildListContent(isMobile),
-          );
-        } else {
-          // --- LAYOUT DESKTOP (Split View) ---
-          return Material(
-            color: const Color(0xFFF2F4F8),
-            child: Row(
-              children: [
-                // COLUNA 2: LISTA
-                Expanded(
-                  flex: 3,
-                  child: _buildListContent(isMobile),
-                ),
-                // COLUNA 3: PAINEL
-                VerticalDivider(width: 1, color: Colors.grey[300]),
-                Expanded(
-                  flex: 2,
-                  child: Container(
-                    color: Colors.white,
-                    child: _showPanel
-                        ? EmployeeRegisterPage(
-                            key: ValueKey(_employeeToEdit?.id ?? 'novo_membro'),
-                            employeeToEdit: _employeeToEdit,
-                            onClose: _closePanelDesktop,
-                          )
-                        : _buildPlaceholder(),
-                  ),
-                ),
-              ],
-            ),
-          );
+    return StreamBuilder<PlanFeatures>(
+      stream: PlanFeaturesService.streamFeaturesByShopId(shopId!),
+      builder: (context, snapshot) {
+        if (snapshot.hasData) {
+          _currentFeatures = snapshot.data!;
         }
+
+        // 🛡️ O GUARDIÃO DO LAYOUT
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            bool isMobile = constraints.maxWidth < 850;
+
+            if (isMobile) {
+              // --- LAYOUT MOBILE (Só Lista) ---
+              return Material(
+                color: const Color(0xFFF2F4F8),
+                child: _buildListContent(isMobile),
+              );
+            } else {
+              // --- LAYOUT DESKTOP (Split View) ---
+              return Material(
+                color: const Color(0xFFF2F4F8),
+                child: Row(
+                  children: [
+                    // COLUNA 2: LISTA
+                    Expanded(
+                      flex: 3,
+                      child: _buildListContent(isMobile),
+                    ),
+                    // COLUNA 3: PAINEL
+                    VerticalDivider(width: 1, color: Colors.grey[300]),
+                    Expanded(
+                      flex: 2,
+                      child: Container(
+                        color: Colors.white,
+                        child: _showPanel
+                            ? EmployeeRegisterPage(
+                                key: ValueKey(_employeeToEdit?.id ?? 'novo_membro'),
+                                employeeToEdit: _employeeToEdit,
+                                onClose: _closePanelDesktop,
+                              )
+                            : _buildPlaceholder(),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
+          },
+        );
       },
     );
   }
 
-  // ðŸ§© CONTEÚDO DA LISTA (REUSÁVEL)
+  // 🧩 CONTEÚDO DA LISTA (REUSÁVEL)
   Widget _buildListContent(bool isMobile) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -203,6 +235,10 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
               if (!snapshot.hasData) {
                 return const Center(child: CircularProgressIndicator());
               }
+              
+              // Atualiza o contador para validação de limite
+              _currentEmployeeCount = snapshot.data!.docs.length;
+
               if (snapshot.data!.docs.isEmpty) return _buildEmptyState();
 
               return ListView.separated(
@@ -272,7 +308,7 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
                         fontWeight: FontWeight.bold, fontSize: 15)),
                 const SizedBox(height: 4),
                 Text(
-                  "ðŸ•’ ${data['horario_inicio'] ?? '--:--'} às ${data['horario_fim'] ?? '--:--'}",
+                  "🕒 ${data['horario_inicio'] ?? '--:--'} às ${data['horario_fim'] ?? '--:--'}",
                   style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                 ),
               ],

@@ -1,4 +1,4 @@
-﻿import 'dart:io';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -27,7 +27,7 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _backupEmailController =
-      TextEditingController(); // ðŸ†• Email para backup Google Calendar
+      TextEditingController(); // 🆕 Email para backup Google Calendar
   final _phoneController = TextEditingController();
   final _startWorkController = TextEditingController(text: "08:00");
   final _endWorkController = TextEditingController(text: "18:00");
@@ -84,7 +84,7 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
           _nameController.text = data['nome'] ?? "";
           _emailController.text = data['email'] ?? "";
           _backupEmailController.text =
-              data['backup_email'] ?? ""; // ðŸ†• Carrega email de backup
+              data['backup_email'] ?? ""; // 🆕 Carrega email de backup
           _phoneController.text = data['telefone'] ?? "";
           _startWorkController.text = data['horario_inicio'] ?? "08:00";
           _endWorkController.text = data['horario_fim'] ?? "18:00";
@@ -239,7 +239,7 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
         'nome': _nameController.text.trim(),
         'email': _emailController.text.trim(),
         'backup_email':
-            _backupEmailController.text.trim(), // ðŸ†• Salva email de backup
+            _backupEmailController.text.trim(), // 🆕 Salva email de backup
         'telefone': _phoneController.text.trim(),
         'horario_inicio': _startWorkController.text,
         'horario_fim': _endWorkController.text,

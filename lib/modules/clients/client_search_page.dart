@@ -212,7 +212,7 @@ class _ClientSearchPageState extends State<ClientSearchPage> {
                   return isActive && matchesText && matchesLoc;
                 }).toList();
 
-                // ðŸ”€ Ordenação por Qualidade do Perfil (Media)
+                // 🔄 Ordenação por Qualidade do Perfil (Media)
                 filtered.sort((a, b) {
                   final da = a.data() as Map<String, dynamic>;
                   final db = b.data() as Map<String, dynamic>;

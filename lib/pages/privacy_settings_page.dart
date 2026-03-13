@@ -1,9 +1,10 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:io' as io;
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -40,7 +41,18 @@ class _PrivacySettingsPageState extends State<PrivacySettingsPage> {
 
       String jsonStr = const JsonEncoder.withIndent('  ').convert(data);
 
-      final file = File(
+      if (kIsWeb) {
+        // Na web, mostramos o JSON no console por enquanto (download via web requer blobs)
+        debugPrint('JSON de Exportação: $jsonStr');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Dados exportados para o console do navegador.')),
+          );
+        }
+        return;
+      }
+
+      final file = io.File(
           '${(await getTemporaryDirectory()).path}/meus_dados_markaai.json');
       await file.writeAsString(jsonStr);
 

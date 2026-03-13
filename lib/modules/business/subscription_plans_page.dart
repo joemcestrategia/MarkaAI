@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 import 'subscription_service.dart';
 import 'trial_service.dart';
@@ -406,49 +406,44 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildFeatureItem(
-                    'Até ${details['employeeLimit']} profissionais',
-                    isCheck: true,
-                    accentColor: accentColor),
-                _buildFeatureItem('Link Personalizado',
-                    isCheck: details['customLink'] as bool,
-                    accentColor: accentColor),
-                _buildFeatureItem('Backup Google Calendar',
-                    isCheck: true, accentColor: accentColor),
-                _buildFeatureItem(
-                    (plan == SubscriptionPlan.free ||
-                            plan == SubscriptionPlan.start)
-                        ? '1 Foto por Serviço'
-                        : 'Até 5 Fotos por Serviço',
-                    isCheck: true,
-                    accentColor: accentColor),
-                _buildFeatureItem(
-                    plan == SubscriptionPlan.free
-                        ? 'Exibe Publicidade'
-                        : 'Sem Anúncios',
-                    isCheck: plan != SubscriptionPlan.free,
-                    accentColor: accentColor),
-                _buildFeatureItem(
-                    (details['onlinePayment'] as bool)
-                        ? 'Pagamentos Online (PIX & Cartão)'
-                        : 'Sem pagamentos online',
-                    isCheck: details['onlinePayment'] as bool,
-                    accentColor: accentColor),
-                _buildFeatureItem(
-                    (plan == SubscriptionPlan.free ||
-                            plan == SubscriptionPlan.start)
-                        ? 'Agenda Simples'
-                        : 'Agenda Otimizada com Bloqueio',
-                    isCheck: plan == SubscriptionPlan.plus ||
-                        plan == SubscriptionPlan.pro,
-                    accentColor: accentColor),
-                if (plan == SubscriptionPlan.plus ||
-                    plan == SubscriptionPlan.pro)
-                  _buildFeatureItem('Gestão Financeira & Comissões',
-                      isCheck: true, accentColor: accentColor),
-                if (plan == SubscriptionPlan.pro)
-                  _buildFeatureItem('Controle de Estoque Completo',
-                      isCheck: true, accentColor: accentColor),
+                if (plan == SubscriptionPlan.free) ...[
+                  _buildFeatureItem('1 profissional', isCheck: true, accentColor: accentColor),
+                   _buildFeatureItem('Agendamento online', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Mini Site Personalizado', isCheck: true, accentColor: accentColor),
+                   _buildFeatureItem('Backup Agenda Google Calendar', isCheck: true, accentColor: accentColor),
+                   _buildFeatureItem('Pagamentos Online (PIX e Cartão)', isCheck: false, accentColor: accentColor),
+                   _buildFeatureItem('Exigir sinal para agendar', isCheck: false, accentColor: accentColor),
+                   _buildFeatureItem('Controle Financeiro e Comissões', isCheck: false, accentColor: accentColor),
+                ] else if (plan == SubscriptionPlan.start) ...[
+                  _buildFeatureItem('Até 2 profissionais', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Agendamento online', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Mini Site Personalizado', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Pagamento Online (Apenas PIX)', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Cliente escolhe o profissional', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Até 3 fotos por serviço', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Otimização de agenda', isCheck: true, accentColor: accentColor),
+                   _buildFeatureItem('Desconto de aniversário automático', isCheck: true, accentColor: accentColor),
+                   _buildFeatureItem('Exigir sinal para agendar', isCheck: true, accentColor: accentColor),
+                   _buildFeatureItem('Controle Financeiro e Comissões', isCheck: false, accentColor: accentColor),
+                ] else if (plan == SubscriptionPlan.plus) ...[
+                  _buildFeatureItem('Até 3 profissionais', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Mini Site Personalizado', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Pagamento Online (Cartão de Crédito e Débito)', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Cupons de Desconto', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Classificação VIP e Confiança', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Filtro, bloqueio e automações', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Gestão de estoque', isCheck: true, accentColor: accentColor),
+                   _buildFeatureItem('Até 5 fotos por serviço', isCheck: true, accentColor: accentColor),
+                   _buildFeatureItem('Exigir sinal para agendar', isCheck: true, accentColor: accentColor),
+                   _buildFeatureItem('Tudo do plano Start', isCheck: true, accentColor: accentColor),
+                ] else if (plan == SubscriptionPlan.pro) ...[
+                  _buildFeatureItem('Até 5 profissionais', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Acesso Exclusivo à Aba Financeira', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Fechamento de Caixa, Faturamento e DRE', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Dashboard Financeiro com Extratos Unificados', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Canal de Suporte VIP via WhatsApp', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Acesso irrestrito (Tudo do plano Plus)', isCheck: true, accentColor: accentColor),
+                ],
                 const SizedBox(height: 16),
                 // ── Botões de ação ────────────────────────────────
                 if (isCurrent)

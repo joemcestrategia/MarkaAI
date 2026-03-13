@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../theme/app_colors.dart';
 
 class CouponShareService {
@@ -19,7 +20,7 @@ class CouponShareService {
       if (boundary == null) return;
 
       // Aumentar o tempo para garantir carregamento de imagens de rede (logo)
-      await Future.delayed(const Duration(milliseconds: 1000));
+      await Future.delayed(const Duration(milliseconds: 1500));
 
       final image = await boundary.toImage(pixelRatio: 3.0);
       final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
@@ -33,6 +34,7 @@ class CouponShareService {
 
       await Share.shareXFiles(
         [XFile(file.path)],
+        subject: 'Confira este desconto especial para você!',
         text: 'Confira este desconto especial para você! Use o código: $code',
       );
     } catch (e) {
@@ -81,12 +83,12 @@ class CouponShareService {
                 shape: BoxShape.circle,
                 color: Colors.white,
                 image: DecorationImage(
-                  image: NetworkImage(logoUrl),
+                  image: CachedNetworkImageProvider(logoUrl),
                   fit: BoxFit.cover,
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.2),
+                    color: Colors.black.withValues(alpha: 0.2),
                     blurRadius: 8,
                     offset: const Offset(0, 4),
                   ),

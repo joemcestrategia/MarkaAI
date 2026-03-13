@@ -1,99 +1,173 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/services/session_service.dart';
+import '../../core/services/plan_features_service.dart';
+import '../../core/constants/plan_features.dart';
+import '../../widgets/upgrade_modal.dart';
 import 'products_page.dart';
 import 'sales_page.dart';
 import 'purchases_page.dart';
 import 'stock_movements_page.dart';
 
-class InventoryHomePage extends StatelessWidget {
+class InventoryHomePage extends StatefulWidget {
   const InventoryHomePage({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final isMobile = MediaQuery.of(context).size.width < 768;
+  State<InventoryHomePage> createState() => _InventoryHomePageState();
+}
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF8F9FD),
-      appBar: AppBar(
-        title: const Text('Inventário & Estoque',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-        backgroundColor: AppColors.primaryPurple,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        centerTitle: false,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.help_outline, size: 20),
-            onPressed: () {
-              showDialog(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16)),
-                  title: const Text('Guia Rápido'),
-                  content: const Text(
-                      'Gerencie seu catálogo, acompanhe saídas e otimize suas compras em um só lugar.'),
-                  actions: [
-                    TextButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        child: const Text('Entendi')),
-                  ],
-                ),
-              );
-            },
-          ),
-          const SizedBox(width: 8),
-        ],
-      ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: EdgeInsets.fromLTRB(
-                  isMobile ? 20 : 40,
-                  24,
-                  isMobile ? 20 : 40,
-                  0,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      "Módulos de Gestão",
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w900,
-                        color: Colors.black87,
-                      ),
+class _InventoryHomePageState extends State<InventoryHomePage> {
+  String? _shopId;
+  bool _isLoadingShop = true;
+  PlanFeatures _currentFeatures = planFeaturesConfig[PlanKey.free]!;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadShopId();
+  }
+
+  Future<void> _loadShopId() async {
+    try {
+      String? id = await SessionService.getShopId();
+      if (id == null || id.isEmpty) {
+        final user = FirebaseAuth.instance.currentUser;
+        if (user != null) {
+          final doc = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .get();
+          if (doc.exists) id = doc.data()?['shopId'];
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _shopId = id;
+          _isLoadingShop = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoadingShop = false);
+    }
+  }
+
+  void _showUpgradeDialog() {
+    UpgradeModal.show(context,
+        featureName: 'Gestão de Estoque e PDV', requiredPlan: 'Plus');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoadingShop) {
+      return const Scaffold(
+          body: Center(
+              child:
+                  CircularProgressIndicator(color: AppColors.primaryPurple)));
+    }
+
+    if (_shopId == null) {
+      return const Scaffold(
+          body: Center(child: Text('Erro: Loja não identificada.')));
+    }
+
+    return StreamBuilder<PlanFeatures>(
+      stream: PlanFeaturesService.streamFeaturesByShopId(_shopId!),
+      builder: (context, snapshot) {
+        if (snapshot.hasData) {
+          _currentFeatures = snapshot.data!;
+        }
+
+        final isMobile = MediaQuery.of(context).size.width < 768;
+        final bool isGated = !_currentFeatures.stockManagement;
+
+        return Scaffold(
+          backgroundColor: const Color(0xFFF8F9FD),
+          appBar: AppBar(
+            title: const Text('Inventário & Estoque',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+            backgroundColor: AppColors.primaryPurple,
+            foregroundColor: Colors.white,
+            elevation: 0,
+            centerTitle: false,
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.help_outline, size: 20),
+                onPressed: () {
+                  showDialog(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16)),
+                      title: const Text('Guia Rápido'),
+                      content: const Text(
+                          'Gerencie seu catálogo, acompanhe saídas e otimize suas compras em um só lugar.'),
+                      actions: [
+                        TextButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            child: const Text('Entendi')),
+                      ],
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      "Selecione uma categoria para gerenciar",
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey.shade500,
-                      ),
-                    ),
-                  ],
-                ),
+                  );
+                },
               ),
-              Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: isMobile ? 20 : 40,
-                  vertical: 20,
-                ),
-                child: isMobile ? _buildMobileList() : _buildDesktopGrid(),
-              ),
+              const SizedBox(width: 8),
             ],
           ),
-        ),
-      ),
+          body: SafeArea(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      isMobile ? 20 : 40,
+                      24,
+                      isMobile ? 20 : 40,
+                      0,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          "Módulos de Gestão",
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w900,
+                            color: Colors.black87,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          "Selecione uma categoria para gerenciar",
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey.shade500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: isMobile ? 20 : 40,
+                      vertical: 20,
+                    ),
+                    child: isMobile
+                        ? _buildMobileList(isGated)
+                        : _buildDesktopGrid(isGated),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
-  Widget _buildMobileList() {
+  Widget _buildMobileList(bool isGated) {
     return Column(
       children: [
         _ModuleCard(
@@ -101,7 +175,12 @@ class InventoryHomePage extends StatelessWidget {
           title: 'Produtos e Serviços',
           description: 'Cadastre e gerencie seu catálogo completo',
           color: AppColors.primaryPurple,
+          isLocked: isGated,
           onTap: (context) {
+            if (isGated) {
+              _showUpgradeDialog();
+              return;
+            }
             Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const ProductsPage()),
@@ -114,7 +193,12 @@ class InventoryHomePage extends StatelessWidget {
           title: 'Frente de Caixa (PDV)',
           description: 'Realize vendas de forma rápida e integrada',
           color: Colors.green,
+          isLocked: isGated,
           onTap: (context) {
+            if (isGated) {
+              _showUpgradeDialog();
+              return;
+            }
             Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const SalesPage()),
@@ -127,7 +211,12 @@ class InventoryHomePage extends StatelessWidget {
           title: 'Entradas e Compras',
           description: 'Registre novas aquisições para o estoque',
           color: Colors.blue,
+          isLocked: isGated,
           onTap: (context) {
+            if (isGated) {
+              _showUpgradeDialog();
+              return;
+            }
             Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const PurchasesPage()),
@@ -140,7 +229,12 @@ class InventoryHomePage extends StatelessWidget {
           title: 'Fluxo e Histórico',
           description: 'Acompanhe todas as entradas e saídas',
           color: Colors.orange,
+          isLocked: isGated,
           onTap: (context) {
+            if (isGated) {
+              _showUpgradeDialog();
+              return;
+            }
             Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const StockMovementsPage()),
@@ -151,7 +245,7 @@ class InventoryHomePage extends StatelessWidget {
     );
   }
 
-  Widget _buildDesktopGrid() {
+  Widget _buildDesktopGrid(bool isGated) {
     return GridView.count(
       crossAxisCount: 2,
       mainAxisSpacing: 20,
@@ -165,7 +259,12 @@ class InventoryHomePage extends StatelessWidget {
           title: 'Produtos e Serviços',
           description: 'Catálogo de itens para venda e uso profissional',
           color: AppColors.primaryPurple,
+          isLocked: isGated,
           onTap: (context) {
+            if (isGated) {
+              _showUpgradeDialog();
+              return;
+            }
             Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const ProductsPage()),
@@ -177,7 +276,12 @@ class InventoryHomePage extends StatelessWidget {
           title: 'Frente de Caixa (PDV)',
           description: 'Sistema integrado para registro de vendas rápidas',
           color: Colors.green,
+          isLocked: isGated,
           onTap: (context) {
+            if (isGated) {
+              _showUpgradeDialog();
+              return;
+            }
             Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const SalesPage()),
@@ -189,7 +293,12 @@ class InventoryHomePage extends StatelessWidget {
           title: 'Entradas e Compras',
           description: 'Gestão de fornecedores e reposição de estoque',
           color: Colors.blue,
+          isLocked: isGated,
           onTap: (context) {
+            if (isGated) {
+              _showUpgradeDialog();
+              return;
+            }
             Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const PurchasesPage()),
@@ -201,7 +310,12 @@ class InventoryHomePage extends StatelessWidget {
           title: 'Fluxo e Histórico',
           description: 'Relatórios detalhados de movimentação de itens',
           color: Colors.orange,
+          isLocked: isGated,
           onTap: (context) {
+            if (isGated) {
+              _showUpgradeDialog();
+              return;
+            }
             Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const StockMovementsPage()),
@@ -218,6 +332,7 @@ class _ModuleCard extends StatefulWidget {
   final String title;
   final String description;
   final Color color;
+  final bool isLocked;
   final Function(BuildContext) onTap;
 
   const _ModuleCard({
@@ -225,6 +340,7 @@ class _ModuleCard extends StatefulWidget {
     required this.title,
     required this.description,
     required this.color,
+    this.isLocked = false,
     required this.onTap,
   });
 
@@ -258,74 +374,129 @@ class _ModuleCardState extends State<_ModuleCard>
   @override
   Widget build(BuildContext context) {
     return MouseRegion(
-      onEnter: (_) => _controller.forward(),
-      onExit: (_) => _controller.reverse(),
+      onEnter: (_) => !widget.isLocked ? _controller.forward() : null,
+      onExit: (_) => !widget.isLocked ? _controller.reverse() : null,
       child: ScaleTransition(
         scale: _scaleAnimation,
         child: GestureDetector(
           onTap: () => widget.onTap(context),
-          child: Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Colors.grey.shade100, width: 1),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.03),
-                  blurRadius: 15,
-                  offset: const Offset(0, 8),
+          child: Opacity(
+            opacity: widget.isLocked ? 0.6 : 1.0,
+            child: Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: widget.isLocked
+                      ? Colors.grey.shade200
+                      : Colors.grey.shade100,
+                  width: 1,
                 ),
-              ],
-            ),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: widget.color.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(14),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.03),
+                    blurRadius: 15,
+                    offset: const Offset(0, 8),
                   ),
-                  child: Icon(
-                    widget.icon,
-                    size: 28,
-                    color: widget.color,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
+                ],
+              ),
+              child: Row(
+                children: [
+                  Stack(
+                    alignment: Alignment.center,
                     children: [
-                      Text(
-                        widget.title,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF1A1A1A),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: widget.color.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Icon(
+                          widget.icon,
+                          size: 28,
+                          color: widget.color,
                         ),
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        widget.description,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey.shade600,
-                          height: 1.3,
+                      if (widget.isLocked)
+                        Positioned(
+                          right: -2,
+                          bottom: -2,
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: const BoxDecoration(
+                              color: Colors.white,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.lock,
+                                size: 12, color: Colors.grey),
+                          ),
                         ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
                     ],
                   ),
-                ),
-                Icon(
-                  Icons.arrow_forward_ios_rounded,
-                  size: 14,
-                  color: Colors.grey.shade300,
-                ),
-              ],
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                widget.title,
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF1A1A1A),
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (widget.isLocked)
+                              Container(
+                                margin: const EdgeInsets.only(left: 6),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: AppColors.primaryPurple
+                                      .withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: const Text(
+                                  "PLUS",
+                                  style: TextStyle(
+                                    color: AppColors.primaryPurple,
+                                    fontSize: 8,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          widget.description,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade600,
+                            height: 1.3,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    widget.isLocked
+                        ? Icons.lock_outline
+                        : Icons.arrow_forward_ios_rounded,
+                    size: 14,
+                    color: Colors.grey.shade300,
+                  ),
+                ],
+              ),
             ),
           ),
         ),

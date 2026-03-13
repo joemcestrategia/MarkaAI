@@ -1,4 +1,5 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import '../../modules/business/subscription_service.dart';
 import '../services/ad_service.dart';
@@ -26,7 +27,8 @@ class _BannerAdWidgetState extends State<BannerAdWidget> {
     final details = SubscriptionService.getPlanDetails(plan);
 
     // Check if plan has ads enabled (default true for Free, false for Paid)
-    if (details['adEnabled'] == true) {
+    // Ads are currently not supported/needed on Web
+    if (!kIsWeb && details['adEnabled'] == true) {
       if (mounted) {
         setState(() => _shouldShowAd = true);
         _loadAd();

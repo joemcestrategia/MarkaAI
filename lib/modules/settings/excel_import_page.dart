@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:excel/excel.dart' hide Border;
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -152,7 +152,7 @@ class _ExcelImportPageState extends State<ExcelImportPage> {
       setState(() {
         _isLoading = false;
         _progress = 1.0;
-        _logs += "\n\nâœ… SUCESSO! $importedCount registros importados.";
+        _logs += "\n\n✅ SUCESSO! $importedCount registros importados.";
       });
     } catch (e) {
       setState(() {

@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class AdminShopsWidget extends StatefulWidget {
@@ -308,6 +308,8 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
                   .doc(doc.id)
                   .update({
                 'plan': selectedPlan,
+                'trial_active': false, // Desativa trial ao mudar manualmente
+                'subscription': null, // Limpa assinatura anterior para evitar conflitos
               });
 
               if (context.mounted) Navigator.pop(context);
@@ -315,7 +317,7 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                       content: Text(
-                          'Plano alterado para ${selectedPlan!.toUpperCase()}!')),
+                          'Plano alterado para ${selectedPlan!.toUpperCase()} e Trial desativado!')),
                 );
               }
             },

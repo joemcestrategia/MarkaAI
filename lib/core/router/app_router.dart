@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -6,27 +6,28 @@ import '../../modules/login/login_page.dart';
 import '../../modules/public/public_shop_page.dart';
 import '../../modules/business/business_home_page.dart';
 import '../../modules/clients/client_home_page.dart';
-import '../../modules/admin/plans_page.dart';
-import '../../modules/admin/admin_page.dart';
+import '../../modules/auth/reset_password_page.dart';
 import '../../core/theme/app_colors.dart';
 import '../../modules/inventory/inventory_home_page.dart';
 import '../../modules/business/subscription_plans_page.dart';
-import '../../modules/auth/reset_password_page.dart';
 import '../../modules/clients/rescheduling_success_page.dart';
 import '../../modules/business/price_adjustment_page.dart';
+import '../../modules/admin/admin_dashboard_page.dart';
+import '../../modules/admin/admin_setup_page.dart';
+import '../../core/services/session_service.dart';
 
 class AppRouter {
   static Route<dynamic> generateRoute(RouteSettings settings) {
     // 1. Determinar o caminho (path) real. No Web, Uri.base é mais confiável para deep links iniciais.
     String pathName = settings.name ?? '/';
 
-    debugPrint('ðŸš© AppRouter: settings.name = "$pathName"');
+    debugPrint('AppRouter: settings.name = "$pathName"');
 
     // Correção para Cold Boot no Web: se o path for '/', verificamos a URL real do browser
     if (pathName == '/') {
       final browserPath = Uri.base.path;
       debugPrint(
-          'ðŸš© AppRouter: Web cold-boot detectado. Uri.base.path = "$browserPath"');
+          'AppRouter: Web cold-boot detectado. Uri.base.path = "$browserPath"');
       if (browserPath != '/' && browserPath.isNotEmpty) {
         pathName = browserPath;
       }
@@ -41,7 +42,7 @@ class AppRouter {
         .replaceAll(RegExp(r'/+$'), '')
         .trim();
 
-    debugPrint('ðŸš© AppRouter: Final cleanPath = "$cleanPath"');
+    debugPrint('AppRouter: Final cleanPath = "$cleanPath"');
 
     // 2. Traduzir query param 's' para slug (fallback/compatibilidade)
     final querySlug = uri.queryParameters['s'];
@@ -129,13 +130,13 @@ class AppRouter {
       return MaterialPageRoute(
           builder: (_) => const InventoryHomePage(), settings: settings);
     }
-    if (cleanPath.toLowerCase() == 'admin/plans') {
-      return MaterialPageRoute(
-          builder: (_) => const PlansPage(), settings: settings);
-    }
     if (baseRoute == 'admin') {
       return MaterialPageRoute(
-          builder: (_) => const AdminPage(), settings: settings);
+          builder: (_) => const AdminAuthGate(), settings: settings);
+    }
+    if (cleanPath == 'setup-admin-secret') {
+      return MaterialPageRoute(
+          builder: (_) => const AdminSetupPage(), settings: settings);
     }
     if (baseRoute == 'subscription_plans') {
       return MaterialPageRoute(
@@ -199,6 +200,7 @@ class AppRouter {
       'subscription_plans',
       'reschedule_success',
       'business/price_adjustment',
+      'setup-admin-secret',
     ];
     return knownRoutes.contains(route.toLowerCase());
   }
@@ -231,7 +233,7 @@ class AuthGate extends StatelessWidget {
   }
 }
 
-// Auth Redirect - redireciona baseado no tipo de usuário
+// Auth Redirect - gerencia redirecionamento baseado no tipo de usuário sem causar loops
 class AuthRedirect extends StatefulWidget {
   final User user;
 
@@ -242,10 +244,13 @@ class AuthRedirect extends StatefulWidget {
 }
 
 class _AuthRedirectState extends State<AuthRedirect> {
+  Widget? _targetPage;
+  bool _error = false;
+
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _resolve());
+    _resolve();
   }
 
   Future<void> _resolve() async {
@@ -258,9 +263,7 @@ class _AuthRedirectState extends State<AuthRedirect> {
       if (!mounted) return;
 
       if (!doc.exists) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const LoginPage()),
-        );
+        setState(() => _error = true);
         return;
       }
 
@@ -272,11 +275,16 @@ class _AuthRedirectState extends State<AuthRedirect> {
           tipo.isEmpty ||
           telefone == null ||
           telefone.isEmpty) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const LoginPage()),
-        );
+        setState(() => _error = true);
         return;
       }
+
+      // Salva na sessão local
+      await SessionService.saveLogin(
+        userId: widget.user.uid,
+        userType: tipo,
+        shopId: tipo == 'dono' || tipo == 'business' ? widget.user.uid : null,
+      );
 
       // Registrar token FCM do dispositivo para notificações (se disponível)
       try {
@@ -291,32 +299,58 @@ class _AuthRedirectState extends State<AuthRedirect> {
         }
       } catch (_) {}
 
-      // Forçar redirecionamento para Home do perfil logado
       if (!mounted) return;
+
+      // Define visualmente para onde ir
       if (tipo == 'dono' || tipo == 'business') {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const BusinessHomePage()),
-        );
+        setState(() => _targetPage = const BusinessHomePage());
       } else {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const ClientHomePage()),
-        );
+        setState(() => _targetPage = const ClientHomePage());
       }
     } catch (_) {
       if (mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const LoginPage()),
-        );
+        setState(() => _error = true);
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_targetPage != null) return _targetPage!;
+    if (_error) return const LoginPage();
+
     return const Scaffold(
       body: Center(
         child: CircularProgressIndicator(color: AppColors.primaryPurple),
       ),
+    );
+  }
+}
+
+
+// Admin Auth Gate - ensures user is logged in before reaching AdminDashboardPage
+class AdminAuthGate extends StatelessWidget {
+  const AdminAuthGate({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(
+              child: CircularProgressIndicator(color: AppColors.primaryPurple),
+            ),
+          );
+        }
+
+        if (snapshot.hasData) {
+          return const AdminDashboardPage();
+        }
+
+        return const LoginPage(avoidRedirect: true);
+      },
     );
   }
 }

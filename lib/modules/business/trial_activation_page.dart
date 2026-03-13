@@ -61,7 +61,7 @@ class _TrialActivationPageState extends State<TrialActivationPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-                "ðŸŽ‰ Parabéns! Trial ativado com sucesso. Aproveite seus 90 dias!"),
+                "🎉 Parabéns! Trial ativado com sucesso. Aproveite seus 90 dias!"),
             backgroundColor: Colors.green,
           ),
         );

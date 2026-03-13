@@ -1,4 +1,4 @@
-﻿import 'dart:io';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 
@@ -23,6 +23,7 @@ class AdService {
   }
 
   static String get bannerAdUnitId {
+    if (kIsWeb) return '';
     if (Platform.isAndroid) {
       return _androidBannerId;
     } else if (Platform.isIOS) {
@@ -32,6 +33,7 @@ class AdService {
   }
 
   static String get interstitialAdUnitId {
+    if (kIsWeb) return '';
     if (Platform.isAndroid) {
       return _androidInterstitialId;
     } else if (Platform.isIOS) {

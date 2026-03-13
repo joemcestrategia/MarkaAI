@@ -14,6 +14,7 @@ import '../modules/schedule/booking_success_page.dart';
 import 'pix_payment_page.dart';
 import '../core/services/client_verification_service.dart';
 import '../core/services/coupon_service.dart';
+import '../core/services/plan_features_service.dart';
 import '../core/widgets/loading_page.dart';
 import '../modules/clients/my_appointments_page.dart';
 import '../modules/clients/client_home_page.dart';
@@ -114,16 +115,16 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
   Future<void> _loadShopPaymentConfig() async {
     try {
-      final shopDoc = await FirebaseFirestore.instance
+      final doc = await FirebaseFirestore.instance
           .collection('shops')
           .doc(widget.shopId)
           .get();
-      if (!shopDoc.exists) return;
+          
+      if (!doc.exists) return;
 
-      final data = shopDoc.data()!;
-      final mpData = data['mercadopago'] as Map<String, dynamic>?;
-      final config =
-          data['config'] as Map<String, dynamic>? ?? widget.shopConfig;
+      final data = doc.data() as Map<String, dynamic>;
+      final mpData = data['mercadopago'] as Map<String, dynamic>? ?? {};
+      final config = data['config'] as Map<String, dynamic>? ?? widget.shopConfig;
 
       final percentualFromDb = config['percentual_sinal'];
       int percentualFinal = 30;
@@ -131,7 +132,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         percentualFinal = (percentualFromDb as num).toInt();
       }
 
-      String? token = mpData?['access_token']?.toString() ??
+      String? token = mpData['access_token']?.toString() ??
           data['mp_access_token']?.toString();
       final isValidToken = token != null && token.length > 20;
 
@@ -563,9 +564,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
                       }),
                       const Divider(height: 30),
 
-                      // CAMPO DE CUPOM (SOMENTE PIX OU TOTAL)
+                      // CAMPO DE CUPOM (SOMENTE SE O PLANO PERMITIR, FOR PIX OU TOTAL)
                       if (_selectedMethod == 'pix' &&
-                          _selectedPaymentType != 'local') ...[
+                          _selectedPaymentType != 'local' &&
+                          PlanFeaturesService.getFeaturesForShop(widget.shopData).coupons) ...[
                         const Text("Tem um cupom?",
                             style: TextStyle(
                                 fontWeight: FontWeight.bold, fontSize: 13)),

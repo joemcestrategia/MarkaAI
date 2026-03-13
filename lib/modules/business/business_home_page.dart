@@ -1,4 +1,4 @@
-﻿// ignore_for_file: use_build_context_synchronously
+// ignore_for_file: use_build_context_synchronously
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -14,16 +14,17 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'business_history_page.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../../core/widgets/splash_loading_widget.dart';
-import 'widgets/profile_completion_widget.dart';
 import 'boost_shop_page.dart';
 import '../admin/admin_dashboard_page.dart';
 
 import '../../core/theme/app_colors.dart';
-import '../../core/services/session_service.dart';
 import '../../core/services/notification_service.dart';
 import '../../core/widgets/trial_banner_widget.dart';
-import '../../core/widgets/paywall_modal_widget.dart';
 import '../../core/widgets/banner_ad_widget.dart';
+import '../../core/constants/plan_features.dart';
+import '../../core/services/plan_features_service.dart';
+import '../../widgets/upgrade_modal.dart';
+import '../../core/services/session_service.dart';
 import '../login/login_page.dart';
 
 // --- MÓDULOS ---
@@ -34,11 +35,15 @@ import 'business_schedule_page.dart';
 import 'business_clients_page.dart';
 // import '../settings/excel_import_page.dart'; // Import removed  recurso 'Importar Dados' descontinuado
 import '../financial/financial_dashboard_page.dart';
+// import 'financial_wallet_page.dart';
+import 'coupons/manage_coupons_page.dart';
 
 import 'subscription_plans_page.dart';
 import '../../modules/inventory/inventory_home_page.dart';
 import 'subscription_service.dart';
 import '../help/help_guide_page.dart';
+import 'price_adjustment_page.dart';
+import '../../pages/privacy_settings_page.dart';
 
 class BusinessHomePage extends StatefulWidget {
   const BusinessHomePage({super.key});
@@ -79,7 +84,13 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
   // Indices bloqueados para o plano atual
   List<int> _restrictedIndices = [];
+  List<int> _hiddenIndices = []; // Indices que nem aparecem no menu
   bool _canViewCommissions = false;
+
+  SubscriptionPlan _currentPlanCode = SubscriptionPlan.free;
+  bool _isTrial = false;
+  bool _isAdmin = false;
+  PlanFeatures _currentFeatures = planFeaturesConfig[PlanKey.free]!;
 
   @override
   void initState() {
@@ -288,9 +299,17 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
       final userData = userDoc.data() as Map<String, dynamic>;
       String tipo = userData['tipo'] ?? 'cliente';
-      String currentShopId = id ?? userData['shopId'] ?? "";
+      
+      // Trust the user document first, then session (consistently with recent backend changes)
+      String currentShopId = userData['shopId'] ?? id ?? "";
 
-      if (tipo != 'dono' && tipo != 'business') {
+      final roles = userData['roles'] as List?;
+      final role = userData['role'] as String?;
+      final isAdmin = role == 'admin' || 
+                      (roles?.contains('admin') ?? false) || 
+                      userData['is_admin_dev'] == true;
+
+      if (tipo != 'dono' && tipo != 'business' && !isAdmin) {
         _forceLogout();
         return;
       }
@@ -306,12 +325,29 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       final currentYear = DateTime.now().year;
       _availableYears = List.generate(5, (index) => (currentYear - 2) + index);
 
+      // Save the identified shopId to session to ensure all sub-pages can access it
+      if (currentShopId.isNotEmpty) {
+        await SessionService.saveShopId(currentShopId);
+      }
+
       if (mounted) {
         setState(() {
           shopId = currentShopId;
           userName = userData['nome'] ?? "Profissional";
           userEmail = user?.email ?? "";
           userPhotoUrl = user?.photoURL;
+          
+          // Note: _currentFeatures will be updated via the StreamBuilder on shops collection below
+          
+          // Check admin status across different possible schemas
+          final roles = userData['roles'] as List?;
+          final role = userData['role'] as String?;
+          final isAdminDev = userData['is_admin_dev'] == true;
+          
+          _isAdmin = role == 'admin' || 
+                      (roles?.contains('admin') ?? false) || 
+                      isAdminDev;
+                      
           _isLoading = false;
         });
 
@@ -364,20 +400,54 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   }
 
   Future<void> _checkPlanRestrictions() async {
-    final canFinancial = await SubscriptionService.canAccessFinancial();
-    final canInventory = await SubscriptionService.canAccessInventory();
-    final canCommissions = await SubscriptionService.canAccessCommissions();
+    // This method is now effectively handled by the StreamBuilder in the build method
+    // to ensure instantaneous updates when plan changes.
+    if (shopId != null) {
+      final doc = await FirebaseFirestore.instance.collection('shops').doc(shopId).get();
+      if (doc.exists) {
+        if (mounted) {
+          setState(() {
+            _updateFeaturesFromData(doc.data());
+          });
+        }
+      }
+    }
+  }
 
-    setState(() {
-      _restrictedIndices = [];
-      if (!canFinancial) _restrictedIndices.add(5); // Financeiro
-      if (!canInventory) _restrictedIndices.add(7); // Estoque
-      _canViewCommissions = canCommissions;
-    });
+  void _updateFeaturesFromData(Map<String, dynamic>? data) {
+    if (data == null) return;
+    
+    // 1. Detectar Plano e Trial de forma centralizada
+    final detection = PlanFeaturesService.detectPlan(data);
+    _currentPlanCode = detection['plan'];
+    _isTrial = detection['trial'];
+    
+    _currentFeatures = PlanFeaturesService.getFeaturesForShop(data);
+    
+    _restrictedIndices = [];
+    _hiddenIndices = [];
+
+    // Estoque (Índice 7)
+    if (!_currentFeatures.stockManagement) {
+      _restrictedIndices.add(7);
+    }
+
+    // Financeiro (Índice 5)
+    if (!_currentFeatures.financialTab || !_currentFeatures.financialDashboard) {
+      _restrictedIndices.add(5);
+    }
+
+    // Reajuste de Valores (Índice 9)
+    if (!_currentFeatures.automaticPriceAdjustment) {
+      _restrictedIndices.add(9);
+    }
+
+    // Comissões
+    _canViewCommissions = _currentFeatures.commissionView;
   }
 
   void _showUpgradeDialog(String feature) {
-    PaywallModalWidget.show(context: context, featureName: feature);
+    UpgradeModal.show(context, featureName: feature, requiredPlan: 'Plus');
   }
 
   void _confirmLogout() {
@@ -485,9 +555,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       case 'assinatura':
         await Navigator.push(context,
             MaterialPageRoute(builder: (_) => const SubscriptionPlansPage()));
-        if (mounted) {
-          _checkBusinessAndLoad(); // Reload to check for new plan features
-        }
+        // No need for _checkBusinessAndLoad() here anymore as StreamBuilder handles it
         break;
       case 'importar':
         // Importar legado removido — mantido para compatibilidade
@@ -536,7 +604,6 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
               .snapshots()
           : null,
       builder: (context, snapshot) {
-        bool locationIncomplete = false;
 
         if (snapshot.hasData && snapshot.data!.exists) {
           final data = snapshot.data!.data() as Map<String, dynamic>;
@@ -552,84 +619,29 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
               ? data['imageUrl']
               : null;
 
-          // Verificar se cidade/estado estão preenchidos
-          final cidade = (data['cidade'] ?? '').toString().trim();
-          final estado = (data['estado'] ?? '').toString().trim();
-          locationIncomplete = cidade.isEmpty || estado.isEmpty;
+          // Atualiza as features em tempo real
+          _updateFeaturesFromData(data);
         }
 
         return LayoutBuilder(
           builder: (context, constraints) {
             final bool isDesktop = constraints.maxWidth > 900;
-            final Widget layout =
-                isDesktop ? _buildDesktopLayout() : _buildMobileLayout();
-
-            if (!locationIncomplete) return layout;
-
-            // Banner de aviso: localização incompleta
-            return Column(
-              children: [
-                Material(
-                  elevation: 2,
-                  color: Colors.red.shade50,
-                  child: InkWell(
-                    onTap: () {
-                      if (shopId == null) return;
-                      setState(() => _selectedIndex = 0);
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) =>
-                              const StoreProfilePage(highlightLocation: true),
-                        ),
-                      );
-                    },
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 10),
-                      child: Row(
-                        children: [
-                          Icon(Icons.warning_amber_rounded,
-                              color: Colors.red.shade700, size: 20),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              '📍 Sua loja não está visível para os clientes. '
-                              'Complete o endereço (cidade e estado) para aparecer nos resultados de busca.',
-                              style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.red.shade800,
-                                  fontWeight: FontWeight.w500),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 5),
-                            decoration: BoxDecoration(
-                              color: AppColors.primaryPurple,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Text(
-                              'Completar →',
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.bold),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                Expanded(child: layout),
-              ],
-            );
+            return isDesktop ? _buildDesktopLayout() : _buildMobileLayout();
           },
         );
       },
     );
+  }
+
+  String _getPlanDisplayName() {
+    final plan = _currentPlanCode;
+    final isTrial = _isTrial;
+    
+    String planName = SubscriptionService.getPlanDetails(plan)['name'].toString().toUpperCase();
+    if (isTrial) {
+      planName += " (TESTE)";
+    }
+    return planName;
   }
 
   List<Widget> _buildScreens({required bool isDesktop}) {
@@ -643,6 +655,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       const TeamManagementPage(), // 6
       const InventoryHomePage(), // 7
       const BusinessSettingsPage(), // 8
+      const PriceAdjustmentPage(), // 9
+      const PrivacySettingsPage(), // 10
     ];
   }
 
@@ -705,78 +719,145 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 _buildDesktopMenuItem(
                     1, Icons.event_note_rounded, "Agenda Completa"),
                 _buildDesktopMenuItem(2, Icons.history, "Histórico"),
+                _buildDesktopMenuItem(6, Icons.people_outline, "Equipe"),
+                _buildDesktopMenuItem(
+                    4, Icons.groups_rounded, "Clientes"),
+                _buildDesktopMenuItem(7, Icons.inventory_2_outlined, "Estoque"),
+                
+                _buildDesktopMenuItem(
+                    5,
+                    Icons.account_balance_wallet_rounded,
+                    "Financeiro",
+                    trailing: !_currentFeatures.financialDashboard
+                        ? const Icon(Icons.lock_outline,
+                            size: 14, color: Colors.grey)
+                        : null),
+
                 _buildDesktopMenuItem(
                     3, Icons.design_services_rounded, "Meus Serviços"),
                 _buildDesktopMenuItem(
-                    4, Icons.groups_rounded, "Base de Clientes"),
-                _buildDesktopMenuItem(
-                    5, Icons.account_balance_wallet_rounded, "Financeiro"),
-                _buildDesktopMenuItem(6, Icons.people_outline, "Equipe"),
+                    9, Icons.trending_up_rounded, "Reajuste de Valores"),
 
-                // Index 7 is Inventory (Estoque), adding it to menu if not present or ensuring 8 is consistent
-                _buildDesktopMenuItem(7, Icons.inventory_2_outlined, "Estoque"),
-
-                _buildDesktopMenuItem(8, Icons.settings,
-                    "Configurações"), // Assuming 8 was Settings based on previous _buildScreens list having Settings at index 8? Wait, let me check _buildScreens again.
-                ListTile(
-                  dense: true,
-                  leading: const Icon(Icons.star_border,
-                      size: 20, color: Colors.orange),
-                  title: const Text("Planos & Assinatura",
-                      style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.orange)),
-                  onTap: () async {
-                    await Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => const SubscriptionPlansPage()));
-                    if (mounted) _checkBusinessAndLoad();
-                  },
-                ),
-                ListTile(
-                  dense: true,
-                  leading: const Icon(Icons.help_outline,
-                      size: 20, color: AppColors.primaryPurple),
-                  title: const Text("Ajuda / Tutorial",
-                      style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                          color: AppColors.primaryPurple)),
-                  onTap: () => _handleMenuAction('ajuda'),
-                ),
-                // Importar Catálogo WhatsApp  apenas Web/PC
-                if (kIsWeb)
-                  ListTile(
-                    dense: true,
-                    leading: const Icon(Icons.upload_file_rounded,
-                        size: 20, color: Color(0xFF25D366)),
-                    title: const Text("Importar Catálogo WhatsApp",
-                        style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                            color: Color(0xFF25D366))),
-                    onTap: () => _handleMenuAction('catalogo_import'),
+                // Cupons
+                Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 1),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
                   ),
+                  child: ListTile(
+                    dense: true,
+                    visualDensity: VisualDensity.compact,
+                    leading: const Icon(Icons.local_offer_outlined,
+                        size: 20, color: Colors.grey),
+                    title: const Text("Meus Cupons",
+                        style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.black87)),
+                    onTap: () {
+                      if (!_currentFeatures.coupons) {
+                        _showUpgradeDialog('Cupons de Desconto');
+                        return;
+                      }
+                      Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => ManageCouponsPage(shopId: shopId ?? "")));
+                    },
+                    trailing: !_currentFeatures.coupons
+                        ? const Icon(Icons.lock, size: 16, color: Colors.grey)
+                        : null,
+                  ),
+                ),
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                   child: Divider(height: 1),
+                ),
+
+                _buildHighlightedMenuItem(
+                  icon: Icons.rocket_launch_rounded,
+                  label: "Impulsionar Negócio",
+                  color: const Color(0xFF7C3AED),
+                  iconColor: const Color(0xFF7C3AED),
+                  onTap: () => _handleMenuAction('impulsionar'),
+                ),
+                _buildHighlightedMenuItem(
+                  icon: Icons.star_rounded,
+                  label: "Planos & Assinatura",
+                  color: Colors.orange,
+                  iconColor: Colors.orange,
+                  onTap: () => _handleMenuAction('assinatura'),
+                ),
+
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                  child: Divider(height: 1),
+                ),
+                _buildDesktopMenuItem(8, Icons.settings, "Configurações"),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                  child: Divider(height: 1),
+                ),
+
+                // Importar Catálogo WhatsApp apenas Web/PC
+                if (kIsWeb)
+                  Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 1),
+                    child: ListTile(
+                      dense: true,
+                      visualDensity: VisualDensity.compact,
+                      leading: const Icon(Icons.upload_file_rounded,
+                          size: 20, color: Color(0xFF25D366)),
+                      title: const Text("Importar Catálogo WhatsApp",
+                          style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w500,
+                              color: Color(0xFF25D366))),
+                      onTap: () => _handleMenuAction('catalogo_import'),
+                    ),
+                  ),
+
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                  child: Divider(height: 1),
+                ),
+
+                _buildDesktopMenuItem(
+                    10, Icons.privacy_tip_rounded, "Privacidade & Segurança"),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                  child: Divider(height: 1),
+                ),
+                Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 1),
+                  child: ListTile(
+                    dense: true,
+                    visualDensity: VisualDensity.compact,
+                    leading: const Icon(Icons.help_outline,
+                        size: 20, color: AppColors.primaryPurple),
+                    title: const Text("Ajuda / Tutorial",
+                        style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w500,
+                            color: AppColors.primaryPurple)),
+                    onTap: () => _handleMenuAction('ajuda'),
+                  ),
                 ),
               ],
             ),
           ),
           Padding(
-            padding: EdgeInsets.all(16),
-            child: Text("v1.0 Pro",
-                style: TextStyle(fontSize: 10, color: Colors.grey)),
+            padding: const EdgeInsets.all(16),
+            child: Text("v1.0 ${_getPlanDisplayName()}",
+                style: const TextStyle(fontSize: 10, color: Colors.grey)),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildDesktopMenuItem(int index, IconData icon, String label) {
+  Widget _buildDesktopMenuItem(int index, IconData icon, String label,
+      {Widget? trailing}) {
     bool isSelected = _selectedIndex == index;
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 1),
@@ -799,7 +880,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           style: TextStyle(
             color: isSelected ? AppColors.primaryPurple : Colors.grey[800],
             fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-            fontSize: 13,
+            fontSize: 15,
           ),
         ),
         onTap: () {
@@ -809,9 +890,10 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
             setState(() => _selectedIndex = index);
           }
         },
-        trailing: _restrictedIndices.contains(index)
-            ? const Icon(Icons.lock, size: 16, color: Colors.grey)
-            : null,
+        trailing: trailing ??
+            (_restrictedIndices.contains(index)
+                ? const Icon(Icons.lock, size: 16, color: Colors.grey)
+                : null),
       ),
     );
   }
@@ -867,6 +949,9 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
               _buildPopupItem(
                   'assinatura', Icons.star_border, "Assinatura (Planos)",
                   isRed: false),
+              if (_isAdmin)
+                _buildPopupItem(
+                    'admin', Icons.admin_panel_settings, "Painel Admin"),
               if (kIsWeb)
                 PopupMenuItem<String>(
                   value: 'catalogo_import',
@@ -969,23 +1054,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       ),
       body: Column(children: [
         if (_selectedIndex == 0) // Show only on dashboard
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: StreamBuilder<DocumentSnapshot>(
-                stream: shopId != null
-                    ? FirebaseFirestore.instance
-                        .collection('shops')
-                        .doc(shopId)
-                        .snapshots()
-                    : null,
-                builder: (context, snapshot) {
-                  final data = snapshot.data?.data() as Map<String, dynamic>?;
-                  return ProfileCompletionWidget(
-                      shopId: shopId ?? '',
-                      shopData: data,
-                      onTap: () => _handleMenuAction('perfil'));
-                }),
-          ),
+          const SizedBox(height: 8),
         Expanded(child: _buildScreens(isDesktop: false)[_selectedIndex]),
         const BannerAdWidget(),
       ]),
@@ -998,9 +1067,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       0,
       1,
       3,
-      4,
       8
-    ]; // Index 8 is Settings (BusinessSettingsPage). Histórico est no menu lateral.
+    ]; // Index 8 is Settings (BusinessSettingsPage). Histórico e Clientes estão no menu lateral.
     int currentBottomIndex = mainItems.contains(_selectedIndex)
         ? mainItems.indexOf(_selectedIndex)
         : 0;
@@ -1047,10 +1115,6 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           label: "Serviços",
         ),
         BottomNavigationBarItem(
-          icon: Icon(Icons.people, size: 24),
-          label: "Clientes",
-        ),
-        BottomNavigationBarItem(
           icon: Icon(Icons.settings, size: 24),
           label: "Config",
         ),
@@ -1092,40 +1156,121 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                   index: 2,
                 ),
                 _buildDrawerItem(
-                  icon: Icons.account_balance_wallet,
-                  title: "Financeiro",
-                  index: 5,
-                ),
-                _buildDrawerItem(
                   icon: Icons.people,
                   title: "Equipe",
                   index: 6,
+                ),
+                _buildDrawerItem(
+                  icon: Icons.groups,
+                  title: "Clientes",
+                  index: 4,
                 ),
                 _buildDrawerItem(
                   icon: Icons.inventory_2_outlined,
                   title: "Estoque",
                   index: 7,
                 ),
-                ListTile(
-                  leading: const Icon(Icons.help_outline,
-                      color: AppColors.primaryPurple),
-                  title: const Text("Ajuda / Tutorial",
-                      style: TextStyle(
-                          color: AppColors.primaryPurple,
-                          fontWeight: FontWeight.bold)),
-                  onTap: () {
-                    Navigator.pop(context);
-                    _handleMenuAction('ajuda');
-                  },
+                _buildDrawerItem(
+                    icon: Icons.account_balance_wallet,
+                    title: "Financeiro",
+                    index: 5,
+                    trailing: !_currentFeatures.financialDashboard
+                        ? const Icon(Icons.lock_outline,
+                            size: 16, color: Colors.grey)
+                        : null),
+                _buildDrawerItem(
+                  icon: Icons.trending_up,
+                  title: "Reajuste de Valores",
+                  index: 9,
                 ),
+                _buildDrawerItem(
+                  icon: Icons.local_offer_outlined,
+                  title: "Meus Cupons",
+                  index: -1,
+                  onTap: () {
+                    if (!_currentFeatures.coupons) {
+                      _showUpgradeDialog('Cupons de Desconto');
+                      return;
+                    }
+                    Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => ManageCouponsPage(shopId: shopId ?? "")));
+                  },
+                  trailing: !_currentFeatures.coupons
+                      ? const Icon(Icons.lock, size: 16, color: Colors.grey)
+                      : null,
+                ),
+
+                const Divider(),
+
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Text(
+                    "CRESCIMENTO",
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                ),
+
+                _buildHighlightedMenuItem(
+                  icon: Icons.rocket_launch,
+                  label: "Impulsionar Negócio",
+                  color: const Color(0xFF7C3AED),
+                  iconColor: const Color(0xFF7C3AED),
+                  onTap: () => _handleMenuAction('impulsionar'),
+                ),
+                _buildHighlightedMenuItem(
+                  icon: Icons.star,
+                  label: "Planos & Assinatura",
+                  color: Colors.orange,
+                  iconColor: Colors.orange,
+                  onTap: () => _handleMenuAction('assinatura'),
+                ),
+
+                const Divider(),
+
+                _buildDrawerItem(
+                  icon: Icons.privacy_tip_outlined,
+                  title: "Privacidade & Segurança",
+                  index: 10,
+                  isPrimary: true,
+                ),
+                _buildDrawerItem(
+                  icon: Icons.help_outline,
+                  title: "Ajuda / Tutorial",
+                  index: -1, // Custom action
+                  isPrimary: true,
+                  onTap: () => _handleMenuAction('ajuda'),
+                ),
+                if (_isAdmin) ...[
+                  const Divider(),
+                  _buildDrawerItem(
+                    icon: Icons.admin_panel_settings_outlined,
+                    title: "Painel Administrativo",
+                    index: -1,
+                    isPrimary: true,
+                    onTap: () => _handleMenuAction('admin'),
+                  ),
+                ],
               ],
             ),
           ),
-          FutureBuilder<SubscriptionPlan>(
-            future: SubscriptionService.getCurrentPlan(),
-            builder: (context, snapshot) {
-              final plan = snapshot.data ?? SubscriptionPlan.start;
-              final isFree = plan == SubscriptionPlan.start;
+          Builder(
+            builder: (context) {
+              final plan = _currentPlanCode;
+              final isTrial = _isTrial;
+              
+              String planName = SubscriptionService.getPlanDetails(plan)['name'].toString().toUpperCase();
+              if (isTrial) {
+                planName += " (TESTE)";
+              }
+
+              final isFree = plan == SubscriptionPlan.free;
 
               return SafeArea(
                 top: false,
@@ -1141,13 +1286,12 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           const Text("Seu Plano: ",
-                              style: TextStyle(color: Colors.grey)),
+                              style: TextStyle(color: Colors.grey, fontSize: 13)),
                           Text(
-                            SubscriptionService.getPlanDetails(plan)['name']
-                                .toString()
-                                .toUpperCase(),
+                            planName,
                             style: TextStyle(
                               fontWeight: FontWeight.bold,
+                              fontSize: 13,
                               color: isFree
                                   ? Colors.grey[600]
                                   : AppColors.primaryPurple,
@@ -1155,7 +1299,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                           ),
                         ],
                       ),
-                      if (isFree) ...[
+                      if (isFree || isTrial) ...[
                         const SizedBox(height: 12),
                         SizedBox(
                           width: double.infinity,
@@ -1169,7 +1313,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                               foregroundColor: Colors.white,
                               padding: const EdgeInsets.symmetric(vertical: 12),
                             ),
-                            child: const Text("ASSINAR AGORA"),
+                            child: Text(isTrial ? "ASSINAR AGORA" : "FAZER UPGRADE"),
                           ),
                         ),
                       ]
@@ -1184,43 +1328,92 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     );
   }
 
+  Widget _buildHighlightedMenuItem({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    required Color color,
+    Color? iconColor,
+  }) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.2)),
+      ),
+      child: ListTile(
+        dense: true,
+        visualDensity: VisualDensity.compact,
+        leading: Icon(icon, color: iconColor ?? color, size: 22),
+        title: Text(
+          label,
+          style: TextStyle(
+            color: color.withOpacity(0.9),
+            fontSize: 15,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        trailing: const Icon(Icons.arrow_forward_ios_rounded, 
+          size: 12, color: Colors.grey),
+        onTap: onTap,
+      ),
+    );
+  }
+
   Widget _buildDrawerItem({
     required IconData icon,
     required String title,
     required int index,
+    Widget? trailing,
+    VoidCallback? onTap,
+    double opacity = 1.0,
+    bool isPrimary = false,
   }) {
-    bool isSelected = _selectedIndex == index;
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(
-        color: isSelected
-            ? AppColors.primaryPurple.withValues(alpha: 0.1)
-            : Colors.transparent,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: ListTile(
-        leading: Icon(
-          icon,
-          color: isSelected ? AppColors.primaryPurple : Colors.grey[700],
+    bool isSelected = index != -1 && _selectedIndex == index;
+    return Opacity(
+      opacity: opacity,
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 1),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? AppColors.primaryPurple.withValues(alpha: 0.1)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
         ),
-        title: Text(
-          title,
-          style: TextStyle(
-            color: isSelected ? AppColors.primaryPurple : Colors.grey[800],
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+        child: ListTile(
+          dense: true,
+          visualDensity: VisualDensity.compact,
+          leading: Icon(
+            icon,
+            color: isSelected || isPrimary ? AppColors.primaryPurple : Colors.grey[600],
+            size: 20,
           ),
+          title: Text(
+            title,
+            style: TextStyle(
+              color: isSelected || isPrimary ? AppColors.primaryPurple : Colors.grey[800],
+              fontWeight: isSelected || isPrimary ? FontWeight.bold : FontWeight.w500,
+              fontSize: 15,
+            ),
+          ),
+          onTap: () {
+            Navigator.pop(context);
+            if (onTap != null) {
+              onTap();
+            } else if (index != -1) {
+              if (_restrictedIndices.contains(index)) {
+                _showUpgradeDialog(title);
+              } else {
+                setState(() => _selectedIndex = index);
+              }
+            }
+          },
+          trailing: trailing ??
+              (index != -1 && _restrictedIndices.contains(index)
+                  ? const Icon(Icons.lock, size: 16, color: Colors.grey)
+                  : null),
         ),
-        onTap: () {
-          Navigator.pop(context);
-          if (_restrictedIndices.contains(index)) {
-            _showUpgradeDialog(title);
-          } else {
-            setState(() => _selectedIndex = index);
-          }
-        },
-        trailing: _restrictedIndices.contains(index)
-            ? const Icon(Icons.lock, size: 16, color: Colors.grey)
-            : null,
       ),
     );
   }
@@ -1448,62 +1641,65 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         // --- ANIVERSARIANTES DO DIA (DESKTOP) ---
         _buildBirthdaysSection(isDesktop: true),
 
-        Row(
-          children: [
-            Expanded(
-              child: _buildMetricCard(
-                "Faturamento",
-                faturamentoTotal,
-                Icons.monetization_on,
-                Colors.green,
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: _buildMetricCard(
-                "Atendimentos",
-                totalAtendimentos.toDouble(),
-                Icons.people_alt,
-                Colors.blue,
-                isMoney: false,
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: _buildMetricCard(
-                "Ticket Mdio",
-                ticketMedio,
-                Icons.receipt_long,
-                AppColors.primaryPurple,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        Expanded(
-          child: Row(
+        if (_currentFeatures.financialTab) ...[
+          Row(
             children: [
               Expanded(
-                flex: 7,
-                child: _buildDualChart(
-                  dataMoney,
-                  dataQty,
-                  chartLabels,
-                  isAllYears,
+                child: _buildMetricCard(
+                  "Faturamento",
+                  faturamentoTotal,
+                  Icons.monetization_on,
+                  Colors.green,
                 ),
               ),
               const SizedBox(width: 16),
               Expanded(
-                flex: 3,
-                child: _buildBreakdownCard(
-                  faturamentoMaoDeObra,
-                  faturamentoProdutos,
-                  faturamentoTotal,
+                child: _buildMetricCard(
+                  "Atendimentos",
+                  totalAtendimentos.toDouble(),
+                  Icons.people_alt,
+                  Colors.blue,
+                  isMoney: false,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: _buildMetricCard(
+                  "Ticket Mdio",
+                  ticketMedio,
+                  Icons.receipt_long,
+                  AppColors.primaryPurple,
                 ),
               ),
             ],
           ),
-        ),
+          const SizedBox(height: 20),
+        ],
+        if (_currentFeatures.financialTab)
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(
+                  flex: 7,
+                  child: _buildDualChart(
+                    dataMoney,
+                    dataQty,
+                    chartLabels,
+                    isAllYears,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  flex: 3,
+                  child: _buildBreakdownCard(
+                    faturamentoMaoDeObra,
+                    faturamentoProdutos,
+                    faturamentoTotal,
+                  ),
+                ),
+              ],
+            ),
+          ),
         if (shopId != null &&
             appointmentDocs != null &&
             appointmentDocs.isNotEmpty &&
@@ -1902,20 +2098,23 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 _buildHojeCard(hoje, appointmentDocs),
                 const SizedBox(height: 12),
 
-                // -- Breakdown Servios vs Produtos ------------------------
-                _buildBreakdownVisual(
-                  faturamentoMaoDeObra,
-                  faturamentoProdutos,
-                  faturamentoTotal,
-                ),
-                const SizedBox(height: 12),
+                if (_currentFeatures.financialTab) ...[
+                  // -- Breakdown Servios vs Produtos ------------------------
+                  _buildBreakdownVisual(
+                    faturamentoMaoDeObra,
+                    faturamentoProdutos,
+                    faturamentoTotal,
+                  ),
+                  const SizedBox(height: 12),
 
-                // -- Grfico -----------------------------------------------
-                _buildMobileChart(dataMoney, dataQty, chartLabels, isAllYears),
+                  // -- Grfico -----------------------------------------------
+                  _buildMobileChart(dataMoney, dataQty, chartLabels, isAllYears),
+                ],
 
                 if (shopId != null &&
                     appointmentDocs != null &&
-                    appointmentDocs.isNotEmpty) ...[
+                    appointmentDocs.isNotEmpty &&
+                    _canViewCommissions) ...[
                   const SizedBox(height: 12),
                   _buildEquipeComissoesCard(shopId!, appointmentDocs),
                 ],
@@ -1936,65 +2135,76 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     required Color color,
     required bool isMoney,
   }) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: color.withValues(alpha: 0.18),
-            blurRadius: 16,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      color.withValues(alpha: 0.15),
-                      color.withValues(alpha: 0.05)
-                    ],
-                  ),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(icon, color: color, size: 18),
-              ),
-              const Spacer(),
-              Icon(Icons.trending_up_rounded, color: color, size: 14),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Text(
-            title,
-            style: TextStyle(
-                fontSize: 11,
-                color: Colors.grey[500],
-                fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 3),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.centerLeft,
-            child: Text(
-              value,
-              style: const TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF1A1D2E)),
+    return GestureDetector(
+      onTap: () {
+        if (!_hiddenIndices.contains(5)) {
+          if (_restrictedIndices.contains(5)) {
+            _showUpgradeDialog('Dashboard Financeiro');
+          } else {
+            setState(() => _selectedIndex = 5);
+          }
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: color.withValues(alpha: 0.18),
+              blurRadius: 16,
+              offset: const Offset(0, 4),
             ),
-          ),
-          const SizedBox(height: 2),
-          Text(subtitle,
-              style: TextStyle(fontSize: 10, color: Colors.grey[400])),
-        ],
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        color.withValues(alpha: 0.15),
+                        color.withValues(alpha: 0.05)
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(icon, color: color, size: 18),
+                ),
+                const Spacer(),
+                Icon(Icons.trending_up_rounded, color: color, size: 14),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              title,
+              style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.grey[500],
+                  fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 3),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                value,
+                style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF1A1D2E)),
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(subtitle,
+                style: TextStyle(fontSize: 10, color: Colors.grey[400])),
+          ],
+        ),
       ),
     );
   }
@@ -2475,57 +2685,68 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         ? NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(value)
         : value.toInt().toString();
 
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 10,
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(12),
+    return GestureDetector(
+      onTap: () {
+        if (!_hiddenIndices.contains(5)) {
+          if (_restrictedIndices.contains(5)) {
+            _showUpgradeDialog('Dashboard Financeiro');
+          } else {
+            setState(() => _selectedIndex = 5);
+          }
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.03),
+              blurRadius: 10,
             ),
-            child: Icon(icon, color: color, size: 28),
-          ),
-          const SizedBox(width: 15),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: Colors.grey,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    textVal,
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, color: color, size: 28),
+            ),
+            const SizedBox(width: 15),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
                     style: const TextStyle(
-                      fontSize: 20,
+                      color: Colors.grey,
+                      fontSize: 12,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 4),
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      textVal,
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
