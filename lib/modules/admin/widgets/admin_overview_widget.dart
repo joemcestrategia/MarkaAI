@@ -8,131 +8,169 @@ class AdminOverviewWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Theme(
-      data: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: const Color(0xFF0F1117),
-        cardColor: const Color(0xFF1A1D27),
-      ),
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Stats Row
-            StreamBuilder<List<QuerySnapshot>>(
-              stream: _getStatsStream(),
-              builder: (context, snapshot) {
-                if (!snapshot.hasData) {
-                  return const Center(child: CircularProgressIndicator());
+    final theme = Theme.of(context);
+    final cardColor = theme.cardColor;
+    final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
+    final subTextColor = theme.textTheme.bodyMedium?.color?.withOpacity(0.7) ?? Colors.grey;
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Stats Row
+          StreamBuilder<List<QuerySnapshot>>(
+            stream: _getStatsStream(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) {
+                return const Center(child: CircularProgressIndicator());
+              }
+
+              final usersSnap = snapshot.data![0];
+              final shopsSnap = snapshot.data![1];
+              final appointmentsSnap = snapshot.data![2];
+
+              final totalUsers = usersSnap.size;
+              final totalShops = shopsSnap.size;
+              final totalAppointments = appointmentsSnap.size;
+
+              double appointmentRevenue = 0;
+              for (var doc in appointmentsSnap.docs) {
+                final data = doc.data() as Map<String, dynamic>;
+                final valor = data['valor_pago'];
+                if (valor != null) {
+                  appointmentRevenue += double.tryParse(valor.toString()) ?? 0;
                 }
+              }
 
-                final usersSnap = snapshot.data![0];
-                final shopsSnap = snapshot.data![1];
-                final appointmentsSnap = snapshot.data![2];
+              // Developer Revenue Calculation (Active Subscriptions)
+              double devMonthlyRevenue = 0;
+              for (var doc in shopsSnap.docs) {
+                final data = doc.data() as Map<String, dynamic>;
+                final plan = (data['plan'] ?? 'free').toString().toLowerCase();
+                final sub = data['subscription'] as Map<String, dynamic>?;
+                final trialActive = data['trial_active'] == true;
 
-                final totalUsers = usersSnap.size;
-                final totalShops = shopsSnap.size;
-                final totalAppointments = appointmentsSnap.size;
-
-                double totalRevenue = 0;
-                for (var doc in appointmentsSnap.docs) {
-                  final data = doc.data() as Map<String, dynamic>;
-                  final valor = data['valor_pago'];
-                  if (valor != null) {
-                    totalRevenue += double.tryParse(valor.toString()) ?? 0;
+                if (plan != 'free' && sub != null && sub['status'] == 'active' && !trialActive) {
+                  switch (plan) {
+                    case 'start': devMonthlyRevenue += 29.90; break;
+                    case 'plus': devMonthlyRevenue += 59.90; break;
+                    case 'pro': devMonthlyRevenue += 99.90; break;
                   }
                 }
+              }
 
-                return Column(
-                  children: [
-                    LayoutBuilder(builder: (context, constraints) {
-                      final cols = constraints.maxWidth > 1200 ? 4 : (constraints.maxWidth > 700 ? 2 : 1);
-                      return GridView.count(
-                        crossAxisCount: cols,
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        crossAxisSpacing: 24,
-                        mainAxisSpacing: 24,
-                        childAspectRatio: 1.8,
-                        children: [
-                          _buildPremiumStatCard(
-                            'Usuários Ativos',
-                            totalUsers.toString(),
-                            Icons.people_alt_rounded,
-                            const Color(0xFF4F8EF7),
-                            '+8.2%',
-                          ),
-                          _buildPremiumStatCard(
-                            'Negócios (Lojas)',
-                            totalShops.toString(),
-                            Icons.storefront_rounded,
-                            const Color(0xFF7C5CFC),
-                            '+12.4%',
-                          ),
-                          _buildPremiumStatCard(
-                            'Agendamentos',
-                            totalAppointments.toString(),
-                            Icons.calendar_today_rounded,
-                            const Color(0xFF22C55E),
-                            '+4.1%',
-                          ),
-                          _buildPremiumStatCard(
-                            'Receita Estimada',
-                            'R\$ ${NumberFormat.currency(symbol: '', decimalDigits: 0).format(totalRevenue)}',
-                            Icons.payments_rounded,
-                            const Color(0xFFF59E0B),
-                            '+15.8%',
-                          ),
-                        ],
-                      );
-                    }),
-                    const SizedBox(height: 32),
-                    // Main Charts Row
-                    LayoutBuilder(builder: (context, constraints) {
-                      final isDesktop = constraints.maxWidth > 1000;
-                      return Flex(
-                        direction: isDesktop ? Axis.horizontal : Axis.vertical,
-                        children: [
-                          Expanded(
-                            flex: isDesktop ? 3 : 0,
-                            child: _buildRevenueChart(),
-                          ),
-                          if (isDesktop) const SizedBox(width: 24),
-                          if (!isDesktop) const SizedBox(height: 24),
-                          Expanded(
-                            flex: isDesktop ? 2 : 0,
-                            child: _buildPlanDonut(shopsSnap.docs),
-                          ),
-                        ],
-                      );
-                    }),
-                    const SizedBox(height: 32),
-                    _buildSubscriptionAnalytics(shopsSnap.docs),
-                  ],
-                );
-              },
-            ),
+              return Column(
+                children: [
+                  LayoutBuilder(builder: (context, constraints) {
+                    final cols = constraints.maxWidth > 1400 ? 5 : (constraints.maxWidth > 1000 ? 4 : (constraints.maxWidth > 600 ? 2 : 1));
+                    return GridView.count(
+                      crossAxisCount: cols,
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      crossAxisSpacing: 16,
+                      mainAxisSpacing: 16,
+                      childAspectRatio: constraints.maxWidth > 1400 ? 2.0 : 1.6,
+                      children: [
+                        _buildPremiumStatCard(
+                          'Usuários',
+                          totalUsers.toString(),
+                          Icons.people_alt_rounded,
+                          const Color(0xFF4F8EF7),
+                          '+8%',
+                          cardColor,
+                          textColor,
+                          subTextColor,
+                        ),
+                        _buildPremiumStatCard(
+                          'Negócios',
+                          totalShops.toString(),
+                          Icons.storefront_rounded,
+                          const Color(0xFF7C5CFC),
+                          '+12%',
+                          cardColor,
+                          textColor,
+                          subTextColor,
+                        ),
+                        _buildPremiumStatCard(
+                          'Agendamentos',
+                          totalAppointments.toString(),
+                          Icons.calendar_today_rounded,
+                          const Color(0xFF22C55E),
+                          '+4%',
+                          cardColor,
+                          textColor,
+                          subTextColor,
+                        ),
+                        _buildPremiumStatCard(
+                          'Movimentação',
+                          'R\$ ${NumberFormat.compactCurrency(symbol: '', decimalDigits: 0).format(appointmentRevenue)}',
+                          Icons.payments_rounded,
+                          const Color(0xFFF59E0B),
+                          '+15%',
+                          cardColor,
+                          textColor,
+                          subTextColor,
+                        ),
+                        _buildPremiumStatCard(
+                          'Recorrência Dev',
+                          'R\$ ${devMonthlyRevenue.toStringAsFixed(0)}',
+                          Icons.insights_rounded,
+                          const Color(0xFFEE4444),
+                          'Recorrência',
+                          cardColor,
+                          textColor,
+                          subTextColor,
+                        ),
+                      ],
+                    );
+                  }),
+                  const SizedBox(height: 24),
+                  // Main Charts Row
+                  LayoutBuilder(builder: (context, constraints) {
+                    final isDesktop = constraints.maxWidth > 1000;
+                    return Flex(
+                      direction: isDesktop ? Axis.horizontal : Axis.vertical,
+                      children: [
+                        Expanded(
+                          flex: isDesktop ? 3 : 0,
+                          child: _buildRevenueChart(cardColor, textColor, subTextColor),
+                        ),
+                        if (isDesktop) const SizedBox(width: 16),
+                        if (!isDesktop) const SizedBox(height: 16),
+                        Expanded(
+                          flex: isDesktop ? 2 : 0,
+                          child: _buildPlanDonut(shopsSnap.docs, cardColor, textColor, subTextColor),
+                        ),
+                      ],
+                    );
+                  }),
+                  const SizedBox(height: 24),
+                  _buildSubscriptionAnalytics(shopsSnap.docs, cardColor, textColor, subTextColor, devMonthlyRevenue),
+                ],
+              );
+            },
+          ),
 
-            const SizedBox(height: 32),
-            const Text(
-              'Atividade Recente',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
-            ),
-            const SizedBox(height: 16),
-            _buildRecentActivityList(),
-          ],
-        ),
+          const SizedBox(height: 32),
+          Text(
+            'Atividade Recente',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textColor),
+          ),
+          const SizedBox(height: 16),
+          _buildRecentActivityList(cardColor, textColor, subTextColor),
+        ],
       ),
     );
   }
 
-  Widget _buildPremiumStatCard(String title, String value, IconData icon, Color color, String trend) {
+  Widget _buildPremiumStatCard(String title, String value, IconData icon, Color color, String trend, Color cardColor, Color textColor, Color subTextColor) {
     return Container(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF1A1D27),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withOpacity(0.04)),
+        color: cardColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: textColor.withOpacity(0.04)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -142,35 +180,31 @@ class AdminOverviewWidget extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Container(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
                   color: color.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(icon, color: color, size: 24),
+                child: Icon(icon, color: color, size: 20),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: Colors.green.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(6),
                 ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.arrow_upward, color: Colors.green, size: 10),
-                    const SizedBox(width: 4),
-                    Text(trend, style: const TextStyle(color: Colors.green, fontSize: 10, fontWeight: FontWeight.bold)),
-                  ],
-                ),
+                child: Text(trend, style: const TextStyle(color: Colors.green, fontSize: 10, fontWeight: FontWeight.bold)),
               ),
             ],
           ),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title, style: TextStyle(color: Colors.grey[500], fontSize: 13, fontWeight: FontWeight.w500)),
-              const SizedBox(height: 4),
-              Text(value, style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w800)),
+              Text(title, style: TextStyle(color: subTextColor, fontSize: 11, fontWeight: FontWeight.w500)),
+              const SizedBox(height: 2),
+              Text(value, 
+                   overflow: TextOverflow.ellipsis,
+                   style: TextStyle(color: textColor, fontSize: 20, fontWeight: FontWeight.w800)),
             ],
           ),
         ],
@@ -178,27 +212,27 @@ class AdminOverviewWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildRevenueChart() {
+  Widget _buildRevenueChart(Color cardColor, Color textColor, Color subTextColor) {
     return Container(
-      height: 400,
-      padding: const EdgeInsets.all(24),
+      height: 350,
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: const Color(0xFF1A1D27),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withOpacity(0.04)),
+        color: cardColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: textColor.withOpacity(0.04)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text('Receita Mensal (Estimativa)',
-                  style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-              Icon(Icons.more_horiz, color: Colors.grey),
+                  style: TextStyle(color: textColor, fontSize: 16, fontWeight: FontWeight.bold)),
+              Icon(Icons.more_horiz, color: subTextColor),
             ],
           ),
-          const SizedBox(height: 32),
+          const SizedBox(height: 24),
           Expanded(
             child: LineChart(
               LineChartData(
@@ -206,24 +240,34 @@ class AdminOverviewWidget extends StatelessWidget {
                   show: true,
                   drawVerticalLine: false,
                   getDrawingHorizontalLine: (value) => FlLine(
-                    color: Colors.white.withOpacity(0.04),
+                    color: textColor.withOpacity(0.04),
                     strokeWidth: 1,
                   ),
                 ),
-                titlesData: const FlTitlesData(
+                titlesData: FlTitlesData(
                   show: true,
-                  rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
                   leftTitles: AxisTitles(
                     sideTitles: SideTitles(
                       showTitles: true,
-                      reservedSize: 40,
-                      interval: 20000,
+                      reservedSize: 35,
+                      getTitlesWidget: (value, meta) => Text(
+                        '${(value/1000).toStringAsFixed(0)}k',
+                        style: TextStyle(color: subTextColor, fontSize: 10),
+                      ),
                     ),
                   ),
                   bottomTitles: AxisTitles(
                     sideTitles: SideTitles(
                       showTitles: true,
+                      getTitlesWidget: (value, meta) => Padding(
+                        padding: const EdgeInsets.only(top: 8.0),
+                        child: Text(
+                          ['Jan', 'Mar', 'Mai', 'Jul', 'Set', 'Nov'][((value % 12) / 2).floor()],
+                          style: TextStyle(color: subTextColor, fontSize: 10),
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -241,14 +285,14 @@ class AdminOverviewWidget extends StatelessWidget {
                     ],
                     isCurved: true,
                     color: const Color(0xFF4F8EF7),
-                    barWidth: 4,
+                    barWidth: 3,
                     isStrokeCapRound: true,
                     dotData: const FlDotData(show: false),
                     belowBarData: BarAreaData(
                       show: true,
                       gradient: LinearGradient(
                         colors: [
-                          const Color(0xFF4F8EF7).withOpacity(0.3),
+                          const Color(0xFF4F8EF7).withOpacity(0.2),
                           const Color(0xFF4F8EF7).withOpacity(0),
                         ],
                         begin: Alignment.topCenter,
@@ -265,7 +309,7 @@ class AdminOverviewWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildPlanDonut(List<QueryDocumentSnapshot> shops) {
+  Widget _buildPlanDonut(List<QueryDocumentSnapshot> shops, Color cardColor, Color textColor, Color subTextColor) {
     Map<String, int> planCounts = {'free': 0, 'start': 0, 'plus': 0, 'pro': 0};
     for (var doc in shops) {
       final data = doc.data() as Map<String, dynamic>;
@@ -276,79 +320,79 @@ class AdminOverviewWidget extends StatelessWidget {
     }
 
     return Container(
-      height: 400,
-      padding: const EdgeInsets.all(24),
+      height: 350,
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: const Color(0xFF1A1D27),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withOpacity(0.04)),
+        color: cardColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: textColor.withOpacity(0.04)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Assinaturas por Plano',
-              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 32),
+          Text('Assinaturas por Plano',
+              style: TextStyle(color: textColor, fontSize: 16, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 24),
           Expanded(
             child: PieChart(
               PieChartData(
-                sectionsSpace: 8,
-                centerSpaceRadius: 60,
+                sectionsSpace: 4,
+                centerSpaceRadius: 50,
                 sections: [
                   PieChartSectionData(
                       value: planCounts['free']!.toDouble(),
-                      color: Colors.grey.withOpacity(0.4),
-                      radius: 20,
+                      color: Colors.grey.withOpacity(0.3),
+                      radius: 15,
                       showTitle: false),
                   PieChartSectionData(
                       value: planCounts['start']!.toDouble(),
                       color: const Color(0xFF4F8EF7),
-                      radius: 20,
+                      radius: 15,
                       showTitle: false),
                   PieChartSectionData(
                       value: planCounts['plus']!.toDouble(),
                       color: const Color(0xFF7C5CFC),
-                      radius: 20,
+                      radius: 15,
                       showTitle: false),
                   PieChartSectionData(
                       value: planCounts['pro']!.toDouble(),
                       color: const Color(0xFF22C55E),
-                      radius: 20,
+                      radius: 15,
                       showTitle: false),
                 ],
               ),
             ),
           ),
-          const SizedBox(height: 24),
-          _buildLegend('Trial/Free', planCounts['free']!, Colors.grey),
-          _buildLegend('Start', planCounts['start']!, const Color(0xFF4F8EF7)),
-          _buildLegend('Plus', planCounts['plus']!, const Color(0xFF7C5CFC)),
-          _buildLegend('Pro', planCounts['pro']!, const Color(0xFF22C55E)),
+          const SizedBox(height: 16),
+          _buildLegend('Free', planCounts['free']!, Colors.grey, subTextColor, textColor),
+          _buildLegend('Start', planCounts['start']!, const Color(0xFF4F8EF7), subTextColor, textColor),
+          _buildLegend('Plus', planCounts['plus']!, const Color(0xFF7C5CFC), subTextColor, textColor),
+          _buildLegend('Pro', planCounts['pro']!, const Color(0xFF22C55E), subTextColor, textColor),
         ],
       ),
     );
   }
 
-  Widget _buildLegend(String label, int count, Color color) {
+  Widget _buildLegend(String label, int count, Color color, Color subTextColor, Color textColor) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Row(
             children: [
               Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
-              const SizedBox(width: 12),
-              Text(label, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+              const SizedBox(width: 8),
+              Text(label, style: TextStyle(color: subTextColor, fontSize: 11)),
             ],
           ),
-          Text(count.toString(), style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+          Text(count.toString(), style: TextStyle(color: textColor, fontSize: 11, fontWeight: FontWeight.bold)),
         ],
       ),
     );
   }
 
-  Widget _buildRecentActivityList() {
+  Widget _buildRecentActivityList(Color cardColor, Color textColor, Color subTextColor) {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance.collection('appointments').orderBy('criado_em', descending: true).limit(6).snapshots(),
       builder: (context, snapshot) {
@@ -361,31 +405,32 @@ class AdminOverviewWidget extends StatelessWidget {
             final cliente = data['client_nome'] ?? 'Cliente';
             final status = (data['status'] ?? 'pendente').toString().toLowerCase();
             return Container(
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.all(16),
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: const Color(0xFF1A1D27),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.white.withOpacity(0.02)),
+                color: cardColor,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: textColor.withOpacity(0.02)),
               ),
               child: Row(
                 children: [
                   CircleAvatar(
+                    radius: 16,
                     backgroundColor: _getStatusColor(status).withOpacity(0.1),
-                    child: Icon(_getStatusIcon(status), color: _getStatusColor(status), size: 20),
+                    child: Icon(_getStatusIcon(status), color: _getStatusColor(status), size: 16),
                   ),
-                  const SizedBox(width: 16),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(servico, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                        Text('Cliente: $cliente', style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                        Text(servico, style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 13)),
+                        Text('Cliente: $cliente', style: TextStyle(color: subTextColor, fontSize: 11)),
                       ],
                     ),
                   ),
                   Text(status.toUpperCase(),
-                      style: TextStyle(color: _getStatusColor(status), fontSize: 10, fontWeight: FontWeight.bold)),
+                      style: TextStyle(color: _getStatusColor(status), fontSize: 9, fontWeight: FontWeight.bold)),
                 ],
               ),
             );
@@ -395,7 +440,7 @@ class AdminOverviewWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildSubscriptionAnalytics(List<QueryDocumentSnapshot> shops) {
+  Widget _buildSubscriptionAnalytics(List<QueryDocumentSnapshot> shops, Color cardColor, Color textColor, Color subTextColor, double devRevenue) {
     Map<String, Map<String, dynamic>> stats = {
       'free': {'name': 'Free', 'paidCount': 0, 'manualCount': 0, 'price': 0.0},
       'start': {'name': 'Start', 'paidCount': 0, 'manualCount': 0, 'price': 29.90},
@@ -422,37 +467,36 @@ class AdminOverviewWidget extends StatelessWidget {
       }
     }
 
-    double totalPaidRevenue = 0;
-    stats.forEach((key, val) => totalPaidRevenue += (val['paidCount'] as int) * (val['price'] as double));
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text('Receita de Assinaturas', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
-            Text('Faturamento: R\$ ${totalPaidRevenue.toStringAsFixed(2)}',
+            Text('Receita de Assinaturas (DEV)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: textColor)),
+            Text('Estimativa: R\$ ${devRevenue.toStringAsFixed(2)}',
                 style: const TextStyle(color: Color(0xFF22C55E), fontWeight: FontWeight.bold)),
           ],
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 12),
         Container(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
-            color: const Color(0xFF1A1D27),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: Colors.white.withOpacity(0.04)),
+            color: cardColor,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: textColor.withOpacity(0.04)),
           ),
           child: Column(
             children: [
-              _buildPlanRow('PLANO', 'TOTAL', 'PAGOS', 'MANUAL', isHeader: true),
-              const Divider(color: Colors.white10),
+              _buildPlanRow('PLANO', 'TOTAL', 'PAGOS', 'MANUAL', subTextColor, textColor, isHeader: true),
+              const Divider(height: 24, color: Colors.white10),
               ...stats.values.map((s) => _buildPlanRow(
                     s['name'],
                     (s['paidCount'] + s['manualCount']).toString(),
                     s['paidCount'].toString(),
                     s['manualCount'].toString(),
+                    subTextColor, 
+                    textColor,
                   )),
             ],
           ),
@@ -461,14 +505,14 @@ class AdminOverviewWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildPlanRow(String plan, String total, String paid, String manual, {bool isHeader = false}) {
+  Widget _buildPlanRow(String plan, String total, String paid, String manual, Color subTextColor, Color textColor, {bool isHeader = false}) {
     final style = TextStyle(
       fontWeight: isHeader ? FontWeight.bold : FontWeight.normal,
-      fontSize: isHeader ? 11 : 13,
-      color: isHeader ? Colors.grey : Colors.white70,
+      fontSize: isHeader ? 10 : 12,
+      color: isHeader ? subTextColor : textColor.withOpacity(0.8),
     );
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         children: [
           Expanded(flex: 2, child: Text(plan, style: style)),

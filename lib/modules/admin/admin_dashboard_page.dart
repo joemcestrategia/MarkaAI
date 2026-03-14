@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 import '../../core/widgets/splash_loading_widget.dart';
 import 'widgets/admin_overview_widget.dart';
@@ -18,6 +17,7 @@ class AdminDashboardPage extends StatefulWidget {
 class _AdminDashboardPageState extends State<AdminDashboardPage> {
   bool _loading = true;
   bool _isAdmin = false;
+  bool _isDarkMode = true;
   int _selectedIndex = 0;
 
   @override
@@ -40,17 +40,22 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       return const SplashLoadingWidget(message: "Verificando permissões...");
     }
 
+    final Color bgColor = _isDarkMode ? const Color(0xFF0F1117) : const Color(0xFFF8FAFC);
+    final Color cardColor = _isDarkMode ? const Color(0xFF1A1D27) : Colors.white;
+    final Color textColor = _isDarkMode ? Colors.white : const Color(0xFF1E293B);
+    final Color borderColor = _isDarkMode ? Colors.white.withValues(alpha: 0.06) : Colors.black.withValues(alpha: 0.06);
+
     if (!_isAdmin) {
       return Scaffold(
-        backgroundColor: const Color(0xFF0F1117),
+        backgroundColor: bgColor,
         body: Center(
           child: Container(
             constraints: const BoxConstraints(maxWidth: 500),
             padding: const EdgeInsets.all(40),
             decoration: BoxDecoration(
-              color: const Color(0xFF1A1D27),
+              color: cardColor,
               borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+              border: Border.all(color: borderColor),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -64,12 +69,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   child: const Icon(Icons.lock_person_rounded, size: 48, color: Colors.redAccent),
                 ),
                 const SizedBox(height: 32),
-                const Text(
+                Text(
                   'Acesso Restrito',
                   style: TextStyle(
                     fontSize: 28,
                     fontWeight: FontWeight.w900,
-                    color: Colors.white,
+                    color: textColor,
                     letterSpacing: -0.5,
                   ),
                 ),
@@ -77,7 +82,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 Text(
                   'Esta área é exclusiva para administradores oficiais do MarkaAI.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.grey[400], fontSize: 16, height: 1.5),
+                  style: TextStyle(color: _isDarkMode ? Colors.grey[400] : Colors.grey[600], fontSize: 16, height: 1.5),
                 ),
                 const SizedBox(height: 32),
                 Container(
@@ -94,7 +99,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       Expanded(
                         child: Text(
                           'Atenção: Por motivos de segurança, não é possível criar contas de administrador pela interface. O processo é 100% manual e direto no banco de dados.',
-                          style: TextStyle(color: Colors.amber[200], fontSize: 12, height: 1.4),
+                          style: TextStyle(color: Colors.amber[700], fontSize: 12, height: 1.4),
                         ),
                       ),
                     ],
@@ -138,29 +143,31 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         final isDesktop = constraints.maxWidth > 900;
 
         return Theme(
-          data: ThemeData.dark().copyWith(
-            scaffoldBackgroundColor: const Color(0xFF0F1117),
-            cardColor: const Color(0xFF1A1D27),
-            dividerColor: Colors.white.withValues(alpha: 0.06),
+          data: (_isDarkMode ? ThemeData.dark() : ThemeData.light()).copyWith(
+            scaffoldBackgroundColor: bgColor,
+            cardColor: cardColor,
+            dividerColor: borderColor,
+            primaryColor: const Color(0xFF4F8EF7),
           ),
-          child: isDesktop ? _buildDesktopLayout() : _buildMobileLayout(),
+          child: isDesktop ? _buildDesktopLayout(bgColor, cardColor, textColor, borderColor) : _buildMobileLayout(bgColor, cardColor, textColor, borderColor),
         );
       },
     );
   }
 
-  Widget _buildDesktopLayout() {
+  Widget _buildDesktopLayout(Color bgColor, Color cardColor, Color textColor, Color borderColor) {
     return Scaffold(
+      backgroundColor: bgColor,
       body: Row(
         children: [
           // Sidebar
           Container(
             width: 260,
             decoration: BoxDecoration(
-              color: const Color(0xFF1A1D27),
+              color: cardColor,
               border: Border(
                 right: BorderSide(
-                  color: Colors.white.withValues(alpha: 0.06),
+                  color: borderColor,
                   width: 1,
                 ),
               ),
@@ -194,19 +201,19 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             color: Colors.white, size: 24),
                       ),
                       const SizedBox(width: 12),
-                      const Column(
+                      Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
                             'MarkaAI',
                             style: TextStyle(
-                              color: Colors.white,
+                              color: textColor,
                               fontSize: 18,
                               fontWeight: FontWeight.w900,
                               letterSpacing: -0.5,
                             ),
                           ),
-                          Text(
+                          const Text(
                             'PANEL ADMIN',
                             style: TextStyle(
                               color: Color(0xFF4F8EF7),
@@ -221,16 +228,16 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   ),
                 ),
                 const SizedBox(height: 48),
-                _buildMenuItem(0, Icons.grid_view_rounded, 'Dashboard'),
-                _buildMenuItem(1, Icons.people_outline_rounded, 'Usuários'),
-                _buildMenuItem(2, Icons.storefront_outlined, 'Negócios'),
-                _buildMenuItem(3, Icons.support_agent_rounded, 'Suporte'),
+                _buildMenuItem(0, Icons.grid_view_rounded, 'Dashboard', textColor),
+                _buildMenuItem(1, Icons.people_outline_rounded, 'Usuários', textColor),
+                _buildMenuItem(2, Icons.storefront_outlined, 'Negócios', textColor),
+                _buildMenuItem(3, Icons.support_agent_rounded, 'Suporte', textColor),
                 const Spacer(),
                 Container(
                   margin: const EdgeInsets.all(16),
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.03),
+                    color: textColor.withValues(alpha: 0.03),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Column(
@@ -242,11 +249,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                           backgroundColor: const Color(0xFF4F8EF7).withValues(alpha: 0.2),
                           child: const Icon(Icons.person, color: Color(0xFF4F8EF7), size: 20),
                         ),
-                        title: const Text('Admin Master',
-                            style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                        title: Text('Admin Master',
+                            style: TextStyle(color: textColor, fontSize: 13, fontWeight: FontWeight.bold)),
                         subtitle: const Text('Sair do sistema',
                             style: TextStyle(color: Colors.grey, fontSize: 10)),
-                        onTap: () => Navigator.pop(context),
+                        onTap: () {
+                          FirebaseAuth.instance.signOut();
+                          Navigator.pushReplacementNamed(context, '/login');
+                        },
                       ),
                     ],
                   ),
@@ -259,11 +269,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           Expanded(
             child: Column(
               children: [
-                _buildTopBar(),
+                _buildTopBar(bgColor, cardColor, textColor, borderColor),
                 Expanded(
                   child: Container(
-                    decoration: const BoxDecoration(
-                      color: Color(0xFF0F1117),
+                    decoration: BoxDecoration(
+                      color: bgColor,
                     ),
                     child: _buildContent(),
                   ),
@@ -276,20 +286,27 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
-  Widget _buildMobileLayout() {
+  Widget _buildMobileLayout(Color bgColor, Color cardColor, Color textColor, Color borderColor) {
     return Scaffold(
+      backgroundColor: bgColor,
       appBar: AppBar(
-        title: const Text('MarkaAI Admin', style: TextStyle(fontWeight: FontWeight.w900)),
-        backgroundColor: const Color(0xFF1A1D27),
+        title: Text('MarkaAI Admin', style: TextStyle(fontWeight: FontWeight.w900, color: textColor)),
+        backgroundColor: cardColor,
         elevation: 0,
+        actions: [
+          IconButton(
+            icon: Icon(_isDarkMode ? Icons.light_mode_rounded : Icons.dark_mode_rounded, color: textColor),
+            onPressed: () => setState(() => _isDarkMode = !_isDarkMode),
+          ),
+        ],
       ),
       body: _buildContent(),
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
-          border: Border(top: BorderSide(color: Colors.white.withValues(alpha: 0.06))),
+          border: Border(top: BorderSide(color: borderColor)),
         ),
         child: BottomNavigationBar(
-          backgroundColor: const Color(0xFF1A1D27),
+          backgroundColor: cardColor,
           currentIndex: _selectedIndex,
           onTap: (index) => setState(() => _selectedIndex = index),
           type: BottomNavigationBarType.fixed,
@@ -308,7 +325,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
-  Widget _buildMenuItem(int index, IconData icon, String label) {
+  Widget _buildMenuItem(int index, IconData icon, String label, Color textColor) {
     final isSelected = _selectedIndex == index;
     return InkWell(
       onTap: () => setState(() => _selectedIndex = index),
@@ -333,7 +350,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             Text(
               label,
               style: TextStyle(
-                color: isSelected ? Colors.white : Colors.grey,
+                color: isSelected ? textColor : Colors.grey,
                 fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
                 fontSize: 14,
               ),
@@ -355,15 +372,15 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
-  Widget _buildTopBar() {
+  Widget _buildTopBar(Color bgColor, Color cardColor, Color textColor, Color borderColor) {
     return Container(
       height: 70,
       padding: const EdgeInsets.symmetric(horizontal: 32),
       decoration: BoxDecoration(
-        color: const Color(0xFF0F1117),
+        color: bgColor,
         border: Border(
           bottom: BorderSide(
-            color: Colors.white.withValues(alpha: 0.06),
+            color: borderColor,
           ),
         ),
       ),
@@ -371,8 +388,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         children: [
           Text(
             _getTitleForIndex(_selectedIndex),
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: textColor,
               fontSize: 20,
               fontWeight: FontWeight.w800,
               letterSpacing: -0.5,
@@ -385,9 +402,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             height: 40,
             padding: const EdgeInsets.symmetric(horizontal: 16),
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.04),
+              color: textColor.withValues(alpha: 0.04),
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+              border: Border.all(color: borderColor),
             ),
             child: Row(
               children: [
@@ -398,12 +415,28 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             ),
           ),
           const SizedBox(width: 24),
-          const Icon(Icons.notifications_none_rounded, color: Colors.grey),
+          // Theme Toggle
+          Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: cardColor,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: borderColor),
+            ),
+            child: Row(
+              children: [
+                _buildThemeButton(true, Icons.dark_mode_rounded),
+                _buildThemeButton(false, Icons.light_mode_rounded),
+              ],
+            ),
+          ),
+          const SizedBox(width: 24),
+          Icon(Icons.notifications_none_rounded, color: Colors.grey),
           const SizedBox(width: 24),
           Container(
             height: 32,
             width: 1,
-            color: Colors.white.withValues(alpha: 0.06),
+            color: borderColor,
           ),
           const SizedBox(width: 24),
           FutureBuilder<User?>(
@@ -418,7 +451,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     children: [
                       Text(
                         user?.displayName ?? 'Admin Master',
-                        style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                        style: TextStyle(color: textColor, fontSize: 13, fontWeight: FontWeight.bold),
                       ),
                       const Text(
                         'Full Access',
@@ -437,6 +470,25 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             },
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildThemeButton(bool isDark, IconData icon) {
+    final isSelected = _isDarkMode == isDark;
+    return GestureDetector(
+      onTap: () => setState(() => _isDarkMode = isDark),
+      child: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFF4F8EF7) : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Icon(
+          icon,
+          size: 16,
+          color: isSelected ? Colors.white : Colors.grey,
+        ),
       ),
     );
   }

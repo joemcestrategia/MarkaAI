@@ -14,154 +14,360 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
 
   @override
   Widget build(BuildContext context) {
-    return Theme(
-      data: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: const Color(0xFF0F1117),
-        cardColor: const Color(0xFF1A1D27),
-      ),
-      child: Column(
-        children: [
-          // Search Bar
-          Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: TextField(
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                hintText: 'Buscar por nome, email ou CPF...',
-                hintStyle: const TextStyle(color: Colors.grey),
-                prefixIcon: const Icon(Icons.search, color: Color(0xFF4F8EF7)),
-                filled: true,
-                fillColor: const Color(0xFF1A1D27),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  borderSide: BorderSide(color: Colors.white.withOpacity(0.06)),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  borderSide: BorderSide(color: Colors.white.withOpacity(0.06)),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  borderSide: const BorderSide(color: Color(0xFF4F8EF7)),
-                ),
+    final theme = Theme.of(context);
+    final cardColor = theme.cardColor;
+    final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
+    final borderColor = textColor.withOpacity(0.06);
+
+    return Column(
+      children: [
+        // Search Bar - Slightly more compact
+        Padding(
+          padding: const EdgeInsets.all(20.0),
+          child: TextField(
+            style: TextStyle(color: textColor, fontSize: 14),
+            decoration: InputDecoration(
+              hintText: 'Buscar por nome, email ou CPF...',
+              hintStyle: TextStyle(color: textColor.withOpacity(0.4), fontSize: 14),
+              prefixIcon: const Icon(Icons.search, color: Color(0xFF4F8EF7), size: 20),
+              filled: true,
+              fillColor: cardColor,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: borderColor),
               ),
-              onChanged: (value) => setState(() => _searchQuery = value),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: borderColor),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: Color(0xFF4F8EF7), width: 1.5),
+              ),
             ),
+            onChanged: (value) => setState(() => _searchQuery = value),
           ),
-  
-          // Users List
-          Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance.collection('users').orderBy('nome').snapshots(),
-              builder: (context, snapshot) {
-                if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-  
-                var users = snapshot.data!.docs;
-                if (_searchQuery.isNotEmpty) {
-                  users = users.where((doc) {
+        ),
+
+        // Users List
+        Expanded(
+          child: StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance.collection('users').orderBy('nome').snapshots(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+
+              var users = snapshot.data!.docs;
+              if (_searchQuery.isNotEmpty) {
+                users = users.where((doc) {
+                  final data = doc.data() as Map<String, dynamic>;
+                  final nome = (data['nome'] ?? '').toString().toLowerCase();
+                  final email = (data['email'] ?? '').toString().toLowerCase();
+                  final docId = (data['documento'] ?? '').toString().toLowerCase();
+                  final query = _searchQuery.toLowerCase();
+                  return nome.contains(query) || email.contains(query) || docId.contains(query);
+                }).toList();
+              }
+
+              return Container(
+                margin: const EdgeInsets.symmetric(horizontal: 20),
+                decoration: BoxDecoration(
+                  color: cardColor,
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                  border: Border.all(color: borderColor),
+                ),
+                child: ListView.separated(
+                  itemCount: users.length,
+                  separatorBuilder: (context, index) => Divider(color: borderColor, height: 1),
+                  itemBuilder: (context, index) {
+                    final doc = users[index];
                     final data = doc.data() as Map<String, dynamic>;
-                    final nome = (data['nome'] ?? '').toString().toLowerCase();
-                    final email = (data['email'] ?? '').toString().toLowerCase();
-                    final docId = (data['documento'] ?? '').toString().toLowerCase();
-                    final query = _searchQuery.toLowerCase();
-                    return nome.contains(query) || email.contains(query) || docId.contains(query);
-                  }).toList();
-                }
-  
-                return Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 24),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1A1D27),
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-                    border: Border.all(color: Colors.white.withOpacity(0.04)),
-                  ),
-                  child: ListView.separated(
-                    itemCount: users.length,
-                    separatorBuilder: (context, index) => Divider(color: Colors.white.withOpacity(0.04), height: 1),
-                    itemBuilder: (context, index) {
-                      final doc = users[index];
-                      final data = doc.data() as Map<String, dynamic>;
-                      final nome = data['nome'] ?? 'Sem nome';
-                      final email = data['email'] ?? '';
-                      final tipo = data['tipo'] ?? 'cliente';
-  
-                      return ListTile(
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-                        leading: CircleAvatar(
+                    final nome = data['nome'] ?? 'Sem nome';
+                    final email = data['email'] ?? '';
+                    final tipo = data['tipo'] ?? 'cliente';
+
+                    return ListTile(
+                      onTap: () => _showUserDetails(doc),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                      leading: Hero(
+                        tag: 'avatar-${doc.id}',
+                        child: CircleAvatar(
+                          radius: 18,
                           backgroundColor: const Color(0xFF4F8EF7).withOpacity(0.1),
                           child: Text(nome.isNotEmpty ? nome[0].toUpperCase() : '?',
-                              style: const TextStyle(color: Color(0xFF4F8EF7), fontWeight: FontWeight.bold)),
+                              style: const TextStyle(color: Color(0xFF4F8EF7), fontWeight: FontWeight.bold, fontSize: 14)),
                         ),
-                        title: Text(nome, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                        subtitle: Text(email, style: const TextStyle(color: Colors.grey, fontSize: 12)),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: (tipo == 'dono' || tipo == 'business')
-                                    ? const Color(0xFF7C5CFC).withOpacity(0.1)
-                                    : Colors.white.withOpacity(0.05),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text(
-                                tipo.toUpperCase(),
-                                style: TextStyle(
-                                  color: (tipo == 'dono' || tipo == 'business') ? const Color(0xFF7C5CFC) : Colors.grey,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
+                      ),
+                      title: Text(nome, style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 14)),
+                      subtitle: Text(email, style: TextStyle(color: textColor.withOpacity(0.5), fontSize: 11)),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: (tipo == 'dono' || tipo == 'business')
+                                  ? const Color(0xFF7C5CFC).withOpacity(0.1)
+                                  : textColor.withOpacity(0.05),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              tipo.toUpperCase(),
+                              style: TextStyle(
+                                color: (tipo == 'dono' || tipo == 'business') ? const Color(0xFF7C5CFC) : textColor.withOpacity(0.5),
+                                fontSize: 9,
+                                fontWeight: FontWeight.bold,
                               ),
                             ),
-                            const SizedBox(width: 12),
-                            PopupMenuButton<String>(
-                              icon: const Icon(Icons.more_vert, color: Colors.grey),
-                              onSelected: (value) {
-                                if (value == 'edit') _editUser(doc);
-                                if (value == 'raw') _showRawData(doc);
-                                if (value == 'delete') _deleteUser(doc);
-                              },
-                              itemBuilder: (context) => [
-                                const PopupMenuItem(value: 'edit', child: Text('Editar')),
-                                const PopupMenuItem(value: 'raw', child: Text('Ver Dados Brutos')),
-                                const PopupMenuItem(value: 'delete', child: Text('Excluir', style: TextStyle(color: Colors.red))),
-                              ],
-                            ),
-                          ],
+                          ),
+                          const SizedBox(width: 8),
+                          Icon(Icons.chevron_right, color: textColor.withOpacity(0.3), size: 18),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _showUserDetails(QueryDocumentSnapshot doc) async {
+    final data = doc.data() as Map<String, dynamic>;
+    final theme = Theme.of(context);
+    final cardColor = theme.cardColor;
+    final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
+    final borderColor = textColor.withOpacity(0.06);
+
+    final nomeController = TextEditingController(text: data['nome'] ?? '');
+    final emailController = TextEditingController(text: data['email'] ?? '');
+    final telefoneController = TextEditingController(text: data['telefone'] ?? '');
+    final documentoController = TextEditingController(text: data['documento'] ?? '');
+    String? currentTipo = data['tipo'] ?? 'cliente';
+    bool isEditing = false;
+
+    await showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) => AlertDialog(
+          backgroundColor: cardColor,
+          surfaceTintColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+            side: BorderSide(color: borderColor),
+          ),
+          titlePadding: EdgeInsets.zero,
+          contentPadding: const EdgeInsets.all(24),
+          content: SizedBox(
+            width: 450,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Hero(
+                      tag: 'avatar-${doc.id}',
+                      child: CircleAvatar(
+                        radius: 24,
+                        backgroundColor: const Color(0xFF4F8EF7).withOpacity(0.1),
+                        child: Text(
+                          (data['nome'] as String? ?? '?').isNotEmpty ? data['nome'][0].toUpperCase() : '?',
+                          style: const TextStyle(color: Color(0xFF4F8EF7), fontSize: 20, fontWeight: FontWeight.bold),
                         ),
-                      );
-                    },
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            data['nome'] ?? 'Sem nome',
+                            style: TextStyle(color: textColor, fontSize: 18, fontWeight: FontWeight.bold),
+                          ),
+                          Text(
+                            data['email'] ?? 'Sem email',
+                            style: TextStyle(color: textColor.withOpacity(0.5), fontSize: 13),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.close, color: textColor.withOpacity(0.4)),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                Divider(color: borderColor),
+                const SizedBox(height: 16),
+                
+                if (!isEditing) ...[
+                  _buildDetailRow('UID', doc.id, Icons.vpn_key_outlined, textColor),
+                  _buildDetailRow('Telefone', data['telefone'] ?? 'Não informado', Icons.phone_outlined, textColor),
+                  _buildDetailRow('CPF/CNPJ', data['documento'] ?? 'Não informado', Icons.badge_outlined, textColor),
+                  _buildDetailRow('Tipo', (data['tipo'] ?? 'cliente').toUpperCase(), Icons.person_outline, textColor),
+                  _buildDetailRow('Criado em', (data['criado_em'] as Timestamp?)?.toDate().toString().split('.')[0] ?? 'N/A', Icons.calendar_today_outlined, textColor),
+                  const SizedBox(height: 24),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () => setModalState(() => isEditing = true),
+                          icon: const Icon(Icons.edit_outlined, size: 16),
+                          label: const Text('EDITAR DADOS', style: TextStyle(fontSize: 12)),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFF4F8EF7),
+                            side: const BorderSide(color: Color(0xFF4F8EF7)),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      IconButton(
+                        onPressed: () => _showRawData(doc),
+                        icon: Icon(Icons.code, color: textColor.withOpacity(0.4), size: 18),
+                        tooltip: 'Ver JSON',
+                      ),
+                      IconButton(
+                        onPressed: () => _deleteUser(doc),
+                        icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
+                        tooltip: 'Excluir Usuário',
+                      ),
+                    ],
                   ),
-                );
-              },
+                ] else ...[
+                  _buildEditField('Nome Completo', nomeController, textColor),
+                  _buildEditField('Email', emailController, textColor),
+                  _buildEditField('Telefone', telefoneController, textColor),
+                  _buildEditField('CPF/CNPJ', documentoController, textColor),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    dropdownColor: cardColor,
+                    value: currentTipo,
+                    style: TextStyle(color: textColor, fontSize: 13),
+                    decoration: InputDecoration(
+                      labelText: 'Tipo de Conta',
+                      labelStyle: TextStyle(color: textColor.withOpacity(0.5), fontSize: 11),
+                      enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: borderColor)),
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 'cliente', child: Text('Cliente')),
+                      DropdownMenuItem(value: 'dono', child: Text('Dono de Negócio')),
+                    ],
+                    onChanged: (val) => setModalState(() => currentTipo = val),
+                  ),
+                  const SizedBox(height: 24),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextButton(
+                          onPressed: () => setModalState(() => isEditing = false),
+                          child: Text('CANCELAR', style: TextStyle(color: textColor.withOpacity(0.5), fontSize: 12)),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () async {
+                            await FirebaseFirestore.instance.collection('users').doc(doc.id).update({
+                              'nome': nomeController.text,
+                              'email': emailController.text,
+                              'telefone': telefoneController.text,
+                              'documento': documentoController.text,
+                              'tipo': currentTipo,
+                            });
+                            setModalState(() => isEditing = false);
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Usuário atualizado com sucesso!')),
+                              );
+                            }
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF4F8EF7),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            elevation: 0,
+                          ),
+                          child: const Text('SALVAR', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetailRow(String label, String value, IconData icon, Color textColor) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: const Color(0xFF4F8EF7).withOpacity(0.6)),
+          const SizedBox(width: 10),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: TextStyle(color: textColor.withOpacity(0.4), fontSize: 10, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 1),
+              Text(value, style: TextStyle(color: textColor, fontSize: 13)),
+            ],
           ),
         ],
       ),
     );
   }
 
+  Widget _buildEditField(String label, TextEditingController controller, Color textColor) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: TextField(
+        controller: controller,
+        style: TextStyle(color: textColor, fontSize: 13),
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: TextStyle(color: textColor.withOpacity(0.5), fontSize: 11),
+          enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: textColor.withOpacity(0.1))),
+          focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF4F8EF7))),
+        ),
+      ),
+    );
+  }
 
   Future<void> _showRawData(QueryDocumentSnapshot doc) async {
     final data = doc.data() as Map<String, dynamic>;
+    final theme = Theme.of(context);
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Dados Brutos do Usuário'),
+        backgroundColor: theme.cardColor,
+        surfaceTintColor: Colors.transparent,
+        title: Text('Dados Brutos', style: TextStyle(color: theme.textTheme.bodyLarge?.color)),
         content: SizedBox(
-          width: double.maxFinite,
+          width: 500,
           child: SingleChildScrollView(
             child: Text(
               const JsonEncoder.withIndent('  ').convert(data),
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12, color: Colors.greenAccent),
             ),
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Fechar'),
+            child: const Text('FECHAR'),
           ),
         ],
       ),
@@ -171,21 +377,24 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
   Future<void> _deleteUser(QueryDocumentSnapshot doc) async {
     final data = doc.data() as Map<String, dynamic>;
     final nome = data['nome'] ?? 'este usuário';
+    final theme = Theme.of(context);
     
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        backgroundColor: theme.cardColor,
+        surfaceTintColor: Colors.transparent,
         title: const Text('Excluir Usuário?'),
         content: Text('Tem certeza que deseja excluir permanetemente o usuário "$nome"? Esta ação não pode ser desfeita.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
+            child: Text('CANCELAR', style: TextStyle(color: theme.textTheme.bodyLarge?.color?.withOpacity(0.5))),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-            child: const Text('Excluir'),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white, elevation: 0),
+            child: const Text('EXCLUIR'),
           ),
         ],
       ),
@@ -194,89 +403,11 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
     if (confirm == true) {
       await FirebaseFirestore.instance.collection('users').doc(doc.id).delete();
       if (mounted) {
+        Navigator.pop(context); // Close details modal
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Usuário excluído com sucesso.')),
         );
       }
     }
-  }
-
-  Future<void> _editUser(QueryDocumentSnapshot doc) async {
-    final data = doc.data() as Map<String, dynamic>;
-    final nomeController = TextEditingController(text: data['nome'] ?? '');
-    final emailController = TextEditingController(text: data['email'] ?? '');
-    final telefoneController = TextEditingController(text: data['telefone'] ?? '');
-    final documentoController = TextEditingController(text: data['documento'] ?? '');
-    String? currentTipo = data['tipo'] ?? 'cliente';
-
-    await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Editar Usuário'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nomeController,
-                decoration: const InputDecoration(labelText: 'Nome'),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: emailController,
-                decoration: const InputDecoration(labelText: 'Email'),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: telefoneController,
-                decoration: const InputDecoration(labelText: 'Telefone'),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: documentoController,
-                decoration: const InputDecoration(labelText: 'CPF/CNPJ'),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                value: currentTipo,
-                decoration: const InputDecoration(labelText: 'Tipo de Conta'),
-                items: const [
-                  DropdownMenuItem(value: 'cliente', child: Text('Cliente')),
-                  DropdownMenuItem(value: 'dono', child: Text('Dono de Negócio')),
-                ],
-                onChanged: (val) => currentTipo = val,
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              await FirebaseFirestore.instance
-                  .collection('users')
-                  .doc(doc.id)
-                  .update({
-                'nome': nomeController.text,
-                'email': emailController.text,
-                'telefone': telefoneController.text,
-                'documento': documentoController.text,
-                'tipo': currentTipo,
-              });
-              if (context.mounted) Navigator.pop(context);
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Usuário atualizado!')),
-                );
-              }
-            },
-            child: const Text('Salvar'),
-          ),
-        ],
-      ),
-    );
   }
 }

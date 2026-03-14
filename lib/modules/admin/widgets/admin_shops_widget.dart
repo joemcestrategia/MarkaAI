@@ -13,154 +13,329 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
 
   @override
   Widget build(BuildContext context) {
-    return Theme(
-      data: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: const Color(0xFF0F1117),
-        cardColor: const Color(0xFF1A1D27),
-      ),
-      child: Column(
-        children: [
-          // Search Bar
-          Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: TextField(
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                hintText: 'Buscar por nome, slug ou plano...',
-                hintStyle: const TextStyle(color: Colors.grey),
-                prefixIcon: const Icon(Icons.search, color: Color(0xFF4F8EF7)),
-                filled: true,
-                fillColor: const Color(0xFF1A1D27),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  borderSide: BorderSide(color: Colors.white.withOpacity(0.06)),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  borderSide: BorderSide(color: Colors.white.withOpacity(0.06)),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  borderSide: const BorderSide(color: Color(0xFF4F8EF7)),
-                ),
+    final theme = Theme.of(context);
+    final cardColor = theme.cardColor;
+    final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
+    final borderColor = textColor.withOpacity(0.06);
+
+    return Column(
+      children: [
+        // Search Bar - Slightly more compact
+        Padding(
+          padding: const EdgeInsets.all(20.0),
+          child: TextField(
+            style: TextStyle(color: textColor, fontSize: 14),
+            decoration: InputDecoration(
+              hintText: 'Buscar por nome, slug ou plano...',
+              hintStyle: TextStyle(color: textColor.withOpacity(0.4), fontSize: 14),
+              prefixIcon: const Icon(Icons.search, color: Color(0xFF4F8EF7), size: 20),
+              filled: true,
+              fillColor: cardColor,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: borderColor),
               ),
-              onChanged: (value) => setState(() => _searchQuery = value),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: borderColor),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: Color(0xFF4F8EF7), width: 1.5),
+              ),
             ),
+            onChanged: (value) => setState(() => _searchQuery = value),
           ),
-  
-          // Shops List
-          Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance.collection('shops').orderBy('nome').snapshots(),
-              builder: (context, snapshot) {
-                if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-  
-                var shops = snapshot.data!.docs;
-                if (_searchQuery.isNotEmpty) {
-                  shops = shops.where((doc) {
+        ),
+
+        // Shops List
+        Expanded(
+          child: StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance.collection('shops').orderBy('nome').snapshots(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+
+              var shops = snapshot.data!.docs;
+              if (_searchQuery.isNotEmpty) {
+                shops = shops.where((doc) {
+                  final data = doc.data() as Map<String, dynamic>;
+                  final nome = (data['nome'] ?? '').toString().toLowerCase();
+                  final slug = (data['slug'] ?? '').toString().toLowerCase();
+                  final plan = (data['plan'] ?? '').toString().toLowerCase();
+                  final query = _searchQuery.toLowerCase();
+                  return nome.contains(query) || slug.contains(query) || plan.contains(query);
+                }).toList();
+              }
+
+              return Container(
+                margin: const EdgeInsets.symmetric(horizontal: 20),
+                decoration: BoxDecoration(
+                  color: cardColor,
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                  border: Border.all(color: borderColor),
+                ),
+                child: ListView.separated(
+                  itemCount: shops.length,
+                  separatorBuilder: (context, index) => Divider(color: borderColor, height: 1),
+                  itemBuilder: (context, index) {
+                    final doc = shops[index];
                     final data = doc.data() as Map<String, dynamic>;
-                    final nome = (data['nome'] ?? '').toString().toLowerCase();
-                    final slug = (data['slug'] ?? '').toString().toLowerCase();
-                    final plan = (data['plan'] ?? '').toString().toLowerCase();
-                    final query = _searchQuery.toLowerCase();
-                    return nome.contains(query) || slug.contains(query) || plan.contains(query);
-                  }).toList();
-                }
-  
-                return Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 24),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1A1D27),
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-                    border: Border.all(color: Colors.white.withOpacity(0.04)),
-                  ),
-                  child: ListView.separated(
-                    itemCount: shops.length,
-                    separatorBuilder: (context, index) => Divider(color: Colors.white.withOpacity(0.04), height: 1),
-                    itemBuilder: (context, index) {
-                      final doc = shops[index];
-                      final data = doc.data() as Map<String, dynamic>;
-                      final nome = data['nome'] ?? 'Sem nome';
-                      final slug = data['slug'] ?? '';
-                      final plan = (data['plan'] ?? 'free').toString();
-                      final isTrial = data['trial_active'] == true;
-                      final photoUrl = data['logoUrl'];
-                      final boostExpires = data['boost_expires_at'] as Timestamp?;
-                      final isBoosted = boostExpires != null && boostExpires.toDate().isAfter(DateTime.now());
-  
-                      return ListTile(
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-                        leading: CircleAvatar(
+                    final nome = data['nome'] ?? 'Sem nome';
+                    final slug = data['slug'] ?? '';
+                    final plan = (data['plan'] ?? 'free').toString();
+                    final isTrial = data['trial_active'] == true;
+                    final photoUrl = data['logoUrl'];
+                    final boostExpires = data['boost_expires_at'] as Timestamp?;
+                    final isBoosted = boostExpires != null && boostExpires.toDate().isAfter(DateTime.now());
+
+                    return ListTile(
+                      onTap: () => _showShopDetails(doc),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                      leading: Hero(
+                        tag: 'shop-logo-${doc.id}',
+                        child: CircleAvatar(
+                          radius: 18,
                           backgroundColor: const Color(0xFF4F8EF7).withOpacity(0.1),
                           backgroundImage: photoUrl != null ? NetworkImage(photoUrl) : null,
-                          child: photoUrl == null ? const Icon(Icons.storefront_rounded, color: Color(0xFF4F8EF7)) : null,
+                          child: photoUrl == null ? const Icon(Icons.storefront_rounded, color: Color(0xFF4F8EF7), size: 18) : null,
                         ),
-                        title: Row(
-                          children: [
-                            Text(nome, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                            if (isBoosted) ...[
-                              const SizedBox(width: 8),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: Colors.amber.withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(4),
-                                  border: Border.all(color: Colors.amber.withOpacity(0.3)),
-                                ),
-                                child: const Text(
-                                  'BOOST',
-                                  style: TextStyle(color: Colors.amber, fontSize: 8, fontWeight: FontWeight.bold),
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                        subtitle: Text('/$slug', style: const TextStyle(color: Colors.grey, fontSize: 12)),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
+                      ),
+                      title: Row(
+                        children: [
+                          Text(nome, style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 14)),
+                          if (isBoosted) ...[
+                            const SizedBox(width: 8),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
                               decoration: BoxDecoration(
-                                color: (plan != 'free')
-                                    ? const Color(0xFF22C55E).withOpacity(0.1)
-                                    : Colors.white.withOpacity(0.05),
-                                borderRadius: BorderRadius.circular(6),
+                                color: Colors.amber.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(color: Colors.amber.withOpacity(0.3)),
                               ),
-                              child: Text(
-                                isTrial ? 'TRIAL' : plan.toUpperCase(),
-                                style: TextStyle(
-                                  color: (plan != 'free') ? const Color(0xFF22C55E) : Colors.grey,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
+                              child: const Text(
+                                'BOOST',
+                                style: TextStyle(color: Colors.amber, fontSize: 7, fontWeight: FontWeight.bold),
                               ),
                             ),
-                            const SizedBox(width: 12),
-                            PopupMenuButton<String>(
-                              icon: const Icon(Icons.more_vert, color: Colors.grey),
-                              onSelected: (value) {
-                                if (value == 'edit') _editShop(doc);
-                                if (value == 'boost') _addBoost(doc);
-                                if (value == 'plan') _changePlan(doc);
-                                if (value == 'trial') _liberarTrial(doc);
-                                if (value == 'delete') _deleteShop(doc);
-                              },
-                              itemBuilder: (context) => [
-                                const PopupMenuItem(value: 'edit', child: Text('Editar')),
-                                const PopupMenuItem(value: 'trial', child: Text('Liberar Trial Customizado')),
-                                const PopupMenuItem(value: 'boost', child: Text('Adicionar Boost')),
-                                const PopupMenuItem(value: 'plan', child: Text('Alterar Plano')),
-                                const PopupMenuItem(value: 'delete', child: Text('Excluir Loja', style: TextStyle(color: Colors.red))),
-                              ],
+                          ],
+                        ],
+                      ),
+                      subtitle: Text('/$slug', style: TextStyle(color: textColor.withOpacity(0.5), fontSize: 11)),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: (plan != 'free')
+                                  ? const Color(0xFF22C55E).withOpacity(0.1)
+                                  : textColor.withOpacity(0.05),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              isTrial ? 'TRIAL' : plan.toUpperCase(),
+                              style: TextStyle(
+                                color: (plan != 'free') ? const Color(0xFF22C55E) : textColor.withOpacity(0.5),
+                                fontSize: 9,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Icon(Icons.chevron_right, color: textColor.withOpacity(0.3), size: 18),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _showShopDetails(QueryDocumentSnapshot doc) async {
+    final data = doc.data() as Map<String, dynamic>;
+    final theme = Theme.of(context);
+    final cardColor = theme.cardColor;
+    final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
+    final borderColor = textColor.withOpacity(0.06);
+
+    final nomeController = TextEditingController(text: data['nome'] ?? '');
+    final telefoneController = TextEditingController(text: data['telefone'] ?? '');
+    final slugController = TextEditingController(text: data['slug'] ?? '');
+    bool isEditing = false;
+    final photoUrl = data['logoUrl'];
+
+    await showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) => AlertDialog(
+          backgroundColor: cardColor,
+          surfaceTintColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+            side: BorderSide(color: borderColor),
+          ),
+          titlePadding: EdgeInsets.zero,
+          contentPadding: const EdgeInsets.all(24),
+          content: SizedBox(
+            width: 550,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Hero(
+                        tag: 'shop-logo-${doc.id}',
+                        child: CircleAvatar(
+                          radius: 28,
+                          backgroundColor: const Color(0xFF4F8EF7).withOpacity(0.1),
+                          backgroundImage: photoUrl != null ? NetworkImage(photoUrl) : null,
+                          child: photoUrl == null ? const Icon(Icons.storefront_rounded, color: Color(0xFF4F8EF7), size: 24) : null,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              data['nome'] ?? 'Sem nome',
+                              style: TextStyle(color: textColor, fontSize: 18, fontWeight: FontWeight.bold),
+                            ),
+                            Text(
+                              '/${data['slug'] ?? 'sem-slug'}',
+                              style: const TextStyle(color: Color(0xFF4F8EF7), fontSize: 13, fontWeight: FontWeight.w600),
                             ),
                           ],
                         ),
-                      );
-                    },
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.close, color: textColor.withOpacity(0.4)),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ],
                   ),
-                );
-              },
+                  const SizedBox(height: 24),
+                  Divider(color: borderColor),
+                  const SizedBox(height: 16),
+
+                  if (!isEditing) ...[
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildDetailRow('UID', doc.id, Icons.vpn_key_outlined, textColor),
+                              _buildDetailRow('Telefone', data['telefone'] ?? 'Não informado', Icons.phone_outlined, textColor),
+                              _buildDetailRow('Email', data['email'] ?? 'Não informado', Icons.email_outlined, textColor),
+                              _buildDetailRow('Plano Atual', (data['plan'] ?? 'free').toString().toUpperCase(), Icons.stars_outlined, textColor),
+                            ],
+                          ),
+                        ),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildDetailRow('Endereço', data['endereco'] ?? 'Não informado', Icons.location_on_outlined, textColor),
+                              _buildDetailRow('Criado em', (data['criado_em'] as Timestamp?)?.toDate().toString().split('.')[0] ?? 'N/A', Icons.calendar_today_outlined, textColor),
+                              _buildDetailRow('Trial Ativo', (data['trial_active'] == true ? 'SIM' : 'NÃO'), Icons.timer_outlined, textColor),
+                              if (data['trial_end_date'] != null)
+                                _buildDetailRow('Fim do Trial', (data['trial_end_date'] as Timestamp).toDate().toString().split('.')[0], Icons.event_busy_outlined, textColor),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 24),
+                    Text('AÇÕES RÁPIDAS', style: TextStyle(color: textColor.withOpacity(0.4), fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: [
+                        _buildActionButton('Editar', Icons.edit_outlined, textColor.withOpacity(0.05), textColor, () => setModalState(() => isEditing = true)),
+                        _buildActionButton('Plano', Icons.stars_outlined, const Color(0xFF22C55E).withOpacity(0.1), const Color(0xFF22C55E), () => _changePlan(doc)),
+                        _buildActionButton('Boost', Icons.rocket_launch_outlined, Colors.amber.withOpacity(0.1), Colors.amber, () => _addBoost(doc)),
+                        _buildActionButton('Trial', Icons.timer_outlined, const Color(0xFF7C5CFC).withOpacity(0.1), const Color(0xFF7C5CFC), () => _liberarTrial(doc)),
+                        _buildActionButton('Excluir', Icons.delete_outline, Colors.red.withOpacity(0.1), Colors.redAccent, () => _deleteShop(doc)),
+                      ],
+                    ),
+                  ] else ...[
+                    _buildEditField('Nome do Negócio', nomeController, textColor),
+                    _buildEditField('Slug (URL)', slugController, textColor),
+                    _buildEditField('Telefone', telefoneController, textColor),
+                    const SizedBox(height: 24),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextButton(
+                            onPressed: () => setModalState(() => isEditing = false),
+                            child: Text('CANCELAR', style: TextStyle(color: textColor.withOpacity(0.5), fontSize: 13)),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () async {
+                              await FirebaseFirestore.instance.collection('shops').doc(doc.id).update({
+                                'nome': nomeController.text,
+                                'slug': slugController.text,
+                                'telefone': telefoneController.text,
+                              });
+                              setModalState(() => isEditing = false);
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Negócio atualizado com sucesso!')),
+                                );
+                              }
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF4F8EF7),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              elevation: 0,
+                            ),
+                            child: const Text('SALVAR', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetailRow(String label, String value, IconData icon, Color textColor) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 16, color: const Color(0xFF4F8EF7).withOpacity(0.6)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: TextStyle(color: textColor.withOpacity(0.4), fontSize: 10, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 1),
+                Text(value, style: TextStyle(color: textColor, fontSize: 12, height: 1.4)),
+              ],
             ),
           ),
         ],
@@ -168,86 +343,84 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
     );
   }
 
-  Future<void> _editShop(QueryDocumentSnapshot doc) async {
-    final data = doc.data() as Map<String, dynamic>;
-    final nomeController = TextEditingController(text: data['nome'] ?? '');
-    final telefoneController =
-        TextEditingController(text: data['telefone'] ?? '');
+  Widget _buildEditField(String label, TextEditingController controller, Color textColor) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: TextField(
+        controller: controller,
+        style: TextStyle(color: textColor, fontSize: 13),
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: TextStyle(color: textColor.withOpacity(0.5), fontSize: 11),
+          enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: textColor.withOpacity(0.1))),
+          focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF4F8EF7))),
+        ),
+      ),
+    );
+  }
 
-    await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Editar Negócio'),
-        content: Column(
+  Widget _buildActionButton(String label, IconData icon, Color bgColor, Color iconColor, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: iconColor.withOpacity(0.1)),
+        ),
+        child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(
-              controller: nomeController,
-              decoration: const InputDecoration(labelText: 'Nome'),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: telefoneController,
-              decoration: const InputDecoration(labelText: 'Telefone'),
-            ),
+            Icon(icon, size: 14, color: iconColor),
+            const SizedBox(width: 8),
+            Text(label, style: TextStyle(color: iconColor, fontSize: 12, fontWeight: FontWeight.bold)),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              await FirebaseFirestore.instance
-                  .collection('shops')
-                  .doc(doc.id)
-                  .update({
-                'nome': nomeController.text,
-                'telefone': telefoneController.text,
-              });
-              if (context.mounted) Navigator.pop(context);
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Negócio atualizado!')),
-                );
-              }
-            },
-            child: const Text('Salvar'),
-          ),
-        ],
       ),
     );
   }
 
   Future<void> _addBoost(QueryDocumentSnapshot doc) async {
     String? selectedDuration = '7';
+    final theme = Theme.of(context);
+    final cardColor = theme.cardColor;
+    final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
 
     await showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Adicionar Boost'),
+        backgroundColor: cardColor,
+        surfaceTintColor: Colors.transparent,
+        title: Text('Adicionar Boost', style: TextStyle(color: textColor)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('Selecione a duração do boost:'),
+            Text('Selecione a duração do boost:', style: TextStyle(color: textColor.withOpacity(0.6))),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
-              initialValue: selectedDuration,
+              dropdownColor: cardColor,
+              style: TextStyle(color: textColor),
+              value: selectedDuration,
               items: const [
                 DropdownMenuItem(value: '7', child: Text('7 dias')),
                 DropdownMenuItem(value: '14', child: Text('14 dias')),
                 DropdownMenuItem(value: '30', child: Text('30 dias')),
               ],
               onChanged: (value) => selectedDuration = value,
-              decoration: const InputDecoration(labelText: 'Duração'),
+              decoration: InputDecoration(
+                labelText: 'Duração', 
+                labelStyle: TextStyle(color: textColor.withOpacity(0.4)),
+                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: textColor.withOpacity(0.1))),
+              ),
             ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar'),
+            child: Text('CANCELAR', style: TextStyle(color: textColor.withOpacity(0.5))),
           ),
           ElevatedButton(
             onPressed: () async {
@@ -269,7 +442,8 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
                 );
               }
             },
-            child: const Text('Adicionar'),
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF4F8EF7), elevation: 0),
+            child: const Text('ADICIONAR'),
           ),
         ],
       ),
@@ -279,18 +453,25 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
   Future<void> _changePlan(QueryDocumentSnapshot doc) async {
     final data = doc.data() as Map<String, dynamic>;
     String? selectedPlan = data['plan'] ?? 'free';
+    final theme = Theme.of(context);
+    final cardColor = theme.cardColor;
+    final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
 
     await showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Alterar Plano'),
+        backgroundColor: cardColor,
+        surfaceTintColor: Colors.transparent,
+        title: Text('Alterar Plano', style: TextStyle(color: textColor)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('Selecione o novo plano:'),
+            Text('Selecione o novo plano:', style: TextStyle(color: textColor.withOpacity(0.6))),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
-              initialValue: selectedPlan,
+              dropdownColor: cardColor,
+              style: TextStyle(color: textColor),
+              value: selectedPlan,
               items: const [
                 DropdownMenuItem(value: 'free', child: Text('Free')),
                 DropdownMenuItem(value: 'start', child: Text('Start')),
@@ -298,14 +479,18 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
                 DropdownMenuItem(value: 'pro', child: Text('Pro')),
               ],
               onChanged: (value) => selectedPlan = value,
-              decoration: const InputDecoration(labelText: 'Plano'),
+              decoration: InputDecoration(
+                labelText: 'Plano', 
+                labelStyle: TextStyle(color: textColor.withOpacity(0.4)),
+                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: textColor.withOpacity(0.1))),
+              ),
             ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar'),
+            child: Text('CANCELAR', style: TextStyle(color: textColor.withOpacity(0.5))),
           ),
           ElevatedButton(
             onPressed: () async {
@@ -323,11 +508,12 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                       content: Text(
-                          'Plano alterado para ${selectedPlan!.toUpperCase()} e Trial desativado!')),
+                          'Plano alterado para ${selectedPlan!.toUpperCase()}!')),
                 );
               }
             },
-            child: const Text('Salvar'),
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF4F8EF7), elevation: 0),
+            child: const Text('SALVAR'),
           ),
         ],
       ),
@@ -337,21 +523,26 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
   Future<void> _deleteShop(QueryDocumentSnapshot doc) async {
     final data = doc.data() as Map<String, dynamic>;
     final nome = data['nome'] ?? 'este negócio';
+    final theme = Theme.of(context);
+    final cardColor = theme.cardColor;
+    final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
     
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Excluir Negócio?'),
-        content: Text('Tem certeza que deseja excluir permanetemente o negócio "$nome"? Esta ação não pode ser desfeita.'),
+        backgroundColor: cardColor,
+        surfaceTintColor: Colors.transparent,
+        title: Text('Excluir Negócio?', style: TextStyle(color: textColor)),
+        content: Text('Tem certeza que deseja excluir permanetemente o negócio "$nome"? Esta ação não pode ser desfeita.', style: TextStyle(color: textColor.withOpacity(0.6))),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
+            child: Text('CANCELAR', style: TextStyle(color: textColor.withOpacity(0.5))),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-            child: const Text('Excluir'),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white, elevation: 0),
+            child: const Text('EXCLUIR'),
           ),
         ],
       ),
@@ -360,6 +551,7 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
     if (confirm == true) {
       await FirebaseFirestore.instance.collection('shops').doc(doc.id).delete();
       if (mounted) {
+        Navigator.pop(context); // Close details modal
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Negócio excluído com sucesso.')),
         );
@@ -370,29 +562,42 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
   Future<void> _liberarTrial(QueryDocumentSnapshot doc) async {
     String? selectedPlan = 'start';
     String? selectedDuration = '30';
+    final theme = Theme.of(context);
+    final cardColor = theme.cardColor;
+    final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
 
     await showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Liberar Trial Customizado'),
+        backgroundColor: cardColor,
+        surfaceTintColor: Colors.transparent,
+        title: Text('Liberar Trial Customizado', style: TextStyle(color: textColor)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('Escolha o plano e a duração do teste gratuito.'),
+            Text('Escolha o plano e a duração do teste gratuito.', style: TextStyle(color: textColor.withOpacity(0.6))),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
-              initialValue: selectedPlan,
+              dropdownColor: cardColor,
+              style: TextStyle(color: textColor),
+              value: selectedPlan,
               items: const [
                 DropdownMenuItem(value: 'start', child: Text('Start')),
                 DropdownMenuItem(value: 'plus', child: Text('Plus')),
                 DropdownMenuItem(value: 'pro', child: Text('Pro')),
               ],
               onChanged: (value) => selectedPlan = value,
-              decoration: const InputDecoration(labelText: 'Plano'),
+              decoration: InputDecoration(
+                labelText: 'Plano', 
+                labelStyle: TextStyle(color: textColor.withOpacity(0.4)),
+                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: textColor.withOpacity(0.1))),
+              ),
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
-              initialValue: selectedDuration,
+              dropdownColor: cardColor,
+              style: TextStyle(color: textColor),
+              value: selectedDuration,
               items: const [
                 DropdownMenuItem(value: '7', child: Text('7 dias')),
                 DropdownMenuItem(value: '15', child: Text('15 dias')),
@@ -401,14 +606,18 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
                 DropdownMenuItem(value: '90', child: Text('90 dias (3 meses)')),
               ],
               onChanged: (value) => selectedDuration = value,
-              decoration: const InputDecoration(labelText: 'Duração'),
+              decoration: InputDecoration(
+                labelText: 'Duração', 
+                labelStyle: TextStyle(color: textColor.withOpacity(0.4)),
+                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: textColor.withOpacity(0.1))),
+              ),
             ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar'),
+            child: Text('CANCELAR', style: TextStyle(color: textColor.withOpacity(0.5))),
           ),
           ElevatedButton(
             onPressed: () async {
@@ -436,7 +645,8 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
                 );
               }
             },
-            child: const Text('Confirmar'),
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF4F8EF7), elevation: 0),
+            child: const Text('CONFIRMAR'),
           ),
         ],
       ),
