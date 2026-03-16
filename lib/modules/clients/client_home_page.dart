@@ -1,4 +1,4 @@
-﻿// ignore_for_file: unused_element, unused_field, unused_local_variable
+// ignore_for_file: unused_element, unused_field, unused_local_variable
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -12,6 +12,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:geocoding/geocoding.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
@@ -303,7 +304,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
       backgroundColor: Colors.transparent,
       builder: (ctx) => Container(
         padding: EdgeInsets.fromLTRB(
-            24, 16, 24, MediaQuery.of(ctx).viewInsets.bottom + 24),
+            24, 16, 24, MediaQuery.of(ctx).viewInsets.bottom + MediaQuery.of(ctx).padding.bottom + 24),
         decoration: const BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -629,29 +630,19 @@ class _ClientHomePageState extends State<ClientHomePage> {
         });
     if (confirmed != true) return;
 
+    if (!mounted) return;
     showDialog(
         context: context,
         barrierDismissible: false,
         builder: (ctx) => const Center(child: CircularProgressIndicator()));
+        
     try {
-      final idToken = await FirebaseAuth.instance.currentUser?.getIdToken(true);
-      if (idToken == null) {
-        if (mounted) Navigator.pop(context);
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Erro: usuário não autenticado')));
-        return;
-      }
-      final url = Uri.parse(
-          'https://us-central1-wismart-118c3.cloudfunctions.net/deleteUserAccount');
-      final resp = await http.post(url,
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $idToken'
-          },
-          body: jsonEncode({'confirm': true}));
+      final callable = FirebaseFunctions.instance.httpsCallable('deleteUserAccount');
+      final result = await callable.call({'confirm': true});
+      
       if (mounted) Navigator.pop(context);
-      if (resp.statusCode == 200) {
+      
+      if (result.data['success'] == true) {
         // success
         try {
           await GoogleSignIn().signOut();
@@ -659,6 +650,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
         } catch (_) {}
         await SessionService.logout();
         await FirebaseAuth.instance.signOut();
+        
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             content: Text(
@@ -666,10 +658,9 @@ class _ClientHomePageState extends State<ClientHomePage> {
         Navigator.pushAndRemoveUntil(context,
             MaterialPageRoute(builder: (_) => const LoginPage()), (r) => false);
       } else {
-        final body = resp.body;
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('Falha ao excluir conta: ${resp.statusCode} $body')));
+            content: Text('Falha ao excluir conta: ${result.data['message']}')));
       }
     } catch (e) {
       if (mounted) Navigator.pop(context);
@@ -1501,21 +1492,37 @@ class _ShopCardState extends State<_ShopCard> {
 
   Future<void> _toggleFavorite() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null) return;
-    final ref = FirebaseFirestore.instance
-        .collection('users')
-        .doc(uid)
-        .collection('favorites')
-        .doc(widget.shop.id);
+    if (uid == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Faça login para salvar favoritos")),
+      );
+      return;
+    }
+    
+    final bool wasFavorite = _isFavorite;
     setState(() => _isFavorite = !_isFavorite);
+    
     try {
-      if (_isFavorite) {
-        await ref.set({'added_at': FieldValue.serverTimestamp()});
-      } else {
-        await ref.delete();
+      final callable = FirebaseFunctions.instanceFor(region: 'us-central1').httpsCallable('toggleFavorite');
+      final result = await callable.call({
+        'shopId': widget.shop.id,
+        'shopName': (widget.shop.data() as Map<String, dynamic>?)?['nome'] ?? '',
+        'isFavorite': !wasFavorite,
+      });
+
+      // Se result.data['success'] não for true, voltamos ao estado anterior
+      final data = result.data;
+      if (mounted && (data == null || data['success'] != true)) {
+        setState(() => _isFavorite = wasFavorite);
       }
-    } catch (_) {
-      if (mounted) setState(() => _isFavorite = !_isFavorite);
+    } catch (e) {
+      debugPrint("❌ Erro toggleFavorite: $e");
+      if (mounted) {
+        setState(() => _isFavorite = wasFavorite);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Erro ao salvar favorito: $e")),
+        );
+      }
     }
   }
 

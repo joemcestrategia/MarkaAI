@@ -61,11 +61,9 @@ class _PrivacySettingsPageState extends State<PrivacySettingsPage> {
             subject: 'Meus Dados MarkaAI');
       }
     } catch (e) {
-      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao exportar dados: \$e')),
+          SnackBar(content: Text('Erro ao exportar dados: $e')),
         );
-      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

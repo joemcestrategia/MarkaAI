@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 import 'service_register_page.dart';
+import 'category_management_page.dart';
+import '../../core/utils/service_image_keywords.dart';
+import '../../core/widgets/pexels_image_widget.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
@@ -429,6 +430,16 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
     });
   }
 
+  void _openCategoryManagement(BuildContext context) {
+    if (shopId == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => CategoryManagementPage(shopId: shopId!),
+      ),
+    );
+  }
+
   void _closePanel() {
     setState(() {
       _showPanel = false;
@@ -482,7 +493,41 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
           backgroundColor: const Color(0xFFF5F7FB),
           floatingActionButton: isMobile // Só mostra FAB no mobile
               ? FloatingActionButton(
-                  onPressed: () => _handleCreateTap(context, isMobile),
+                  onPressed: () {
+                    showModalBottomSheet(
+                      context: context,
+                      backgroundColor: Colors.transparent,
+                      builder: (context) => Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: const BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            ListTile(
+                              leading: const Icon(Icons.add_circle_outline, color: AppColors.primaryPurple),
+                              title: const Text("Criar Novo Serviço"),
+                              onTap: () {
+                                Navigator.pop(context);
+                                _handleCreateTap(context, isMobile);
+                              },
+                            ),
+                            ListTile(
+                              leading: const Icon(Icons.category_outlined, color: AppColors.primaryPurple),
+                              title: const Text("Gerenciar Categorias"),
+                              onTap: () {
+                                Navigator.pop(context);
+                                _openCategoryManagement(context);
+                              },
+                            ),
+                            const SizedBox(height: 10),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
                   backgroundColor: AppColors.primaryPurple,
                   foregroundColor: Colors.white,
                   child: const Icon(Icons.add, color: Colors.white),
@@ -536,18 +581,29 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
             children: [
               // No Mobile, o botão de novo serviço é um FAB.
               // No Desktop, ele fica no topo à direita.
-              if (!isMobile)
+              if (!isMobile) ...[
+                OutlinedButton.icon(
+                  onPressed: () => _openCategoryManagement(context),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.primaryPurple,
+                    side: const BorderSide(color: AppColors.primaryPurple),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  ),
+                  icon: const Icon(Icons.category_outlined, size: 18),
+                  label: const Text("CATEGORIAS"),
+                ),
+                const SizedBox(width: 12),
                 ElevatedButton.icon(
                   onPressed: () => _handleCreateTap(context, isMobile),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primaryPurple,
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 12),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   ),
                   icon: const Icon(Icons.add, size: 18),
                   label: const Text("NOVO SERVIÇO"),
                 ),
+              ],
             ],
           ),
         ),
@@ -731,7 +787,10 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
         errorWidget: (context, url, error) => const Icon(Icons.error),
       );
     }
-    return _PexelsImage(searchQuery: 'beauty salon', index: index);
+    return PexelsImageWidget(
+      searchQuery: ServiceImageKeywords.getEnglishKeyword(nome),
+      index: index,
+    );
   }
 
   void _showOptions(DocumentSnapshot doc) {
@@ -902,55 +961,3 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
   }
 }
 
-// ✅ WIDGET DE IMAGEM PEXELS (MANTIDO IGUAL)
-class _PexelsImage extends StatefulWidget {
-  final String searchQuery;
-  final int index;
-  const _PexelsImage({required this.searchQuery, required this.index});
-
-  @override
-  State<_PexelsImage> createState() => _PexelsImageState();
-}
-
-class _PexelsImageState extends State<_PexelsImage> {
-  String? _imageUrl;
-  static const String _pexelsApiKey =
-      '1RYDlI3xTEeYwIHOfwh3MZCslQNj3XYeQ7MmyoBRTy6uRQxujW7nfvkf';
-
-  @override
-  void initState() {
-    super.initState();
-    _loadImage();
-  }
-
-  Future<void> _loadImage() async {
-    try {
-      final url = Uri.parse(
-          'https://api.pexels.com/v1/search?query=${Uri.encodeComponent(widget.searchQuery)}&per_page=15');
-      final response =
-          await http.get(url, headers: {'Authorization': _pexelsApiKey});
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        final photos = data['photos'] as List;
-        if (photos.isNotEmpty && mounted) {
-          setState(() => _imageUrl =
-              photos[widget.index % photos.length]['src']['medium']);
-        }
-      }
-    } catch (e) {
-      if (kDebugMode) debugPrint("Erro ao carregar imagem Pexels: $e");
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_imageUrl == null) {
-      return Container(
-        color: Colors.grey[200],
-        child: const Icon(Icons.image, color: Colors.grey),
-      );
-    }
-    return Image.network(_imageUrl!, fit: BoxFit.cover);
-  }
-}

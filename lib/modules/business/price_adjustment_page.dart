@@ -32,21 +32,25 @@ class _PriceAdjustmentPageState extends State<PriceAdjustmentPage> {
 
   Future<void> _loadInitialData() async {
     setState(() => _isLoading = true);
-    shopId = await SessionService.getShopId();
-    if (shopId != null) {
-      final historyDoc = await FirebaseFirestore.instance
-          .collection('shops')
-          .doc(shopId)
-          .collection('price_adjustment_history')
-          .orderBy('appliedAt', descending: true)
-          .limit(1)
-          .get();
-      if (historyDoc.docs.isNotEmpty) {
-        _lastAdjustment = historyDoc.docs.first.data();
+    try {
+      shopId = await SessionService.getShopId();
+      if (shopId != null) {
+        final historyDoc = await FirebaseFirestore.instance
+            .collection('shops')
+            .doc(shopId)
+            .collection('price_adjustment_history')
+            .orderBy('appliedAt', descending: true)
+            .limit(1)
+            .get();
+        if (historyDoc.docs.isNotEmpty) {
+          _lastAdjustment = historyDoc.docs.first.data();
+        }
       }
-      // Features are now handled by StreamBuilder in build()
+    } catch (e) {
+      debugPrint("Error loading price adjustment initial data: $e");
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
-    setState(() => _isLoading = false);
   }
 
   double _calculateNewPrice(double oldPrice) {

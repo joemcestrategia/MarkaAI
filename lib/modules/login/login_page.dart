@@ -1198,7 +1198,6 @@ class _ModernInput extends StatelessWidget {
   final MaskTextInputFormatter? mask;
   final TextInputType? keyboardType;
   final Function(String)? onChanged;
-  final bool readOnly;
 
   const _ModernInput({
     required this.controller,
@@ -1210,7 +1209,6 @@ class _ModernInput extends StatelessWidget {
     this.mask,
     this.keyboardType,
     this.onChanged,
-    this.readOnly = false,
   });
 
   @override
@@ -1221,10 +1219,9 @@ class _ModernInput extends StatelessWidget {
       keyboardType: keyboardType,
       inputFormatters: mask != null ? [mask!] : [],
       onChanged: onChanged,
-      readOnly: readOnly,
       validator: (val) =>
           val == null || val.isEmpty ? 'Campo obrigatório' : null,
-      style: TextStyle(color: readOnly ? Colors.grey : Colors.black87),
+      style: const TextStyle(color: Colors.black87),
       decoration: InputDecoration(
         labelText: label,
         labelStyle: TextStyle(color: Colors.grey[600], fontSize: 14),
@@ -1241,7 +1238,7 @@ class _ModernInput extends StatelessWidget {
               )
             : null,
         filled: true,
-        fillColor: readOnly ? Colors.grey[100] : const Color(0xFFFAFAFA),
+        fillColor: const Color(0xFFFAFAFA),
         contentPadding:
             const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
         border: OutlineInputBorder(

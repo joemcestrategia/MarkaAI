@@ -48,6 +48,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
   bool _isDragging = false;
   double _uploadProgress = 0;
   bool _ativo = true;
+  List<String> _categoryIds = [];
   late PlanFeatures _currentFeatures = planFeaturesConfig[PlanKey.free]!;
 
   @override
@@ -72,6 +73,13 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
 
       _requerAviso = data['requer_aviso'] ?? false;
       _avisoController.text = data['mensagem_aviso'] ?? "";
+      
+      // Suporte para migração ou carga do novo campo
+      if (data['categoryIds'] != null) {
+        _categoryIds = List<String>.from(data['categoryIds']);
+      } else if (data['categoryId'] != null) {
+        _categoryIds = [data['categoryId']];
+      }
     }
   }
 
@@ -443,6 +451,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
         'descricao': _descriptionController.text.trim(),
         'fotos_urls': uploadedUrls,
         'shopId': shopId,
+        'categoryIds': _categoryIds,
         'ativo': _ativo,
         'variations': _variations,
         'requer_aviso': _requerAviso,
@@ -742,6 +751,57 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                                       ? "Obrigatório"
                                       : null;
                                 }),
+
+                            const SizedBox(height: 16),
+
+                            // CATEGORIAS (Múltipla Seleção)
+                            StreamBuilder<QuerySnapshot>(
+                              stream: FirebaseFirestore.instance
+                                  .collection('categories')
+                                  .where('shopId', isEqualTo: _shopId)
+                                  .snapshots(),
+                              builder: (context, snapshot) {
+                                if (!snapshot.hasData) return const SizedBox();
+                                
+                                final categories = snapshot.data!.docs;
+                                if (categories.isEmpty) return const SizedBox();
+
+                                return Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text("Categorias", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                                    const SizedBox(height: 8),
+                                    Wrap(
+                                      spacing: 8,
+                                      runSpacing: 8,
+                                      children: categories.map((cat) {
+                                        final catId = cat.id;
+                                        final catName = cat['nome'];
+                                        final isSelected = _categoryIds.contains(catId);
+
+                                        return FilterChip(
+                                          label: Text(catName),
+                                          selected: isSelected,
+                                          onSelected: (selected) {
+                                            setState(() {
+                                              if (selected) {
+                                                _categoryIds.add(catId);
+                                              } else {
+                                                _categoryIds.remove(catId);
+                                              }
+                                            });
+                                          },
+                                          selectedColor: AppColors.primaryPurple.withValues(alpha: 0.2),
+                                          checkmarkColor: AppColors.primaryPurple,
+                                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                                        );
+                                      }).toList(),
+                                    ),
+                                    const SizedBox(height: 24),
+                                  ],
+                                );
+                              },
+                            ),
 
                             const SizedBox(height: 16),
 

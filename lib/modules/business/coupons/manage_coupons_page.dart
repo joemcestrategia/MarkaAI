@@ -287,8 +287,15 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SizedBox(height: 4),
-            Text('Usos: ${data['usageCount'] ?? 0}',
-                style: const TextStyle(fontSize: 12)),
+            Builder(builder: (context) {
+              final int usageCount = data['usageCount'] ?? 0;
+              final int maxUsages = int.tryParse(data['maxUsage']?.toString() ?? '0') ?? 
+                                   int.tryParse(data['uso_limite']?.toString() ?? '0') ?? 0;
+              return Text(
+                'Usos: $usageCount${maxUsages > 0 ? " / $maxUsages" : ""}',
+                style: const TextStyle(fontSize: 12),
+              );
+            }),
             if (validUntil != null)
               Text(
                 'Válido até: ${DateFormat('dd/MM/yyyy').format(validUntil)}',
@@ -322,6 +329,10 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
     DateTime? selectedDate =
         (initialData?['validUntil'] as Timestamp?)?.toDate();
     int? selectedMonth = initialData?['validMonth'];
+    final limitCtrl = TextEditingController(
+        text: initialData?['maxUsage']?.toString() ??
+            initialData?['uso_limite']?.toString() ??
+            '');
     double discountValue = (initialData?['discountPercent'] as num?)?.toDouble() ?? 10.0;
     bool isActive = initialData?['isActive'] ?? true;
 
@@ -480,6 +491,35 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
                 ),
                 const SizedBox(height: 20),
 
+                // LIMITE DE USO
+                const Text(
+                  "LIMITE POR QUANTIDADE (USOS)",
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: limitCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    hintText: 'Ex: 10 (Vazio = ilimitado)',
+                    filled: true,
+                    fillColor: Colors.grey[50],
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey[200]!),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey[200]!),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+
                 // DESCRIÇÃO
                 const Text(
                   "DESCRIÇÃO DO CUPOM",
@@ -598,39 +638,31 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
                 const SizedBox(height: 8),
                 Container(
                   padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                   decoration: BoxDecoration(
                     color: Colors.grey[50],
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(color: Colors.grey[200]!),
                   ),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<int>(
-                      value: selectedMonth,
-                      hint: const Text("Selecione um mês (opcional)",
-                          style: TextStyle(fontSize: 15)),
-                      isExpanded: true,
-                      items: [
-                        const DropdownMenuItem<int>(
-                          value: null,
-                          child: Text("Qualquer mês"),
-                        ),
-                        ...List.generate(12, (index) {
-                          final monthNum = index + 1;
-                          final monthName = DateFormat('MMMM', 'pt_BR')
-                              .format(DateTime(2024, monthNum));
-                          return DropdownMenuItem<int>(
-                            value: monthNum,
-                            child: Text(monthName[0].toUpperCase() +
-                                monthName.substring(1)),
-                          );
-                        }),
-                      ],
-                      onChanged: (val) =>
-                          setDialogState(() => selectedMonth = val),
-                    ),
+                  child: DropdownButton<int?>(
+                    value: selectedMonth,
+                    isExpanded: true,
+                    underline: Container(),
+                    hint: const Text('Válido em qualquer mês'),
+                    items: [
+                      const DropdownMenuItem(
+                          value: null, child: Text('Qualquer mês')),
+                      ...List.generate(12, (i) => i + 1).map((m) {
+                        return DropdownMenuItem(
+                            value: m,
+                            child: Text(DateFormat('MMMM', 'pt_BR')
+                                .format(DateTime(2022, m))));
+                      }),
+                    ],
+                    onChanged: (val) => setDialogState(() => selectedMonth = val),
                   ),
                 ),
+
                 const SizedBox(height: 30),
                 SizedBox(
                   width: double.infinity,
@@ -638,39 +670,75 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
                   child: ElevatedButton(
                     onPressed: () async {
                       if (codeCtrl.text.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('O código do cupom é obrigatório')),
+                        );
                         return;
                       }
 
-                      final data = {
-                        'code': codeCtrl.text.trim().toUpperCase(),
-                        'descricao': descCtrl.text.trim(),
-                        'discountPercent': discountValue.toInt(),
-                        'isActive': isActive,
-                        'validUntil': selectedDate != null
-                            ? Timestamp.fromDate(selectedDate!)
-                            : null,
-                        'validMonth': selectedMonth,
-                        'updatedAt': FieldValue.serverTimestamp(),
-                      };
+                      try {
+                        debugPrint('Tentando salvar cupom - shopId: ${widget.shopId}, id: $id');
+                        final data = {
+                          'code': codeCtrl.text.trim().toUpperCase(),
+                          'descricao': descCtrl.text.trim(),
+                          'discountPercent': discountValue, // Mantenho como double
+                          'isActive': isActive,
+                          'validUntil': selectedDate != null
+                              ? Timestamp.fromDate(selectedDate!)
+                              : null,
+                          'validMonth': selectedMonth,
+                          'maxUsage': int.tryParse(limitCtrl.text) ?? 0,
+                          'uso_limite': int.tryParse(limitCtrl.text) ?? 0,
+                          'updatedAt': FieldValue.serverTimestamp(),
+                        };
+                        debugPrint('Dados do cupom: $data');
 
-                      if (id == null) {
-                        data['createdAt'] = FieldValue.serverTimestamp();
-                        data['usageCount'] = 0;
-                        await FirebaseFirestore.instance
-                            .collection('shops')
-                            .doc(widget.shopId)
-                            .collection('coupons')
-                            .add(data);
-                      } else {
-                        await FirebaseFirestore.instance
-                            .collection('shops')
-                            .doc(widget.shopId)
-                            .collection('coupons')
-                            .doc(id)
-                            .update(data);
+                        if (id == null) {
+                          data['createdAt'] = FieldValue.serverTimestamp();
+                          data['usageCount'] = 0;
+                          final ref = await FirebaseFirestore.instance
+                              .collection('shops')
+                              .doc(widget.shopId)
+                              .collection('coupons')
+                              .add(data);
+                          debugPrint('Cupom criado com ID: ${ref.id}');
+                        } else {
+                          await FirebaseFirestore.instance
+                              .collection('shops')
+                              .doc(widget.shopId)
+                              .collection('coupons')
+                              .doc(id)
+                              .update(data);
+                          debugPrint('Cupom $id atualizado');
+                        }
+
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(id == null
+                                  ? 'Cupom criado com sucesso!'
+                                  : 'Alterações salvas com sucesso!'),
+                              backgroundColor: Colors.green,
+                              duration: const Duration(seconds: 2),
+                            ),
+                          );
+                          // Pequeno delay para garantir que a snackbar seja registrada antes do pop
+                          Future.delayed(const Duration(milliseconds: 300), () {
+                            if (context.mounted) Navigator.pop(context);
+                          });
+                        }
+                      } catch (e, stack) {
+                        debugPrint('Erro ao salvar cupom: $e');
+                        debugPrint('Stack: $stack');
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Erro ao salvar: $e'),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                        }
                       }
-
-                      if (context.mounted) Navigator.pop(context);
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primaryPurple,

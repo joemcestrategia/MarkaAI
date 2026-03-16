@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/theme/app_colors.dart';
@@ -70,7 +70,7 @@ class ServiceDetailsPage extends StatelessWidget {
                       // GALERIA (Agora rola junto para não ocupar espaço fixo em tela pequena)
                       if (fotos.isNotEmpty)
                         SizedBox(
-                          height: 250,
+                          height: 350,
                           width: double.infinity,
                           child: PageView.builder(
                             itemCount: fotos.length,

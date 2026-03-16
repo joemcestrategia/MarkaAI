@@ -11,7 +11,7 @@ class AdminOverviewWidget extends StatelessWidget {
     final theme = Theme.of(context);
     final cardColor = theme.cardColor;
     final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
-    final subTextColor = theme.textTheme.bodyMedium?.color?.withOpacity(0.7) ?? Colors.grey;
+    final subTextColor = theme.textTheme.bodyMedium?.color?.withValues(alpha: 0.7) ?? Colors.grey;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
@@ -170,7 +170,7 @@ class AdminOverviewWidget extends StatelessWidget {
       decoration: BoxDecoration(
         color: cardColor,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: textColor.withOpacity(0.04)),
+        border: Border.all(color: textColor.withValues(alpha: 0.04)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -182,7 +182,7 @@ class AdminOverviewWidget extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
+                  color: color.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(icon, color: color, size: 20),
@@ -190,7 +190,7 @@ class AdminOverviewWidget extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: Colors.green.withOpacity(0.1),
+                  color: Colors.green.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(trend, style: const TextStyle(color: Colors.green, fontSize: 10, fontWeight: FontWeight.bold)),
@@ -219,7 +219,7 @@ class AdminOverviewWidget extends StatelessWidget {
       decoration: BoxDecoration(
         color: cardColor,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: textColor.withOpacity(0.04)),
+        border: Border.all(color: textColor.withValues(alpha: 0.04)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -240,7 +240,7 @@ class AdminOverviewWidget extends StatelessWidget {
                   show: true,
                   drawVerticalLine: false,
                   getDrawingHorizontalLine: (value) => FlLine(
-                    color: textColor.withOpacity(0.04),
+                    color: textColor.withValues(alpha: 0.04),
                     strokeWidth: 1,
                   ),
                 ),
@@ -292,8 +292,8 @@ class AdminOverviewWidget extends StatelessWidget {
                       show: true,
                       gradient: LinearGradient(
                         colors: [
-                          const Color(0xFF4F8EF7).withOpacity(0.2),
-                          const Color(0xFF4F8EF7).withOpacity(0),
+                          const Color(0xFF4F8EF7).withValues(alpha: 0.2),
+                          const Color(0xFF4F8EF7).withValues(alpha: 0),
                         ],
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
@@ -325,7 +325,7 @@ class AdminOverviewWidget extends StatelessWidget {
       decoration: BoxDecoration(
         color: cardColor,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: textColor.withOpacity(0.04)),
+        border: Border.all(color: textColor.withValues(alpha: 0.04)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -341,7 +341,7 @@ class AdminOverviewWidget extends StatelessWidget {
                 sections: [
                   PieChartSectionData(
                       value: planCounts['free']!.toDouble(),
-                      color: Colors.grey.withOpacity(0.3),
+                      color: Colors.grey.withValues(alpha: 0.3),
                       radius: 15,
                       showTitle: false),
                   PieChartSectionData(
@@ -410,13 +410,13 @@ class AdminOverviewWidget extends StatelessWidget {
               decoration: BoxDecoration(
                 color: cardColor,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: textColor.withOpacity(0.02)),
+                border: Border.all(color: textColor.withValues(alpha: 0.02)),
               ),
               child: Row(
                 children: [
                   CircleAvatar(
                     radius: 16,
-                    backgroundColor: _getStatusColor(status).withOpacity(0.1),
+                    backgroundColor: _getStatusColor(status).withValues(alpha: 0.1),
                     child: Icon(_getStatusIcon(status), color: _getStatusColor(status), size: 16),
                   ),
                   const SizedBox(width: 12),
@@ -484,7 +484,7 @@ class AdminOverviewWidget extends StatelessWidget {
           decoration: BoxDecoration(
             color: cardColor,
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: textColor.withOpacity(0.04)),
+            border: Border.all(color: textColor.withValues(alpha: 0.04)),
           ),
           child: Column(
             children: [
@@ -509,7 +509,7 @@ class AdminOverviewWidget extends StatelessWidget {
     final style = TextStyle(
       fontWeight: isHeader ? FontWeight.bold : FontWeight.normal,
       fontSize: isHeader ? 10 : 12,
-      color: isHeader ? subTextColor : textColor.withOpacity(0.8),
+      color: isHeader ? subTextColor : textColor.withValues(alpha: 0.8),
     );
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),

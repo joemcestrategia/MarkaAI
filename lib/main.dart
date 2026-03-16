@@ -33,6 +33,14 @@ void main() async {
     );
     debugPrint("=== BOOT STEP 1: Firebase Inicializado ===");
 
+    // 1.1 Ativar App Check (Comentado até ser configurado no Console do Firebase para evitar erro 403)
+    // await FirebaseAppCheck.instance.activate(
+    //   androidProvider: AndroidProvider.playIntegrity,
+    //   appleProvider: AppleProvider.deviceCheck,
+    //   webProvider: ReCaptchaV3Provider('recaptcha-v3-site-key'),
+    // );
+    // debugPrint("=== BOOT STEP 1.1: App Check Ativado (Simulado) ===");
+
     // 2. Configurar handler de background imediatamente após Firebase
     if (!kIsWeb) {
       FirebaseMessaging.onBackgroundMessage(

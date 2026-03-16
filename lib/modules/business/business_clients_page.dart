@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:rxdart/rxdart.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 import '../../core/utils/string_utils.dart';
@@ -41,7 +42,6 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
 
   // --- CACHE LOCAL ---
   Map<String, List<Map<String, dynamic>>>? _cachedData;
-  int _lastAppointmentCount = -1;
 
   PlanFeatures _currentFeatures = planFeaturesConfig[PlanKey.free]!;
 
@@ -228,15 +228,57 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
       }
     }
   }
+  
+  // ?? STREAM REATIVO COMBINADO
+  Stream<Map<String, dynamic>> _buildCombinedStream() {
+    if (shopId == null) return const Stream.empty();
+
+    final appointmentsStream = FirebaseFirestore.instance
+        .collection('appointments')
+        .where('shopId', isEqualTo: shopId)
+        .orderBy('data_agendamento', descending: true)
+        .snapshots();
+
+    final clientSettingsStream = FirebaseFirestore.instance
+        .collection('shops')
+        .doc(shopId)
+        .collection('clients')
+        .snapshots();
+        
+    final shopStream = FirebaseFirestore.instance
+        .collection('shops')
+        .doc(shopId)
+        .snapshots();
+
+    final featuresStream = PlanFeaturesService.streamFeaturesByShopId(shopId!);
+
+    return Rx.combineLatest4(
+      appointmentsStream,
+      clientSettingsStream,
+      shopStream,
+      featuresStream,
+      (appointmentsSnap, clientsSnap, shopSnap, features) {
+        return {
+          'appointments': appointmentsSnap.docs,
+          'clients': clientsSnap.docs,
+          'shop': shopSnap.data() ?? {},
+          'features': features,
+        };
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     if (_isLoadingId) return const Center(child: CircularProgressIndicator());
 
-    return StreamBuilder<PlanFeatures>(
-      stream: PlanFeaturesService.streamFeaturesByShopId(shopId!),
+    return StreamBuilder<Map<String, dynamic>>(
+      stream: _buildCombinedStream(),
       builder: (context, snapshot) {
-        if (snapshot.hasData) _currentFeatures = snapshot.data!;
+        if (snapshot.hasData) {
+          final data = snapshot.data!;
+          _currentFeatures = data['features'] as PlanFeatures;
+        }
 
         // ??? O GUARDIÃO DO LAYOUT: Verifica a largura da tela
         return LayoutBuilder(
@@ -399,136 +441,85 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
         shopId == null
             ? const Center(child: Text("Erro: ID da Loja não encontrado"))
             : Expanded(
-                child: StreamBuilder<QuerySnapshot>(
-                  stream: FirebaseFirestore.instance
-                      .collection('shops')
-                      .doc(shopId)
-                      .collection('clients')
-                      .snapshots(),
-                  builder: (context, clientsSnapshot) {
-                    if (clientsSnapshot.hasError) {
-                      return const Center(
-                          child: Text(
-                              "Erro ao carregar configurações de clientes"));
+                child: StreamBuilder<Map<String, dynamic>>(
+                  stream: _buildCombinedStream(),
+                  builder: (context, snapshot) {
+                    if (snapshot.hasError) {
+                      debugPrint("Erro no stream combinado: ${snapshot.error}");
+                      return const Center(child: Text("Erro ao carregar dados"));
+                    }
+                    if (!snapshot.hasData) {
+                      return const Center(child: CircularProgressIndicator());
                     }
 
-                    final clientSettingsDocs = clientsSnapshot.data?.docs ?? [];
+                    final data = snapshot.data!;
+                    final appointmentDocs = data['appointments'] as List<QueryDocumentSnapshot>;
+                    final clientSettingsDocs = data['clients'] as List<QueryDocumentSnapshot>;
+                    final shopConfig = (data['shop'] as Map?)?['config'] as Map? ?? {};
+                    _currentFeatures = data['features'] as PlanFeatures;
+
                     final Map<String, Map<String, dynamic>> clientSettings = {
                       for (var doc in clientSettingsDocs)
                         doc.id: doc.data() as Map<String, dynamic>
                     };
 
-                    return StreamBuilder<DocumentSnapshot>(
-                      stream: FirebaseFirestore.instance
-                          .collection('shops')
-                          .doc(shopId)
-                          .snapshots(),
-                      builder: (context, shopSnapshot) {
-                        final shopConfig = (shopSnapshot.data?.data()
-                                as Map?)?['config'] as Map? ??
-                            {};
+                    _cachedData = _processAppointments(
+                        appointmentDocs,
+                        clientSettings,
+                        shopConfig);
 
-                        return StreamBuilder<QuerySnapshot>(
-                          stream: FirebaseFirestore.instance
-                              .collection('appointments')
-                              .where('shopId', isEqualTo: shopId)
-                              .orderBy('data_agendamento', descending: true)
-                              .snapshots(),
-                          builder: (context, snapshot) {
-                            if (snapshot.hasError) {
-                              debugPrint(
-                                  "Erro ao carregar clientes: ${snapshot.error}");
-                              return Center(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    const Icon(Icons.error_outline,
-                                        color: Colors.red, size: 48),
-                                    const SizedBox(height: 16),
-                                    Text(
-                                      "Erro ao carregar clientes.\nVerifique sua conexão ou contate o suporte.",
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(color: Colors.red[700]),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            }
-                            if (!snapshot.hasData) {
-                              return const Center(
-                                  child: CircularProgressIndicator());
-                            }
+                    List<Map<String, dynamic>> targetList =
+                        _selectedTabIndex == 0
+                            ? _cachedData!['app']!
+                            : _cachedData!['manual']!;
 
-                            final int currentCount = snapshot.data!.docs.length;
-                            final bool dataChanged = currentCount != _lastAppointmentCount;
+                    final filteredDocs = targetList.where((client) {
+                      // Filtro de Texto
+                      final nome = (client['nome'] ?? "").toString();
+                      final normalizedNome =
+                          StringUtils.removeDiacritics(nome)
+                              .toLowerCase();
+                      final normalizedSearch =
+                          StringUtils.removeDiacritics(_searchText)
+                              .toLowerCase();
+                      bool matchesSearch = normalizedNome.contains(normalizedSearch);
 
-                            if (dataChanged || _cachedData == null) {
-                              _cachedData = _processAppointments(
-                                  snapshot.data!.docs,
-                                  clientSettings,
-                                  shopConfig);
-                              _lastAppointmentCount = currentCount;
-                              
-                              // Salva em cache de forma assíncrona
-                              ClientCacheService.saveClients(shopId!, _cachedData!);
-                            }
+                      if (!matchesSearch) return false;
 
-                            List<Map<String, dynamic>> targetList =
-                                _selectedTabIndex == 0
-                                    ? _cachedData!['app']!
-                                    : _cachedData!['manual']!;
+                      // Filtro de Tags
+                      if (_selectedTagFilter == "Todos") return true;
 
-                            final filteredDocs = targetList.where((client) {
-                              // Filtro de Texto
-                              final nome = (client['nome'] ?? "").toString();
-                              final normalizedNome =
-                                  StringUtils.removeDiacritics(nome)
-                                      .toLowerCase();
-                              final normalizedSearch =
-                                  StringUtils.removeDiacritics(_searchText)
-                                      .toLowerCase();
-                              bool matchesSearch = normalizedNome.contains(normalizedSearch);
+                      final List tags = client['tags'] as List? ?? [];
+                      final String? classification = client['classification']?.toString().toLowerCase();
 
-                              if (!matchesSearch) return false;
+                      if (_selectedTagFilter == "VIP") {
+                        return tags.contains('vip') || classification == 'vip';
+                      }
+                      if (_selectedTagFilter == "Novo") {
+                        return tags.contains('novo') || classification == 'novo';
+                      }
+                      if (_selectedTagFilter == "Sumido") {
+                        return tags.contains('sumido') || classification == 'sumido';
+                      }
+                      if (_selectedTagFilter == "Problemático") {
+                        return classification == 'problematico' || tags.contains('problematico');
+                      }
 
-                              // Filtro de Tags
-                              if (_selectedTagFilter == "Todos") return true;
+                      return true;
+                    }).toList();
 
-                              final List tags = client['tags'] as List? ?? [];
-                              final String? classification = client['classification']?.toString().toLowerCase();
+                    if (filteredDocs.isEmpty) return _buildEmptyState();
 
-                              if (_selectedTagFilter == "VIP") {
-                                return tags.contains('vip') || classification == 'vip';
-                              }
-                              if (_selectedTagFilter == "Novo") {
-                                return tags.contains('novo') || classification == 'novo';
-                              }
-                              if (_selectedTagFilter == "Sumido") {
-                                return tags.contains('sumido') || classification == 'sumido';
-                              }
-                              if (_selectedTagFilter == "Problemático") {
-                                return classification == 'problematico' || tags.contains('problematico');
-                              }
+                    return ListView.builder(
+                      padding: const EdgeInsets.all(20),
+                      itemCount: filteredDocs.length,
+                      itemBuilder: (context, index) {
+                        final client = filteredDocs[index];
+                        bool isSelected = !isMobile &&
+                            _selectedClientId == client['id'];
 
-                              return true;
-                            }).toList();
-
-                            if (filteredDocs.isEmpty) return _buildEmptyState();
-
-                            return ListView.builder(
-                              padding: const EdgeInsets.all(20),
-                              itemCount: filteredDocs.length,
-                              itemBuilder: (context, index) {
-                                final client = filteredDocs[index];
-                                bool isSelected = !isMobile &&
-                                    _selectedClientId == client['id'];
-
-                                return _buildClientListItem(
-                                    client, isSelected, isMobile);
-                              },
-                            );
-                          },
-                        );
+                        return _buildClientListItem(
+                            client, isSelected, isMobile);
                       },
                     );
                   },
@@ -622,51 +613,58 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
     final int sumidoMaxDays = shopConfig['sumido_max_days'] ?? 45;
 
     for (var c in allApps) {
-      List<String> tags = List<String>.from(c['tags'] ?? []);
       final settings = clientSettings[c['id']];
-      final bool hasOverride =
-          settings != null && (settings['classificationOverride'] ?? false);
+      
+      // 1. Calcular tag automática
+      String? autoTag;
+      final int visits = c['visitas'] as int;
+      final DateTime lastVisit = c['ultimaVisita'] as DateTime;
+      final DateTime firstVisit = c['primeiraVisita'] as DateTime;
 
-      if (hasOverride) {
-        // RESPEITA MANUALMENTE DEFINIDO
-        String? manualClass =
-            settings['classification']?.toString().toLowerCase();
-        if (manualClass != null) {
-          tags = [manualClass]; // Limpa automáticos e mantém o manual
-          c['classification'] = manualClass;
-        }
+      double avgInterval = 0;
+      if (visits > 1) {
+        final totalDays = lastVisit.difference(firstVisit).inDays;
+        avgInterval = totalDays / (visits - 1);
+      }
+
+      final daysSinceLast = now.difference(lastVisit).inDays;
+      if (daysSinceLast > sumidoMaxDays) {
+        autoTag = 'sumido';
       } else {
-        // LÓGICA AUTOMÁTICA
-        final int visits = c['visitas'] as int;
-        final DateTime lastVisit = c['ultimaVisita'] as DateTime;
-        final DateTime firstVisit = c['primeiraVisita'] as DateTime;
+        bool meetsVisits = visits >= vipMinVisits;
+        bool meetsInterval = visits == 1 || avgInterval <= vipAvgInterval;
 
-        // Calcular intervalo médio
-        double avgInterval = 0;
-        if (visits > 1) {
-          final totalDays = lastVisit.difference(firstVisit).inDays;
-          avgInterval = totalDays / (visits - 1);
-        }
-
-        // Sumido check (sempre prioritário se não houver override)
-        final daysSinceLast = now.difference(lastVisit).inDays;
-        if (daysSinceLast > sumidoMaxDays) {
-          tags.add('sumido');
-        } else {
-          // VIP check
-          // Para VIP: Visitas >= threshold AND Intervalo Médio <= threshold
-          bool meetsVisits = visits >= vipMinVisits;
-          bool meetsInterval = visits == 1 || avgInterval <= vipAvgInterval;
-
-          if (meetsVisits && meetsInterval && _currentFeatures.clientClassification) {
-            tags.add('vip');
-          } else if (visits == 1 && daysSinceLast < 30 && _currentFeatures.clientClassification) {
-            tags.add('novo');
-          }
+        if (meetsVisits && meetsInterval && _currentFeatures.clientClassification) {
+          autoTag = 'vip';
+        } else if (visits == 1 && daysSinceLast < 30 && _currentFeatures.clientClassification) {
+          autoTag = 'novo';
         }
       }
 
-      c['tags'] = tags;
+      // 2. Classificação Manual tem PRIORIDADE ABSOLUTA
+      String? manualClass = settings?['classification']?.toString().toLowerCase().trim();
+      String finalClassification = manualClass ?? autoTag ?? '';
+      
+      // 3. Mesclar manualTags com a classification
+      List<String> displayTags = [];
+      if (settings?['manualTags'] != null) {
+        // Normaliza tags manuais para lowercase e remove acentos do problematico
+        displayTags = (settings!['manualTags'] as List)
+            .map((t) => StringUtils.removeDiacritics(t.toString().toLowerCase().trim()))
+            .toList();
+      }
+      
+      // Garante que o problematico esteja normalizado na classification também
+      if (finalClassification == 'problemático' || finalClassification == 'problematico') {
+        finalClassification = 'problematico';
+      }
+
+      if (finalClassification.isNotEmpty && !displayTags.contains(finalClassification)) {
+        displayTags.insert(0, finalClassification); // Principal primeiro
+      }
+
+      c['classification'] = finalClassification;
+      c['tags'] = displayTags;
     }
 
     return {
@@ -762,21 +760,6 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
     bool isManual = client['origem'] == 'manual';
     Color themeColor = isManual ? Colors.orange : AppColors.primaryPurple;
 
-    Widget? manualTag;
-    if (client['classification'] != null &&
-        !['vip', 'fiel', 'novo'].contains(client['classification'])) {
-      final cClass = client['classification'].toString().toLowerCase();
-      if (cClass == 'problematico') {
-        manualTag = _buildTag(
-            "PROBLEMÁTICO", Colors.red.shade700, Icons.warning_amber_rounded);
-      } else if (cClass == 'sumido') {
-        manualTag = _buildTag("SUMIDO", Colors.grey, Icons.timer_off_outlined);
-      } else {
-        manualTag = _buildTag(client['classification'].toString().toUpperCase(),
-            Colors.purple, Icons.label);
-      }
-    }
-
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
@@ -825,16 +808,12 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                     color: Colors.grey,
                     fontWeight: FontWeight.w500)),
             const SizedBox(height: 4),
-            Row(
-              children: [
-                if ((client['tags'] as List?)?.contains('vip') ?? false)
-                  _buildTag("VIP", Colors.amber, Icons.star),
-                if ((client['tags'] as List?)?.contains('novo') ?? false)
-                  _buildTag("Novo", Colors.green, Icons.new_releases),
-                if ((client['tags'] as List?)?.contains('sumido') ?? false)
-                  _buildTag("Sumido", Colors.grey, Icons.timer_off_outlined),
-                if (manualTag != null) manualTag,
-              ],
+            Wrap(
+              spacing: 4,
+              runSpacing: 4,
+              children: (client['tags'] as List? ?? [])
+                  .map<Widget>((tag) => _buildTagFromType(tag.toString()))
+                  .toList(),
             )
           ],
         ),
@@ -879,9 +858,26 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
             style: TextStyle(color: Colors.grey[500]))
       ]));
 
+  Widget _buildTagFromType(String tag) {
+    final t = tag.toLowerCase();
+    
+    // Configurações de Estilo por Tag
+    if (t == 'vip') {
+      return _buildTag("VIP", Colors.amber, Icons.star);
+    } else if (t == 'problematico' || t == 'problemático') {
+      return _buildTag("PROBLEMÁTICO", Colors.red.shade700, Icons.warning_amber_rounded);
+    } else if (t == 'novo') {
+      return _buildTag("NOVO", Colors.green, Icons.new_releases);
+    } else if (t == 'sumido') {
+      return _buildTag("SUMIDO", Colors.grey, Icons.timer_off_outlined);
+    } else {
+      // Tags Manuais Genéricas
+      return _buildTag(tag.toUpperCase(), AppColors.primaryPurple, Icons.label);
+    }
+  }
+
   Widget _buildTag(String label, Color color, IconData icon) {
     return Container(
-      margin: const EdgeInsets.only(right: 6),
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.1),

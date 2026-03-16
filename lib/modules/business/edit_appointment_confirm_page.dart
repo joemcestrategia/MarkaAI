@@ -702,7 +702,7 @@ class _EditAppointmentConfirmPageState
               Padding(
                 padding: const EdgeInsets.only(left: 48.0),
                 child: DropdownButtonFormField<String>(
-                  value: selectedId,
+                  initialValue: selectedId,
                   isExpanded: true,
                   decoration: InputDecoration(
                     contentPadding:

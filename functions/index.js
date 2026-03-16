@@ -2,13 +2,14 @@
    The later implementation will be adapted to handle HTTP if needed. */
 
 const functions = require("firebase-functions");
-const { onDocumentCreated, onDocumentUpdated, onDocumentDeleted } = require("firebase-functions/v2/firestore");
+const { onDocumentCreated, onDocumentUpdated, onDocumentDeleted, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { onRequest, onCall } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 
 const { defineString, defineSecret } = require("firebase-functions/params");
 
 const admin = require("firebase-admin");
+admin.initializeApp();
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
@@ -4102,6 +4103,7 @@ exports.deleteUserAccount = onCall(async (request) => {
   }
 
   const uid = request.auth.uid;
+  console.log(` Iniciando exclusão de conta para UID: ${uid}`);
 
   try {
     const userDoc = await admin.firestore().collection('users').doc(uid).get();
@@ -4109,13 +4111,17 @@ exports.deleteUserAccount = onCall(async (request) => {
     if (userDoc.exists) {
       const userData = userDoc.data();
       const shopId = userData.shopId;
+      const role = userData.role || userData.papel || '';
 
-      // Se tiver loja vinculada (sendo dono)
-      if (shopId && userData.papel === 'dono') {
+      // Se tiver loja vinculada e for o dono, tenta limpar dados da loja
+      if (shopId && (role === 'dono' || role === 'owner')) {
+        console.log(` Usuário é dono da loja ${shopId}. Removendo loja e assinaturas.`);
         const shopDoc = await admin.firestore().collection('shops').doc(shopId).get();
         if (shopDoc.exists) {
-          const customerId = shopDoc.data().stripeCustomerId;
-          // Se tiver um customer do Stripe, cancelar todas as assinaturas dele primeiro
+          const sData = shopDoc.data();
+          const customerId = sData.stripe_customer_id || sData.stripeCustomerId;
+          
+          // Cancelar assinaturas no Stripe se existirem
           if (customerId) {
             try {
               const subscriptions = await stripe.subscriptions.list({
@@ -4124,27 +4130,263 @@ exports.deleteUserAccount = onCall(async (request) => {
               });
               for (const sub of subscriptions.data) {
                 await stripe.subscriptions.cancel(sub.id);
+                console.log(` Assinatura Stripe ${sub.id} cancelada.`);
               }
             } catch (e) {
-              console.warn("Stripe cancel warn (exclusão conta):", e.message);
+              console.warn(" Aviso ao cancelar Stripe (exclusão conta):", e.message);
             }
           }
           // Deleta a loja
           await admin.firestore().collection('shops').doc(shopId).delete();
+          console.log(` Loja ${shopId} removida.`);
         }
       }
 
       // Deleta os dados do user 
       await admin.firestore().collection('users').doc(uid).delete();
+      console.log(` Documento do usuário ${uid} removido do Firestore.`);
     }
 
-    // E por fim, deleta o registro no Firebase Authentication
+    // Por fim, deleta o registro no Firebase Authentication
+    // Nota: Em onCall, o admin SDK tem privilégios totais.
     await admin.auth().deleteUser(uid);
+    console.log(` Usuário ${uid} removido do Firebase Auth.`);
 
-    return { success: true, message: "Conta excluída" };
+    return { success: true, message: "Conta excluída com sucesso" };
   } catch (error) {
-    console.error("Erro em deleteUserAccount:", error);
-    throw new functions.https.HttpsError('internal', "Erro ao excluir conta");
+    console.error(" Erro crítico em deleteUserAccount:", error);
+    // Mesmo que falhe o Firestore, tentamos garantir a deleção do Auth se possível ou vice-versa
+    // Mas aqui o mais provável é erro de permissão ou timeout
+    throw new functions.https.HttpsError('internal', error.message || "Erro ao excluir conta");
   }
 });
 
+exports.toggleFavorite = onCall(async (request) => {
+  const uid = request.auth ? request.auth.uid : null;
+  console.log(`[toggleFavorite] Início - UID: ${uid}`);
+  
+  if (!uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Usuário não autenticado');
+  }
+
+  const data = request.data || {};
+  const shopId = data.shopId;
+  const shopName = data.shopName || '';
+  const isFavorite = data.isFavorite === true;
+
+  console.log(`[toggleFavorite] Dados: shopId=${shopId}, isFavorite=${isFavorite}`);
+
+  if (!shopId) {
+    throw new functions.https.HttpsError('invalid-argument', 'ID da loja é obrigatório');
+  }
+
+  const db = admin.firestore();
+  
+  try {
+    const favRef = db.collection('users').doc(uid).collection('favorites').doc(shopId);
+
+    if (isFavorite) {
+      // 1. Salvar nos favoritos do usuário
+      await favRef.set({
+        added_at: admin.firestore.FieldValue.serverTimestamp(),
+        shopId: shopId,
+        shopName: shopName,
+      });
+
+      // 2. REGISTRO AUTOMÁTICO DE CLIENTE (CONCORRENTE)
+      // Se ele favoritou, ele tem interesse, logo vira um cliente "novo" se não existir um registro
+      const clientRef = db.collection('shops').doc(shopId).collection('clients').doc(uid);
+      const clientDoc = await clientRef.get();
+      
+      if (!clientDoc.exists) {
+        // Busca dados do usuário para preencher o registro inicial do cliente
+        const userDoc = await db.collection('users').doc(uid).get();
+        const userData = userDoc.exists ? userDoc.data() : {};
+        
+        await clientRef.set({
+          nome: userData.nome || userData.name || 'Cliente App',
+          email: userData.email || '',
+          telefone: userData.telefone || userData.whatsapp || userData.phoneNumber || '',
+          aniversario: userData.aniversario || userData.data_nascimento || userData.nascimento || userData.birthDate || '',
+          classification: 'novo',
+          classificationOverride: false,
+          created_at: admin.firestore.FieldValue.serverTimestamp(),
+          origem: 'app_favorite'
+        });
+        console.log(`[toggleFavorite] Cliente ${uid} registrado automaticamente para a loja ${shopId}`);
+      }
+
+      console.log(`[toggleFavorite] Sucesso: Favoritado ${shopId}`);
+    } else {
+      await favRef.delete();
+      console.log(`[toggleFavorite] Sucesso: Desfavoritado ${shopId}`);
+    }
+    return { success: true };
+  } catch (error) {
+    console.error("[toggleFavorite] Erro:", error);
+    throw new functions.https.HttpsError('internal', error.message || "Erro ao atualizar favoritos");
+  }
+});
+
+/**
+ * --- MARKA AI: ARQUITETURA OPTIMIZADA (IMPLEMENTAÇÃO) ---
+ */
+
+/**
+ * GESTÃO DE CUSTOM CLAIMS (Elimina reads nas Security Rules)
+ */
+exports.setUserClaims = onCall(async (request) => {
+  if (!request.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "Usuário deve estar logado.");
+  }
+
+  const { shopId, role, uid } = request.data;
+  if (!shopId || !role) {
+    throw new functions.https.HttpsError("invalid-argument", "shopId e role são obrigatórios.");
+  }
+
+  const callerRole = request.auth.token.role;
+  const callerShopId = request.auth.token.shopId;
+  const targetUid = uid || request.auth.uid;
+
+  if (shopId !== callerShopId) {
+    throw new functions.https.HttpsError(
+      "permission-denied",
+      "Não é possível alterar membros de outra loja."
+    );
+  }
+
+  if (callerRole !== "owner" && request.auth.uid !== targetUid) {
+     throw new functions.https.HttpsError("permission-denied", "Apenas Owners podem alterar permissões de terceiros.");
+  }
+
+  try {
+    await admin.auth().setCustomUserClaims(targetUid, { shopId, role });
+    return { success: true };
+  } catch (error) {
+    console.error("Erro ao definir claims:", error);
+    throw new functions.https.HttpsError("internal", "Erro ao atualizar permissões.");
+  }
+});
+
+/**
+ * SINCRONIZAÇÃO DE CLIENT SUMMARY
+ */
+exports.syncClientSummary = onDocumentWritten(
+  "/shops/{shopId}/clients/{clientId}",
+  async (event) => {
+    const db = admin.firestore();
+    const { shopId, clientId } = event.params;
+    const summaryRef = db.doc(`shops/${shopId}/clientsSummary/${clientId}`);
+
+    if (!event.data.after.exists) {
+      await summaryRef.delete();
+      return;
+    }
+
+    const data = event.data.after.data();
+    await summaryRef.set({
+      name: data.name || "",
+      phone: data.phone || "",
+      phoneNormalized: data.phoneNormalized || "",
+      lastVisitAt: data.lastVisitAt || null,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+  }
+);
+
+/**
+ * Função utilitária para atualizar agendamentos futuros em batches
+ */
+async function batchUpdateAppointmentsSnapshots(shopId, fieldFilter, updateData) {
+  const db = admin.firestore();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const snapshot = await db
+    .collectionGroup('appointments')
+    .where('shopId', '==', shopId)
+    .where(fieldFilter.field, "==", fieldFilter.value)
+    .where("scheduledAt", ">=", admin.firestore.Timestamp.fromDate(today))
+    .where("isDeleted", "==", false)
+    .get();
+
+  if (snapshot.empty) return 0;
+
+  const BATCH_LIMIT = 499;
+  const docs = snapshot.docs;
+
+  for (let i = 0; i < docs.length; i += BATCH_LIMIT) {
+    const batch = db.batch();
+    const chunk = docs.slice(i, i + BATCH_LIMIT);
+
+    chunk.forEach((doc) => {
+      batch.update(doc.ref, {
+        ...updateData,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedBy: "system-sync",
+      });
+    });
+
+    await batch.commit();
+  }
+  return docs.length;
+}
+
+exports.syncProfessionalSnapshot = onDocumentUpdated(
+  "/shops/{shopId}/employees/{empId}",
+  async (event) => {
+    const before = event.data.before.data();
+    const after = event.data.after.data();
+
+    if (before.name === after.name && before.photoUrl === after.photoUrl) return;
+
+    try {
+      const count = await batchUpdateAppointmentsSnapshots(
+        event.params.shopId,
+        { field: "professionalId", value: event.params.empId },
+        {
+          "professional.name": after.name,
+          "professional.photoUrl": after.photoUrl,
+        }
+      );
+      console.log(`✅ Sincronizados ${count} agendamentos para o profissional ${event.params.empId}`);
+    } catch (error) {
+      console.error(`❌ Falha na sincronização do profissional ${event.params.empId}:`, error);
+    }
+  }
+);
+
+exports.syncServiceSnapshot = onDocumentUpdated(
+  "/shops/{shopId}/services/{svcId}",
+  async (event) => {
+    const before = event.data.before.data();
+    const after = event.data.after.data();
+
+    if (
+      before.name === after.name &&
+      before.price === after.price &&
+      before.durationMin === after.durationMin
+    ) return;
+
+    try {
+      const count = await batchUpdateAppointmentsSnapshots(
+        event.params.shopId,
+        { field: "serviceId", value: event.params.svcId },
+        {
+          "service.name": after.name,
+          "service.price": after.price,
+          "service.durationMin": after.durationMin,
+        }
+      );
+      console.log(`✅ Sincronizados ${count} agendamentos para o serviço ${event.params.svcId}`);
+    } catch (error) {
+      console.error(`❌ Falha na sincronização do serviço ${event.params.svcId}:`, error);
+    }
+  }
+);
+
+// --- NOVAS FUNÇÕES DE FOLGAS E FERIADOS ---
+exports.calcularFeriadosPendentes = require("./src/scheduled/calcularFeriadosPendentes").calcularFeriadosPendentes;
+exports.salvarDecisaoFeriado = require("./src/https/salvarDecisaoFeriado").salvarDecisaoFeriado;
+exports.salvarFeriadoPersonalizado = require("./src/https/salvarFeriadoPersonalizado").salvarFeriadoPersonalizado;

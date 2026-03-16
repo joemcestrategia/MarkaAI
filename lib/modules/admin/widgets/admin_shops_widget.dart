@@ -16,7 +16,7 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
     final theme = Theme.of(context);
     final cardColor = theme.cardColor;
     final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
-    final borderColor = textColor.withOpacity(0.06);
+    final borderColor = textColor.withValues(alpha: 0.06);
 
     return Column(
       children: [
@@ -27,7 +27,7 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
             style: TextStyle(color: textColor, fontSize: 14),
             decoration: InputDecoration(
               hintText: 'Buscar por nome, slug ou plano...',
-              hintStyle: TextStyle(color: textColor.withOpacity(0.4), fontSize: 14),
+              hintStyle: TextStyle(color: textColor.withValues(alpha: 0.4), fontSize: 14),
               prefixIcon: const Icon(Icons.search, color: Color(0xFF4F8EF7), size: 20),
               filled: true,
               fillColor: cardColor,
@@ -96,7 +96,7 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
                         tag: 'shop-logo-${doc.id}',
                         child: CircleAvatar(
                           radius: 18,
-                          backgroundColor: const Color(0xFF4F8EF7).withOpacity(0.1),
+                          backgroundColor: const Color(0xFF4F8EF7).withValues(alpha: 0.1),
                           backgroundImage: photoUrl != null ? NetworkImage(photoUrl) : null,
                           child: photoUrl == null ? const Icon(Icons.storefront_rounded, color: Color(0xFF4F8EF7), size: 18) : null,
                         ),
@@ -109,9 +109,9 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
                               decoration: BoxDecoration(
-                                color: Colors.amber.withOpacity(0.1),
+                                color: Colors.amber.withValues(alpha: 0.1),
                                 borderRadius: BorderRadius.circular(4),
-                                border: Border.all(color: Colors.amber.withOpacity(0.3)),
+                                border: Border.all(color: Colors.amber.withValues(alpha: 0.3)),
                               ),
                               child: const Text(
                                 'BOOST',
@@ -121,7 +121,7 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
                           ],
                         ],
                       ),
-                      subtitle: Text('/$slug', style: TextStyle(color: textColor.withOpacity(0.5), fontSize: 11)),
+                      subtitle: Text('/$slug', style: TextStyle(color: textColor.withValues(alpha: 0.5), fontSize: 11)),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -129,21 +129,21 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                             decoration: BoxDecoration(
                               color: (plan != 'free')
-                                  ? const Color(0xFF22C55E).withOpacity(0.1)
-                                  : textColor.withOpacity(0.05),
+                                  ? const Color(0xFF22C55E).withValues(alpha: 0.1)
+                                  : textColor.withValues(alpha: 0.05),
                               borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text(
                               isTrial ? 'TRIAL' : plan.toUpperCase(),
                               style: TextStyle(
-                                color: (plan != 'free') ? const Color(0xFF22C55E) : textColor.withOpacity(0.5),
+                                color: (plan != 'free') ? const Color(0xFF22C55E) : textColor.withValues(alpha: 0.5),
                                 fontSize: 9,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
                           ),
                           const SizedBox(width: 8),
-                          Icon(Icons.chevron_right, color: textColor.withOpacity(0.3), size: 18),
+                          Icon(Icons.chevron_right, color: textColor.withValues(alpha: 0.3), size: 18),
                         ],
                       ),
                     );
@@ -162,7 +162,7 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
     final theme = Theme.of(context);
     final cardColor = theme.cardColor;
     final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
-    final borderColor = textColor.withOpacity(0.06);
+    final borderColor = textColor.withValues(alpha: 0.06);
 
     final nomeController = TextEditingController(text: data['nome'] ?? '');
     final telefoneController = TextEditingController(text: data['telefone'] ?? '');
@@ -195,7 +195,7 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
                         tag: 'shop-logo-${doc.id}',
                         child: CircleAvatar(
                           radius: 28,
-                          backgroundColor: const Color(0xFF4F8EF7).withOpacity(0.1),
+                          backgroundColor: const Color(0xFF4F8EF7).withValues(alpha: 0.1),
                           backgroundImage: photoUrl != null ? NetworkImage(photoUrl) : null,
                           child: photoUrl == null ? const Icon(Icons.storefront_rounded, color: Color(0xFF4F8EF7), size: 24) : null,
                         ),
@@ -217,7 +217,7 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
                         ),
                       ),
                       IconButton(
-                        icon: Icon(Icons.close, color: textColor.withOpacity(0.4)),
+                        icon: Icon(Icons.close, color: textColor.withValues(alpha: 0.4)),
                         onPressed: () => Navigator.pop(context),
                       ),
                     ],
@@ -256,17 +256,17 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
                       ],
                     ),
                     const SizedBox(height: 24),
-                    Text('AÇÕES RÁPIDAS', style: TextStyle(color: textColor.withOpacity(0.4), fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+                    Text('AÇÕES RÁPIDAS', style: TextStyle(color: textColor.withValues(alpha: 0.4), fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
                     const SizedBox(height: 12),
                     Wrap(
                       spacing: 12,
                       runSpacing: 12,
                       children: [
-                        _buildActionButton('Editar', Icons.edit_outlined, textColor.withOpacity(0.05), textColor, () => setModalState(() => isEditing = true)),
-                        _buildActionButton('Plano', Icons.stars_outlined, const Color(0xFF22C55E).withOpacity(0.1), const Color(0xFF22C55E), () => _changePlan(doc)),
-                        _buildActionButton('Boost', Icons.rocket_launch_outlined, Colors.amber.withOpacity(0.1), Colors.amber, () => _addBoost(doc)),
-                        _buildActionButton('Trial', Icons.timer_outlined, const Color(0xFF7C5CFC).withOpacity(0.1), const Color(0xFF7C5CFC), () => _liberarTrial(doc)),
-                        _buildActionButton('Excluir', Icons.delete_outline, Colors.red.withOpacity(0.1), Colors.redAccent, () => _deleteShop(doc)),
+                        _buildActionButton('Editar', Icons.edit_outlined, textColor.withValues(alpha: 0.05), textColor, () => setModalState(() => isEditing = true)),
+                        _buildActionButton('Plano', Icons.stars_outlined, const Color(0xFF22C55E).withValues(alpha: 0.1), const Color(0xFF22C55E), () => _changePlan(doc)),
+                        _buildActionButton('Boost', Icons.rocket_launch_outlined, Colors.amber.withValues(alpha: 0.1), Colors.amber, () => _addBoost(doc)),
+                        _buildActionButton('Trial', Icons.timer_outlined, const Color(0xFF7C5CFC).withValues(alpha: 0.1), const Color(0xFF7C5CFC), () => _liberarTrial(doc)),
+                        _buildActionButton('Excluir', Icons.delete_outline, Colors.red.withValues(alpha: 0.1), Colors.redAccent, () => _deleteShop(doc)),
                       ],
                     ),
                   ] else ...[
@@ -279,7 +279,7 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
                         Expanded(
                           child: TextButton(
                             onPressed: () => setModalState(() => isEditing = false),
-                            child: Text('CANCELAR', style: TextStyle(color: textColor.withOpacity(0.5), fontSize: 13)),
+                            child: Text('CANCELAR', style: TextStyle(color: textColor.withValues(alpha: 0.5), fontSize: 13)),
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -326,13 +326,13 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 16, color: const Color(0xFF4F8EF7).withOpacity(0.6)),
+          Icon(icon, size: 16, color: const Color(0xFF4F8EF7).withValues(alpha: 0.6)),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(label, style: TextStyle(color: textColor.withOpacity(0.4), fontSize: 10, fontWeight: FontWeight.bold)),
+                Text(label, style: TextStyle(color: textColor.withValues(alpha: 0.4), fontSize: 10, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 1),
                 Text(value, style: TextStyle(color: textColor, fontSize: 12, height: 1.4)),
               ],
@@ -351,8 +351,8 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
         style: TextStyle(color: textColor, fontSize: 13),
         decoration: InputDecoration(
           labelText: label,
-          labelStyle: TextStyle(color: textColor.withOpacity(0.5), fontSize: 11),
-          enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: textColor.withOpacity(0.1))),
+          labelStyle: TextStyle(color: textColor.withValues(alpha: 0.5), fontSize: 11),
+          enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: textColor.withValues(alpha: 0.1))),
           focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF4F8EF7))),
         ),
       ),
@@ -368,7 +368,7 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
         decoration: BoxDecoration(
           color: bgColor,
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: iconColor.withOpacity(0.1)),
+          border: Border.all(color: iconColor.withValues(alpha: 0.1)),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -397,12 +397,12 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('Selecione a duração do boost:', style: TextStyle(color: textColor.withOpacity(0.6))),
+            Text('Selecione a duração do boost:', style: TextStyle(color: textColor.withValues(alpha: 0.6))),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
               dropdownColor: cardColor,
               style: TextStyle(color: textColor),
-              value: selectedDuration,
+              initialValue: selectedDuration,
               items: const [
                 DropdownMenuItem(value: '7', child: Text('7 dias')),
                 DropdownMenuItem(value: '14', child: Text('14 dias')),
@@ -411,8 +411,8 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
               onChanged: (value) => selectedDuration = value,
               decoration: InputDecoration(
                 labelText: 'Duração', 
-                labelStyle: TextStyle(color: textColor.withOpacity(0.4)),
-                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: textColor.withOpacity(0.1))),
+                labelStyle: TextStyle(color: textColor.withValues(alpha: 0.4)),
+                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: textColor.withValues(alpha: 0.1))),
               ),
             ),
           ],
@@ -420,7 +420,7 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text('CANCELAR', style: TextStyle(color: textColor.withOpacity(0.5))),
+            child: Text('CANCELAR', style: TextStyle(color: textColor.withValues(alpha: 0.5))),
           ),
           ElevatedButton(
             onPressed: () async {
@@ -466,12 +466,12 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('Selecione o novo plano:', style: TextStyle(color: textColor.withOpacity(0.6))),
+            Text('Selecione o novo plano:', style: TextStyle(color: textColor.withValues(alpha: 0.6))),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
               dropdownColor: cardColor,
               style: TextStyle(color: textColor),
-              value: selectedPlan,
+              initialValue: selectedPlan,
               items: const [
                 DropdownMenuItem(value: 'free', child: Text('Free')),
                 DropdownMenuItem(value: 'start', child: Text('Start')),
@@ -481,8 +481,8 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
               onChanged: (value) => selectedPlan = value,
               decoration: InputDecoration(
                 labelText: 'Plano', 
-                labelStyle: TextStyle(color: textColor.withOpacity(0.4)),
-                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: textColor.withOpacity(0.1))),
+                labelStyle: TextStyle(color: textColor.withValues(alpha: 0.4)),
+                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: textColor.withValues(alpha: 0.1))),
               ),
             ),
           ],
@@ -490,7 +490,7 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text('CANCELAR', style: TextStyle(color: textColor.withOpacity(0.5))),
+            child: Text('CANCELAR', style: TextStyle(color: textColor.withValues(alpha: 0.5))),
           ),
           ElevatedButton(
             onPressed: () async {
@@ -533,11 +533,11 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
         backgroundColor: cardColor,
         surfaceTintColor: Colors.transparent,
         title: Text('Excluir Negócio?', style: TextStyle(color: textColor)),
-        content: Text('Tem certeza que deseja excluir permanetemente o negócio "$nome"? Esta ação não pode ser desfeita.', style: TextStyle(color: textColor.withOpacity(0.6))),
+        content: Text('Tem certeza que deseja excluir permanetemente o negócio "$nome"? Esta ação não pode ser desfeita.', style: TextStyle(color: textColor.withValues(alpha: 0.6))),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: Text('CANCELAR', style: TextStyle(color: textColor.withOpacity(0.5))),
+            child: Text('CANCELAR', style: TextStyle(color: textColor.withValues(alpha: 0.5))),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
@@ -575,12 +575,12 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('Escolha o plano e a duração do teste gratuito.', style: TextStyle(color: textColor.withOpacity(0.6))),
+            Text('Escolha o plano e a duração do teste gratuito.', style: TextStyle(color: textColor.withValues(alpha: 0.6))),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
               dropdownColor: cardColor,
               style: TextStyle(color: textColor),
-              value: selectedPlan,
+              initialValue: selectedPlan,
               items: const [
                 DropdownMenuItem(value: 'start', child: Text('Start')),
                 DropdownMenuItem(value: 'plus', child: Text('Plus')),
@@ -589,15 +589,15 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
               onChanged: (value) => selectedPlan = value,
               decoration: InputDecoration(
                 labelText: 'Plano', 
-                labelStyle: TextStyle(color: textColor.withOpacity(0.4)),
-                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: textColor.withOpacity(0.1))),
+                labelStyle: TextStyle(color: textColor.withValues(alpha: 0.4)),
+                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: textColor.withValues(alpha: 0.1))),
               ),
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
               dropdownColor: cardColor,
               style: TextStyle(color: textColor),
-              value: selectedDuration,
+              initialValue: selectedDuration,
               items: const [
                 DropdownMenuItem(value: '7', child: Text('7 dias')),
                 DropdownMenuItem(value: '15', child: Text('15 dias')),
@@ -608,8 +608,8 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
               onChanged: (value) => selectedDuration = value,
               decoration: InputDecoration(
                 labelText: 'Duração', 
-                labelStyle: TextStyle(color: textColor.withOpacity(0.4)),
-                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: textColor.withOpacity(0.1))),
+                labelStyle: TextStyle(color: textColor.withValues(alpha: 0.4)),
+                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: textColor.withValues(alpha: 0.1))),
               ),
             ),
           ],
@@ -617,7 +617,7 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text('CANCELAR', style: TextStyle(color: textColor.withOpacity(0.5))),
+            child: Text('CANCELAR', style: TextStyle(color: textColor.withValues(alpha: 0.5))),
           ),
           ElevatedButton(
             onPressed: () async {

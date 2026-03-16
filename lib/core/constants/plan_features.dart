@@ -46,6 +46,10 @@ class PlanFeatures {
   // Equipe
   final bool commissionView;
 
+  // Folgas e Feriados
+  final bool holidaysManagement;
+  final bool customHolidays;
+
   const PlanFeatures({
     required this.onlineBooking,
     required this.canDisableOnlineBooking,
@@ -72,6 +76,8 @@ class PlanFeatures {
     required this.googleBusiness,
     required this.automaticPriceAdjustment,
     required this.commissionView,
+    required this.holidaysManagement,
+    required this.customHolidays,
   });
 }
 
@@ -102,6 +108,8 @@ const Map<PlanKey, PlanFeatures> planFeaturesConfig = {
     googleBusiness: true,
     automaticPriceAdjustment: false,
     commissionView: false,
+    holidaysManagement: false,
+    customHolidays: false,
   ),
   PlanKey.starter: PlanFeatures(
     onlineBooking: true,
@@ -129,6 +137,8 @@ const Map<PlanKey, PlanFeatures> planFeaturesConfig = {
     googleBusiness: true,
     automaticPriceAdjustment: false,
     commissionView: true,
+    holidaysManagement: false,
+    customHolidays: false,
   ),
   PlanKey.plus: PlanFeatures(
     onlineBooking: true,
@@ -156,6 +166,8 @@ const Map<PlanKey, PlanFeatures> planFeaturesConfig = {
     googleBusiness: true,
     automaticPriceAdjustment: true,
     commissionView: true,
+    holidaysManagement: true,
+    customHolidays: false,
   ),
   PlanKey.pro: PlanFeatures(
     onlineBooking: true,
@@ -183,5 +195,7 @@ const Map<PlanKey, PlanFeatures> planFeaturesConfig = {
     googleBusiness: true,
     automaticPriceAdjustment: true,
     commissionView: true,
+    holidaysManagement: true,
+    customHolidays: true,
   ),
 };

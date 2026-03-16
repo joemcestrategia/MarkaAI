@@ -12,6 +12,7 @@ import '../modules/business/subscription_service.dart';
 import '../modules/schedule/checkout_transparente_page.dart';
 import '../modules/schedule/booking_success_page.dart';
 import 'pix_payment_page.dart';
+import '../core/widgets/birthday_celebration_modal.dart';
 import '../core/services/client_verification_service.dart';
 import '../core/services/coupon_service.dart';
 import '../core/services/plan_features_service.dart';
@@ -46,7 +47,10 @@ class CheckoutPage extends StatefulWidget {
     this.serviceNameOverride,
     this.servicePriceOverride,
     this.fromSubdomain = false,
+    this.clientStatus,
   });
+ 
+  final Map<String, bool>? clientStatus;
 
   @override
   State<CheckoutPage> createState() => _CheckoutPageState();
@@ -82,6 +86,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
   String? _userPhone;
   double _birthdayDiscountPercent = 0.0;
   bool _birthdayDiscountEnabled = false;
+  bool _isVip = false;
+  bool _trustedOnlyPayLocal = false;
+  bool _birthdayGiftAccepted = false;
+  double _cardTaxPercent = 0.0;
 
   // Cupons
   final _couponController = TextEditingController();
@@ -152,6 +160,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
       final double birthdayPercent = double.tryParse(
               config['birthday_pix_discount_percent']?.toString() ?? "0.0") ??
           0.0;
+      final double cardTax = double.tryParse(
+              (config['tax_percent'] ?? config['porcentagem_a_vista'] ?? "0.0")
+                  .toString()) ??
+          0.0;
 
       // Pre-calcula as flags da loja antes de disparar o VIP check
       final bool baseAceitaPix =
@@ -160,18 +172,22 @@ class _CheckoutPageState extends State<CheckoutPage> {
           planAllowsOnline && (config['pagamento_cartao'] ?? false);
       bool baseAceitaDinheiro = config['pagamento_dinheiro'] ?? true;
       final bool baseExigeSinal = config['exigir_sinal'] ?? false;
+      final bool trustedOnly = config['trusted_only_pay_in_person'] ?? false;
 
       // Carrega status do cliente (VIP/Aniversário) se logado antes de dar o setState final
       final user = FirebaseAuth.instance.currentUser;
       bool isBirthday = false;
       bool isProblematic = false;
+      bool isVip = false;
       String? userPhone;
 
       if (user != null) {
-        final status = await ClientVerificationService.getClientStatus(
+        final status = widget.clientStatus ?? await ClientVerificationService.getClientStatus(
             user.uid, widget.shopId);
         isProblematic = status['isProblematic'] ?? false;
-        isBirthday = await ClientVerificationService.isBirthdayMonth(user.uid);
+        isVip = status['isVip'] ?? false;
+        isBirthday = await ClientVerificationService.isBirthdayMonth(user.uid,
+            targetMonth: widget.date.month);
 
         if (isBirthday && birthdayEnabled) {
           final hasUsed =
@@ -194,7 +210,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
       if (mounted) {
         debugPrint(
-            '👤 Status Cliente: Problemático=$isProblematic, Niver=$isBirthday');
+            '👤 Status Cliente: Problemático=$isProblematic, Niver=$isBirthday, VIP=$isVip');
         debugPrint('🚫 Restrições: Aceita Dinheiro Final=$baseAceitaDinheiro');
 
         setState(() {
@@ -212,19 +228,59 @@ class _CheckoutPageState extends State<CheckoutPage> {
           // Atualiza status do cliente no estado
           _isBirthdayMonth = isBirthday;
           _isProblematic = isProblematic;
+          _isVip = isVip;
           _userPhone = userPhone;
+          _trustedOnlyPayLocal = trustedOnly;
+          _cardTaxPercent = cardTax;
+
+          // Lógica VIP: Se a loja restringe local apenas para VIPs
+          if (_trustedOnlyPayLocal) {
+            // Se for VIP, habilitamos (mesmo que baseAceitaDinheiro seja false)
+            // Se NÃO for VIP, desabilitamos.
+            aceitaDinheiro = _isVip;
+          } else {
+            // Caso padrão (sem restrição VIP): usa o switch master
+            aceitaDinheiro = baseAceitaDinheiro;
+          }
 
           // Seleção inicial inteligente
           if (exigeSinal && (aceitaPix || aceitaCartao)) {
             _selectedPaymentType = 'sinal';
           } else if (aceitaDinheiro) {
             _selectedPaymentType = 'local';
-          } else {
+          } else if (aceitaPix || aceitaCartao) {
             _selectedPaymentType = 'total';
+          } else {
+            // Fallback
+            _selectedPaymentType = 'total'; // Total is safer if local is discouraged
           }
 
           _paymentConfigLoaded = true;
         });
+
+        // Se for aniversário e tiver desconto, mostra a modal bonita
+        debugPrint('🎂 DEBUG Niver Month Check:');
+        debugPrint('   - isBirthdayMonth: $isBirthday');
+        debugPrint('   - birthdayEnabled: $birthdayEnabled');
+        debugPrint('   - Current Date: ${widget.date}');
+        debugPrint('   - Target Month: ${widget.date.month}');
+        
+        if (isBirthday && birthdayEnabled) {
+          final hasUsed =
+              await ClientVerificationService.hasUsedBirthdayDiscountInYear(
+                  user!.uid, widget.shopId);
+          debugPrint('   - hasUsedBirthdayDiscountInYear: $hasUsed');
+          if (!hasUsed) {
+            debugPrint('   - Triggering _showBirthdayModal()');
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _showBirthdayModal();
+            });
+          } else {
+            debugPrint('   - Modal NOT triggered: Discount already used this year.');
+          }
+        } else {
+          debugPrint('   - Modal NOT triggered: isBirthday=$isBirthday, birthdayEnabled=$birthdayEnabled');
+        }
       }
     } catch (e) {
       debugPrint('❌ Erro config: $e');
@@ -245,11 +301,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
       double base = (_selectedPaymentType == 'sinal') ? valorSinal : valorTotal;
       double totalDiscountPercent = 0.0;
 
-      // Aplica desconto de aniversário se for PIX e estiver no mês
-      if (_selectedMethod == 'pix' &&
-          _isBirthdayMonth &&
+      // Aplica desconto de aniversário se estiver no mês e o presente foi aceito
+      if (_isBirthdayMonth &&
           _birthdayDiscountEnabled &&
-          _selectedPaymentType != 'local') {
+          _birthdayGiftAccepted) {
         totalDiscountPercent += _birthdayDiscountPercent;
       }
 
@@ -264,6 +319,12 @@ class _CheckoutPageState extends State<CheckoutPage> {
       if (totalDiscountPercent > 100) totalDiscountPercent = 100;
 
       base = base * (1 - (totalDiscountPercent / 100.0));
+
+      // Aplica taxa de cartão se for cartão de crédito e não for pagamento local
+      if (_selectedMethod == 'card' && _selectedPaymentType != 'local') {
+        base = base * (1 + (_cardTaxPercent / 100.0));
+      }
+
       valorFinalComJuros = base;
     });
   }
@@ -377,8 +438,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
           break;
         }
         if (_selectedMethod == 'card' && _selectedPaymentType != 'local') {
-          double valorParaCobrar =
-              (_selectedPaymentType == 'sinal') ? valorSinal : valorTotal;
+          double valorParaCobrar = valorFinalComJuros;
 
           setState(() => _isLoading = true);
           final user = FirebaseAuth.instance.currentUser;
@@ -678,6 +738,29 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
                       return Column(
                         children: [
+                          if (_selectedMethod == 'pix' &&
+                              _isBirthdayMonth &&
+                              _birthdayDiscountEnabled &&
+                              _selectedPaymentType != 'local')
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 8.0),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const Icon(Icons.cake,
+                                      color: AppColors.primaryPurple, size: 16),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    "Desconto de Aniversário Aplicado (-${_birthdayDiscountPercent.round()}%)",
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                      color: AppColors.primaryPurple,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           Container(
                             padding: const EdgeInsets.all(15),
                             decoration: BoxDecoration(
@@ -776,14 +859,13 @@ class _CheckoutPageState extends State<CheckoutPage> {
       _saveBooking(metodo: "No Local", status: "agendado", valorPago: 0);
     } else if (_selectedMethod == 'pix') {
       debugPrint('→ Pagamento PIX');
-      double valor =
-          (_selectedPaymentType == 'sinal') ? valorSinal : valorTotal;
+      double valor = valorFinalComJuros;
+
       String desc = (_selectedPaymentType == 'sinal') ? "Sinal" : "Total";
       _generatePix(valor, desc);
     } else {
       debugPrint('→ Pagamento CARTÃO → cobrando com dados já coletados');
-      double valorParaCobrar =
-          (_selectedPaymentType == 'sinal') ? valorSinal : valorTotal;
+      double valorParaCobrar = valorFinalComJuros;
       if (_storedCardData != null) {
         if (_storedCardData!['useSavedCard'] == true) {
           final fUser = FirebaseAuth.instance.currentUser;
@@ -954,13 +1036,39 @@ class _CheckoutPageState extends State<CheckoutPage> {
     }
   }
 
+  void _showBirthdayModal() {
+    showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: '',
+      transitionDuration: const Duration(milliseconds: 400),
+      pageBuilder: (context, anim1, anim2) {
+        return BirthdayCelebrationModal(
+          discountPercent: _birthdayDiscountPercent,
+          shopName: widget.shopData['nome'] ?? 'O Studio',
+          onAccept: () {
+            Navigator.pop(context);
+            setState(() {
+              _birthdayGiftAccepted = true;
+              _recalculateTotals();
+            });
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text("Presente ativado! O desconto foi aplicado ao seu valor total."),
+                backgroundColor: Colors.green,
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     double valorExibido = valorFinalComJuros;
-    if (_selectedPaymentType == 'local') {
-      valorExibido = valorTotal;
-    } else if (_selectedPaymentType == 'sinal' && _selectedMethod != 'card') {
-      valorExibido = valorSinal;
+    if (_selectedPaymentType == 'sinal' && _selectedMethod != 'card') {
+      valorExibido = valorFinalComJuros; // valorFinalComJuros already accounts for signal in _recalculateTotals
     }
 
     return Scaffold(
@@ -1089,6 +1197,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
       );
     }
 
+    double discountFactor = 1.0;
+    if (_isBirthdayMonth && _birthdayDiscountEnabled && _birthdayGiftAccepted) {
+      discountFactor -= (_birthdayDiscountPercent / 100.0);
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1103,7 +1216,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
             value: 'sinal',
             title: "💰 Pagar Adiantamento",
             subtitle: "$percentualSinalInt% do valor agora",
-            amount: valorSinal,
+            amount: valorSinal * discountFactor,
             badge: "SINAL",
             badgeColor: Colors.orange,
           ),
@@ -1113,7 +1226,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
             value: 'total',
             title: "✅ Pagar Valor Total",
             subtitle: "Valor completo agora",
-            amount: valorTotal,
+            amount: valorTotal * discountFactor,
             badge: "COMPLETO",
             badgeColor: Colors.green,
           ),
@@ -1123,7 +1236,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
             value: 'local',
             title: "🏪 Pagar Pessoalmente",
             subtitle: "Dinheiro ou cartão na hora",
-            amount: valorTotal,
+            amount: valorTotal * discountFactor,
             badge: "LOCAL",
             badgeColor: Colors.blue,
           ),
@@ -1136,15 +1249,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
       margin: const EdgeInsets.only(bottom: 20),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFFFFD700), Color(0xFFFFA500)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        color: AppColors.primaryPurple,
         borderRadius: BorderRadius.circular(15),
         boxShadow: [
           BoxShadow(
-            color: Colors.orange.withValues(alpha: 0.3),
+            color: AppColors.primaryPurple.withValues(alpha: 0.2),
             blurRadius: 8,
             offset: const Offset(0, 4),
           )
@@ -1167,7 +1276,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                   ),
                 ),
                 Text(
-                  "Você ganhou ${_birthdayDiscountPercent.round()}% de desconto pagando com PIX.",
+                  "Você ganhou ${_birthdayDiscountPercent.round()}% de desconto especial de aniversário.",
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 13,
@@ -1205,95 +1314,113 @@ class _CheckoutPageState extends State<CheckoutPage> {
     required double amount,
     required String badge,
     required Color badgeColor,
+    bool disabled = false,
   }) {
     bool isSelected = value == _selectedPaymentType;
     return GestureDetector(
-      onTap: () {
-        setState(() {
-          _selectedPaymentType = value;
-          _recalculateTotals();
-        });
-      },
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? AppColors.primaryPurple.withValues(alpha: 0.08)
-              : Colors.white,
-          border: Border.all(
-            color: isSelected ? AppColors.primaryPurple : Colors.grey[300]!,
-            width: isSelected ? 2 : 1,
+      onTap: disabled
+          ? null
+          : () {
+              setState(() {
+                _selectedPaymentType = value;
+                _recalculateTotals();
+              });
+            },
+      child: Opacity(
+        opacity: disabled ? 0.6 : 1.0,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: isSelected
+                ? AppColors.primaryPurple.withValues(alpha: 0.08)
+                : Colors.white,
+            border: Border.all(
+              color: isSelected ? AppColors.primaryPurple : Colors.grey[300]!,
+              width: isSelected ? 2 : 1,
+            ),
+            borderRadius: BorderRadius.circular(12),
           ),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 24,
-              height: 24,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color:
-                      isSelected ? AppColors.primaryPurple : Colors.grey[400]!,
-                  width: 2,
+          child: Row(
+            children: [
+              Container(
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: isSelected
+                        ? AppColors.primaryPurple
+                        : Colors.grey[400]!,
+                    width: 2,
+                  ),
+                ),
+                child: isSelected
+                    ? Center(
+                        child: Container(
+                          width: 12,
+                          height: 12,
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: AppColors.primaryPurple,
+                          ),
+                        ),
+                      )
+                    : null,
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 15)),
+                    Text(
+                        disabled
+                            ? "Opção exclusiva para clientes VIP"
+                            : subtitle,
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: disabled ? Colors.orange[800] : Colors.grey)),
+                  ],
                 ),
               ),
-              child: isSelected
-                  ? Center(
-                      child: Container(
-                        width: 12,
-                        height: 12,
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: AppColors.primaryPurple,
-                        ),
-                      ),
-                    )
-                  : null,
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              if (value == 'local' && _trustedOnlyPayLocal && !_isVip)
+                const Padding(
+                  padding: EdgeInsets.only(right: 8),
+                  child: Icon(Icons.stars, color: Colors.orange, size: 16),
+                ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Text(title,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 15)),
-                  Text(subtitle,
-                      style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: badgeColor.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      badge,
+                      style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: badgeColor),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _currencyFormat.format(amount),
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                        color: AppColors.primaryPurple),
+                  ),
                 ],
               ),
-            ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: badgeColor.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    badge,
-                    style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                        color: badgeColor),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  _currencyFormat.format(amount),
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14,
-                      color: AppColors.primaryPurple),
-                ),
-              ],
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -1316,7 +1443,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    "Você pagará ${_currencyFormat.format(valorTotal)} no local do atendimento.",
+                    "Você pagará ${_currencyFormat.format(valorFinalComJuros)} no local do atendimento.",
                     style: const TextStyle(fontSize: 14, color: Colors.blue),
                   ),
                 )
@@ -1542,22 +1669,80 @@ class _CheckoutPageState extends State<CheckoutPage> {
   }
 
   Widget _buildResumoHeader(double v) {
+    // Determine the base price without birthday discount for the strike-through
+    double baseSemAniversario =
+        (_selectedPaymentType == 'sinal') ? valorSinal : valorTotal;
+
+    // We only show the "magic" if the gift was accepted and we are NOT in local payment
+    bool isActuallyDiscounted = _birthdayGiftAccepted && v < baseSemAniversario;
+
+    // Calcule o preço "cheio" para o riscado (Old Price)
+    // Se for cartão, o "preço antigo" deve incluir a taxa se houver desconto, 
+    // ou ser o preço base (sem taxa) se não houver desconto (para destacar o acréscimo)
+    double precoAntigo = baseSemAniversario;
+    bool mostrarRiscado = isActuallyDiscounted;
+
+    if (_selectedMethod == 'card' && _selectedPaymentType != 'local') {
+      if (isActuallyDiscounted) {
+        // Mostra (Original + Taxa) vs (Desconto + Taxa)
+        precoAntigo = baseSemAniversario * (1 + (_cardTaxPercent / 100.0));
+      } else {
+        // Mostra (Original sem Taxa) vs (Original + Taxa)
+        precoAntigo = baseSemAniversario;
+        mostrarRiscado = true; // Sempre mostra o antigo no cartão para evidenciar a taxa
+      }
+    }
+
     return Container(
       padding: const EdgeInsets.all(20),
+      // ... resto do estilo ...
       decoration: BoxDecoration(
-          color: Colors.white, borderRadius: BorderRadius.circular(16)),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            spreadRadius: 0,
+          )
+        ],
+      ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           const Text("Total a Pagar",
               style: TextStyle(fontSize: 14, color: Colors.grey)),
-          Text(
-            _currencyFormat.format(v),
-            style: const TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: AppColors.primaryPurple,
-            ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              if (mostrarRiscado)
+                Text(
+                  _currencyFormat.format(precoAntigo),
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: Colors.grey,
+                    decoration: TextDecoration.lineThrough,
+                  ),
+                ),
+              TweenAnimationBuilder<double>(
+                key: ValueKey("price_${_selectedPaymentType}_${_selectedMethod}_$v"),
+                tween: Tween(begin: isActuallyDiscounted ? baseSemAniversario : v, end: v),
+                duration: const Duration(milliseconds: 1200),
+                curve: Curves.elasticOut,
+                builder: (context, value, child) {
+                  return Text(
+                    _currencyFormat.format(value),
+                    style: TextStyle(
+                      fontSize: 26,
+                      fontWeight: FontWeight.bold,
+                      color: isActuallyDiscounted
+                          ? Colors.green.shade700
+                          : AppColors.primaryPurple,
+                    ),
+                  );
+                },
+              ),
+            ],
           ),
         ],
       ),
@@ -1865,10 +2050,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         'status': status,
         'metodo_pagamento': metodo,
         'payment_id': paymentId,
-        'birthday_discount_applied': (_selectedMethod == 'pix' &&
-            _isBirthdayMonth &&
-            _birthdayDiscountEnabled &&
-            _selectedPaymentType != 'local'),
+        'birthday_discount_applied': _birthdayGiftAccepted,
         'coupon_applied': _couponApplied,
         'coupon_code': _appliedCouponCode,
         'coupon_discount_percent': _couponDiscountPercent,
@@ -1879,14 +2061,32 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 : 0,
       });
 
+      // Get the ID of the newly created appointment
+      final appointmentQuery = await FirebaseFirestore.instance
+          .collection('appointments')
+          .where('clientId', isEqualTo: user.uid)
+          .where('shopId', isEqualTo: widget.shopId)
+          .orderBy('criado_em', descending: true)
+          .limit(1)
+          .get();
+      
+      final String appointmentId = appointmentQuery.docs.isNotEmpty ? appointmentQuery.docs.first.id : "";
+
       // Se usou cupom, marca como usado para o cliente
       if (_couponApplied && _appliedCouponId != null) {
         await CouponService.markCouponAsUsed(
           shopId: widget.shopId,
           couponId: _appliedCouponId!,
           userId: user.uid,
-          appointmentId:
-              "", // Será preenchido pelo backend se necessário ou deixamos vazio já que o doc é o ID do usuário
+          appointmentId: appointmentId,
+        );
+      }
+
+      // Se usou presente de aniversário, registra o uso anual
+      if (_birthdayGiftAccepted) {
+        await ClientVerificationService.registerBirthdayDiscountUsage(
+          user.uid,
+          widget.shopId,
         );
       }
 

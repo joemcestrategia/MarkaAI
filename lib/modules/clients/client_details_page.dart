@@ -101,13 +101,13 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
     try {
       // Deriva a classificação oficial baseada nas tags manuais
       String? classification;
-      if (_manualTags.contains('Problemático')) {
+      if (_manualTags.contains('Problemático') || _manualTags.contains('problematico')) {
         classification = 'problematico';
-      } else if (_manualTags.contains('VIP')) {
+      } else if (_manualTags.contains('VIP') || _manualTags.contains('vip')) {
         classification = 'vip';
-      } else if (_manualTags.contains('Sumido')) {
+      } else if (_manualTags.contains('Sumido') || _manualTags.contains('sumido')) {
         classification = 'sumido';
-      } else if (_manualTags.contains('Novo')) {
+      } else if (_manualTags.contains('Novo') || _manualTags.contains('novo')) {
         classification = 'novo';
       }
 
@@ -117,8 +117,8 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
           .collection('clients')
           .doc(widget.clientId)
           .set({
-        'manualTags': _manualTags,
-        if (classification != null) 'classification': classification,
+        'manualTags': _manualTags.map((t) => t.toLowerCase().trim()).toList(),
+        'classification': classification ?? '',
         // Se houver uma classificação manual definida, marcamos como override
         'classificationOverride': classification != null,
         'lastUpdated': FieldValue.serverTimestamp(),

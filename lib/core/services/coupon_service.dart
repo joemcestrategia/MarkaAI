@@ -70,7 +70,17 @@ class CouponService {
             isValid: false, message: 'Este cupom não é válido neste mês.');
       }
 
-      // 5. Verifica se o usuário já usou este cupom
+      // 5. Verifica limite de uso global
+      final int usageCount = int.tryParse(couponData['usageCount']?.toString() ?? '0') ?? 0;
+      final int? maxUsage = int.tryParse(couponData['maxUsage']?.toString() ?? '') ?? 
+                            int.tryParse(couponData['uso_limite']?.toString() ?? '');
+      
+      if (maxUsage != null && usageCount >= maxUsage) {
+        return CouponValidationResult(
+            isValid: false, message: 'Este cupom atingiu o limite de usos.');
+      }
+
+      // 6. Verifica se o usuário já usou este cupom
       final usageDoc = await _firestore
           .collection('shops')
           .doc(shopId)

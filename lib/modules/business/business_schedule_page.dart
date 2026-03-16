@@ -1,4 +1,4 @@
-﻿// ignore_for_file: use_build_context_synchronously
+// ignore_for_file: use_build_context_synchronously
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
@@ -8,6 +8,7 @@ import '../../core/theme/app_colors.dart';
 import 'appointment_details_page.dart';
 import '../clients/client_details_page.dart';
 import '../../core/utils/availability_utils.dart';
+import '../../core/services/transaction_autocomplete_service.dart';
 
 class BusinessSchedulePage extends StatefulWidget {
   final String shopId;
@@ -398,8 +399,8 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                         final picked = await showDatePicker(
                           context: context,
                           initialDate: appointmentDate,
-                          firstDate: DateTime(2020),
-                          lastDate: DateTime(2030),
+                          firstDate: DateTime(2010),
+                          lastDate: DateTime(2035),
                         );
                         if (picked != null) {
                           setModalState(() {
@@ -930,398 +931,635 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     );
   }
 
-  // âž• MODAL DE LANÇAMENTO
-  void _showManualEntryDialog({DateTime? initialDate}) {
-    final TextEditingController nameController = TextEditingController();
-    final TextEditingController serviceController = TextEditingController();
-    final TextEditingController valueController = TextEditingController();
-    String? selectedProfessionalId;
-    String selectedProfessionalName = 'Selecione Profissional';
-    DateTime manualDate = initialDate ?? _selectedDay;
-    TimeOfDay manualTime = const TimeOfDay(hour: 8, minute: 0);
+  void _showQuickEntryModal({DateTime? initialDate, DocumentSnapshot? appointment}) async {
+    final Map<String, dynamic>? editData = appointment?.data() as Map<String, dynamic>?;
 
-    showDialog(
+
+    // Controladores básicos
+    final TextEditingController nameController = TextEditingController(text: editData?['client_nome'] ?? '');
+    final TextEditingController serviceController = TextEditingController(text: editData?['servico_nome'] ?? '');
+    final TextEditingController valueController = TextEditingController();
+    
+    // Estado do Modal
+    String? serviceId = editData?['servicoId'];
+    int durationMin = editData?['duracao_min'] ?? 30;
+    String? selectedProfessionalId = editData?['profissionalId'];
+    String selectedProfessionalName = editData?['profissional_nome'] ?? 'Selecione Profissional';
+    DateTime manualDate = initialDate ?? _selectedDay;
+    TimeOfDay manualTime = TimeOfDay.now();
+
+    if (editData != null) {
+      final ts = editData['data_agendamento'] as Timestamp?;
+      if (ts != null) {
+        manualDate = ts.toDate();
+        manualTime = TimeOfDay.fromDateTime(manualDate);
+      }
+      double val = _safeParseValue(appointment!);
+      valueController.text = val > 0 ? val.toString().replaceAll('.', ',') : '';
+    }
+
+    // --- REVISÃO / INTELIGÊNCIA INICIAL ---
+    DocumentSnapshot? suggestedService;
+    DocumentSnapshot? suggestedProfessional;
+    bool isServiceConfirmed = false;
+    bool isProfessionalConfirmed = false;
+
+    Future<void> runInitialIntelligence() async {
+      // 1. Match de Serviço
+      if (serviceId == null && serviceController.text.isNotEmpty) {
+        suggestedService = await TransactionAutocompleteService.findBestMatchingService(
+          shopId: widget.shopId,
+          rawName: serviceController.text,
+        );
+      }
+
+      // 2. Sugestão de Profissional
+      if (selectedProfessionalId == null) {
+        final candidates = await TransactionAutocompleteService.getCandidates(
+          shopId: widget.shopId,
+          serviceId: serviceId ?? suggestedService?.id,
+        );
+
+        // Verifica disponibilidade e rankeia
+        List<DocumentSnapshot> availableCands = [];
+        for (var cand in candidates) {
+          bool ok = await TransactionAutocompleteService.isProfessionalAvailable(
+            employeeId: cand.id,
+            targetDate: manualDate,
+            durationMin: durationMin,
+            excludeDocId: appointment?.id,
+          );
+          if (ok) availableCands.add(cand);
+        }
+
+        if (availableCands.isNotEmpty) {
+          final ranked = await TransactionAutocompleteService.rankCandidatesByWorkload(
+            shopId: widget.shopId,
+            candidates: availableCands,
+            targetMonth: manualDate,
+          );
+          suggestedProfessional = ranked.first;
+        }
+      }
+    }
+
+    try {
+      await runInitialIntelligence();
+    } catch (e) {
+      debugPrint("Erro na inteligência do agendamento: $e");
+    }
+
+    if (!mounted) return;
+
+    showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setModalState) {
-            return AlertDialog(
-              title: Row(
-                children: const [
-                  Icon(Icons.flash_on, color: Colors.orange),
-                  SizedBox(width: 8),
-                  Text("Lançamento Rápido"),
-                ],
-              ),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20)),
-              content: SingleChildScrollView(
+            return Padding(
+              padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+              child: Container(
+                height: MediaQuery.of(context).size.height * 0.75,
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.only(topLeft: Radius.circular(20), topRight: Radius.circular(20)),
+                ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    InkWell(
-                      onTap: () async {
-                        final picked = await showDatePicker(
-                          context: context,
-                          initialDate: manualDate,
-                          firstDate: DateTime(2020),
-                          lastDate: DateTime(2030),
-                        );
-                        if (picked != null) {
-                          setModalState(() => manualDate = picked);
-                        }
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 15),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey.shade300),
-                          borderRadius: BorderRadius.circular(10),
-                          color: Colors.grey.shade50,
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              DateFormat('dd/MM/yyyy').format(manualDate),
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.bold),
-                            ),
-                            const Icon(Icons.calendar_today,
-                                size: 18, color: AppColors.primaryPurple),
-                          ],
-                        ),
+                    // Header
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(appointment == null ? "Lançamento Rápido" : "Editar Agendamento",
+                              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.primaryPurple)),
+                          IconButton(
+                            icon: const Icon(Icons.close, size: 22),
+                            onPressed: () => Navigator.pop(context),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 15),
-                    // Hora do agendamento (novo)
-                    InkWell(
-                      onTap: () async {
-                        final picked = await showTimePicker(
-                            context: context, initialTime: manualTime);
-                        if (picked != null) {
-                          setModalState(() => manualTime = picked);
-                        }
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 15),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey.shade300),
-                          borderRadius: BorderRadius.circular(10),
-                          color: Colors.grey.shade50,
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              manualTime.format(context),
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.bold),
-                            ),
-                            const Icon(Icons.access_time,
-                                size: 18, color: AppColors.primaryPurple),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: nameController,
-                      decoration: InputDecoration(
-                        labelText: 'Nome do Cliente',
-                        filled: true,
-                        fillColor: Colors.grey.shade50,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: BorderSide.none,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: serviceController,
-                      decoration: InputDecoration(
-                        labelText: 'Serviço',
-                        filled: true,
-                        fillColor: Colors.grey.shade50,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: BorderSide.none,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: valueController,
-                      keyboardType: TextInputType.number,
-                      decoration: InputDecoration(
-                        labelText: 'Valor (R\$)',
-                        prefixText: "R\$ ",
-                        filled: true,
-                        fillColor: Colors.grey.shade50,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: BorderSide.none,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-
-                    // Profissional
-                    StreamBuilder<QuerySnapshot>(
-                      stream: FirebaseFirestore.instance
-                          .collection('employees')
-                          .where('shopId', isEqualTo: widget.shopId)
-                          .snapshots(),
-                      builder: (context, snapshot) {
-                        if (!snapshot.hasData) return const SizedBox();
-                        final pros = snapshot.data!.docs;
-                        return Column(
+                    // Form
+                    Expanded(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                        child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text('Profissional',
-                                style: TextStyle(fontWeight: FontWeight.bold)),
-                            const SizedBox(height: 8),
-                            Container(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 12),
-                              decoration: BoxDecoration(
-                                color: Colors.grey.shade50,
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: DropdownButton<String>(
-                                isExpanded: true,
-                                underline: const SizedBox(),
-                                value: selectedProfessionalId,
-                                hint: Text(selectedProfessionalName),
-                                items: pros.map((pro) {
-                                  final pData =
-                                      pro.data() as Map<String, dynamic>;
-                                  return DropdownMenuItem<String>(
-                                    value: pro.id,
-                                    child: Text(pData['nome'] ?? 'Sem nome'),
-                                  );
-                                }).toList(),
-                                onChanged: (value) {
-                                  if (value != null) {
-                                    final pro =
-                                        pros.firstWhere((p) => p.id == value);
-                                    final pData =
-                                        pro.data() as Map<String, dynamic>;
-                                    setModalState(() {
-                                      selectedProfessionalId = value;
-                                      selectedProfessionalName =
-                                          pData['nome'] ?? '';
-                                    });
-                                  }
-                                },
+                            // Data e Horário
+                            const Text('Data e Horário',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.grey)),
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: InkWell(
+                                    onTap: () async {
+                                      final picked = await showDatePicker(
+                                        context: context,
+                                        initialDate: manualDate,
+                                        firstDate: DateTime(2010),
+                                        lastDate: DateTime(2035),
+                                      );
+                                      if (picked != null) {
+                                        setModalState(() => manualDate = picked);
+                                      }
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                      decoration: BoxDecoration(
+                                        border: Border.all(color: Colors.grey.shade200),
+                                        borderRadius: BorderRadius.circular(8),
+                                        color: Colors.grey.shade50,
+                                      ),
+                                      child: Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          Text(
+                                            DateFormat('dd/MM/yyyy').format(manualDate),
+                                            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                                          ),
+                                          const Icon(Icons.calendar_today, size: 16, color: AppColors.primaryPurple),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: InkWell(
+                                    onTap: () async {
+                                      final picked = await showTimePicker(context: context, initialTime: manualTime);
+                                      if (picked != null) {
+                                        setModalState(() => manualTime = picked);
+                                      }
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                      decoration: BoxDecoration(
+                                        border: Border.all(color: Colors.grey.shade200),
+                                        borderRadius: BorderRadius.circular(8),
+                                        color: Colors.grey.shade50,
+                                      ),
+                                      child: Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          Text(
+                                            manualTime.format(context),
+                                            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                                          ),
+                                          const Icon(Icons.access_time, size: 16, color: AppColors.primaryPurple),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            // Cliente
+                            const Text('Cliente',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.grey)),
+                            const SizedBox(height: 4),
+                            SizedBox(
+                              height: 40,
+                              child: TextField(
+                                controller: nameController,
+                                textCapitalization: TextCapitalization.words,
+                                style: const TextStyle(fontSize: 14),
+                                decoration: InputDecoration(
+                                  hintText: 'Nome do cliente',
+                                  filled: true,
+                                  fillColor: Colors.grey.shade50,
+                                  prefixIcon: const Icon(Icons.person_outline, size: 18),
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                    borderSide: BorderSide(color: Colors.grey.shade200),
+                                  ),
+                                  enabledBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                    borderSide: BorderSide(color: Colors.grey.shade200),
+                                  ),
+                                ),
                               ),
                             ),
-                          ],
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 15),
-                    const Text(
-                      'Sugestões de Horários Livres:',
-                      style:
-                          TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                    ),
-                    const SizedBox(height: 8),
-                    if (selectedProfessionalId != null)
-                      FutureBuilder<List<Map<String, int>>>(
-                        future: AvailabilityUtils.getBusyIntervals(
-                          selectedProfessionalId!,
-                          manualDate,
-                        ),
-                        builder: (context, busySnapshot) {
-                          if (!busySnapshot.hasData) return const SizedBox();
-
-                          return FutureBuilder<DocumentSnapshot>(
-                              future: FirebaseFirestore.instance
+                            const SizedBox(height: 10),
+                            // Profissional
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text('Profissional',
+                                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.grey)),
+                                if (suggestedProfessional != null && !isProfessionalConfirmed && selectedProfessionalId == null)
+                                  GestureDetector(
+                                    onTap: () {
+                                      final pData = suggestedProfessional!.data() as Map<String, dynamic>;
+                                      setModalState(() {
+                                        selectedProfessionalId = suggestedProfessional!.id;
+                                        selectedProfessionalName = pData['nome'] ?? '';
+                                        isProfessionalConfirmed = true;
+                                      });
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.blue.shade50,
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: Border.all(color: Colors.blue.shade100),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(Icons.auto_awesome, size: 10, color: Colors.blue),
+                                          const SizedBox(width: 4),
+                                          Text("Sugerir: ${(suggestedProfessional!.data() as Map)['nome']}", 
+                                            style: const TextStyle(fontSize: 10, color: Colors.blue, fontWeight: FontWeight.bold)),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            StreamBuilder<QuerySnapshot>(
+                              stream: FirebaseFirestore.instance
                                   .collection('employees')
-                                  .doc(selectedProfessionalId)
-                                  .get(),
-                              builder: (context, empSnapshot) {
-                                if (!empSnapshot.hasData)
-                                  return const SizedBox();
-                                final empData = empSnapshot.data!.data()
-                                        as Map<String, dynamic>? ??
-                                    {};
-
-                                final slots =
-                                    AvailabilityUtils.generateSmartSlots(
-                                  startStr:
-                                      empData['horario_inicio'] ?? "08:00",
-                                  endStr: empData['horario_fim'] ?? "18:00",
-                                  interval:
-                                      _shopConfig['intervalo_agenda_min'] ?? 30,
-                                  serviceDuration:
-                                      30, // Padrão 30m para entrada rápida
-                                  busyIntervals: busySnapshot.data!,
-                                  preventGaps:
-                                      _shopConfig['evitar_buracos_agenda'] ??
-                                          false,
-                                  minAdvanceHours: 0,
-                                  selectedDate: manualDate,
-                                );
-
-                                if (slots.isEmpty) {
-                                  return const Text(
-                                      "Sem horários livres sugeridos.",
-                                      style: TextStyle(
-                                          fontSize: 12, color: Colors.grey));
-                                }
-
-                                return Wrap(
-                                  spacing: 8,
-                                  runSpacing: 8,
-                                  children: slots.take(12).map((slotStr) {
-                                    final parts = slotStr.split(':');
-                                    final slotTime = TimeOfDay(
-                                        hour: int.parse(parts[0]),
-                                        minute: int.parse(parts[1]));
-                                    final isCurrent = manualTime.hour ==
-                                            slotTime.hour &&
-                                        manualTime.minute == slotTime.minute;
-
-                                    return ChoiceChip(
-                                      label: Text(slotStr,
-                                          style: const TextStyle(fontSize: 11)),
-                                      selected: isCurrent,
-                                      onSelected: (selected) {
-                                        if (selected) {
+                                  .where('shopId', isEqualTo: widget.shopId)
+                                  .snapshots(),
+                              builder: (context, snapshot) {
+                                if (!snapshot.hasData) return const SizedBox(height: 40);
+                                final pros = snapshot.data!.docs;
+                                return Container(
+                                  height: 40,
+                                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey.shade50,
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(color: Colors.grey.shade200),
+                                  ),
+                                  child: DropdownButtonHideUnderline(
+                                    child: DropdownButton<String>(
+                                      isExpanded: true,
+                                      value: pros.any((p) => p.id == selectedProfessionalId) ? selectedProfessionalId : null,
+                                      style: const TextStyle(fontSize: 14, color: Colors.black),
+                                      hint: Text(selectedProfessionalName, style: const TextStyle(fontSize: 14)),
+                                      items: pros.map((pro) {
+                                        final pData = pro.data() as Map<String, dynamic>;
+                                        return DropdownMenuItem<String>(
+                                          value: pro.id,
+                                          child: Text(pData['nome'] ?? 'Sem nome'),
+                                        );
+                                      }).toList(),
+                                      onChanged: (value) {
+                                        if (value != null) {
+                                          final pro = pros.firstWhere((p) => p.id == value);
+                                          final pData = pro.data() as Map<String, dynamic>;
                                           setModalState(() {
-                                            manualTime = slotTime;
+                                            selectedProfessionalId = value;
+                                            selectedProfessionalName = pData['nome'] ?? '';
                                           });
                                         }
                                       },
-                                      selectedColor: AppColors.primaryPurple
-                                          .withValues(alpha: 0.2),
-                                      backgroundColor: Colors.white,
-                                      shape: RoundedRectangleBorder(
-                                          borderRadius:
-                                              BorderRadius.circular(8)),
-                                    );
-                                  }).toList(),
+                                    ),
+                                  ),
                                 );
-                              });
-                        },
+                              },
+                            ),
+                            const SizedBox(height: 10),
+                            // Serviço Autocomplete
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text('Serviço',
+                                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.grey)),
+                                if (suggestedService != null && !isServiceConfirmed && serviceId == null)
+                                  GestureDetector(
+                                    onTap: () {
+                                      final sData = suggestedService!.data() as Map<String, dynamic>;
+                                      setModalState(() {
+                                        serviceId = suggestedService!.id;
+                                        serviceController.text = sData['nome'] ?? '';
+                                        valueController.text = (sData['preco'] ?? 0).toString().replaceAll('.', ',');
+                                        durationMin = (sData['tempo_min'] ?? sData['duracao_min'] ?? 30);
+                                        isServiceConfirmed = true;
+                                      });
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.green.shade50,
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: Border.all(color: Colors.green.shade100),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(Icons.auto_awesome, size: 10, color: Colors.green),
+                                          const SizedBox(width: 4),
+                                          Text("Completar: ${(suggestedService!.data() as Map)['nome']}", 
+                                            style: const TextStyle(fontSize: 10, color: Colors.green, fontWeight: FontWeight.bold)),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            StreamBuilder<QuerySnapshot>(
+                              stream: FirebaseFirestore.instance
+                                  .collection('services')
+                                  .where('shopId', isEqualTo: widget.shopId)
+                                  .where('ativo', isEqualTo: true)
+                                  .snapshots(),
+                              builder: (context, snapshot) {
+                                if (!snapshot.hasData) return const SizedBox(height: 40);
+                                final allServices = snapshot.data!.docs.map((doc) {
+                                  final data = doc.data() as Map<String, dynamic>;
+                                  data['id'] = doc.id;
+                                  return data;
+                                }).toList();
+
+                                return LayoutBuilder(builder: (context, constraints) {
+                                  return Autocomplete<Map<String, dynamic>>(
+                                    initialValue: TextEditingValue(text: serviceController.text),
+                                    optionsBuilder: (TextEditingValue textEditingValue) {
+                                      if (textEditingValue.text.isEmpty) return allServices;
+                                      return allServices.where((s) => s['nome']
+                                          .toString()
+                                          .toLowerCase()
+                                          .contains(textEditingValue.text.toLowerCase()));
+                                    },
+                                    displayStringForOption: (option) => option['nome'] ?? '',
+                                    onSelected: (option) {
+                                      setModalState(() {
+                                        serviceId = option['id'];
+                                        serviceController.text = option['nome'] ?? '';
+                                        valueController.text = (option['preco'] ?? 0).toString().replaceAll('.', ',');
+                                        durationMin = (option['tempo_min'] ?? option['duracao_min'] ?? 30);
+                                      });
+                                    },
+                                    fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+                                      return SizedBox(
+                                        height: 40,
+                                        child: TextField(
+                                          controller: controller,
+                                          focusNode: focusNode,
+                                          style: const TextStyle(fontSize: 14),
+                                          decoration: InputDecoration(
+                                            hintText: 'Buscar serviço...',
+                                            filled: true,
+                                            fillColor: Colors.grey.shade50,
+                                            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                                            border: OutlineInputBorder(
+                                              borderRadius: BorderRadius.circular(8),
+                                              borderSide: BorderSide(color: Colors.grey.shade200),
+                                            ),
+                                            enabledBorder: OutlineInputBorder(
+                                              borderRadius: BorderRadius.circular(8),
+                                              borderSide: BorderSide(color: Colors.grey.shade200),
+                                            ),
+                                            suffixIcon: controller.text.isNotEmpty
+                                                ? IconButton(
+                                                    icon: const Icon(Icons.clear, size: 16),
+                                                    onPressed: () {
+                                                      controller.clear();
+                                                      setModalState(() {
+                                                        serviceId = null;
+                                                        serviceController.clear();
+                                                      });
+                                                    },
+                                                  )
+                                                : null,
+                                          ),
+                                          onChanged: (v) {
+                                            setModalState(() {
+                                              serviceController.text = v;
+                                              serviceId = null;
+                                            });
+                                          },
+                                        ),
+                                      );
+                                    },
+                                    optionsViewBuilder: (context, onSelected, options) {
+                                      return Align(
+                                        alignment: Alignment.topLeft,
+                                        child: Material(
+                                          elevation: 4,
+                                          borderRadius: BorderRadius.circular(8),
+                                          child: Container(
+                                            width: constraints.maxWidth,
+                                            constraints: const BoxConstraints(maxHeight: 200),
+                                            child: ListView.builder(
+                                              padding: EdgeInsets.zero,
+                                              shrinkWrap: true,
+                                              itemCount: options.length,
+                                              itemBuilder: (BuildContext context, int index) {
+                                                final option = options.elementAt(index);
+                                                return ListTile(
+                                                  dense: true,
+                                                  title: Text(option['nome'] ?? '', style: const TextStyle(fontSize: 13)),
+                                                  subtitle: Text('R\$ ${option['preco']}', style: const TextStyle(fontSize: 11)),
+                                                  onTap: () => onSelected(option),
+                                                );
+                                              },
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  );
+                                });
+                              },
+                            ),
+                            const SizedBox(height: 10),
+                            // Valor
+                            const Text('Valor (R\$)',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.grey)),
+                            const SizedBox(height: 4),
+                            SizedBox(
+                              height: 40,
+                              child: TextField(
+                                controller: valueController,
+                                keyboardType: TextInputType.number,
+                                style: const TextStyle(fontSize: 14),
+                                decoration: InputDecoration(
+                                  prefixText: 'R\$ ',
+                                  filled: true,
+                                  fillColor: Colors.grey.shade50,
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                    borderSide: BorderSide(color: Colors.grey.shade200),
+                                  ),
+                                  enabledBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                    borderSide: BorderSide(color: Colors.grey.shade200),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            // Horários
+                            if (selectedProfessionalId != null) ...[
+                              const Text("Sugestões:",
+                                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
+                              const SizedBox(height: 6),
+                              FutureBuilder<List<Map<String, int>>>(
+                                future: AvailabilityUtils.getBusyIntervals(selectedProfessionalId!, manualDate, excludeDocId: appointment?.id),
+                                builder: (context, busySnapshot) {
+                                  if (!busySnapshot.hasData) return const SizedBox(height: 38);
+                                  return FutureBuilder<DocumentSnapshot>(
+                                    future: FirebaseFirestore.instance.collection('employees').doc(selectedProfessionalId).get(),
+                                    builder: (context, empSnapshot) {
+                                      if (!empSnapshot.hasData) return const SizedBox();
+                                      final empData = empSnapshot.data!.data() as Map<String, dynamic>? ?? {};
+                                      final slots = AvailabilityUtils.generateSmartSlots(
+                                        startStr: empData['horario_inicio'] ?? "08:00",
+                                        endStr: empData['horario_fim'] ?? "18:00",
+                                        interval: _shopConfig['intervalo_agenda_min'] ?? 30,
+                                        serviceDuration: durationMin,
+                                        busyIntervals: busySnapshot.data!,
+                                        preventGaps: _shopConfig['evitar_buracos_agenda'] ?? false,
+                                        minAdvanceHours: 0,
+                                        selectedDate: manualDate,
+                                      );
+                                      if (slots.isEmpty) return const Text("Sem horários.", style: TextStyle(fontSize: 11));
+                                      return SizedBox(
+                                        height: 36,
+                                        child: ListView.separated(
+                                          scrollDirection: Axis.horizontal,
+                                          itemCount: slots.length,
+                                          separatorBuilder: (_, __) => const SizedBox(width: 8),
+                                          itemBuilder: (context, index) {
+                                            final slotStr = slots[index];
+                                            final parts = slotStr.split(':');
+                                            final slotTime = TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
+                                            final isCurrent = manualTime.hour == slotTime.hour && manualTime.minute == slotTime.minute;
+                                            return ActionChip(
+                                              label: Text(slotStr, style: TextStyle(fontSize: 12, color: isCurrent ? Colors.white : Colors.black87)),
+                                              onPressed: () => setModalState(() => manualTime = slotTime),
+                                              backgroundColor: isCurrent ? AppColors.primaryPurple : Colors.grey.shade100,
+                                              padding: EdgeInsets.zero,
+                                              side: BorderSide.none,
+                                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                            );
+                                          },
+                                        ),
+                                      );
+                                    },
+                                  );
+                                },
+                              ),
+                            ] else
+                              const Text("Selecione um profissional para ver sugestões.",
+                                  style: TextStyle(fontSize: 11, color: Colors.grey)),
+                            const SizedBox(height: 16),
+                            // Botão Salvar
+                            SizedBox(
+                              width: double.infinity,
+                              height: 48,
+                              child: ElevatedButton(
+                                onPressed: () async {
+                                  if (nameController.text.isEmpty || valueController.text.isEmpty) {
+                                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Preencha nome e valor')));
+                                    return;
+                                  }
+                                  if (selectedProfessionalId != null) {
+                                    final busy = await AvailabilityUtils.getBusyIntervals(selectedProfessionalId!, manualDate, excludeDocId: appointment?.id);
+                                    int startMin = manualTime.hour * 60 + manualTime.minute;
+                                    bool available = AvailabilityUtils.isSlotAvailable(startMin, durationMin, busy);
+                                    if (!available) {
+                                      bool? confirm = await showDialog<bool>(
+                                        context: context,
+                                        builder: (ctx) => AlertDialog(
+                                          title: const Text("Conflito de Horário"),
+                                          content: const Text("Este profissional já possui um agendamento. Prosseguir mesmo assim?"),
+                                          actions: [
+                                            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("NÃO")),
+                                            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("SIM")),
+                                          ],
+                                        ),
+                                      );
+                                      if (confirm != true) return;
+                                    }
+                                  }
+                                  double valor = double.tryParse(valueController.text.replaceAll(',', '.')) ?? 0.0;
+                                  final DateTime manualDateNormalized = DateTime(manualDate.year, manualDate.month, manualDate.day, manualTime.hour, manualTime.minute, 0);
+                                  
+                                  final Map<String, dynamic> appointmentData = {
+                                    'shopId': widget.shopId,
+                                    'client_nome': nameController.text.trim(),
+                                    'servico_nome': serviceController.text.isEmpty ? 'Avulso' : serviceController.text,
+                                    'servicoId': serviceId,
+                                    'duracao_min': durationMin,
+                                    'valor_total': valor,
+                                    'valor': valor,
+                                    'valor_pago': editData?['valor_pago'] ?? valor,
+                                    if (selectedProfessionalId != null) ...{
+                                      'profissionalId': selectedProfessionalId,
+                                      'profissional_nome': selectedProfessionalName,
+                                    },
+                                    'status': editData?['status'] ?? 'concluido',
+                                    'data_agendamento': Timestamp.fromDate(manualDateNormalized),
+                                    if (appointment == null) 'criado_em': FieldValue.serverTimestamp(),
+                                    'editado_em': FieldValue.serverTimestamp(),
+                                    'tipo': 'manual',
+                                  };
+
+                                  try {
+                                    if (appointment == null) {
+                                      await FirebaseFirestore.instance.collection('appointments').add(appointmentData);
+                                    } else {
+                                      await appointment.reference.update(appointmentData);
+                                    }
+
+                                    if (!mounted) return;
+                                    Navigator.pop(context);
+                                    _loadAppointments();
+                                    _loadMonthEvents();
+                                    
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(appointment == null ? 'Agendamento criado!' : 'Agendamento atualizado!'),
+                                        backgroundColor: Colors.green,
+                                      )
+                                    );
+                                  } catch (e) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text('Erro ao salvar: $e'))
+                                    );
+                                  }
+                                },
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppColors.primaryPurple,
+                                  foregroundColor: Colors.white,
+                                  elevation: 0,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                ),
+                                child: Text(appointment == null ? "Finalizar Lançamento" : "Salvar Alterações",
+                                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                          ],
+                        ),
                       ),
+                    ),
                   ],
                 ),
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text("Cancelar",
-                      style: TextStyle(color: Colors.grey)),
-                ),
-                ElevatedButton(
-                  onPressed: () async {
-                    if (nameController.text.isEmpty ||
-                        valueController.text.isEmpty) {
-                      return;
-                    }
-
-                    // Verificação de Conflito de Horário
-                    if (selectedProfessionalId != null) {
-                      final busy = await AvailabilityUtils.getBusyIntervals(
-                        selectedProfessionalId!,
-                        manualDate,
-                      );
-
-                      int startMin = manualTime.hour * 60 + manualTime.minute;
-                      bool available =
-                          AvailabilityUtils.isSlotAvailable(startMin, 30, busy);
-
-                      if (!available) {
-                        bool? confirm = await showDialog<bool>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            title: const Text("Conflito de Horário"),
-                            content: const Text(
-                                "Este profissional já possui um agendamento neste horário. Deseja agendar mesmo assim?"),
-                            actions: [
-                              TextButton(
-                                  onPressed: () => Navigator.pop(ctx, false),
-                                  child: const Text("NÃO")),
-                              TextButton(
-                                  onPressed: () => Navigator.pop(ctx, true),
-                                  child: const Text("SIM, AGENDAR")),
-                            ],
-                          ),
-                        );
-                        if (confirm != true) return;
-                      }
-                    }
-                    double valor = double.tryParse(
-                            valueController.text.replaceAll(',', '.')) ??
-                        0.0;
-
-                    // Normalize date + time to local to avoid timezone shifts when storing.
-                    final DateTime manualDateNormalized = DateTime(
-                        manualDate.year,
-                        manualDate.month,
-                        manualDate.day,
-                        manualTime.hour,
-                        manualTime.minute,
-                        0);
-
-                    final ref = await FirebaseFirestore.instance
-                        .collection('appointments')
-                        .add({
-                      'shopId': widget.shopId,
-                      'client_nome': nameController.text,
-                      'servico_nome': serviceController.text.isEmpty
-                          ? 'Avulso'
-                          : serviceController.text,
-                      'valor_total': valor,
-                      'valor': valor,
-                      'valor_pago': valor,
-                      if (selectedProfessionalId != null) ...{
-                        'profissionalId': selectedProfessionalId,
-                        'profissional_nome': selectedProfessionalName,
-                      },
-                      'status': 'concluido',
-                      'data_agendamento':
-                          Timestamp.fromDate(manualDateNormalized),
-                      'criado_em': FieldValue.serverTimestamp(),
-                      'tipo': 'manual',
-                    });
-
-                    // Fetch the newly created document (single read) and update UI locally
-                    final newDoc = await ref.get();
-
-                    if (!mounted) return;
-                    Navigator.pop(context);
-
-                    // Re-load to ensure correct ordering if date has changed
-                    _loadAppointments();
-                    _loadMonthEvents();
-
-                    setState(() {
-                      // Update events map to show marker on calendar without reloading whole month instantly
-                      final dateKey = DateTime(manualDateNormalized.year,
-                          manualDateNormalized.month, manualDateNormalized.day);
-                      final existing = _events[dateKey] ?? [];
-                      if (!existing.contains(newDoc.id)) {
-                        existing.add(newDoc.id);
-                        _events[dateKey] = existing;
-                      }
-                    });
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primaryPurple,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8)),
-                  ),
-                  child: const Text("Salvar",
-                      style: TextStyle(color: Colors.white)),
-                ),
-              ],
             );
           },
         );
@@ -1340,7 +1578,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
           floatingActionButton: isDesktop
               ? null
               : FloatingActionButton(
-                  onPressed: _showManualEntryDialog,
+                  onPressed: _showQuickEntryModal,
                   backgroundColor: AppColors.primaryPurple,
                   foregroundColor: Colors.white,
                   child: const Icon(Icons.add, color: Colors.white),
@@ -1395,7 +1633,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
               Padding(
                 padding: const EdgeInsets.all(20),
                 child: ElevatedButton.icon(
-                  onPressed: _showManualEntryDialog,
+                  onPressed: _showQuickEntryModal,
                   icon: const Icon(Icons.add, color: Colors.white),
                   label: const Text(
                     "NOVO AGENDAMENTO",
@@ -1481,6 +1719,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
               child: AppointmentDetailsPage(
                 appointmentDoc: _selectedAppointment!,
                 isEmbedded: true,
+                onEdit: () => _showQuickEntryModal(appointment: _selectedAppointment!),
                 onClose: () {
                   final id = _selectedAppointment?.id;
                   setState(() => _selectedAppointment = null);
@@ -1576,7 +1815,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
               IconButton(
                 icon: const Icon(Icons.add_circle, color: Colors.green),
                 tooltip: 'Adicionar agendamento neste dia',
-                onPressed: () => _showManualEntryDialog(initialDate: key),
+                onPressed: () => _showQuickEntryModal(initialDate: key),
               ),
             ],
           ),
@@ -2067,7 +2306,13 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
           await Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) => AppointmentDetailsPage(appointmentDoc: doc),
+              builder: (context) => AppointmentDetailsPage(
+                appointmentDoc: doc,
+                onEdit: () {
+                  Navigator.pop(context); // Fecha Detalhes para abrir Modal
+                  _showQuickEntryModal(appointment: doc);
+                },
+              ),
             ),
           );
           // Limpa cache específico do documento para evitar "flash" se foi deletado

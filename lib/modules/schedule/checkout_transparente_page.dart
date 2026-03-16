@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:brasil_fields/brasil_fields.dart';
@@ -85,8 +85,8 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
           (config['tax_percent'] ?? config['porcentagem_a_vista'] ?? 0)
               .toDouble();
 
-      final rawTotal = widget.valor * (1 + (_taxaCredito / 100));
-      _valorComTaxa = double.parse(rawTotal.toStringAsFixed(2));
+      // O valor recebido já deve incluir todas as taxas e descontos calculados no passo anterior
+      _valorComTaxa = widget.valor;
 
       _paymentItems.add({
         'label': 'Reserva na ${data['nome'] ?? 'Loja'}',

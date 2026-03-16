@@ -149,7 +149,7 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
                 color: (_trialActive
                         ? const Color(0xFF0891B2)
                         : const Color(0xFF6B21A8))
-                    .withOpacity(0.3),
+                    .withValues(alpha: 0.3),
                 blurRadius: 12,
                 offset: const Offset(0, 4),
               ),
@@ -190,7 +190,7 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
         borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF0891B2).withOpacity(0.3),
+            color: const Color(0xFF0891B2).withValues(alpha: 0.3),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -287,12 +287,12 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: isCurrent ? accentColor : accentColor.withOpacity(0.25),
+          color: isCurrent ? accentColor : accentColor.withValues(alpha: 0.25),
           width: isCurrent ? 2.5 : 1,
         ),
         boxShadow: [
           BoxShadow(
-            color: accentColor.withOpacity(isCurrent ? 0.35 : 0.1),
+            color: accentColor.withValues(alpha: isCurrent ? 0.35 : 0.1),
             blurRadius: isCurrent ? 22 : 8,
             spreadRadius: isCurrent ? 1 : 0,
             offset: const Offset(0, 6),
@@ -324,7 +324,7 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
                     padding:
                         const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.22),
+                      color: Colors.white.withValues(alpha: 0.22),
                       borderRadius: BorderRadius.circular(20),
                       border: Border.all(color: Colors.white60),
                     ),
@@ -366,7 +366,7 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
                             details['description'] as String,
                             style: TextStyle(
                                 fontSize: 12,
-                                color: Colors.white.withOpacity(0.85)),
+                                color: Colors.white.withValues(alpha: 0.85)),
                           ),
                         ],
                       ),
@@ -389,7 +389,7 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
                           Text(
                             '/mês',
                             style: TextStyle(
-                                color: Colors.white.withOpacity(0.8),
+                                color: Colors.white.withValues(alpha: 0.8),
                                 fontSize: 12),
                           ),
                       ],
@@ -480,7 +480,7 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
                         }
                       },
                       style: OutlinedButton.styleFrom(
-                        side: BorderSide(color: accentColor.withOpacity(0.5)),
+                        side: BorderSide(color: accentColor.withValues(alpha: 0.5)),
                         padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12)),

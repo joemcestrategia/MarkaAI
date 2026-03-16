@@ -17,7 +17,7 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
     final theme = Theme.of(context);
     final cardColor = theme.cardColor;
     final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
-    final borderColor = textColor.withOpacity(0.06);
+    final borderColor = textColor.withValues(alpha: 0.06);
 
     return Column(
       children: [
@@ -28,7 +28,7 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
             style: TextStyle(color: textColor, fontSize: 14),
             decoration: InputDecoration(
               hintText: 'Buscar por nome, email ou CPF...',
-              hintStyle: TextStyle(color: textColor.withOpacity(0.4), fontSize: 14),
+              hintStyle: TextStyle(color: textColor.withValues(alpha: 0.4), fontSize: 14),
               prefixIcon: const Icon(Icons.search, color: Color(0xFF4F8EF7), size: 20),
               filled: true,
               fillColor: cardColor,
@@ -93,13 +93,13 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
                         tag: 'avatar-${doc.id}',
                         child: CircleAvatar(
                           radius: 18,
-                          backgroundColor: const Color(0xFF4F8EF7).withOpacity(0.1),
+                          backgroundColor: const Color(0xFF4F8EF7).withValues(alpha: 0.1),
                           child: Text(nome.isNotEmpty ? nome[0].toUpperCase() : '?',
                               style: const TextStyle(color: Color(0xFF4F8EF7), fontWeight: FontWeight.bold, fontSize: 14)),
                         ),
                       ),
                       title: Text(nome, style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 14)),
-                      subtitle: Text(email, style: TextStyle(color: textColor.withOpacity(0.5), fontSize: 11)),
+                      subtitle: Text(email, style: TextStyle(color: textColor.withValues(alpha: 0.5), fontSize: 11)),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -107,21 +107,21 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                             decoration: BoxDecoration(
                               color: (tipo == 'dono' || tipo == 'business')
-                                  ? const Color(0xFF7C5CFC).withOpacity(0.1)
-                                  : textColor.withOpacity(0.05),
+                                  ? const Color(0xFF7C5CFC).withValues(alpha: 0.1)
+                                  : textColor.withValues(alpha: 0.05),
                               borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text(
                               tipo.toUpperCase(),
                               style: TextStyle(
-                                color: (tipo == 'dono' || tipo == 'business') ? const Color(0xFF7C5CFC) : textColor.withOpacity(0.5),
+                                color: (tipo == 'dono' || tipo == 'business') ? const Color(0xFF7C5CFC) : textColor.withValues(alpha: 0.5),
                                 fontSize: 9,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
                           ),
                           const SizedBox(width: 8),
-                          Icon(Icons.chevron_right, color: textColor.withOpacity(0.3), size: 18),
+                          Icon(Icons.chevron_right, color: textColor.withValues(alpha: 0.3), size: 18),
                         ],
                       ),
                     );
@@ -140,7 +140,7 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
     final theme = Theme.of(context);
     final cardColor = theme.cardColor;
     final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
-    final borderColor = textColor.withOpacity(0.06);
+    final borderColor = textColor.withValues(alpha: 0.06);
 
     final nomeController = TextEditingController(text: data['nome'] ?? '');
     final emailController = TextEditingController(text: data['email'] ?? '');
@@ -173,7 +173,7 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
                       tag: 'avatar-${doc.id}',
                       child: CircleAvatar(
                         radius: 24,
-                        backgroundColor: const Color(0xFF4F8EF7).withOpacity(0.1),
+                        backgroundColor: const Color(0xFF4F8EF7).withValues(alpha: 0.1),
                         child: Text(
                           (data['nome'] as String? ?? '?').isNotEmpty ? data['nome'][0].toUpperCase() : '?',
                           style: const TextStyle(color: Color(0xFF4F8EF7), fontSize: 20, fontWeight: FontWeight.bold),
@@ -191,13 +191,13 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
                           ),
                           Text(
                             data['email'] ?? 'Sem email',
-                            style: TextStyle(color: textColor.withOpacity(0.5), fontSize: 13),
+                            style: TextStyle(color: textColor.withValues(alpha: 0.5), fontSize: 13),
                           ),
                         ],
                       ),
                     ),
                     IconButton(
-                      icon: Icon(Icons.close, color: textColor.withOpacity(0.4)),
+                      icon: Icon(Icons.close, color: textColor.withValues(alpha: 0.4)),
                       onPressed: () => Navigator.pop(context),
                     ),
                   ],
@@ -231,7 +231,7 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
                       const SizedBox(width: 12),
                       IconButton(
                         onPressed: () => _showRawData(doc),
-                        icon: Icon(Icons.code, color: textColor.withOpacity(0.4), size: 18),
+                        icon: Icon(Icons.code, color: textColor.withValues(alpha: 0.4), size: 18),
                         tooltip: 'Ver JSON',
                       ),
                       IconButton(
@@ -249,11 +249,11 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
                   const SizedBox(height: 8),
                   DropdownButtonFormField<String>(
                     dropdownColor: cardColor,
-                    value: currentTipo,
+                    initialValue: currentTipo,
                     style: TextStyle(color: textColor, fontSize: 13),
                     decoration: InputDecoration(
                       labelText: 'Tipo de Conta',
-                      labelStyle: TextStyle(color: textColor.withOpacity(0.5), fontSize: 11),
+                      labelStyle: TextStyle(color: textColor.withValues(alpha: 0.5), fontSize: 11),
                       enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: borderColor)),
                     ),
                     items: const [
@@ -268,7 +268,7 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
                       Expanded(
                         child: TextButton(
                           onPressed: () => setModalState(() => isEditing = false),
-                          child: Text('CANCELAR', style: TextStyle(color: textColor.withOpacity(0.5), fontSize: 12)),
+                          child: Text('CANCELAR', style: TextStyle(color: textColor.withValues(alpha: 0.5), fontSize: 12)),
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -315,12 +315,12 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         children: [
-          Icon(icon, size: 16, color: const Color(0xFF4F8EF7).withOpacity(0.6)),
+          Icon(icon, size: 16, color: const Color(0xFF4F8EF7).withValues(alpha: 0.6)),
           const SizedBox(width: 10),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(label, style: TextStyle(color: textColor.withOpacity(0.4), fontSize: 10, fontWeight: FontWeight.bold)),
+              Text(label, style: TextStyle(color: textColor.withValues(alpha: 0.4), fontSize: 10, fontWeight: FontWeight.bold)),
               const SizedBox(height: 1),
               Text(value, style: TextStyle(color: textColor, fontSize: 13)),
             ],
@@ -338,8 +338,8 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
         style: TextStyle(color: textColor, fontSize: 13),
         decoration: InputDecoration(
           labelText: label,
-          labelStyle: TextStyle(color: textColor.withOpacity(0.5), fontSize: 11),
-          enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: textColor.withOpacity(0.1))),
+          labelStyle: TextStyle(color: textColor.withValues(alpha: 0.5), fontSize: 11),
+          enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: textColor.withValues(alpha: 0.1))),
           focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF4F8EF7))),
         ),
       ),
@@ -389,7 +389,7 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: Text('CANCELAR', style: TextStyle(color: theme.textTheme.bodyLarge?.color?.withOpacity(0.5))),
+            child: Text('CANCELAR', style: TextStyle(color: theme.textTheme.bodyLarge?.color?.withValues(alpha: 0.5))),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),

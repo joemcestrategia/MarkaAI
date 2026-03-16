@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 import '../../modules/business/subscription_service.dart';
 
@@ -84,7 +84,7 @@ class _PlanGateWidgetState extends State<PlanGateWidget> {
             onTap: widget.onUpgradeTap,
             child: Container(
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.45),
+                color: Colors.black.withValues(alpha: 0.05),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Center(
@@ -176,7 +176,7 @@ class PlanUpgradeBanner extends StatelessWidget {
       decoration: BoxDecoration(
         color: const Color(0xFFFFF3CD),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFFFD93D).withOpacity(0.5)),
+        border: Border.all(color: const Color(0xFFFFD93D).withValues(alpha: 0.5)),
       ),
       child: Row(
         children: [

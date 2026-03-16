@@ -46,9 +46,7 @@
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	
-	<!-- AdMob Application ID -->
-	<key>GADApplicationIdentifier</key>
-	<string>ca-app-pub-4304690293754093~6073797484</string>
+
 	
 	<!-- Localização para seleção de local de atendimento -->
 	<key>NSLocationWhenInUseUsageDescription</key>

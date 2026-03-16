@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -9,6 +9,7 @@ import '../../core/services/mercado_pago_service.dart';
 import '../schedule/checkout_transparente_page.dart';
 import '../schedule/booking_page.dart';
 import '../../pages/pix_payment_page.dart';
+import '../../core/services/client_verification_service.dart';
 import 'dart:async';
 import '../public/public_shop_page.dart';
 
@@ -527,6 +528,14 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
 
     if (confirm != true) return;
 
+    // --- NOVA VALIDAÇÃO DE POLÍTICA ---
+    final validation = await ClientVerificationService.canModifyAppointment(appointment);
+    if (!validation['can']) {
+      if (!mounted) return;
+      _showError(validation['reason']);
+      return;
+    }
+
     // Loading indicator
     if (!mounted) return;
     showDialog(
@@ -739,7 +748,16 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
                       const SizedBox(width: 12),
                     Expanded(
                       child: ElevatedButton(
-                        onPressed: () {
+                        onPressed: () async {
+                          // --- NOVA VALIDAÇÃO DE POLÍTICA ---
+                          final validation = await ClientVerificationService.canModifyAppointment(appointment);
+                          if (!validation['can']) {
+                            if (!mounted) return;
+                            _showError(validation['reason']);
+                            return;
+                          }
+
+                          if (!mounted) return;
                           Navigator.pop(ctx);
                           // Reagendar usando a tela de agendamento ou escolher novo serviço
                           _promptRescheduleType(appointment, shopName);

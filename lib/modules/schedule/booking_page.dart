@@ -11,6 +11,8 @@ import '../../core/services/client_verification_service.dart';
 import '../../core/services/plan_features_service.dart';
 import '../../core/constants/plan_features.dart';
 import '../clients/widgets/restricted_client_view.dart';
+import 'package:table_calendar/table_calendar.dart';
+import '../../core/services/brasilapi_service.dart';
 
 class BookingPage extends StatefulWidget {
   final DocumentSnapshot shop;
@@ -63,6 +65,7 @@ class _BookingPageState extends State<BookingPage> {
 
   bool _isRestricted = false;
   bool _loadingRestriction = true;
+  Map<String, bool>? _clientStatus;
 
   @override
   void initState() {
@@ -77,9 +80,9 @@ class _BookingPageState extends State<BookingPage> {
     final user = FirebaseAuth.instance.currentUser;
     if (user != null && !user.isAnonymous) {
       try {
-        final status =
-            await ClientVerificationService.getClientStatus(user.uid, shopId);
-        if (status['isProblematic'] == true) {
+        _clientStatus = await ClientVerificationService.getClientStatus(user.uid, shopId);
+        final restrictProblematic = _shopConfig['restrict_problematic_clients'] ?? false;
+        if (_clientStatus!['isProblematic'] == true && restrictProblematic) {
           if (mounted) {
             setState(() {
               _isRestricted = true;
@@ -117,26 +120,6 @@ class _BookingPageState extends State<BookingPage> {
     }
   }
 
-  void _autoSelectFirstAvailableDate(DocumentSnapshot profDoc) {
-    final profData = profDoc.data() as Map<String, dynamic>;
-    List<dynamic> rawWorkDays = profData['dias_trabalho'] ?? [1, 2, 3, 4, 5, 6];
-    List<int> workDays =
-        rawWorkDays.map((e) => int.parse(e.toString())).toList();
-
-    DateTime testDate = DateTime.now();
-
-    if (testDate.hour >= 18) {
-      testDate = testDate.add(const Duration(days: 1));
-    }
-
-    for (int i = 0; i < _bookingWindowDays; i++) {
-      if (workDays.contains(testDate.weekday)) {
-        // encontrado primeiro dia disponível (não armazenamos na página pai)
-        break;
-      }
-      testDate = testDate.add(const Duration(days: 1));
-    }
-  }
 
   Widget _buildHeader() {
     String serviceName = widget.serviceData['nome'];
@@ -274,6 +257,7 @@ class _BookingPageState extends State<BookingPage> {
                       minAdvanceHours: _minAdvanceHours,
                       isReschedule: widget.isReschedule,
                       appointmentId: widget.appointmentId,
+                      clientStatus: _clientStatus,
                     ),
                   ),
                 );
@@ -313,7 +297,6 @@ class _BookingPageState extends State<BookingPage> {
                       onTap: () {
                         setState(() {
                           _selectedProfessional = doc;
-                          _autoSelectFirstAvailableDate(doc);
                         });
                         Navigator.push(
                           context,
@@ -327,6 +310,7 @@ class _BookingPageState extends State<BookingPage> {
                               intervalMinutes: _intervalMinutes,
                               minAdvanceHours: _minAdvanceHours,
                               fromSubdomain: widget.fromSubdomain,
+                              clientStatus: _clientStatus,
                             ),
                           ),
                         );
@@ -453,7 +437,10 @@ class BookingTimePage extends StatefulWidget {
     this.isReschedule = false,
     this.appointmentId,
     this.fromSubdomain = false,
+    this.clientStatus,
   });
+ 
+  final Map<String, bool>? clientStatus;
 
   Map<String, dynamic> get serviceData =>
       serviceDoc.data() as Map<String, dynamic>;
@@ -464,10 +451,16 @@ class BookingTimePage extends StatefulWidget {
 
 class _BookingTimePageState extends State<BookingTimePage> {
   DateTime? _selectedDate;
+  DateTime _focusedDay = DateTime.now();
   int _bookingWindowDays = 90;
   bool _isVip = false;
   int _vipExtraDays = 0;
   bool _isRestricted = false;
+
+  // Cache de disponibilidade
+  Map<DateTime, bool> _dayAvailability = {};
+  List<dynamic> _nationalHolidays = [];
+  bool _isLoadingAvailability = false;
 
   @override
   void initState() {
@@ -489,14 +482,159 @@ class _BookingTimePageState extends State<BookingTimePage> {
     _vipExtraDays = (widget.shopConfig['vip_extra_booking_days'] ?? 0).toInt();
     _checkVipStatus();
     _checkRestriction();
+    _fetchNationalHolidays(DateTime.now());
+    _fetchMonthAvailability(DateTime.now());
+  }
+
+  Future<void> _fetchNationalHolidays(DateTime month) async {
+    try {
+      final year = month.year;
+      final response = await BrasilApiService.getHolidays(year);
+      if (mounted) {
+        setState(() {
+          _nationalHolidays = response;
+        });
+      }
+    } catch (e) {
+      debugPrint("Erro ao buscar feriados nacionais: $e");
+    }
+  }
+
+  Future<void> _fetchMonthAvailability(DateTime month) async {
+    if (mounted) setState(() => _isLoadingAvailability = true);
+
+    try {
+      final startOfMonth = DateTime(month.year, month.month, 1);
+      final endOfMonth = DateTime(month.year, month.month + 1, 0, 23, 59, 59);
+
+      final snapshot = await FirebaseFirestore.instance
+          .collection('appointments')
+          .where('shopId', isEqualTo: widget.shop.id)
+          .where('profissionalId', isEqualTo: widget.professionalDoc.id)
+          .where('data_agendamento',
+              isGreaterThanOrEqualTo: Timestamp.fromDate(startOfMonth))
+          .where('data_agendamento',
+              isLessThanOrEqualTo: Timestamp.fromDate(endOfMonth))
+          .get();
+
+      // Agrupar appointments por dia
+      Map<int, List<Map<String, int>>> groupedByDay = {};
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        final status = data['status']?.toString().toLowerCase() ?? '';
+        if (status == 'cancelado' ||
+            status == 'rejeitado' ||
+            status == 'excluido') {
+          continue;
+        }
+
+        final dt = (data['data_agendamento'] as Timestamp).toDate();
+        final day = dt.day;
+
+        int startMin = dt.hour * 60 + dt.minute;
+        int? duration = int.tryParse(data['duracao_min']?.toString() ?? '') ??
+            int.tryParse(data['duracao']?.toString() ?? '') ??
+            30;
+
+        groupedByDay.putIfAbsent(day, () => []).add({
+          'start': startMin,
+          'end': startMin + duration,
+        });
+      }
+
+      final profData = widget.professionalDoc.data() as Map<String, dynamic>;
+      final startStr = profData['horario_inicio'] ?? "08:00";
+      final endStr = profData['horario_fim'] ?? "18:00";
+      final rawWorkDays = profData['dias_trabalho'] ?? [1, 2, 3, 4, 5, 6];
+      final workDays = rawWorkDays.map((e) => int.parse(e.toString())).toList();
+      final preventGaps = widget.shopConfig['evitar_buracos_agenda'] ?? false;
+
+      Map<DateTime, bool> newAvail = {};
+      // Calcular para cada dia do mês
+      for (int day = 1; day <= endOfMonth.day; day++) {
+        final date = DateTime(month.year, month.month, day);
+        
+        // Se não for dia de trabalho, já marca como indisponível
+        if (!workDays.contains(date.weekday)) {
+          newAvail[date] = false;
+          continue;
+        }
+
+        // NOVO: Verifica Decisões de Feriados/Folgas
+        final iso = date.toIso8601String().split('T')[0];
+        final shopData = widget.shop.data() as Map<String, dynamic>;
+        final configurados = shopData['feriados_configurados'] ?? {};
+        final pendentes = shopData['feriados_pendentes'] ?? [];
+        final autoBlock = widget.shopConfig['bloquear_feriados_auto'] ?? false;
+        if (autoBlock) {
+          // Bloqueia se for feriado pendente OU feriado nacional da BrasilAPI
+          bool isNational = _nationalHolidays.any((f) => f['date'] == iso);
+          if (pendentes.contains(iso) || isNational) {
+            newAvail[date] = false;
+            continue;
+          }
+        }
+
+        if (configurados.containsKey(iso)) {
+          final config = configurados[iso];
+          if (config == 'fechado') {
+            newAvail[date] = false;
+            continue;
+          } else if (config is Map && config.containsKey('escala')) {
+            final List escala = config['escala'] ?? [];
+            if (!escala.contains(widget.professionalDoc.id)) {
+              newAvail[date] = false;
+              continue;
+            }
+          }
+        }
+
+        final busy = groupedByDay[day] ?? [];
+        final slots = AvailabilityUtils.generateSmartSlots(
+          startStr: startStr,
+          endStr: endStr,
+          interval: widget.intervalMinutes,
+          serviceDuration:
+              int.tryParse(widget.serviceData['tempo_min'].toString()) ?? 30,
+          busyIntervals: busy,
+          preventGaps: preventGaps,
+          minAdvanceHours: widget.minAdvanceHours,
+          selectedDate: date,
+        );
+
+        newAvail[date] = slots.isNotEmpty;
+      }
+
+      if (mounted) {
+        setState(() {
+          _dayAvailability.addAll(newAvail);
+          _isLoadingAvailability = false;
+        });
+      }
+    } catch (e) {
+      debugPrint("Erro ao buscar disponibilidade mensal: $e");
+      if (mounted) setState(() => _isLoadingAvailability = false);
+    }
   }
 
   Future<void> _checkRestriction() async {
+    if (widget.clientStatus != null) {
+      final restrictProblematic = widget.shopConfig['restrict_problematic_clients'] ?? false;
+      if (widget.clientStatus!['isProblematic'] == true && restrictProblematic) {
+        if (mounted) {
+          setState(() {
+            _isRestricted = true;
+          });
+        }
+      }
+      return;
+    }
     final user = FirebaseAuth.instance.currentUser;
     if (user != null && !user.isAnonymous) {
       final status = await ClientVerificationService.getClientStatus(
           user.uid, widget.shop.id);
-      if (status['isProblematic'] == true) {
+      final restrictProblematic = widget.shopConfig['restrict_problematic_clients'] ?? false;
+      if (status['isProblematic'] == true && restrictProblematic) {
         if (mounted) {
           setState(() {
             _isRestricted = true;
@@ -507,6 +645,18 @@ class _BookingTimePageState extends State<BookingTimePage> {
   }
 
   Future<void> _checkVipStatus() async {
+    if (widget.clientStatus != null) {
+      if (mounted) {
+        setState(() {
+          _isVip = widget.clientStatus!['isVip'] ?? false;
+          if (_isVip) {
+            _bookingWindowDays += _vipExtraDays;
+          }
+        });
+        // _autoSelectFirstAvailableDate(widget.professionalDoc);
+      }
+      return;
+    }
     final user = FirebaseAuth.instance.currentUser;
     if (user != null && !user.isAnonymous) {
       final status = await ClientVerificationService.getClientStatus(
@@ -519,35 +669,13 @@ class _BookingTimePageState extends State<BookingTimePage> {
           }
         });
         // Reinicializa a data automática se o status VIP mudar a janela
-        _autoSelectFirstAvailableDate(widget.professionalDoc);
+        // _autoSelectFirstAvailableDate(widget.professionalDoc);
       }
     } else {
-      _autoSelectFirstAvailableDate(widget.professionalDoc);
+      // _autoSelectFirstAvailableDate(widget.professionalDoc);
     }
   }
 
-  void _autoSelectFirstAvailableDate(DocumentSnapshot profDoc) {
-    final profData = profDoc.data() as Map<String, dynamic>;
-    List<dynamic> rawWorkDays = profData['dias_trabalho'] ?? [1, 2, 3, 4, 5, 6];
-    List<int> workDays =
-        rawWorkDays.map((e) => int.parse(e.toString())).toList();
-
-    final now = DateTime.now();
-    // Respeita minAdvanceHours: começa da data mínima permitida
-    final minAdvanceDateRaw = now.add(Duration(hours: widget.minAdvanceHours));
-    DateTime testDate = DateTime(
-        minAdvanceDateRaw.year, minAdvanceDateRaw.month, minAdvanceDateRaw.day);
-
-    for (int i = 0; i < _bookingWindowDays; i++) {
-      if (workDays.contains(testDate.weekday)) {
-        setState(() {
-          _selectedDate = testDate;
-        });
-        break;
-      }
-      testDate = testDate.add(const Duration(days: 1));
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -576,10 +704,6 @@ class _BookingTimePageState extends State<BookingTimePage> {
         minAllowedDate.isAfter(today) ? minAllowedDate : today;
 
     final lastAllowedDay = today.add(Duration(days: _bookingWindowDays));
-    final profData = widget.professionalDoc.data() as Map<String, dynamic>;
-    List<dynamic> rawWorkDays = profData['dias_trabalho'] ?? [1, 2, 3, 4, 5, 6];
-    List<int> workDays =
-        rawWorkDays.map((e) => int.parse(e.toString())).toList();
 
     return Scaffold(
       appBar: AppBar(
@@ -595,7 +719,6 @@ class _BookingTimePageState extends State<BookingTimePage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // ✅ USANDO CALENDARDATEPICKER - MAIS ESTÁVEL
               Container(
                 decoration: BoxDecoration(
                   color: Colors.white,
@@ -615,39 +738,111 @@ class _BookingTimePageState extends State<BookingTimePage> {
                         'Selecione uma data',
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
+                      if (_isLoadingAvailability)
+                        const LinearProgressIndicator(
+                          minHeight: 2,
+                          backgroundColor: Colors.transparent,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                              AppColors.primaryPurple),
+                        ),
                       const SizedBox(height: 16),
-                      // ✅ CalendarDatePicker - RÁPIDO E RESPONSIVO
-                      CalendarDatePicker(
-                        initialDate: () {
-                          // Garante que initialDate satisfaz o selectableDayPredicate:
-                          // deve ser >= minAllowedDate E ser um dia de trabalho
-                          DateTime candidate = _selectedDate ?? firstDateBound;
-                          if (candidate.isBefore(firstDateBound)) {
-                            candidate = firstDateBound;
-                          }
-                          // Avança até encontrar um dia de trabalho válido
-                          int safety = 0;
-                          while ((!workDays.contains(candidate.weekday) ||
-                                  candidate.isBefore(minAllowedDate)) &&
-                              safety < 60) {
-                            candidate = candidate.add(const Duration(days: 1));
-                            safety++;
-                          }
-                          return candidate;
-                        }(),
-                        firstDate: firstDateBound,
-                        lastDate: lastAllowedDay,
-                        selectableDayPredicate: (day) {
-                          // Bloqueia dias antes do mínimo de antecedência
-                          if (day.isBefore(minAllowedDate)) return false;
-                          if (day.isAfter(lastAllowedDay)) return false;
-                          return workDays.contains(day.weekday);
-                        },
-                        onDateChanged: (selected) {
+                      TableCalendar(
+                        firstDay: firstDateBound,
+                        lastDay: lastAllowedDay,
+                        focusedDay: _focusedDay.isBefore(firstDateBound)
+                            ? firstDateBound
+                            : (_focusedDay.isAfter(lastAllowedDay)
+                                ? lastAllowedDay
+                                : _focusedDay),
+                        selectedDayPredicate: (day) =>
+                            isSameDay(_selectedDate, day),
+                        onDaySelected: (selectedDay, focusedDay) {
                           setState(() {
-                            _selectedDate = selected;
+                            _selectedDate = selectedDay;
+                            _focusedDay = focusedDay;
                           });
                         },
+                        onPageChanged: (focusedDay) {
+                          setState(() {
+                            _focusedDay = focusedDay;
+                          });
+                          _fetchMonthAvailability(focusedDay);
+                        },
+                        locale: 'pt_BR',
+                        headerStyle: const HeaderStyle(
+                          formatButtonVisible: false,
+                          titleCentered: true,
+                          titleTextStyle: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.primaryPurple,
+                          ),
+                        ),
+                        calendarStyle: CalendarStyle(
+                          selectedDecoration: const BoxDecoration(
+                            color: AppColors.primaryPurple,
+                            shape: BoxShape.circle,
+                          ),
+                          todayDecoration: BoxDecoration(
+                            color:
+                                AppColors.primaryPurple.withValues(alpha: 0.3),
+                            shape: BoxShape.circle,
+                          ),
+                          outsideDaysVisible: false,
+                          disabledTextStyle:
+                              const TextStyle(color: Colors.transparent),
+                        ),
+                        enabledDayPredicate: (day) {
+                          final dateKey = DateTime(day.year, day.month, day.day);
+                          return _dayAvailability[dateKey] ?? true;
+                        },
+                        calendarBuilders: CalendarBuilders(
+                          defaultBuilder: (context, day, focusedDay) {
+                            final dateKey =
+                                DateTime(day.year, day.month, day.day);
+                            final isAvailable =
+                                _dayAvailability[dateKey] ?? true;
+
+                            if (!isAvailable) {
+                              return Center(
+                                child: Stack(
+                                  alignment: Alignment.center,
+                                  children: [
+                                    Text(
+                                      '${day.day}',
+                                      style:
+                                          const TextStyle(color: Colors.grey),
+                                    ),
+                                    CustomPaint(
+                                      size: const Size(20, 20),
+                                      painter: StrikeThroughPainter(),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }
+                            return null;
+                          },
+                          disabledBuilder: (context, day, focusedDay) {
+                            return Center(
+                              child: Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  Text(
+                                    '${day.day}',
+                                    style: TextStyle(
+                                        color: Colors.grey
+                                            .withValues(alpha: 0.5)),
+                                  ),
+                                  CustomPaint(
+                                    size: const Size(20, 20),
+                                    painter: StrikeThroughPainter(),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
                       ),
                     ],
                   ),
@@ -973,8 +1168,28 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                     );
 
                                     try {
-                                      final functions =
-                                          FirebaseFunctions.instance;
+                                      final functions = FirebaseFunctions.instance;
+
+                                      // --- TRAVA DE SEGURANÇA FINAL ---
+                                      final appDoc = await FirebaseFirestore.instance
+                                          .collection('appointments')
+                                          .doc(widget.appointmentId)
+                                          .get();
+                                      if (appDoc.exists) {
+                                        final validation =
+                                            await ClientVerificationService
+                                                .canModifyAppointment(appDoc);
+                                        if (!validation['can']) {
+                                          if (!mounted) return;
+                                          Navigator.pop(context); // tira o loading
+                                          sm.showSnackBar(SnackBar(
+                                              content:
+                                                  Text(validation['reason']),
+                                              backgroundColor: Colors.red));
+                                          return;
+                                        }
+                                      }
+
                                       await functions
                                           .httpsCallable(
                                               'rescheduleAppointment')
@@ -1721,4 +1936,24 @@ class _RescheduleConfirmSheet extends StatelessWidget {
       ],
     );
   }
+}
+
+class StrikeThroughPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.grey.withValues(alpha: 0.5)
+      ..strokeWidth = 1.0
+      ..style = PaintingStyle.stroke;
+
+    // Linha diagonal inclinada (risquinho)
+    canvas.drawLine(
+      Offset(size.width * 0.2, size.height * 0.8),
+      Offset(size.width * 0.8, size.height * 0.2),
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(CustomPainter oldDelegate) => false;
 }

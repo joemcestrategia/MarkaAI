@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import '../../core/theme/app_colors.dart';
@@ -13,6 +13,7 @@ class AppointmentDetailsPage extends StatefulWidget {
   final bool isEmbedded;
   final VoidCallback? onClose;
   final bool startInEditMode; // ?? Iniciar direto em modo de edição
+  final VoidCallback? onEdit; // ?? Callback para edição externa (Modal Refatorado)
 
   const AppointmentDetailsPage({
     super.key,
@@ -20,6 +21,7 @@ class AppointmentDetailsPage extends StatefulWidget {
     this.isEmbedded = false,
     this.onClose,
     this.startInEditMode = false,
+    this.onEdit,
   });
 
   @override
@@ -240,7 +242,9 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
         final status = (data['status'] ?? '').toString().toLowerCase();
         if (status == 'cancelado' ||
             status == 'recusado' ||
-            status == 'excluido') continue;
+            status == 'excluido') {
+          continue;
+        }
 
         final dt = (data['data_agendamento'] as Timestamp).toDate();
         final dur = int.tryParse(data['duracao_min']?.toString() ?? '') ?? 30;
@@ -283,7 +287,9 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
           final status = (data['status'] ?? '').toString().toLowerCase();
           if (status == 'cancelado' ||
               status == 'recusado' ||
-              status == 'excluido') continue;
+              status == 'excluido') {
+            continue;
+          }
 
           final dt = (data['data_agendamento'] as Timestamp).toDate();
           final dur = int.tryParse(data['duracao_min']?.toString() ?? '') ?? 30;
@@ -327,6 +333,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
         'valor': _selectedPrice ??
             double.tryParse(_priceController.text.replaceAll(',', '.')) ??
             0.0,
+        'duracao_min': _selectedServiceDuration ?? 30,
       });
 
       if (mounted) {
@@ -461,7 +468,9 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
           if (widget.isEmbedded) {
             widget.onClose?.call();
           } else {
-            Navigator.pop(context);
+            if (mounted) {
+              Navigator.pop(context);
+            }
           }
         }
       } catch (e) {
@@ -607,7 +616,13 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
               const SizedBox(width: 10),
               Expanded(
                 child: ElevatedButton.icon(
-                  onPressed: () => setState(() => _isEditing = true),
+                  onPressed: () {
+                    if (widget.onEdit != null) {
+                      widget.onEdit!();
+                    } else {
+                      setState(() => _isEditing = true);
+                    }
+                  },
                   icon: const Icon(Icons.edit, color: Colors.white, size: 18),
                   label: const Text("Editar",
                       style: TextStyle(

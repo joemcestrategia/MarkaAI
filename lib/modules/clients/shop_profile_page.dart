@@ -1,11 +1,14 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/utils/service_image_keywords.dart';
+import '../../core/widgets/pexels_image_widget.dart';
 import '../../widgets/google_reviews_widget.dart';
 
 class ShopProfilePage extends StatefulWidget {
@@ -24,6 +27,7 @@ class ShopProfilePage extends StatefulWidget {
 
 class _ShopProfilePageState extends State<ShopProfilePage> {
   bool _isFavorite = false;
+  String? _selectedCategoryId;
 
   @override
   void initState() {
@@ -51,21 +55,39 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
 
   Future<void> _toggleFavorite() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null) return;
-    final ref = FirebaseFirestore.instance
-        .collection('users')
-        .doc(uid)
-        .collection('favorites')
-        .doc(widget.shopDoc.id);
+    if (uid == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Faça login para favoritar lojas")),
+      );
+      return;
+    }
+
+    final bool wasFavorite = _isFavorite;
     setState(() => _isFavorite = !_isFavorite);
+
     try {
-      if (_isFavorite) {
-        await ref.set({'added_at': FieldValue.serverTimestamp()});
-      } else {
-        await ref.delete();
+      final callable = FirebaseFunctions.instanceFor(region: 'us-central1').httpsCallable('toggleFavorite');
+      final result = await callable.call({
+        'shopId': widget.shopDoc.id,
+        'shopName': (widget.shopDoc.data() as Map<String, dynamic>?)?['nome'] ?? '',
+        'isFavorite': !wasFavorite,
+      });
+
+      final data = result.data;
+      if (mounted && (data == null || data['success'] != true)) {
+        setState(() => _isFavorite = wasFavorite);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Erro ao atualizar favoritos: ${data?['message'] ?? 'Erro no servidor'}")),
+        );
       }
-    } catch (_) {
-      if (mounted) setState(() => _isFavorite = !_isFavorite);
+    } catch (e) {
+      debugPrint("❌ Erro toggleFavorite: $e");
+      if (mounted) {
+        setState(() => _isFavorite = wasFavorite);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Erro ao atualizar favoritos: $e")),
+        );
+      }
     }
   }
 
@@ -311,32 +333,133 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
             ),
           ),
 
+          // CATEGORY TAGS (Horizontal Scroll)
+          SliverToBoxAdapter(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('categories')
+                  .where('shopId', isEqualTo: widget.shopDoc.id)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.hasError) return const SizedBox();
+                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                  return const SizedBox();
+                }
+
+                final categories = snapshot.data!.docs.toList();
+                // Ordenar em memória para evitar necessidade de índices compostos
+                categories.sort((a, b) {
+                  final nameA = (a.data() as Map<String, dynamic>)['nome']?.toString().toLowerCase() ?? '';
+                  final nameB = (b.data() as Map<String, dynamic>)['nome']?.toString().toLowerCase() ?? '';
+                  return nameA.compareTo(nameB);
+                });
+
+                return Container(
+                  height: 50,
+                  margin: const EdgeInsets.only(bottom: 10),
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    itemCount: categories.length + 1,
+                    itemBuilder: (context, index) {
+                      final isAll = index == 0;
+                      final category = isAll ? null : categories[index - 1];
+                      final catId = isAll ? null : category!.id;
+                      final catName = isAll ? "Todos" : category!['nome'];
+                      final isSelected = _selectedCategoryId == catId;
+
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        child: FilterChip(
+                          label: Text(
+                            catName,
+                            style: TextStyle(
+                              color: isSelected ? Colors.white : Colors.black87,
+                              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                            ),
+                          ),
+                          selected: isSelected,
+                          onSelected: (selected) {
+                            setState(() {
+                              _selectedCategoryId = catId;
+                            });
+                          },
+                          backgroundColor: Colors.white,
+                          selectedColor: AppColors.primaryPurple,
+                          checkmarkColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                            side: BorderSide(
+                              color: isSelected ? AppColors.primaryPurple : Colors.grey.shade300,
+                            ),
+                          ),
+                          elevation: isSelected ? 4 : 0,
+                          pressElevation: 8,
+                        ),
+                      );
+                    },
+                  ),
+                );
+              },
+            ),
+          ),
+
           // Lista de serviços
           StreamBuilder<QuerySnapshot>(
             stream: FirebaseFirestore.instance
                 .collection('services')
                 .where('shopId', isEqualTo: widget.shopDoc.id)
                 .where('ativo', isEqualTo: true)
-                .orderBy('nome')
                 .snapshots(),
             builder: (context, snapshot) {
-              if (!snapshot.hasData) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
                 return const SliverToBoxAdapter(
                   child: Center(child: CircularProgressIndicator()),
                 );
               }
 
-              final services = snapshot.data!.docs;
-              if (services.isEmpty) {
+              if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
                 return const SliverToBoxAdapter(
                   child: Center(child: Text("Sem serviços.")),
                 );
               }
 
+              var services = snapshot.data!.docs;
+
+              // Aplicar filtro de categoria manualmente
+              if (_selectedCategoryId != null) {
+                services = services.where((doc) {
+                  final sData = doc.data() as Map<String, dynamic>;
+                  final ids = sData['categoryIds'] != null 
+                      ? List<String>.from(sData['categoryIds']) 
+                      : (sData['categoryId'] != null ? [sData['categoryId'].toString()] : []);
+                  return ids.contains(_selectedCategoryId);
+                }).toList();
+              }
+
+              if (services.isEmpty) {
+                return const SliverToBoxAdapter(
+                  child: Padding(
+                    padding: EdgeInsets.all(40),
+                    child: Center(
+                      child: Text("Nenhum serviço nesta categoria.", style: TextStyle(color: Colors.grey)),
+                    ),
+                  ),
+                );
+              }
+
+              // Ordenar serviços em ordem alfabética em memória
+              final sortedServices = List.from(services);
+              sortedServices.sort((a, b) {
+                final strA = (a.data() as Map<String, dynamic>)['nome']?.toString().toLowerCase() ?? '';
+                final strB = (b.data() as Map<String, dynamic>)['nome']?.toString().toLowerCase() ?? '';
+                return strA.compareTo(strB);
+              });
+
               return SliverList(
                 delegate: SliverChildBuilderDelegate(
                   (context, index) {
-                    final sDoc = services[index];
+                    final sDoc = sortedServices[index];
                     final sData = sDoc.data() as Map<String, dynamic>;
                     dynamic rawFotos = sData['fotos_urls'] ??
                         sData['fotos'] ??
@@ -385,8 +508,10 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
                                               imageUrl: serviceThumb,
                                               fit: BoxFit.cover,
                                             )
-                                          : const Icon(Icons.spa,
-                                              color: Colors.grey),
+                                          : PexelsImageWidget(
+                                              searchQuery: ServiceImageKeywords.getEnglishKeyword(sData['nome'] ?? ""),
+                                              index: sortedServices.indexOf(sDoc),
+                                            ),
                                     ),
                                   ),
                                   const SizedBox(width: 15),
@@ -430,7 +555,7 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
                       ),
                     );
                   },
-                  childCount: services.length,
+                  childCount: sortedServices.length,
                 ),
               );
             },

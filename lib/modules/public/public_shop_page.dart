@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:intl/intl.dart';
@@ -6,6 +6,8 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/theme/app_colors.dart';
 import '../../widgets/google_reviews_widget.dart';
+import '../../core/utils/service_image_keywords.dart';
+import '../../core/widgets/pexels_image_widget.dart';
 import '../clients/client_service_detail_page.dart';
 
 class PublicShopPage extends StatefulWidget {
@@ -25,6 +27,8 @@ class PublicShopPage extends StatefulWidget {
 }
 
 class _PublicShopPageState extends State<PublicShopPage> {
+  String? _selectedCategoryId;
+  final _currency = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
   Future<void> _launchWhatsApp(BuildContext context, String whatsapp) async {
     try {
       final phone = whatsapp.replaceAll(RegExp(r'[^0-9]'), '');
@@ -141,7 +145,6 @@ class _PublicShopPageState extends State<PublicShopPage> {
 
         final shopDoc = snapshot.data!.docs.first;
         final data = shopDoc.data() as Map<String, dynamic>;
-        final currency = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
         final whatsapp = data['whatsapp']?.toString() ?? '';
         final instagram = data['instagram']?.toString() ?? '';
 
@@ -152,7 +155,7 @@ class _PublicShopPageState extends State<PublicShopPage> {
               SliverAppBar(
                 expandedHeight: 200,
                 floating: false,
-                pinned: true,
+                pinned: false,
                 backgroundColor: AppColors.primaryPurple,
                 foregroundColor: Colors.white,
                 flexibleSpace: FlexibleSpaceBar(
@@ -347,6 +350,20 @@ class _PublicShopPageState extends State<PublicShopPage> {
                   ),
                 ),
               ),
+
+              // CATEGORY TAGS (Sticky Horizontal Scroll)
+              SliverPersistentHeader(
+                pinned: true,
+                delegate: _StickyCategoryDelegate(
+                  shopId: shopDoc.id,
+                  selectedCategoryId: _selectedCategoryId,
+                  onCategorySelected: (catId) {
+                    setState(() {
+                      _selectedCategoryId = catId;
+                    });
+                  },
+                ),
+              ),
               // Helper: function to build star icons (placed after class content)
 
               // Lista de serviços
@@ -355,7 +372,6 @@ class _PublicShopPageState extends State<PublicShopPage> {
                     .collection('services')
                     .where('shopId', isEqualTo: shopDoc.id)
                     .where('ativo', isEqualTo: true)
-                    .orderBy('nome')
                     .snapshots(),
                 builder: (context, snapshot) {
                   if (!snapshot.hasData) {
@@ -365,6 +381,18 @@ class _PublicShopPageState extends State<PublicShopPage> {
                   }
 
                   var services = snapshot.data!.docs;
+                  
+                  // Aplicar filtro de categoria manualmente para evitar complexidade de índice no Firestore
+                  if (_selectedCategoryId != null) {
+                    services = services.where((doc) {
+                      final sData = doc.data() as Map<String, dynamic>;
+                      final ids = sData['categoryIds'] != null 
+                          ? List<String>.from(sData['categoryIds']) 
+                          : (sData['categoryId'] != null ? [sData['categoryId'].toString()] : []);
+                      return ids.contains(_selectedCategoryId);
+                    }).toList();
+                  }
+
                   if (services.isEmpty) {
                     return const SliverToBoxAdapter(
                       child: Padding(
@@ -379,8 +407,9 @@ class _PublicShopPageState extends State<PublicShopPage> {
                     );
                   }
 
-                  // âœ… Ordenar serviços em ordem alfabética
-                  services.sort((a, b) {
+                  // ✅ Ordenar serviços em ordem alfabética (copiando para evitar erro em lista imutável)
+                  var sortedServices = List.from(services);
+                  sortedServices.sort((a, b) {
                     final strA = (a.data() as Map<String, dynamic>)['nome']
                             ?.toString()
                             .toLowerCase() ??
@@ -395,7 +424,7 @@ class _PublicShopPageState extends State<PublicShopPage> {
                   return SliverList(
                     delegate: SliverChildBuilderDelegate(
                       (context, index) {
-                        final sDoc = services[index];
+                        final sDoc = sortedServices[index];
                         final sData = sDoc.data() as Map<String, dynamic>;
                         dynamic rawFotos = sData['fotos_urls'] ??
                             sData['fotos'] ??
@@ -444,8 +473,10 @@ class _PublicShopPageState extends State<PublicShopPage> {
                                                   imageUrl: serviceThumb,
                                                   fit: BoxFit.cover,
                                                 )
-                                              : const Icon(Icons.spa,
-                                                  color: Colors.grey),
+                                              : PexelsImageWidget(
+                                                  searchQuery: ServiceImageKeywords.getEnglishKeyword(sData['nome'] ?? ""),
+                                                  index: services.indexOf(sDoc),
+                                                ),
                                         ),
                                       ),
                                       const SizedBox(width: 15),
@@ -470,7 +501,7 @@ class _PublicShopPageState extends State<PublicShopPage> {
                                             ),
                                             const SizedBox(height: 4),
                                             Text(
-                                              currency.format(double.tryParse(
+                                              _currency.format(double.tryParse(
                                                       sData['preco']
                                                               ?.toString() ??
                                                           '0') ??
@@ -519,6 +550,107 @@ class _PublicShopPageState extends State<PublicShopPage> {
         );
       },
     );
+  }
+}
+
+// Delegate para manter as categorias fixas no topo ao rolar
+class _StickyCategoryDelegate extends SliverPersistentHeaderDelegate {
+  final String shopId;
+  final String? selectedCategoryId;
+  final Function(String?) onCategorySelected;
+
+  _StickyCategoryDelegate({
+    required this.shopId,
+    required this.selectedCategoryId,
+    required this.onCategorySelected,
+  });
+
+  @override
+  Widget build(
+      BuildContext context, double shrinkOffset, bool overlapsContent) {
+    return Container(
+      color: const Color(0xFFF5F7FA), // Fundo combinando com a página
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance
+            .collection('categories')
+            .where('shopId', isEqualTo: shopId)
+            .snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.hasError) return const SizedBox();
+          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+            return const SizedBox();
+          }
+
+          final categories = snapshot.data!.docs.toList();
+          categories.sort((a, b) {
+            final nameA = (a.data() as Map<String, dynamic>)['nome']
+                    ?.toString()
+                    .toLowerCase() ??
+                '';
+            final nameB = (b.data() as Map<String, dynamic>)['nome']
+                    ?.toString()
+                    .toLowerCase() ??
+                '';
+            return nameA.compareTo(nameB);
+          });
+
+          return ListView.builder(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            itemCount: categories.length + 1,
+            itemBuilder: (context, index) {
+              final isAll = index == 0;
+              final category = isAll ? null : categories[index - 1];
+              final catId = isAll ? null : category!.id;
+              final catName = isAll ? "Todos" : category!['nome'];
+              final isSelected = selectedCategoryId == catId;
+
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                child: FilterChip(
+                  label: Text(
+                    catName,
+                    style: TextStyle(
+                      color: isSelected ? Colors.white : Colors.black87,
+                      fontWeight:
+                          isSelected ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
+                  selected: isSelected,
+                  onSelected: (selected) => onCategorySelected(catId),
+                  backgroundColor: Colors.white,
+                  selectedColor: AppColors.primaryPurple,
+                  checkmarkColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                    side: BorderSide(
+                      color: isSelected
+                          ? AppColors.primaryPurple
+                          : Colors.grey.shade300,
+                    ),
+                  ),
+                  elevation: isSelected ? 4 : 0,
+                  pressElevation: 8,
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  @override
+  double get maxExtent => 58; // Altura do container + padding
+
+  @override
+  double get minExtent => 58;
+
+  @override
+  bool shouldRebuild(covariant _StickyCategoryDelegate oldDelegate) {
+    return oldDelegate.selectedCategoryId != selectedCategoryId ||
+        oldDelegate.shopId != shopId;
   }
 }
 

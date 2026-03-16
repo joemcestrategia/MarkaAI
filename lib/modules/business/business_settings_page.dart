@@ -31,6 +31,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   bool _allowReschedule = true;
   bool _clientChoosesProfessional = true;
   bool _onlineBookingActive = true;
+  bool _autoBlockHolidays = false;
 
   // ðŸ•’ Intervalo (Slots)
   int _appointmentIntervalMinutes = 60;
@@ -116,6 +117,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     config['cliente_escolhe_prof'] ?? true;
                 _onlineBookingActive =
                     config['agendamento_online_ativo'] ?? true;
+                _autoBlockHolidays = config['bloquear_feriados_auto'] ?? false;
 
                 _appointmentIntervalMinutes =
                     config['intervalo_agenda_min'] ?? 60;
@@ -229,6 +231,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           'permitir_reagendamento': _allowReschedule,
           'cliente_escolhe_prof': _clientChoosesProfessional,
           'agendamento_online_ativo': _onlineBookingActive,
+          'bloquear_feriados_auto': _autoBlockHolidays,
           'intervalo_agenda_min': _appointmentIntervalMinutes,
           'evitar_buracos_agenda': _preventGaps,
           'janela_agendamento_dias':
@@ -390,6 +393,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     "Se desativado, os clientes não poderão agendar sozinhos e serão instruídos a te chamar no WhatsApp.",
                     _onlineBookingActive,
                     (v) => _setOnlineBooking(v)),
+                const Divider(height: 1),
+                _buildSwitchTile(
+                    "Bloquear Feriados Automaticamente",
+                    "Feriados nacionais serão bloqueados sem precisar aprovar um por um.",
+                    _autoBlockHolidays,
+                    (v) => setState(() => _autoBlockHolidays = v)),
               ]),
 
               const SizedBox(height: 24),
@@ -661,7 +670,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   "Somente VIPs podem escolher pagar na loja",
                   isPremium ? _trustedOnlyPayInPerson : false,
                   isPremium
-                      ? (v) => setState(() => _trustedOnlyPayInPerson = v)
+                      ? (v) => setState(() {
+                            _trustedOnlyPayInPerson = v;
+                            if (v) {
+                              // Caso a loja ative a opção de pagar pessoalmente somente para vips, 
+                              // entao a opção de pagar pessoalmente (geral) deve ser desativada
+                              _pagarPessoalmente = false;
+                            }
+                          })
                       : (v) => _showUpgradeDialog('Restringir Pagamentos a VIPs', PlanKey.plus),
                   trailing: !isPremium ? _buildPremiumBadge() : null,
                 ),
@@ -1119,30 +1135,44 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                       ),
 
                       // Pagar Pessoalmente (Espécie / Pix Loja)
-                      _buildSwitchTile(
-                        "Pagar Pessoalmente",
-                        "Dinheiro ou PIX direto na loja",
-                        !allowPayments ? true : _pagarPessoalmente,
-                        !allowPayments
-                            ? (v) {
-                                if (!v) {
-                                  _showSnack(
-                                      "Plano Gratuito permite apenas pagamento presencial.",
-                                      isError: true);
-                                }
-                              }
-                            : (v) {
-                                int active = (_cartaoOnline ? 1 : 0) +
-                                    (_debitoPresencial ? 1 : 0) +
-                                    (v ? 1 : 0);
-                                if (!v && active == 0) {
-                                  _showSnack(
-                                      "Você precisa ter ao menos um método de pagamento ativo.",
-                                      isError: true);
-                                  return;
-                                }
-                                setState(() => _pagarPessoalmente = v);
-                              },
+                      Opacity(
+                        opacity: _trustedOnlyPayInPerson ? 0.5 : 1.0,
+                        child: AbsorbPointer(
+                          absorbing: _trustedOnlyPayInPerson,
+                          child: _buildSwitchTile(
+                            "Pagar Pessoalmente",
+                            _trustedOnlyPayInPerson 
+                              ? "Opção desativada pois a restrição para VIPs está ligada abaixo." 
+                              : "Dinheiro ou PIX direto na loja",
+                            !allowPayments ? true : _pagarPessoalmente,
+                            !allowPayments
+                                ? (v) {
+                                    if (!v) {
+                                      _showSnack(
+                                          "Plano Gratuito permite apenas pagamento presencial.",
+                                          isError: true);
+                                    }
+                                  }
+                                : (v) {
+                                    int active = (_cartaoOnline ? 1 : 0) +
+                                        (_debitoPresencial ? 1 : 0) +
+                                        (v ? 1 : 0);
+                                    if (!v && active == 0) {
+                                      _showSnack(
+                                          "Você precisa ter ao menos um método de pagamento ativo.",
+                                          isError: true);
+                                      return;
+                                    }
+                                    setState(() {
+                                      _pagarPessoalmente = v;
+                                      // Se desativar o pagamento pessoalmente, removemos a restrição VIP (pois não há mais o que restringir)
+                                      if (!v) {
+                                        _trustedOnlyPayInPerson = false;
+                                      }
+                                    });
+                                  },
+                          ),
+                        ),
                       ),
 
                       const Divider(height: 1),

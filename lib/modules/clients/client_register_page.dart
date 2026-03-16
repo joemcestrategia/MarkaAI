@@ -1,4 +1,4 @@
-﻿// ignore_for_file: use_build_context_synchronously
+// ignore_for_file: use_build_context_synchronously
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -49,6 +49,8 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
       mask: '#####-###', filter: {"#": RegExp(r'[0-9]')});
   final FocusNode _numberFocus = FocusNode();
 
+  bool _isBirthdayLocked = false;
+
   @override
   void initState() {
     super.initState();
@@ -56,6 +58,38 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
       _preencherDadosGoogle();
       _verificarTelefoneExistente();
       _loadExistingUserData();
+      _checkBirthdayLock();
+    }
+  }
+
+  Future<void> _checkBirthdayLock() async {
+    if (widget.user == null) return;
+    try {
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.user!.uid)
+          .get();
+      if (userDoc.exists) {
+        final data = userDoc.data();
+        if (data?['birthday_locked'] == true) {
+          setState(() => _isBirthdayLocked = true);
+          return;
+        }
+      }
+
+      // Fallback: check appointments for any applied birthday discount
+      final appointments = await FirebaseFirestore.instance
+          .collection('appointments')
+          .where('clientId', isEqualTo: widget.user!.uid)
+          .where('birthday_discount_applied', isEqualTo: true)
+          .limit(1)
+          .get();
+
+      if (appointments.docs.isNotEmpty) {
+        setState(() => _isBirthdayLocked = true);
+      }
+    } catch (e) {
+      debugPrint('Erro ao verificar trava de aniversário: $e');
     }
   }
 
@@ -143,9 +177,18 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
   }
 
   Future<void> _pickDate() async {
+    if (_isBirthdayLocked) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("A data de nascimento não pode mais ser alterada após o uso do desconto de aniversário."),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
     final DateTime? picked = await showDatePicker(
       context: context,
-      initialDate: DateTime(1995),
+      initialDate: _birthDate ?? DateTime(1995),
       firstDate: DateTime(1920),
       lastDate: DateTime.now(),
       builder: (context, child) => Theme(

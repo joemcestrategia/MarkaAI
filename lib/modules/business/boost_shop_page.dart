@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
@@ -13,7 +13,10 @@ class BoostShopPage extends StatefulWidget {
   State<BoostShopPage> createState() => _BoostShopPageState();
 }
 
-class _BoostShopPageState extends State<BoostShopPage> {
+class _BoostShopPageState extends State<BoostShopPage>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnimation;
   bool _isLoading = false;
   String? shopId;
   DateTime? _currentBoostExpiration;
@@ -22,7 +25,20 @@ class _BoostShopPageState extends State<BoostShopPage> {
   @override
   void initState() {
     super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    )..repeat(reverse: true);
+    _pulseAnimation = Tween<double>(begin: 1.0, end: 1.05).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
     _loadData();
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadData() async {
@@ -139,101 +155,149 @@ class _BoostShopPageState extends State<BoostShopPage> {
         elevation: 0,
         foregroundColor: Colors.white,
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          children: [
-            // Status Card
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    AppColors.primaryPurple,
-                    AppColors.primaryPurple.withValues(alpha: 0.8)
-                  ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                      color: AppColors.primaryPurple.withValues(alpha: 0.3),
-                      blurRadius: 15,
-                      offset: const Offset(0, 8)),
-                ],
-              ),
-              child: Column(
-                children: [
-                  const Icon(Icons.rocket_launch,
-                      size: 48, color: Colors.white),
-                  const SizedBox(height: 16),
-                  const Text("Status do Impulsionamento",
-                      style: TextStyle(color: Colors.white70, fontSize: 14)),
-                  const SizedBox(height: 8),
-                  Text(
-                    _currentBoostExpiration != null ? "ATIVO" : "INATIVO",
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          child: Column(
+            children: [
+              // Status Card
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      AppColors.primaryPurple,
+                      AppColors.primaryPurple.withValues(alpha: 0.8)
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
                   ),
-                  if (_currentBoostExpiration != null) ...[
-                    const SizedBox(height: 8),
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                        color: AppColors.primaryPurple.withValues(alpha: 0.3),
+                        blurRadius: 15,
+                        offset: const Offset(0, 8)),
+                  ],
+                ),
+                child: Column(
+                  children: [
+                    const Icon(Icons.rocket_launch,
+                        size: 42, color: Colors.white),
+                    const SizedBox(height: 12),
+                    const Text("Status do Impulsionamento",
+                        style: TextStyle(color: Colors.white70, fontSize: 13)),
+                    const SizedBox(height: 4),
                     Text(
-                      "Expira em: ${DateFormat('dd/MM/yyyy HH:mm').format(_currentBoostExpiration!)}",
+                      _currentBoostExpiration != null ? "ATIVO" : "INATIVO",
                       style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold),
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1),
                     ),
-                  ]
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 32),
-            const Text("Escolha seu plano de destaque",
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-
-            _buildOptionCard(0, "Destaque 24h", "R\$ 9,90",
-                "Ideal para dias de pouco movimento"),
-            _buildOptionCard(1, "Destaque 3 Dias", "R\$ 14,90",
-                "Mais popular! Para períodos intensos",
-                isPopular: true),
-            _buildOptionCard(2, "Destaque Semanal", "R\$ 29,90",
-                "Presença constante no topo"),
-
-            const SizedBox(height: 32),
-            SizedBox(
-              width: double.infinity,
-              height: 56,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.gold,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16)),
-                  elevation: 4,
+                    if (_currentBoostExpiration != null) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        "Expira em: ${DateFormat('dd/MM/yyyy HH:mm').format(_currentBoostExpiration!)}",
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold),
+                      ),
+                    ]
+                  ],
                 ),
-                onPressed: _isLoading ? null : _purchaseBoost,
-                child: _isLoading
-                    ? const CircularProgressIndicator(
-                        color: AppColors.primaryPurple)
-                    : const Text("ATIVAR DESTAQUE AGORA",
-                        style: TextStyle(
-                            color: AppColors.primaryPurple,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16)),
               ),
-            ),
-            const SizedBox(height: 16),
-            const Text("O pagamento será processado via sua conta cadastrada.",
-                style: TextStyle(color: Colors.grey, fontSize: 12),
-                textAlign: TextAlign.center),
+
+              const SizedBox(height: 20),
+              const Text("Escolha seu plano de destaque",
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12),
+
+              _buildOptionCard(0, "Destaque 24h", "R\$ 9,90",
+                  "Ideal para dias de pouco movimento"),
+              _buildOptionCard(1, "Destaque 3 Dias", "R\$ 14,90",
+                  "Mais popular! Para períodos intensos",
+                  isPopular: true),
+              _buildOptionCard(2, "Destaque Semanal", "R\$ 29,90",
+                  "Presença constante no topo"),
+
+              const SizedBox(height: 8),
+              const Text(
+                  "O pagamento será processado via sua conta cadastrada.",
+                  style: TextStyle(color: Colors.grey, fontSize: 10),
+                  textAlign: TextAlign.center),
+              const SizedBox(height: 100), // Espaço para o botão fixo
+            ],
+          ),
+        ),
+      ),
+      bottomNavigationBar: Container(
+        padding: EdgeInsets.fromLTRB(
+            20, 12, 20, MediaQuery.of(context).padding.bottom + 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 10,
+                offset: const Offset(0, -5)),
           ],
+        ),
+        child: ScaleTransition(
+          scale: _pulseAnimation,
+          child: Container(
+            width: double.infinity,
+            height: 56,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              gradient: LinearGradient(
+                colors: [
+                  AppColors.gold,
+                  const Color(0xFFFFD700),
+                  AppColors.gold,
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.gold.withValues(alpha: 0.4),
+                  blurRadius: 12,
+                  spreadRadius: 2,
+                ),
+              ],
+            ),
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.transparent,
+                shadowColor: Colors.transparent,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16)),
+              ),
+              onPressed: _isLoading ? null : _purchaseBoost,
+              child: _isLoading
+                  ? const CircularProgressIndicator(
+                      color: AppColors.primaryPurple)
+                  : Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: const [
+                        Icon(Icons.rocket_launch_rounded,
+                            color: AppColors.primaryPurple, size: 20),
+                        SizedBox(width: 8),
+                        Text("ATIVAR DESTAQUE AGORA",
+                            style: TextStyle(
+                                color: AppColors.primaryPurple,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                                letterSpacing: 0.5)),
+                      ],
+                    ),
+            ),
+          ),
         ),
       ),
     );
@@ -315,9 +379,9 @@ class _BoostShopPageState extends State<BoostShopPage> {
                     color: AppColors.gold,
                     borderRadius: BorderRadius.circular(20),
                   ),
-                  child: const Text("MAIS VENDIDO",
+                  child: const Text("DESTAK+",
                       style: TextStyle(
-                          fontSize: 10,
+                          fontSize: 9,
                           fontWeight: FontWeight.bold,
                           color: AppColors.primaryPurple)),
                 ),

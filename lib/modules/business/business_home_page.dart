@@ -20,7 +20,6 @@ import '../admin/admin_dashboard_page.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/notification_service.dart';
 import '../../core/widgets/trial_banner_widget.dart';
-import '../../core/widgets/banner_ad_widget.dart';
 import '../../core/constants/plan_features.dart';
 import '../../core/services/plan_features_service.dart';
 import '../../widgets/upgrade_modal.dart';
@@ -44,6 +43,7 @@ import 'subscription_service.dart';
 import '../help/help_guide_page.dart';
 import 'price_adjustment_page.dart';
 import '../../pages/privacy_settings_page.dart';
+import 'holidays_page.dart';
 
 class BusinessHomePage extends StatefulWidget {
   const BusinessHomePage({super.key});
@@ -444,6 +444,11 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
     // Comissões
     _canViewCommissions = _currentFeatures.commissionView;
+
+    // Folgas e Feriados (Índice 11)
+    if (!_currentFeatures.holidaysManagement) {
+      _restrictedIndices.add(11);
+    }
   }
 
   void _showUpgradeDialog(String feature) {
@@ -457,7 +462,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       backgroundColor: Colors.transparent,
       builder: (ctx) => Container(
         padding: EdgeInsets.fromLTRB(
-            24, 16, 24, MediaQuery.of(ctx).viewInsets.bottom + 24),
+            24, 16, 24, MediaQuery.of(ctx).viewInsets.bottom + MediaQuery.of(ctx).padding.bottom + 24),
         decoration: const BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -657,6 +662,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       const BusinessSettingsPage(), // 8
       const PriceAdjustmentPage(), // 9
       const PrivacySettingsPage(), // 10
+      HolidaysPage(shopId: shopId ?? ""), // 11
     ];
   }
 
@@ -735,6 +741,47 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
                 _buildDesktopMenuItem(
                     3, Icons.design_services_rounded, "Meus Serviços"),
+                
+                // Folgas e Feriados
+                StreamBuilder<DocumentSnapshot>(
+                  stream: shopId != null 
+                    ? FirebaseFirestore.instance.collection('shops').doc(shopId).snapshots()
+                    : null,
+                  builder: (context, snapshot) {
+                    int pendingCount = 0;
+                    if (snapshot.hasData && snapshot.data!.exists) {
+                      final data = snapshot.data!.data() as Map<String, dynamic>;
+                      final pendentes = data['feriados_pendentes'] as List?;
+                      pendingCount = pendentes?.length ?? 0;
+                    }
+                    
+                    return _buildDesktopMenuItem(
+                      11, 
+                      Icons.beach_access_rounded, 
+                      "Folgas e Feriados",
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (pendingCount > 0)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.red,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                pendingCount.toString(),
+                                style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          if (!_currentFeatures.holidaysManagement)
+                            const Icon(Icons.lock, size: 16, color: Colors.grey)
+                        ],
+                      ),
+                    );
+                  }
+                ),
+
                 _buildDesktopMenuItem(
                     9, Icons.trending_up_rounded, "Reajuste de Valores"),
 
@@ -1056,7 +1103,6 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         if (_selectedIndex == 0) // Show only on dashboard
           const SizedBox(height: 8),
         Expanded(child: _buildScreens(isDesktop: false)[_selectedIndex]),
-        const BannerAdWidget(),
       ]),
       bottomNavigationBar: _buildMobileBottomNav(),
     );
@@ -1182,6 +1228,40 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                   icon: Icons.trending_up,
                   title: "Reajuste de Valores",
                   index: 9,
+                ),
+                
+                // Folgas e Feriados Mobile
+                StreamBuilder<DocumentSnapshot>(
+                  stream: shopId != null 
+                    ? FirebaseFirestore.instance.collection('shops').doc(shopId).snapshots()
+                    : null,
+                  builder: (context, snapshot) {
+                    int pendingCount = 0;
+                    if (snapshot.hasData && snapshot.data!.exists) {
+                      final data = snapshot.data!.data() as Map<String, dynamic>;
+                      final pendentes = data['feriados_pendentes'] as List?;
+                      pendingCount = pendentes?.length ?? 0;
+                    }
+                    
+                    return _buildDrawerItem(
+                      icon: Icons.beach_access_rounded,
+                      title: "Folgas e Feriados",
+                      index: 11,
+                      trailing: pendingCount > 0 
+                        ? Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.red,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              pendingCount.toString(),
+                              style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                            ),
+                          )
+                        : null,
+                    );
+                  }
                 ),
                 _buildDrawerItem(
                   icon: Icons.local_offer_outlined,
@@ -1338,9 +1418,9 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.2)),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
       ),
       child: ListTile(
         dense: true,
@@ -1349,7 +1429,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         title: Text(
           label,
           style: TextStyle(
-            color: color.withOpacity(0.9),
+            color: color.withValues(alpha: 0.9),
             fontSize: 15,
             fontWeight: FontWeight.bold,
           ),
@@ -3170,6 +3250,12 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         return "Estoque";
       case 8:
         return "Configurações";
+      case 9:
+        return "Reajuste de Preços";
+      case 10:
+        return "Privacidade";
+      case 11:
+        return "Gestão de Folgas";
       default:
         return "";
     }

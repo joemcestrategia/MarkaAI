@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'dart:async';
@@ -216,66 +216,95 @@ class SeletorDeCidadeModal extends StatefulWidget {
 
   static Future<List<CidadeOpcao>> getCitySuggestions(String query) async {
     try {
-      // Pega um volume maior para garantir diversidade de cidades
-      Query q = FirebaseFirestore.instance.collection('shops').limit(500);
-
-      final snap = await q.get();
       final Map<String, CidadeOpcao> seen = {};
 
-      for (final doc in snap.docs) {
-        final d = doc.data() as Map<String, dynamic>;
+      // Se houver busca, tenta buscar especificamente por cidade para garantir que apareça
+      if (query.length >= 2) {
+        final qNormalized = query[0].toUpperCase() + query.substring(1).toLowerCase();
+        
+        // Busca 1: Cidade exata ou começando com (Capitalizado)
+        final q1 = FirebaseFirestore.instance
+            .collection('shops')
+            .where('cidade', isGreaterThanOrEqualTo: qNormalized)
+            .where('cidade', isLessThanOrEqualTo: '$qNormalized\uf8ff')
+            .limit(100);
+            
+        // Busca 2: Cidade exata (Tudo minúsculo para compatibilidade)
+        final q2 = FirebaseFirestore.instance
+            .collection('shops')
+            .where('cidade', isEqualTo: query.toLowerCase())
+            .limit(50);
 
-        String getVal(List<String> keys) {
-          for (var k in keys) {
-            if (d[k] != null && d[k].toString().trim().isNotEmpty) {
-              return d[k].toString().trim();
-            }
+        final snaps = await Future.wait([q1.get(), q2.get()]);
+        
+        for (var snap in snaps) {
+          for (var doc in snap.docs) {
+            _processCityDoc(doc.data(), seen);
           }
-          if (d['endereco'] is Map) {
-            final m = d['endereco'] as Map;
-            for (var k in keys) {
-              if (m[k] != null && m[k].toString().trim().isNotEmpty) {
-                return m[k].toString().trim();
-              }
-            }
-          }
-          return '';
         }
-
-        final c = getVal(['cidade', 'city']);
-        final e = getVal(['estado', 'uf', 'state']).toUpperCase();
-
-        if (c.isEmpty) continue;
-        final key = '${c.toLowerCase()}|${e.toLowerCase()}';
-
-        if (!seen.containsKey(key)) {
-          seen[key] = CidadeOpcao(cidade: c, estado: e, count: 0);
-        }
-        seen[key] = CidadeOpcao(
-          cidade: seen[key]!.cidade,
-          estado: seen[key]!.estado,
-          count: seen[key]!.count + 1,
-        );
       }
+
+      // Se ainda tivermos pouco resultado ou for busca vazia, pega os top-shops (fallback)
+      if (seen.length < 20) {
+        final snap = await FirebaseFirestore.instance.collection('shops').limit(200).get();
+        for (final doc in snap.docs) {
+          _processCityDoc(doc.data(), seen);
+        }
+      }
+
       var result = seen.values.toList()
         ..sort((a, b) => b.count.compareTo(a.count));
+
       if (query.isNotEmpty) {
         final q2 = StringUtils.removeDiacritics(query).toLowerCase();
         result = result.where((c) {
           final cityName = StringUtils.removeDiacritics(c.cidade).toLowerCase();
-          final stateName =
-              StringUtils.removeDiacritics(c.estado).toLowerCase();
+          final stateName = StringUtils.removeDiacritics(c.estado).toLowerCase();
           final combined = "$cityName $stateName";
           return cityName.contains(q2) ||
               stateName.contains(q2) ||
               combined.contains(q2);
         }).toList();
       }
-      return result;
+      return result.take(15).toList();
     } catch (e) {
       debugPrint('[SeletorDeCidade] Error fetching suggestions: $e');
       return [];
     }
+  }
+
+  static void _processCityDoc(Map<String, dynamic> d, Map<String, CidadeOpcao> seen) {
+    String getVal(List<String> keys) {
+      for (var k in keys) {
+        if (d[k] != null && d[k].toString().trim().isNotEmpty) {
+          return d[k].toString().trim();
+        }
+      }
+      if (d['endereco'] is Map) {
+        final m = d['endereco'] as Map;
+        for (var k in keys) {
+          if (m[k] != null && m[k].toString().trim().isNotEmpty) {
+            return m[k].toString().trim();
+          }
+        }
+      }
+      return '';
+    }
+
+    final c = getVal(['cidade', 'city']);
+    final e = getVal(['estado', 'uf', 'state']).toUpperCase();
+
+    if (c.isEmpty) return;
+    final key = '${c.toLowerCase()}|${e.toLowerCase()}';
+
+    if (!seen.containsKey(key)) {
+      seen[key] = CidadeOpcao(cidade: c, estado: e, count: 0);
+    }
+    seen[key] = CidadeOpcao(
+      cidade: seen[key]!.cidade,
+      estado: seen[key]!.estado,
+      count: seen[key]!.count + 1,
+    );
   }
 
   @override
