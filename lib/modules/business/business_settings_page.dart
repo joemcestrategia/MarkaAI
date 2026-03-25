@@ -75,6 +75,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   double _vipAvgInterval = 30.0; // Padrão: 30 dias de intervalo médio
   double _sumidoMaxDays = 45.0; // Padrão: 45 dias sem agendar
 
+  // Google Business
+  Map<String, dynamic>? _googleBusiness;
+
   @override
   void initState() {
     super.initState();
@@ -106,11 +109,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
 
         final doc = await sb.Supabase.instance.client
             .from('shops')
-            .select('config')
+            .select('config, google_business')
             .eq('id', shopId!)
             .maybeSingle();
         if (doc != null) {
           final data = doc;
+          _googleBusiness = data['google_business'] as Map<String, dynamic>?;
           if (data.containsKey('config')) {
             final config = data['config'] as Map<String, dynamic>;
             if (mounted) {
@@ -1376,20 +1380,25 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           style: TextStyle(fontSize: 12),
         ),
         trailing: ElevatedButton.icon(
-          onPressed: () {
+          onPressed: () async {
             if (shopId != null) {
-              Navigator.push(
+              await Navigator.push(
                 context,
                 MaterialPageRoute(
                   builder: (context) => LinkGoogleBusinessPage(shopId: shopId!),
                 ),
               );
+              // Recarrega configurações ao voltar para atualizar o status do botão
+              _loadSettings();
             }
           },
-          icon: const Icon(Icons.link, size: 18),
-          label: const Text("CONECTAR"),
+          icon: Icon(_googleBusiness != null ? Icons.link_off : Icons.link,
+              size: 18),
+          label: Text(_googleBusiness != null ? "DESCONECTAR" : "CONECTAR"),
           style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.primaryPurple,
+            backgroundColor: _googleBusiness != null
+                ? Colors.red[600]
+                : AppColors.primaryPurple,
             foregroundColor: Colors.white,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           ),

@@ -243,9 +243,9 @@ class _ClientHomePageState extends State<ClientHomePage> {
         final data = doc;
         setState(() {
           _userId = user.id;
-          _userName = data?['nome'] ?? "Cliente";
+          _userName = data?['name'] ?? data?['nome'] ?? "Cliente";
           _userEmail = user.email ?? "";
-          _userPhotoUrl = null;
+          _userPhotoUrl = data?['photo_url'];
           _userTipo = data?['tipo'] ?? data?['role'] ?? 'cliente';
           // Restaurar última localização salva
           final lastLoc = data?['last_location'] as Map<String, dynamic>?;
@@ -985,18 +985,23 @@ class _ClientHomePageState extends State<ClientHomePage> {
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Row(
                 children: [
-                  // Apenas o logo (j contm o nome do app)
+                  // Apenas o logo (já contém o nome do app)
                   Image.asset('assets/images/logo_purple.png', height: 36),
 
-                  const Spacer(),
+                  const SizedBox(width: 8),
 
-                  // Seletor de Cidade (Pequeno no topo)
-                  SeletorDeCidadeButton(
-                    cidadeSelecionada: _cidadeSelecionada,
-                    onTap: _mostrarSeletorDeCidade,
+                  // Seletor de Cidade (Pequeno no topo) - Ajustado para crescer e manter distância
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: SeletorDeCidadeButton(
+                        cidadeSelecionada: _cidadeSelecionada,
+                        onTap: _mostrarSeletorDeCidade,
+                      ),
+                    ),
                   ),
 
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 12), // Distância segura da foto de perfil
 
                   // Perfil Mini com PopupMenu
                   PopupMenuButton<String>(
@@ -1689,12 +1694,33 @@ class _ShopCardState extends State<_ShopCard> {
                             const Icon(Icons.star,
                                 size: 10, color: Colors.amber),
                             const SizedBox(width: 2),
-                            Text(
-                              (data['rating'] ?? 5.0).toStringAsFixed(1),
-                              style: const TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white),
+                            Builder(
+                              builder: (context) {
+                                final googleData = data['google_business'] as Map<String, dynamic>?;
+                                final double rating = googleData?['rating']?.toDouble() ?? (data['rating']?.toDouble() ?? 5.0);
+                                final int? totalReviews = googleData?['user_ratings_total'];
+                                
+                                return Row(
+                                  children: [
+                                    Text(
+                                      rating.toStringAsFixed(1),
+                                      style: const TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.white),
+                                    ),
+                                    if (totalReviews != null && totalReviews > 0) ...[
+                                      const SizedBox(width: 2),
+                                      Text(
+                                        "($totalReviews)",
+                                        style: const TextStyle(
+                                            fontSize: 8,
+                                            color: Colors.white70),
+                                      ),
+                                    ],
+                                  ],
+                                );
+                              },
                             ),
                           ],
                         ),

@@ -20,6 +20,9 @@ String? getHashCatalogData() => null;
 /// Opens a URL in a new browser tab/window.
 void openWindow(String url, String name) {}
 
+/// Downloads an image from bytes on Web.
+void downloadImageWeb(List<int> bytes, String fileName) {}
+
 /// Reads text from the browser clipboard. Returns null on mobile.
 Future<String?> readClipboardWeb() async => null;
 

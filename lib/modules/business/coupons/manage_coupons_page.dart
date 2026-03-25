@@ -63,6 +63,7 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
   String? _slug;
   bool _isGeneratingImage = false;
   late PlanFeatures _currentFeatures = planFeaturesConfig[PlanKey.free]!;
+  List<Map<String, dynamic>> _services = [];
 
   Map<String, dynamic>? _couponToShare;
 
@@ -70,6 +71,31 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
   void initState() {
     super.initState();
     _loadShopData();
+    _loadServices();
+  }
+
+  Future<void> _loadServices() async {
+    final data = await Supabase.instance.client
+        .from('services')
+        .select('id, name')
+        .eq('shop_id', widget.shopId)
+        .eq('is_active', true)
+        .order('name');
+    
+    if (mounted) {
+      setState(() {
+        _services = List<Map<String, dynamic>>.from(data);
+      });
+    }
+  }
+
+  String _resolveServiceNames(List<String> serviceIds) {
+    final names = serviceIds.map((id) {
+      final match = _services.where((s) => s['id'].toString() == id);
+      return match.isNotEmpty ? match.first['name'] ?? '' : '';
+    }).where((n) => n.isNotEmpty).toList();
+    if (names.isEmpty) return 'Serviços específicos';
+    return names.join(', ');
   }
 
   Future<void> _loadShopData() async {
@@ -80,13 +106,15 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
         .maybeSingle();
 
     if (data != null) {
-      setState(() {
-        _shopName = data['nome'] ?? "Minha Loja";
-        final String? logo = data['logoUrl'];
-        final String? foto = data['foto'];
-        _logoUrl = (logo != null && logo.isNotEmpty) ? logo : foto;
-        _slug = data['slug'];
-      });
+      if (mounted) {
+        setState(() {
+          _shopName = data['name'] ?? "Minha Loja"; // Corrigido de 'nome'
+          final String? logo = data['logo_url']; // Corrigido de 'logoUrl'
+          final String? image = data['image_url']; // Corrigido de 'foto'
+          _logoUrl = (logo != null && logo.isNotEmpty) ? logo : image;
+          _slug = data['slug'];
+        });
+      }
     }
   }
 
@@ -142,8 +170,13 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
                     .stream(primaryKey: ['id'])
                     .eq('shop_id', widget.shopId),
                 builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator());
+                  if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+                    return const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(32.0),
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    );
                   }
 
                   if (snapshot.hasError) {
@@ -228,7 +261,7 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
                     child: CouponShareService.buildShareableCoupon(
                       shopName: _shopName,
                       code: _couponToShare!['code'] ?? '',
-                      discount: _couponToShare!['discountPercent'] ?? 0,
+                      discount: (_couponToShare!['discount_percent'] as num?)?.toInt() ?? 0, // Corrigido cast para int
                       logoUrl: _logoUrl,
                       description: _couponToShare!['description'],
                       subdomain: _slug,
@@ -299,7 +332,7 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
       child: ClipPath(
         clipper: const CouponTicketClipper(),
         child: Container(
-          height: 120,
+          height: 150, // Aumentado para acomodar logo e nome
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(16),
@@ -349,41 +382,76 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
 
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
+                      // Logo e Nome da Loja
                       Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
+                          if (_logoUrl != null && _logoUrl!.isNotEmpty)
+                            CircleAvatar(
+                              radius: 10,
+                              backgroundColor: Colors.grey[100],
+                              backgroundImage: CachedNetworkImageProvider(_logoUrl!),
+                            )
+                          else
+                            const Icon(Icons.store, size: 14, color: Colors.grey),
+                          const SizedBox(width: 8),
                           Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  data['code'] ?? '',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 18,
-                                    color: isCouponEnabled ? Colors.black87 : Colors.grey,
-                                    letterSpacing: 1.1,
-                                  ),
-                                ),
-                                if (data['description'] != null && data['description'].toString().isNotEmpty)
-                                  Text(
-                                    data['description'] ?? '',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                                  ),
-                              ],
+                            child: Text(
+                              _shopName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.grey[600],
+                              ),
                             ),
                           ),
                           _buildStatusBadge(isActive, isExpired),
                         ],
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 6),
+                      Text(
+                        data['code'] ?? '',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18,
+                          color: isCouponEnabled ? Colors.black87 : Colors.grey,
+                          letterSpacing: 1.1,
+                        ),
+                      ),
+                      if (data['description'] != null && data['description'].toString().isNotEmpty)
+                        Text(
+                          data['description'] ?? '',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                        ),
+                      if (data['service_ids'] != null && (data['service_ids'] as List).isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Row(
+                            children: [
+                              Icon(Icons.sell_outlined, size: 12, color: Colors.orange[400]),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  _resolveServiceNames(List<String>.from(data['service_ids'])),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(fontSize: 10, color: Colors.orange[700], fontWeight: FontWeight.w500),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      const SizedBox(height: 10),
                       Row(
                         children: [
                           Icon(Icons.history, size: 14, color: Colors.grey[400]),
@@ -426,28 +494,13 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
                     IconButton(
-                      icon: const Icon(Icons.copy_rounded, size: 20),
-                      color: isCouponEnabled ? AppColors.primaryPurple : Colors.grey,
-                      tooltip: 'Copiar Código',
-                      onPressed: () {
-                        Clipboard.setData(ClipboardData(text: data['code'] ?? ''));
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('Código ${data['code']} copiado!'),
-                            backgroundColor: AppColors.primaryPurple,
-                            behavior: SnackBarBehavior.floating,
-                            width: 250,
-                          ),
-                        );
-                      },
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.share_outlined, size: 20),
+                      icon: const Icon(Icons.share_outlined, size: 22),
                       color: Colors.blue[400],
+                      tooltip: 'Compartilhar',
                       onPressed: () => _shareCoupon(data),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.edit_outlined, size: 20),
+                      icon: const Icon(Icons.edit_outlined, size: 22),
                       color: Colors.grey[600],
                       onPressed: () => _showCouponDialog(id: id, initialData: data),
                     ),
@@ -497,6 +550,9 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
         text: initialData?['max_usage']?.toString() ?? '');
     double discountValue = (initialData?['discount_percent'] as num?)?.toDouble() ?? 10.0;
     bool isActive = initialData?['is_active'] ?? true;
+    List<String> selectedServiceIds = initialData?['service_ids'] != null 
+        ? List<String>.from(initialData!['service_ids']) 
+        : [];
 
     showModalBottomSheet(
       context: context,
@@ -580,6 +636,8 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
                 const SizedBox(height: 8),
                 TextField(
                   controller: codeCtrl,
+                  textCapitalization: TextCapitalization.characters,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
                   decoration: InputDecoration(
                     hintText: 'EX: VERAO20',
                     filled: true,
@@ -593,12 +651,51 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
                       borderSide: BorderSide(color: Colors.grey[200]!),
                     ),
                   ),
-                  textCapitalization: TextCapitalization.characters,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold, fontSize: 18),
                 ),
-
                 const SizedBox(height: 20),
+
+                const Text(
+                  "SERVIÇOS APLICÁVEIS (Opcional)",
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                if (_services.isEmpty)
+                  const Text("Nenhum serviço cadastrado.", style: TextStyle(fontSize: 12, color: Colors.grey))
+                else
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    children: _services.map((service) {
+                      final sId = service['id'].toString();
+                      final isSelected = selectedServiceIds.contains(sId);
+                      return FilterChip(
+                        label: Text(service['name'] ?? ''),
+                        selected: isSelected,
+                        onSelected: (selected) {
+                          setDialogState(() {
+                            if (selected) {
+                              selectedServiceIds.add(sId);
+                            } else {
+                              selectedServiceIds.remove(sId);
+                            }
+                          });
+                        },
+                        selectedColor: AppColors.primaryPurple.withValues(alpha: 0.2),
+                        checkmarkColor: AppColors.primaryPurple,
+                        labelStyle: TextStyle(
+                          fontSize: 12,
+                          color: isSelected ? AppColors.primaryPurple : Colors.black87,
+                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                const SizedBox(height: 20),
+
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -846,6 +943,7 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
                           'valid_month': selectedMonth,
                           'max_usage': int.tryParse(limitCtrl.text) ?? 0,
                           'updated_at': DateTime.now().toIso8601String(),
+                          'service_ids': selectedServiceIds.isEmpty ? null : selectedServiceIds,
                         };
                         debugPrint('Dados do cupom: $data');
  

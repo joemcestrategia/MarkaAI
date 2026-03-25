@@ -1,9 +1,7 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
-import 'package:http/http.dart' as http;
 import '../../core/theme/app_colors.dart';
 import '../../core/services/mercado_pago_service.dart';
 import '../modules/business/subscription_service.dart';
@@ -209,7 +207,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
             .maybeSingle();
 
         if (userDoc != null) {
-          _userPhone = userDoc['telefone']?.toString();
+          _userPhone = userDoc['phone']?.toString();
           if (_userPhone != null && _userPhone!.trim().isEmpty) _userPhone = null;
         }
       }
@@ -314,9 +312,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
         totalDiscountPercent += _birthdayDiscountPercent;
       }
 
-      // Aplica desconto de cupom se for PIX e estiver aplicado (ou se for pagamento local)
-      if ((_selectedMethod == 'pix' || _selectedPaymentType == 'local') &&
-          _couponApplied) {
+      // Aplica desconto de cupom se estiver aplicado (qualquer método de pagamento)
+      if (_couponApplied) {
         totalDiscountPercent += _couponDiscountPercent;
       }
 
@@ -346,6 +343,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
       shopId: widget.shopId,
       code: code,
       userId: user.id,
+      serviceId: widget.serviceDoc['id'],
     );
     setState(() => _isLoading = false);
 
@@ -741,7 +739,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
                       return Column(
                         children: [
-                          if (_selectedMethod == 'pix' &&
+                          if (_birthdayGiftAccepted &&
                               _isBirthdayMonth &&
                               _birthdayDiscountEnabled &&
                               _selectedPaymentType != 'local')
@@ -759,6 +757,48 @@ class _CheckoutPageState extends State<CheckoutPage> {
                                       fontSize: 12,
                                       fontWeight: FontWeight.bold,
                                       color: AppColors.primaryPurple,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          if (_couponApplied)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 8.0),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const Icon(Icons.local_offer,
+                                      color: Colors.green, size: 16),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    "Cupom '$_appliedCouponCode' Aplicado (-${_couponDiscountPercent.round()}%)",
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.green,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          if (_selectedMethod == 'card' &&
+                              _selectedPaymentType != 'local' &&
+                              _cardTaxPercent > 0)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 8.0),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.credit_card,
+                                      color: Colors.orange[700], size: 16),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    "Inclui ${_cardTaxPercent.toStringAsFixed(1)}% de taxa do cartão",
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.orange[700],
                                     ),
                                   ),
                                 ],
@@ -901,6 +941,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
             email: _storedCardData!['email'] as String,
             paymentMethodId: _storedCardData!['paymentMethodId'] as String?,
             issuerId: _storedCardData!['issuerId'],
+            cpf: _storedCardData!['cpf'] as String?,
           );
         }
       } else {
@@ -920,47 +961,31 @@ class _CheckoutPageState extends State<CheckoutPage> {
     required String email,
     String? paymentMethodId,
     dynamic issuerId,
+    String? cpf,
   }) async {
     setState(() => _isLoading = true);
     try {
-      final idToken = await _getPaymentIdToken();
-      if (idToken == null) return;
-
-      final response = await http.post(
-        Uri.parse(
-            'https://us-central1-wismart-118c3.cloudfunctions.net/criarPagamento'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'data': {
-            'cardToken': cardToken,
-            'email': email,
-            'installments': installments,
-            'valor': valor,
-            'shopId': widget.shopId,
-            'orderId': 'ORD-${DateTime.now().millisecondsSinceEpoch}',
-            'descricao': "Reserva: ${widget.serviceDoc['name'] ?? 'Serviço'}",
-            'idToken': idToken,
-            if (paymentMethodId != null) 'paymentMethodId': paymentMethodId,
-            if (issuerId != null) 'issuerId': issuerId,
-          }
-        }),
+      final result = await MercadoPagoService.criarPagamentoCartao(
+        shopId: widget.shopId,
+        cardToken: cardToken,
+        amount: valor,
+        installments: installments,
+        email: email,
+        description: "Reserva: ${widget.serviceDoc['name'] ?? 'Serviço'}",
+        cpf: cpf,
+        paymentMethodId: paymentMethodId,
+        issuerId: issuerId,
       );
 
-      if (response.statusCode == 200) {
-        final result = jsonDecode(response.body);
-        if (result['success'] == true && result['paymentId'] != null) {
-          await _saveBooking(
-            metodo: "Cartão de Crédito",
-            status: "confirmado",
-            valorPago: valor,
-            paymentId: result['paymentId'].toString(),
-          );
-        } else {
-          _showError(result['error']?.toString() ?? 'Pagamento recusado');
-        }
+      if (result['success'] == true && result['paymentId'] != null) {
+        await _saveBooking(
+          metodo: "Cartão de Crédito",
+          status: "confirmado",
+          valorPago: valor,
+          paymentId: result['paymentId'].toString(),
+        );
       } else {
-        final error = jsonDecode(response.body);
-        _showError(error['error']?.toString() ?? 'Erro no pagamento');
+        _showError(result['error']?.toString() ?? 'Pagamento recusado');
       }
     } catch (e) {
       _showError('Erro ao processar pagamento: $e');
@@ -980,70 +1005,40 @@ class _CheckoutPageState extends State<CheckoutPage> {
   }) async {
     setState(() => _isLoading = true);
     try {
-      final idToken = await _getPaymentIdToken();
-      if (idToken == null) return;
+      if (shopAccessToken == null) {
+        _showError('Esta loja não configurou os meios de pagamento online ainda.');
+        return;
+      }
 
-      final response = await http.post(
-        Uri.parse(
-            'https://us-central1-wismart-118c3.cloudfunctions.net/cobrarCartaoSalvo'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'data': {
-            'cardId': cardId,
-            'customerId': customerId,
-            'securityCode': securityCode,
-            'email': email,
-            'installments': installments,
-            'amount': valor,
-            'shopId': widget.shopId,
-            'description': "Reserva: ${widget.serviceDoc['name'] ?? 'Serviço'}",
-            'idToken':
-                idToken, // Required for Auth validation in our onCall function
-          }
-        }),
+      final result = await MercadoPagoService.cobrarCartaoSalvo(
+        accessToken: shopAccessToken!,
+        customerId: customerId,
+        cardId: cardId,
+        amount: valor,
+        installments: installments,
+        emailCliente: email,
+        description: "Reserva: ${widget.serviceDoc['name'] ?? 'Serviço'}",
+        securityCode: securityCode,
       );
 
-      if (response.statusCode == 200) {
-        final result = jsonDecode(response.body);
-        if (result['result'] != null &&
-            result['result']['status'] == 'approved') {
-          await _saveBooking(
-            metodo: "Cartão Salvo",
-            status: "confirmado",
-            valorPago: valor,
-            paymentId: result['result']['id'].toString(),
-          );
-        } else if (result['result'] != null &&
-            result['result']['status'] == 'pending') {
-          _showError(
-              'Seu pagamento está em análise. Tente novamente mais tarde.');
-        } else {
-          _showError(result['error']?.toString() ?? 'Pagamento recusado.');
-        }
+      final status = result['status']?.toString();
+      if (status == 'approved') {
+        await _saveBooking(
+          metodo: "Cartão Salvo",
+          status: "confirmado",
+          valorPago: valor,
+          paymentId: result['id']?.toString() ?? '',
+        );
+      } else if (status == 'pending' || status == 'in_process') {
+        _showError(
+            'Seu pagamento está em análise. Tente novamente mais tarde.');
       } else {
-        final error = jsonDecode(response.body);
-        _showError(error['error']?.toString() ?? 'Erro no pagamento');
+        _showError(result['status_detail']?.toString() ?? 'Pagamento recusado.');
       }
     } catch (e) {
       _showError('Erro ao processar pagamento com cartão salvo: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  Future<String?> _getPaymentIdToken() async {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) {
-      _showError(
-          'Não foi possível validar sua sessão para o pagamento. Tente novamente.');
-      return null;
-    }
-    try {
-      return Supabase.instance.client.auth.currentSession?.accessToken;
-    } catch (_) {
-      _showError(
-          'Não foi possível validar sua sessão para o pagamento. Tente novamente.');
-      return null;
     }
   }
 
@@ -1515,7 +1510,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
                   id: 'card',
                   icon: Icons.credit_card,
                   label: 'CARTÃO',
-                  description: 'Com parcelas',
+                  description: _cardTaxPercent > 0
+                      ? '+${_cardTaxPercent.toStringAsFixed(1)}% taxa'
+                      : 'Com parcelas',
                 ),
               ),
           ],
@@ -2056,6 +2053,28 @@ class _CheckoutPageState extends State<CheckoutPage> {
       final profData = widget.professionalDoc as Map<String, dynamic>;
       final DateTime endDate = bookingDate.add(Duration(minutes: duration));
 
+      // Calcula desconto total considerando se cada desconto está realmente ativo
+      double activeDiscountPercent = 0.0;
+      if (_isBirthdayMonth && _birthdayDiscountEnabled && _birthdayGiftAccepted) {
+        activeDiscountPercent += _birthdayDiscountPercent;
+      }
+      if (_couponApplied) {
+        activeDiscountPercent += _couponDiscountPercent;
+      }
+      if (activeDiscountPercent > 100) activeDiscountPercent = 100;
+
+      final double totalDiscounted = valorTotal * (1 - (activeDiscountPercent / 100.0));
+      double totalWithTax = totalDiscounted;
+      
+      // Se for pagamento via cartão (online), a taxa configurada pela loja é aplicada sobre o valor pago
+      if (_selectedMethod == 'card' && _selectedPaymentType != 'local') {
+        final double basePaid = (_selectedPaymentType == 'sinal') 
+            ? (valorSinal * (1 - (activeDiscountPercent / 100.0))) 
+            : totalDiscounted;
+        final double currentTax = basePaid * (_cardTaxPercent / 100.0);
+        totalWithTax += currentTax;
+      }
+
       final Map<String, dynamic> bookingData = {
         'shop_id': widget.shopId,
         'client_id': user.id,
@@ -2067,9 +2086,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
         'professional_photo_url': profData['foto_url'],
         'service_id': widget.serviceDoc['id'],
         'total_price': valorTotal,
-        'valor_com_desconto': valorTotal * (1 - (_birthdayDiscountPercent + _couponDiscountPercent) / 100.0),
+        'valor_com_desconto': totalWithTax,
         'paid_amount': valorPago,
-        'remaining_amount': (valorTotal * (1 - (_birthdayDiscountPercent + _couponDiscountPercent) / 100.0)) - valorPago,
+        'remaining_amount': (totalWithTax - valorPago).toDouble(),
         'duration_min': duration,
         'scheduled_at': bookingDate.toIso8601String(),
         'end_at': endDate.toIso8601String(),
@@ -2078,9 +2097,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
         'payment_method': metodo,
         'payment_id': paymentId,
         'birthday_discount_applied': _birthdayGiftAccepted,
+        'birthday_discount_percent': _birthdayGiftAccepted ? _birthdayDiscountPercent : 0,
         'coupon_applied': _couponApplied,
         'coupon_code': _appliedCouponCode,
-        'coupon_discount_percent': _couponDiscountPercent,
+        'coupon_discount_percent': _couponApplied ? _couponDiscountPercent : 0,
+        'card_tax_percent': (_selectedMethod == 'card' && _selectedPaymentType != 'local') ? _cardTaxPercent : 0,
         'valor_sinal':
             (metodo.contains('Sinal') || _selectedPaymentType == 'sinal')
                 ? valorPago

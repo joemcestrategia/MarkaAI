@@ -39,6 +39,15 @@
         android:scheme="markaai"
         android:host="login-callback"/>
 </intent-filter>
+<!-- Deep link para callback Mercado Pago OAuth -->
+<intent-filter>
+    <action android:name="android.intent.action.VIEW"/>
+    <category android:name="android.intent.category.DEFAULT"/>
+    <category android:name="android.intent.category.BROWSABLE"/>
+    <data
+        android:scheme="markaai"
+        android:host="mercadopago"/>
+</intent-filter>
         </activity>
 
         <activity

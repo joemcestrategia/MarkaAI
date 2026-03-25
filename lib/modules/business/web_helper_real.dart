@@ -5,6 +5,8 @@ library;
 
 import 'dart:async';
 import 'dart:js_interop';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:web/web.dart' as web;
 import 'dart:ui_web' as ui_web;
 
@@ -42,6 +44,21 @@ String? getHashCatalogData() {
 
 void openWindow(String url, String name) {
   web.window.open(url, name);
+}
+
+void downloadImageWeb(List<int> bytes, String fileName) {
+  try {
+    final uint8list = Uint8List.fromList(bytes);
+    final blob = web.Blob([uint8list.toJS].toJS, web.BlobPropertyBag(type: 'image/png'));
+    final url = web.URL.createObjectURL(blob);
+    final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+    anchor.href = url;
+    anchor.download = fileName;
+    anchor.click();
+    web.URL.revokeObjectURL(url);
+  } catch (e) {
+    debugPrint('Erro ao baixar imagem no Web: $e');
+  }
 }
 
 Future<String?> readClipboardWeb() async {

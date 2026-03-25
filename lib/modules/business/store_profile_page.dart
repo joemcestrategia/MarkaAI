@@ -1004,6 +1004,18 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                             hint: "(00) 00000-0000",
                             keyboardType: TextInputType.phone,
                             inputFormatters: [_phoneMask],
+                            onChanged: (val) {
+                              final unmasked = _phoneMask.getUnmaskedText();
+                              // Padrão brasileiro: celulares novos começam com 9
+                              bool isMobile = unmasked.length >= 3 && unmasked[2] == '9';
+                              String correctMask = isMobile ? '(##) #####-####' : '(##) ####-####';
+                              
+                              if (_phoneMask.getMask() != correctMask) {
+                                setState(() {
+                                  _phoneMask.updateMask(mask: correctMask);
+                                });
+                              }
+                            },
                           ),
                           const SizedBox(height: 12),
                           // ── Localização: Cidade + UF ───────────────────
@@ -1393,6 +1405,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
     String? Function(String?)? validator,
     String? hint,
     List<TextInputFormatter>? inputFormatters,
+    void Function(String)? onChanged,
   }) {
     return Container(
       decoration: BoxDecoration(
@@ -1412,6 +1425,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
         keyboardType: keyboardType,
         validator: validator,
         inputFormatters: inputFormatters,
+        onChanged: onChanged,
         decoration: InputDecoration(
           labelText: label,
           hintText: hint,

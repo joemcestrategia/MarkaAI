@@ -158,41 +158,34 @@ class SeletorDeCidadeButton extends StatelessWidget {
 
     return GestureDetector(
       onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: hasCity
-              ? AppColors.primaryPurple.withValues(alpha: 0.08)
-              : Colors.grey[100],
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: hasCity
-                ? AppColors.primaryPurple.withValues(alpha: 0.3)
-                : Colors.grey[300]!,
-          ),
-        ),
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
               Icons.location_on,
-              size: 14,
+              size: 16,
               color: hasCity ? AppColors.primaryPurple : Colors.grey[500],
             ),
             const SizedBox(width: 4),
-            Text(
-              label,
-              style: TextStyle(
-                color: hasCity ? AppColors.primaryPurple : Colors.grey[600],
-                fontSize: 12,
-                fontWeight: hasCity ? FontWeight.w600 : FontWeight.normal,
+            Flexible(
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: hasCity ? Colors.black87 : Colors.grey[600],
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                ),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
               ),
             ),
-            const SizedBox(width: 3),
             Icon(
               Icons.keyboard_arrow_down,
-              size: 14,
-              color: hasCity ? AppColors.primaryPurple : Colors.grey[500],
+              size: 16,
+              color: hasCity ? Colors.grey[400] : Colors.grey[500],
             ),
           ],
         ),

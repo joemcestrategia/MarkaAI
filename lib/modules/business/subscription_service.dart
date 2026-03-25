@@ -620,7 +620,7 @@ class SubscriptionService {
     }
   }
 
-  /// Ativa plano gratuito diretamente no Firestore, sem cobrança.
+  /// Ativa plano gratuito diretamente no Supabase, sem cobrança.
   static Future<void> _ativarPlanoGratuito({
     required BuildContext context,
     required String planId,
@@ -698,7 +698,7 @@ class SubscriptionService {
       final response = await supabase.functions.invoke('cancel-subscription', body: {'shop_id': shopId});
       
       final success = response.status == 200;
-      final data = response.data as Map<String, dynamic>?;
+      final data = response.data is Map<String, dynamic> ? response.data as Map<String, dynamic> : null;
 
       if (success && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -706,6 +706,11 @@ class SubscriptionService {
             content: Text(data?['message'] ?? 'Assinatura cancelada.'),
             backgroundColor: Colors.orange,
           ),
+        );
+      } else if (!success && context.mounted) {
+        final errMsg = data?['error'] ?? 'Erro ao cancelar assinatura.';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(errMsg.toString()), backgroundColor: Colors.red),
         );
       }
       return success;
@@ -741,7 +746,7 @@ class SubscriptionService {
       });
 
       final success = response.status == 200;
-      final data = response.data as Map<String, dynamic>?;
+      final data = response.data is Map<String, dynamic> ? response.data as Map<String, dynamic> : null;
 
       if (success && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -749,6 +754,11 @@ class SubscriptionService {
             content: Text(data?['message'] ?? 'Plano atualizado!'),
             backgroundColor: Colors.green,
           ),
+        );
+      } else if (!success && context.mounted) {
+        final errMsg = data?['error'] ?? 'Erro ao atualizar plano.';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(errMsg.toString()), backgroundColor: Colors.red),
         );
       }
       return success;
@@ -782,7 +792,7 @@ class SubscriptionService {
       });
 
       final success = response.status == 200;
-      final data = response.data as Map<String, dynamic>?;
+      final data = response.data is Map<String, dynamic> ? response.data as Map<String, dynamic> : null;
 
       if (success && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -790,6 +800,11 @@ class SubscriptionService {
             content: Text(data?['message'] ?? 'Downgrade agendado.'),
             backgroundColor: Colors.blue,
           ),
+        );
+      } else if (!success && context.mounted) {
+        final errMsg = data?['error'] ?? 'Erro ao agendar downgrade.';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(errMsg.toString()), backgroundColor: Colors.red),
         );
       }
       return success;
@@ -823,7 +838,7 @@ class SubscriptionService {
       });
 
       final success = response.status == 200;
-      final data = response.data as Map<String, dynamic>?;
+      final data = response.data is Map<String, dynamic> ? response.data as Map<String, dynamic> : null;
 
       if (success && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -832,6 +847,11 @@ class SubscriptionService {
                 Text(data?['message'] ?? 'Assinatura reativada! 🚀'),
             backgroundColor: Colors.green,
           ),
+        );
+      } else if (!success && context.mounted) {
+        final errMsg = data?['error'] ?? 'Erro ao reativar assinatura.';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(errMsg.toString()), backgroundColor: Colors.red),
         );
       }
       return success;

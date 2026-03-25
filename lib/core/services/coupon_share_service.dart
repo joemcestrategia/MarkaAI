@@ -7,6 +7,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../theme/app_colors.dart';
+import '../../modules/business/web_helper_stub.dart'
+    if (dart.library.js_interop) '../../modules/business/web_helper_real.dart' as web_helper;
 
 class CouponShareService {
   /// Captura um widget usando uma GlobalKey e compartilha como imagem
@@ -30,9 +32,10 @@ class CouponShareService {
       final bytes = byteData.buffer.asUint8List();
 
       if (kIsWeb) {
+        web_helper.downloadImageWeb(bytes, 'coupon_$code.png');
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Compartilhamento de cupom não disponível na Web.')),
+            const SnackBar(content: Text('Imagem do cupom baixada com sucesso!')),
           );
         }
         return;
@@ -87,87 +90,95 @@ class CouponShareService {
           // Logo da Loja
           if (logoUrl != null && logoUrl.isNotEmpty) ...[
             Container(
-              width: 70,
-              height: 70,
+              width: 90, // Aumentado de 70 para 90
+              height: 90,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: Colors.white,
+                border: Border.all(color: Colors.white, width: 3),
                 image: DecorationImage(
                   image: CachedNetworkImageProvider(logoUrl),
                   fit: BoxFit.cover,
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.2),
-                    blurRadius: 8,
-                    offset: const Offset(0, 4),
+                    color: Colors.black.withValues(alpha: 0.3),
+                    blurRadius: 12,
+                    offset: const Offset(0, 6),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
           ],
 
           // Nome da Loja
           Text(
             shopName.toUpperCase(),
             textAlign: TextAlign.center,
-            maxLines: 1,
+            maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               color: Colors.white,
-              fontSize: 18,
+              fontSize: 20, // Aumentado
               fontWeight: FontWeight.bold,
-              letterSpacing: 1.5,
+              letterSpacing: 2,
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 6),
           Container(
-            height: 1.5,
-            width: 30,
-            color: Colors.white.withValues(alpha: 0.3),
+            height: 2,
+            width: 40,
+            color: Colors.white.withValues(alpha: 0.5),
           ),
-          const SizedBox(height: 15),
+          const SizedBox(height: 20),
 
           // Título
           const Text(
             "VOCÊ GANHOU UM",
             style: TextStyle(
               color: Colors.white70,
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              letterSpacing: 3,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 4,
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 6),
           const Text(
             "SUPER DESCONTO",
             textAlign: TextAlign.center,
             style: TextStyle(
               color: Colors.white,
-              fontSize: 24,
+              fontSize: 28,
               fontWeight: FontWeight.w900,
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 18),
 
           // Badge de Desconto
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.2),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
             ),
             child: Text(
               "$discount% OFF",
               style: const TextStyle(
                 color: AppColors.primaryPurple,
-                fontSize: 38,
+                fontSize: 44, // Aumentado
                 fontWeight: FontWeight.w900,
               ),
             ),
           ),
-          const SizedBox(height: 15),
+          const SizedBox(height: 20),
 
           // Descrição do Cupom
           if (description != null && description.isNotEmpty) ...[
@@ -178,37 +189,38 @@ class CouponShareService {
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 13,
+                fontSize: 15,
                 fontStyle: FontStyle.italic,
               ),
             ),
-            const SizedBox(height: 15),
+            const SizedBox(height: 20),
           ],
 
           // Código
           const Text(
-            "USE O CÓDIGO:",
+            "USE O CÓDIGO NO SITE:",
             style: TextStyle(
               color: Colors.white70,
-              fontSize: 12,
+              fontSize: 13,
               fontWeight: FontWeight.bold,
               letterSpacing: 2,
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
             decoration: BoxDecoration(
-              border: Border.all(color: Colors.white, width: 2),
-              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.white, width: 3),
+              borderRadius: BorderRadius.circular(12),
+              color: Colors.white.withValues(alpha: 0.1),
             ),
             child: Text(
               code,
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 24,
+                fontSize: 28,
                 fontWeight: FontWeight.bold,
-                letterSpacing: 3,
+                letterSpacing: 4,
               ),
             ),
           ),

@@ -39,7 +39,7 @@ class GoogleCalendarService {
           'displayName': gUser.displayName,
         };
 
-        await supabase.from('users').update({'googleCalendar': calendarData}).eq('id', user.id);
+        await supabase.from('users').update({'google_calendar': calendarData}).eq('id', user.id);
 
         return {
           'accessToken': gAuth.accessToken,
@@ -60,7 +60,7 @@ class GoogleCalendarService {
     final user = supabase.auth.currentUser;
     if (user != null) {
       await supabase.from('users').update({
-        'googleCalendar': null,
+        'google_calendar': null,
       }).eq('id', user.id);
     }
   }
@@ -73,12 +73,12 @@ class GoogleCalendarService {
 
     final doc = await supabase
         .from('users')
-        .select('googleCalendar')
+        .select('google_calendar')
         .eq('id', user.id)
         .maybeSingle();
 
     if (doc == null) return false;
-    final data = doc['googleCalendar'] as Map<String, dynamic>?;
+    final data = doc['google_calendar'] as Map<String, dynamic>?;
     return data?['connected'] ?? false;
   }
 }

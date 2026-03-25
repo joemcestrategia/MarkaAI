@@ -119,7 +119,7 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
             _nameController.text = doc['name'] ?? '';
             _phoneController.text = doc['phone'] ?? '';
             _cepController.text = doc['zip_code'] ?? '';
-            _addressController.text = doc['address'] ?? '';
+            _addressController.text = doc['street'] ?? doc['address'] ?? '';
             _numberController.text = doc['number'] ?? '';
             _districtController.text = doc['neighborhood'] ?? '';
             _cityController.text = doc['city'] ?? '';
@@ -273,6 +273,15 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
       }
 
       await Supabase.instance.client.from('users').upsert(userData);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Cadastro atualizado com sucesso!"),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
 
       if (mounted) {
         if (widget.isBusinessAdding) {
@@ -380,15 +389,14 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
                     decoration: _deco("WhatsApp ou Fixo", Icons.phone),
                     onChanged: (val) {
                       String unmasked = phoneMask.getUnmaskedText();
-                      if (unmasked.length > 10 &&
-                          phoneMask.getMask() != '(##) #####-####') {
+                      // Padrão brasileiro: celulares novos começam com 9
+                      // Se tem pelo menos 3 dígitos e o terceiro é 9, é celular
+                      bool isMobile = unmasked.length >= 3 && unmasked[2] == '9';
+                      String correctMask = isMobile ? '(##) #####-####' : '(##) ####-####';
+                      
+                      if (phoneMask.getMask() != correctMask) {
                         setState(() {
-                          phoneMask.updateMask(mask: '(##) #####-####');
-                        });
-                      } else if (unmasked.length <= 10 &&
-                          phoneMask.getMask() != '(##) ####-####') {
-                        setState(() {
-                          phoneMask.updateMask(mask: '(##) ####-####');
+                          phoneMask.updateMask(mask: correctMask);
                         });
                       }
                     },

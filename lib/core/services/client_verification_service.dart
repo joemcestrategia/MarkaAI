@@ -101,14 +101,14 @@ class ClientVerificationService {
       // 2. Verificação avançada no registro da loja por email/telefone (prevenção de multi-conta)
       final userDoc = await _supabase
           .from('users')
-          .select('email, telefone')
+          .select('email, phone')
           .eq('id', userId)
           .maybeSingle();
       
       if (userDoc == null) return false;
 
       final email = (userDoc['email'] ?? '').toString().toLowerCase().trim();
-      final phone = (userDoc['telefone'] ?? '').toString().replaceAll(RegExp(r'\D'), '');
+      final phone = (userDoc['phone'] ?? '').toString().replaceAll(RegExp(r'\D'), '');
 
       if (email.isNotEmpty) {
         final registryEmail = await _supabase
@@ -148,14 +148,14 @@ class ClientVerificationService {
       
       final userDoc = await _supabase
           .from('users')
-          .select('email, telefone')
+          .select('email, phone')
           .eq('id', userId)
           .maybeSingle();
       
       if (userDoc == null) return;
 
       final email = (userDoc['email'] ?? '').toString().toLowerCase().trim();
-      final phone = (userDoc['telefone'] ?? '').toString().replaceAll(RegExp(r'\D'), '');
+      final phone = (userDoc['phone'] ?? '').toString().replaceAll(RegExp(r'\D'), '');
 
       // 1. Registro no documento do usuário (Trava Global)
       await _supabase.from('users').update({
@@ -167,7 +167,7 @@ class ClientVerificationService {
       final List<Map<String, dynamic>> registros = [];
       if (email.isNotEmpty) {
         registros.add({
-          'shopId': shopId,
+          'shop_id': shopId,
           'identifier': 'email_$email',
           'year': currentYear,
           'user_id': userId,
@@ -176,7 +176,7 @@ class ClientVerificationService {
       }
       if (phone.isNotEmpty) {
         registros.add({
-          'shopId': shopId,
+          'shop_id': shopId,
           'identifier': 'phone_$phone',
           'year': currentYear,
           'user_id': userId,
@@ -197,13 +197,14 @@ class ClientVerificationService {
     try {
       final userDoc = await _supabase
           .from('users')
-          .select('aniversario, data_nascimento, nascimento, birthDate')
+          .select('aniversario, data_nascimento, nascimento, birthDate, birth_date')
           .eq('id', userId)
           .maybeSingle();
       
       if (userDoc == null) return false;
 
-      final birthData = userDoc['aniversario'] ??
+      final birthData = userDoc['birth_date'] ??
+          userDoc['aniversario'] ??
           userDoc['data_nascimento'] ??
           userDoc['nascimento'] ??
           userDoc['birthDate'];

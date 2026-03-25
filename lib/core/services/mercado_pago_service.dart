@@ -19,7 +19,7 @@ class MercadoPagoService {
     try {
       debugPrint("⚡ [Service] Chamando Supabase Function: create-pix-payment");
 
-      final response = await _supabase.functions.invoke('create-pix-payment', body: {
+      final response = await _supabase.functions.invoke('createPixPayment', body: {
         'shop_id': shopId,
         'amount': amount,
         'email': emailCliente,
@@ -57,7 +57,7 @@ class MercadoPagoService {
     required String paymentId,
   }) async {
     try {
-      final response = await _supabase.functions.invoke('get-payment-status', body: {
+      final response = await _supabase.functions.invoke('getPaymentStatus', body: {
         'shop_id': shopId,
         'payment_id': paymentId,
       });
@@ -183,7 +183,7 @@ class MercadoPagoService {
     required int installments,
     required String email,
     required String description,
-    required String cpf,
+    String? cpf,
     String? paymentMethodId,
     String? issuerId,
   }) async {

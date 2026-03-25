@@ -227,6 +227,8 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
     const redirectUri =
         'https://uhccgcojwqvkfyzrmebv.supabase.co/functions/v1/mercadopagoCallback';
     final state = 'shop-$_shopId-${DateTime.now().millisecondsSinceEpoch}';
+    // Cache-buster: garante que o navegador nunca reutilize a sessão anterior
+    final nonce = DateTime.now().millisecondsSinceEpoch;
 
     final authUrl = Uri.parse(
       'https://auth.mercadopago.com.br/authorization'
@@ -234,11 +236,15 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
       '&response_type=code'
       '&platform_id=mp'
       '&redirect_uri=${Uri.encodeComponent(redirectUri)}'
-      '&state=${Uri.encodeComponent(state)}',
+      '&state=${Uri.encodeComponent(state)}'
+      '&_t=$nonce', // ← forçar URL única a cada tentativa (anti-cache)
     );
 
     try {
-      if (!await launchUrl(authUrl, mode: LaunchMode.externalApplication)) {
+      if (!await launchUrl(
+        authUrl,
+        mode: LaunchMode.externalApplication,
+      )) {
         throw 'Não foi possível abrir o navegador';
       }
     } catch (e) {

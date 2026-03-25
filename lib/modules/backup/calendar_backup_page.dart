@@ -44,13 +44,13 @@ class _CalendarBackupPageState extends State<CalendarBackupPage> {
       if (user != null) {
         final doc = await supabase
             .from('users')
-            .select('googleCalendar')
+            .select('google_calendar')
             .eq('id', user.id)
             .maybeSingle();
 
         if (mounted && doc != null) {
           setState(() {
-            _calendarData = doc['googleCalendar'] as Map<String, dynamic>?;
+            _calendarData = doc['google_calendar'] as Map<String, dynamic>?;
             _isConnected = _calendarData?['connected'] ?? false;
           });
         }
@@ -112,7 +112,7 @@ class _CalendarBackupPageState extends State<CalendarBackupPage> {
           'email': user.email,
           'lastSync': DateTime.now().toIso8601String(),
         };
-        await supabase.from('users').update({'googleCalendar': googleCalendar}).eq('id', user.id);
+        await supabase.from('users').update({'google_calendar': googleCalendar}).eq('id', user.id);
         
         if (mounted) {
           setState(() {
@@ -154,7 +154,7 @@ class _CalendarBackupPageState extends State<CalendarBackupPage> {
         final supabase = Supabase.instance.client;
         final user = supabase.auth.currentUser;
         if (user != null) {
-          await supabase.from('users').update({'googleCalendar': null}).eq('id', user.id);
+          await supabase.from('users').update({'google_calendar': null}).eq('id', user.id);
           if (mounted) {
             setState(() {
               _isConnected = false;

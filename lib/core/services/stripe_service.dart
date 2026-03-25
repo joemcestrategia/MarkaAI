@@ -41,7 +41,11 @@ class StripeService {
       );
 
   /// Atualiza o plano no Supabase imediatamente após pagamento aprovado
-  static Future<void> _updatePlanInSupabase(String planId) async {
+  static Future<void> _updatePlanInSupabase(
+    String planId, {
+    String? stripeSubscriptionId,
+    String? stripeCustomerId,
+  }) async {
     try {
       String? shopId = await SessionService.getShopId();
       if (shopId == null) {
@@ -64,6 +68,10 @@ class StripeService {
           'plan_id': planId,
           'status': 'active',
           'payment_provider': 'stripe',
+          if (stripeSubscriptionId != null)
+            'stripe_subscription_id': stripeSubscriptionId,
+          if (stripeCustomerId != null)
+            'stripe_customer_id': stripeCustomerId,
           'updated_at': DateTime.now().toIso8601String(),
         },
       }).eq('id', shopId);
@@ -95,7 +103,10 @@ class StripeService {
       });
 
       if (response.status != 200) {
-        throw Exception(response.data['message'] ?? 'Erro ao criar assinatura no Stripe.');
+        final errMsg = response.data is Map
+            ? (response.data['error'] ?? response.data['message'] ?? 'Erro ao criar assinatura no Stripe.')
+            : 'Erro ao criar assinatura no Stripe.';
+        throw Exception(errMsg);
       }
 
       final data = response.data;
@@ -129,7 +140,12 @@ class StripeService {
       await Stripe.instance.presentPaymentSheet();
 
       // 4. Pagamento aprovado — atualizar plano no Supabase imediatamente
-      await _updatePlanInSupabase(planId);
+      final String? subscriptionId = data['subscriptionId'];
+      await _updatePlanInSupabase(
+        planId,
+        stripeSubscriptionId: subscriptionId,
+        stripeCustomerId: customerId,
+      );
 
       return true;
     } on StripeException catch (e) {
@@ -163,7 +179,10 @@ class StripeService {
       });
 
       if (response.status != 200) {
-        throw Exception(response.data['message'] ?? 'Erro ao criar intenção de pagamento no Stripe.');
+        final errMsg = response.data is Map
+            ? (response.data['error'] ?? response.data['message'] ?? 'Erro ao criar intenção de pagamento no Stripe.')
+            : 'Erro ao criar intenção de pagamento no Stripe.';
+        throw Exception(errMsg);
       }
 
       final clientSecret = response.data['clientSecret'];

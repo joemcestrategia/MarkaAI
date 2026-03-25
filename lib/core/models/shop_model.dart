@@ -34,6 +34,7 @@ class ShopModel {
   final List<dynamic>? customHolidays;
   final Map<String, dynamic>? mercadopago;
   final String? mpAccessToken;
+  final Map<String, dynamic>? googleBusiness;
 
   ShopModel({
     required this.id,
@@ -71,6 +72,7 @@ class ShopModel {
     this.customHolidays,
     this.mercadopago,
     this.mpAccessToken,
+    this.googleBusiness,
   });
 
   factory ShopModel.fromMap(Map<String, dynamic> map) {
@@ -114,6 +116,7 @@ class ShopModel {
           : null,
       mercadopago: map['mercadopago'],
       mpAccessToken: map['mp_access_token'],
+      googleBusiness: map['google_business'],
     );
   }
 
@@ -154,6 +157,7 @@ class ShopModel {
       'custom_holidays': customHolidays,
       'mercadopago': mercadopago,
       'mp_access_token': mpAccessToken,
+      'google_business': googleBusiness,
       'updated_at': DateTime.now().toIso8601String(),
     };
   }

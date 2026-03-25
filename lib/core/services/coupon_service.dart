@@ -24,6 +24,7 @@ class CouponService {
     required String shopId,
     required String code,
     required String userId,
+    String? serviceId,
   }) async {
     try {
       final normalizedCode = code.trim().toUpperCase();
@@ -53,8 +54,18 @@ class CouponService {
         return CouponValidationResult(
             isValid: false, message: 'Este cupom não está mais ativo.');
       }
+
+      // 3. Verifica restrição de serviço
+      final List<dynamic>? serviceIds = couponData['service_ids'];
+      if (serviceIds != null && serviceIds.isNotEmpty) {
+        if (serviceId == null || !serviceIds.contains(serviceId)) {
+          return CouponValidationResult(
+              isValid: false,
+              message: 'Este cupom não é válido para o serviço selecionado.');
+        }
+      }
  
-      // 3. Verifica validade (data)
+      // 4. Verifica validade (data)
       final validUntilStr = couponData['valid_until'];
       if (validUntilStr != null) {
         final validUntil = DateTime.parse(validUntilStr.toString());
@@ -64,14 +75,14 @@ class CouponService {
         }
       }
  
-      // 4. Verifica validade (mês específico)
+      // 5. Verifica validade (mês específico)
       final validMonth = int.tryParse(couponData['valid_month']?.toString() ?? '');
       if (validMonth != null && DateTime.now().month != validMonth) {
         return CouponValidationResult(
             isValid: false, message: 'Este cupom não é válido neste mês.');
       }
  
-      // 5. Verifica limite de uso global
+      // 6. Verifica limite de uso global
       final int usageCount = int.tryParse(couponData['usage_count']?.toString() ?? '0') ?? 0;
       final int? maxUsage = int.tryParse(couponData['max_usage']?.toString() ?? '');
       
@@ -80,7 +91,7 @@ class CouponService {
             isValid: false, message: 'Este cupom atingiu o limite de usos.');
       }
  
-      // 6. Verifica se o usuário já usou este cupom
+      // 7. Verifica se o usuário já usou este cupom
       final usageResponse = await _supabase
           .from('coupon_usage')
           .select()

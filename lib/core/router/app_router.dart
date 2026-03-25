@@ -376,7 +376,7 @@ class _AuthRedirectState extends State<AuthRedirect> {
         if (mounted) {
           setState(() {
             _targetPage = const LoginPage(
-              contextMessage: 'Por favor, complete seu cadastro para continuar.',
+            contextMessage: 'Por favor, edite seu perfil para continuar.',
             );
           });
         }

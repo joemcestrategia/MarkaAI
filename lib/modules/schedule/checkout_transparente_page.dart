@@ -181,20 +181,30 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
 
       final user = Supabase.instance.client.auth.currentUser;
 
+      final paymentData = {
+        'cardToken': cardToken,
+        'valor': _valorComTaxa,
+        'email': user?.email ?? 'cliente@markaai.com.br',
+        'installments': _selectedInstallment['installments'],
+        'lastFour': lastFour,
+        'paymentMethodId': tokenData['payment_method_id'],
+        'issuerId': tokenData['issuer_id'],
+        'cpf': _cpfController.text,
+      };
+
+      // Notify the system that autofill is complete
+      TextInput.finishAutofillContext();
+
+      if (widget.collectOnly) {
+        Navigator.pop(context, paymentData);
+        return;
+      }
+
       Navigator.push(
         context,
         MaterialPageRoute(
           builder: (context) => CheckoutReviewPage(
-            paymentData: {
-              'cardToken': cardToken,
-              'valor': _valorComTaxa,
-              'email': user?.email ?? 'cliente@markaai.com.br',
-              'installments': _selectedInstallment['installments'],
-              'lastFour': lastFour,
-              'paymentMethodId': tokenData['payment_method_id'],
-              'issuerId': tokenData['issuer_id'],
-              'cpf': _cpfController.text,
-            },
+            paymentData: paymentData,
             serviceDoc: widget.serviceDoc,
             professionalDoc: widget.professionalDoc,
             date: widget.date,
@@ -206,9 +216,6 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
           ),
         ),
       );
-
-      // Notify the system that autofill is complete
-      TextInput.finishAutofillContext();
     } catch (e) {
       _showError(_getFriendlyErrorMessage(e.toString()));
     } finally {
