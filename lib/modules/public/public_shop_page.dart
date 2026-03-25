@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -84,7 +84,7 @@ class _PublicShopPageState extends State<PublicShopPage> {
 
   Future<void> _handleServiceTap(
     BuildContext context,
-    DocumentSnapshot serviceDoc,
+    Map<String, dynamic> serviceDoc,
   ) async {
     // ✅ Navegar direto para os detalhes do serviço (Antigamente pedia login aqui)
     if (context.mounted) {
@@ -105,12 +105,12 @@ class _PublicShopPageState extends State<PublicShopPage> {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<QuerySnapshot>(
-      future: FirebaseFirestore.instance
-          .collection('shops')
-          .where('slug', isEqualTo: widget.slug)
-          .limit(1)
-          .get(),
+    return FutureBuilder<Map<String, dynamic>?>(
+      future: Supabase.instance.client
+          .from('shops')
+          .select()
+          .eq('slug', widget.slug)
+          .maybeSingle(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
@@ -118,7 +118,7 @@ class _PublicShopPageState extends State<PublicShopPage> {
           );
         }
 
-        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+        if (!snapshot.hasData || snapshot.data == null) {
           return Scaffold(
             backgroundColor: const Color(0xFFF5F7FA),
             body: Center(
@@ -143,8 +143,8 @@ class _PublicShopPageState extends State<PublicShopPage> {
           );
         }
 
-        final shopDoc = snapshot.data!.docs.first;
-        final data = shopDoc.data() as Map<String, dynamic>;
+        final data = snapshot.data!;
+        final shopId = data['id'];
         final whatsapp = data['whatsapp']?.toString() ?? '';
         final instagram = data['instagram']?.toString() ?? '';
 
@@ -160,7 +160,7 @@ class _PublicShopPageState extends State<PublicShopPage> {
                 foregroundColor: Colors.white,
                 flexibleSpace: FlexibleSpaceBar(
                   title: Text(
-                    data['nome'] ?? 'Loja',
+                    data['name'] ?? 'Loja',
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
@@ -168,10 +168,9 @@ class _PublicShopPageState extends State<PublicShopPage> {
                     ),
                   ),
                   background: Hero(
-                    tag: 'cover_${shopDoc.id}',
+                    tag: 'cover_$shopId',
                     child: () {
-                      final coverUrl = data['coverUrl']?.toString() ??
-                          data['imageUrl']?.toString() ??
+                      final coverUrl = data['image_url']?.toString() ??
                           '';
                       if (coverUrl.isNotEmpty) {
                         return CachedNetworkImage(
@@ -198,12 +197,12 @@ class _PublicShopPageState extends State<PublicShopPage> {
                       return Container(
                         decoration: const BoxDecoration(
                           gradient: LinearGradient(
-                              colors: [
-                                AppColors.primaryPurple,
-                                Color(0xFF4A148C)
-                              ],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight),
+                               colors: [
+                                 AppColors.primaryPurple,
+                                 Color(0xFF4A148C)
+                               ],
+                               begin: Alignment.topLeft,
+                               end: Alignment.bottomRight),
                         ),
                       );
                     }(),
@@ -228,13 +227,13 @@ class _PublicShopPageState extends State<PublicShopPage> {
                               color: Colors.white,
                               shape: BoxShape.circle,
                               border: Border.all(color: Colors.grey.shade200),
-                              image: data['logoUrl'] != null
+                              image: data['logo_url'] != null
                                   ? DecorationImage(
-                                      image: NetworkImage(data['logoUrl']),
+                                      image: NetworkImage(data['logo_url']),
                                       fit: BoxFit.cover)
                                   : null,
                             ),
-                            child: data['logoUrl'] == null
+                            child: data['logo_url'] == null
                                 ? const Icon(Icons.store, size: 36)
                                 : null,
                           ),
@@ -244,7 +243,7 @@ class _PublicShopPageState extends State<PublicShopPage> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  data['nome'] ?? 'Loja',
+                                  data['name'] ?? 'Loja',
                                   style: const TextStyle(
                                       fontSize: 22,
                                       fontWeight: FontWeight.bold),
@@ -355,7 +354,7 @@ class _PublicShopPageState extends State<PublicShopPage> {
               SliverPersistentHeader(
                 pinned: true,
                 delegate: _StickyCategoryDelegate(
-                  shopId: shopDoc.id,
+                  shopId: shopId,
                   selectedCategoryId: _selectedCategoryId,
                   onCategorySelected: (catId) {
                     setState(() {
@@ -364,28 +363,54 @@ class _PublicShopPageState extends State<PublicShopPage> {
                   },
                 ),
               ),
-              // Helper: function to build star icons (placed after class content)
 
               // Lista de serviços
-              StreamBuilder<QuerySnapshot>(
-                stream: FirebaseFirestore.instance
-                    .collection('services')
-                    .where('shopId', isEqualTo: shopDoc.id)
-                    .where('ativo', isEqualTo: true)
-                    .snapshots(),
+              FutureBuilder<List<Map<String, dynamic>>>(
+                // ✅ FIX: Removido .eq('is_active', true) do banco.
+                // Dados migrados do Firebase NÃO têm essa coluna populada (null).
+                // O Supabase trata null != true, bloqueando todos os serviços.
+                // O filtro agora é feito localmente no Dart (null = ativo por padrão).
+                future: Supabase.instance.client
+                    .from('services')
+                    .select()
+                    .eq('shop_id', shopId),
                 builder: (context, snapshot) {
+                  if (snapshot.hasError) {
+                    debugPrint('PublicShopPage: Erro ao buscar serviços: ${snapshot.error}');
+                    return const SliverToBoxAdapter(
+                      child: Padding(
+                        padding: EdgeInsets.all(40),
+                        child: Center(
+                          child: Text(
+                            'Erro ao carregar serviços.',
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                        ),
+                      ),
+                    );
+                  }
+
                   if (!snapshot.hasData) {
                     return const SliverToBoxAdapter(
                       child: Center(child: CircularProgressIndicator()),
                     );
                   }
 
-                  var services = snapshot.data!.docs;
-                  
-                  // Aplicar filtro de categoria manualmente para evitar complexidade de índice no Firestore
+                  // ✅ FIX: Filtro local — null é tratado como ativo (dados migrados)
+                  var services = List<Map<String, dynamic>>.from(snapshot.data!)
+                      .where((s) {
+                        final isActive = s['is_active'];
+                        // null = sem coluna (migrado), true = ativo, false = inativo
+                        return isActive == null || isActive == true;
+                      })
+                      .toList();
+
+                  debugPrint('PublicShopPage: ${snapshot.data!.length} serviços no banco, '
+                      '${services.length} ativos para shopId=$shopId');
+
+                  // Aplicar filtro de categoria manualmente
                   if (_selectedCategoryId != null) {
-                    services = services.where((doc) {
-                      final sData = doc.data() as Map<String, dynamic>;
+                    services = services.where((sData) {
                       final ids = sData['categoryIds'] != null 
                           ? List<String>.from(sData['categoryIds']) 
                           : (sData['categoryId'] != null ? [sData['categoryId'].toString()] : []);
@@ -407,25 +432,18 @@ class _PublicShopPageState extends State<PublicShopPage> {
                     );
                   }
 
-                  // ✅ Ordenar serviços em ordem alfabética (copiando para evitar erro em lista imutável)
-                  var sortedServices = List.from(services);
+                  // ✅ Ordenar serviços em ordem alfabética
+                  var sortedServices = List<Map<String, dynamic>>.from(services);
                   sortedServices.sort((a, b) {
-                    final strA = (a.data() as Map<String, dynamic>)['nome']
-                            ?.toString()
-                            .toLowerCase() ??
-                        '';
-                    final strB = (b.data() as Map<String, dynamic>)['nome']
-                            ?.toString()
-                            .toLowerCase() ??
-                        '';
+                    final strA = (a['name'] ?? '').toString().toLowerCase();
+                    final strB = (b['name'] ?? '').toString().toLowerCase();
                     return strA.compareTo(strB);
                   });
 
                   return SliverList(
                     delegate: SliverChildBuilderDelegate(
                       (context, index) {
-                        final sDoc = sortedServices[index];
-                        final sData = sDoc.data() as Map<String, dynamic>;
+                        final sData = sortedServices[index];
                         dynamic rawFotos = sData['fotos_urls'] ??
                             sData['fotos'] ??
                             sData['imageUrl'] ??
@@ -457,7 +475,7 @@ class _PublicShopPageState extends State<PublicShopPage> {
                               color: Colors.transparent,
                               child: InkWell(
                                 borderRadius: BorderRadius.circular(12),
-                                onTap: () => _handleServiceTap(context, sDoc),
+                                onTap: () => _handleServiceTap(context, sData),
                                 child: Padding(
                                   padding: const EdgeInsets.all(12),
                                   child: Row(
@@ -474,8 +492,8 @@ class _PublicShopPageState extends State<PublicShopPage> {
                                                   fit: BoxFit.cover,
                                                 )
                                               : PexelsImageWidget(
-                                                  searchQuery: ServiceImageKeywords.getEnglishKeyword(sData['nome'] ?? ""),
-                                                  index: services.indexOf(sDoc),
+                                                  searchQuery: ServiceImageKeywords.getEnglishKeyword(sData['name'] ?? ""),
+                                                  index: index,
                                                 ),
                                         ),
                                       ),
@@ -486,7 +504,7 @@ class _PublicShopPageState extends State<PublicShopPage> {
                                               CrossAxisAlignment.start,
                                           children: [
                                             Text(
-                                              sData['nome'] ?? "",
+                                              sData['name'] ?? "",
                                               style: const TextStyle(
                                                   fontWeight: FontWeight.bold,
                                                   fontSize: 16),
@@ -494,7 +512,7 @@ class _PublicShopPageState extends State<PublicShopPage> {
                                             ),
                                             const SizedBox(height: 4),
                                             Text(
-                                              "${sData['tempo_min'] ?? 30} min",
+                                              "${sData['duration_min'] ?? 30} min",
                                               style: const TextStyle(
                                                   fontSize: 12,
                                                   color: Colors.grey),
@@ -502,7 +520,7 @@ class _PublicShopPageState extends State<PublicShopPage> {
                                             const SizedBox(height: 4),
                                             Text(
                                               _currency.format(double.tryParse(
-                                                      sData['preco']
+                                                      (sData['price'])
                                                               ?.toString() ??
                                                           '0') ??
                                                   0),
@@ -525,7 +543,7 @@ class _PublicShopPageState extends State<PublicShopPage> {
                           ),
                         );
                       },
-                      childCount: services.length,
+                      childCount: sortedServices.length,
                     ),
                   );
                 },
@@ -571,27 +589,27 @@ class _StickyCategoryDelegate extends SliverPersistentHeaderDelegate {
     return Container(
       color: const Color(0xFFF5F7FA), // Fundo combinando com a página
       padding: const EdgeInsets.symmetric(vertical: 4),
-      child: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('categories')
-            .where('shopId', isEqualTo: shopId)
-            .snapshots(),
+      child: StreamBuilder<List<Map<String, dynamic>>>(
+        // ✅ FIX: A tabela 'categories' usa shop_id (snake_case)
+        stream: Supabase.instance.client
+            .from('categories')
+            .stream(primaryKey: ['id'])
+            .eq('shop_id', shopId),
         builder: (context, snapshot) {
-          if (snapshot.hasError) return const SizedBox();
-          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+          if (snapshot.hasError) {
+            debugPrint('❌ Erro no Stream de Categorias: ${snapshot.error}');
+            return const SizedBox();
+          }
+          if (!snapshot.hasData || snapshot.data!.isEmpty) {
+            debugPrint('ℹ️ PublicShopPage: Nenhuma categoria encontrada para shop_id=$shopId');
             return const SizedBox();
           }
 
-          final categories = snapshot.data!.docs.toList();
+          final categories = List<Map<String, dynamic>>.from(snapshot.data!);
           categories.sort((a, b) {
-            final nameA = (a.data() as Map<String, dynamic>)['nome']
-                    ?.toString()
-                    .toLowerCase() ??
-                '';
-            final nameB = (b.data() as Map<String, dynamic>)['nome']
-                    ?.toString()
-                    .toLowerCase() ??
-                '';
+            // ✅ FIX: A tabela 'categories' usa 'name' (inglês) no Supabase
+            final nameA = (a['name'] ?? '').toString().toLowerCase();
+            final nameB = (b['name'] ?? '').toString().toLowerCase();
             return nameA.compareTo(nameB);
           });
 
@@ -602,8 +620,9 @@ class _StickyCategoryDelegate extends SliverPersistentHeaderDelegate {
             itemBuilder: (context, index) {
               final isAll = index == 0;
               final category = isAll ? null : categories[index - 1];
-              final catId = isAll ? null : category!.id;
-              final catName = isAll ? "Todos" : category!['nome'];
+              final catId = isAll ? null : category!['id']?.toString();
+              // ✅ FIX: A tabela 'categories' usa 'name'
+              final catName = isAll ? "Todos" : category!['name'] ?? "Sem Nome";
               final isSelected = selectedCategoryId == catId;
 
               return Padding(

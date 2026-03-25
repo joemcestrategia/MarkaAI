@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import '../../core/theme/app_colors.dart';
 
@@ -7,7 +7,7 @@ import '../../core/theme/app_colors.dart';
 /// Exibe o resumo da alteração e, se houver sobreposição, alerta com detalhes
 /// do agendamento conflitante.
 class EditAppointmentConfirmPage extends StatefulWidget {
-  final DocumentSnapshot appointmentDoc;
+  final Map<String, dynamic> appointmentDoc;
   final DateTime newDate;
   final TimeOfDay newTime;
 
@@ -71,41 +71,40 @@ class _EditAppointmentConfirmPageState
   Future<void> _fetchAlternatives() async {
     setState(() => _isLoadingAlternatives = true);
     try {
-      final currentApp = widget.appointmentDoc.data() as Map<String, dynamic>;
-      final shopId = currentApp['shopId'] as String;
+      final currentApp = widget.appointmentDoc;
+      final shopId = (currentApp['shop_id'] ?? currentApp['shopId']) as String;
 
       // Usa pendingUpdates se existir, fallback pro original
       final pending = widget.pendingUpdates ?? {};
-      final currentProfId = pending['profissionalId'] as String? ??
-          currentApp['profissionalId'] as String;
+      final currentProfId = pending['professional_id'] as String? ??
+          currentApp['professional_id'] as String;
       final newServiceId =
-          pending['servicoId'] as String? ?? currentApp['servicoId'] as String;
+          pending['service_id'] as String? ?? currentApp['service_id'] as String;
       final int newServiceDuration = pending['duracao_min'] ??
           int.tryParse(currentApp['duracao_min']?.toString() ?? '30') ??
           30;
 
       // Dados do agendamento Conflitante (O antigo que já ocupava a vaga)
       final conflictApp = widget.conflictData!;
-      final oldServiceId = conflictApp['servicoId'] as String?;
+      final oldServiceId = conflictApp['service_id'] as String?;
       final oldServiceDuration =
           int.tryParse(conflictApp['duracao_min']?.toString() ?? '30') ?? 30;
-      final oldAppStartData = conflictApp['data_agendamento'] as Timestamp;
-      final oldAppStart = oldAppStartData.toDate();
+      
+      final oldAppStart = conflictApp['scheduled_at'] is String 
+          ? DateTime.parse(conflictApp['scheduled_at'])
+          : conflictApp['scheduled_at'] as DateTime;
 
       // Buscar todos os funcionários da loja (exceto o profissional atual)
-      final employeesSnap = await FirebaseFirestore.instance
-          .collection('employees')
-          .where('shopId', isEqualTo: shopId)
-          .get();
-
-      final otherEmployees =
-          employeesSnap.docs.where((d) => d.id != currentProfId).toList();
+      final otherEmployees = await Supabase.instance.client
+          .from('employees')
+          .select()
+          .eq('shop_id', shopId)
+          .neq('id', currentProfId);
 
       List<Map<String, dynamic>> reassignMatches = [];
       List<Map<String, dynamic>> swapMatches = [];
 
-      for (var empDoc in otherEmployees) {
-        final empData = empDoc.data();
+      for (var empData in otherEmployees) {
         final skills =
             (empData['servicos_habilidade'] as List?)?.cast<String>() ?? [];
 
@@ -113,9 +112,9 @@ class _EditAppointmentConfirmPageState
         bool canDoNewService = skills.isEmpty || skills.contains(newServiceId);
         if (canDoNewService) {
           bool isFree = await _checkEmployeeAvailability(
-              empDoc.id, _newDateTime, newServiceDuration);
+              empData['id'].toString(), _newDateTime, newServiceDuration);
           if (isFree) {
-            reassignMatches.add({'id': empDoc.id, 'nome': empData['nome']});
+            reassignMatches.add({'id': empData['id'].toString(), 'nome': empData['nome']});
           }
         }
 
@@ -125,9 +124,9 @@ class _EditAppointmentConfirmPageState
               skills.isEmpty || skills.contains(oldServiceId);
           if (canDoOldService) {
             bool isFree = await _checkEmployeeAvailability(
-                empDoc.id, oldAppStart, oldServiceDuration);
+                empData['id'].toString(), oldAppStart, oldServiceDuration);
             if (isFree) {
-              swapMatches.add({'id': empDoc.id, 'nome': empData['nome']});
+              swapMatches.add({'id': empData['id'].toString(), 'nome': empData['nome']});
             }
           }
         }
@@ -159,25 +158,24 @@ class _EditAppointmentConfirmPageState
         DateTime(targetStart.year, targetStart.month, targetStart.day);
     final dayEnd = dayStart.add(const Duration(days: 1));
 
-    final snap = await FirebaseFirestore.instance
-        .collection('appointments')
-        .where('profissionalId', isEqualTo: empId)
-        .where('data_agendamento',
-            isGreaterThanOrEqualTo: Timestamp.fromDate(dayStart))
-        .where('data_agendamento', isLessThan: Timestamp.fromDate(dayEnd))
-        .get();
+    final snap = await Supabase.instance.client
+        .from('appointments')
+        .select()
+        .eq('professional_id', empId)
+        .gte('scheduled_at', dayStart.toIso8601String())
+        .lt('scheduled_at', dayEnd.toIso8601String());
 
     final targetStartMin = targetStart.hour * 60 + targetStart.minute;
     final targetEndMin = targetStartMin + duration;
 
-    for (var doc in snap.docs) {
-      final d = doc.data();
+    for (var d in snap) {
       final status = (d['status'] ?? '').toString().toLowerCase();
-      if (status == 'cancelado' || status == 'recusado' || status == 'excluido')
+      if (status == 'cancelado' || status == 'recusado' || status == 'excluido') {
         continue;
+      }
 
-      final appStart = (d['data_agendamento'] as Timestamp).toDate();
-      final appDur = int.tryParse(d['duracao_min']?.toString() ?? '30') ?? 30;
+      final appStart = DateTime.parse(d['scheduled_at'].toString());
+      final appDur = int.tryParse(d['duration_min']?.toString() ?? '30') ?? 30;
       final startMin = appStart.hour * 60 + appStart.minute;
       final endMin = startMin + appDur;
 
@@ -191,30 +189,32 @@ class _EditAppointmentConfirmPageState
   Future<void> _processSwapOrReassignment() async {
     setState(() => _isSaving = true);
     try {
-      final batch = FirebaseFirestore.instance.batch();
       final Map<String, dynamic> updatesToSave = {
         ...?widget.pendingUpdates,
-        'data_agendamento': _newDateTime,
+        'scheduled_at': _newDateTime.toIso8601String(),
       };
 
       if (_selectedAction == 1 && _selectedReassignId != null) {
         // Ação 1: REATRIBUIR
-        updatesToSave['profissionalId'] = _selectedReassignId;
-        batch.update(widget.appointmentDoc.reference, updatesToSave);
+        updatesToSave['professional_id'] = _selectedReassignId;
+        await Supabase.instance.client
+          .from('appointments')
+          .update(updatesToSave)
+          .eq('id', widget.appointmentDoc['id']);
       } else if (_selectedAction == 2 && _selectedSwapId != null) {
         // Ação 2: PERMUTA/SWAP
         final conflictId = widget.conflictData!['id'];
-        final oldAppRef = FirebaseFirestore.instance
-            .collection('appointments')
-            .doc(conflictId);
 
-        batch.update(oldAppRef, {
-          'profissionalId': _selectedSwapId,
-        });
-        batch.update(widget.appointmentDoc.reference, updatesToSave);
+        await Supabase.instance.client
+          .from('appointments')
+          .update({'professional_id': _selectedSwapId})
+          .eq('id', conflictId);
+
+        await Supabase.instance.client
+          .from('appointments')
+          .update(updatesToSave)
+          .eq('id', widget.appointmentDoc['id']);
       }
-
-      await batch.commit();
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -247,7 +247,7 @@ class _EditAppointmentConfirmPageState
     }
     setState(() => _isSaving = true);
     try {
-      final data = widget.appointmentDoc.data() as Map<String, dynamic>;
+      final data = widget.appointmentDoc;
       final pending = widget.pendingUpdates ?? {};
 
       // --- RE-VALIDAÇÃO BACKEND (PRE-UPDATE) ---
@@ -262,29 +262,28 @@ class _EditAppointmentConfirmPageState
       final newStartMin = _newDateTime.hour * 60 + _newDateTime.minute;
       final newEndMin = newStartMin + serviceDur;
 
-      final profId = pending['profissionalId'] as String? ??
-          data['profissionalId'] as String?;
+      final profId = pending['professional_id'] as String? ??
+          data['professional_id'] as String?;
       final clientId =
-          pending['clientId'] as String? ?? data['clientId'] as String?;
+          pending['client_id'] as String? ?? data['client_id'] as String?;
 
       if (profId != null) {
-        final snapProf = await FirebaseFirestore.instance
-            .collection('appointments')
-            .where('profissionalId', isEqualTo: profId)
-            .where('data_agendamento', isGreaterThanOrEqualTo: dayStart)
-            .where('data_agendamento', isLessThanOrEqualTo: dayEnd)
-            .get();
+        final snapProf = await Supabase.instance.client
+            .from('appointments')
+            .select()
+            .eq('professional_id', profId)
+            .gte('scheduled_at', dayStart.toIso8601String())
+            .lte('scheduled_at', dayEnd.toIso8601String());
 
-        for (final doc in snapProf.docs) {
-          if (doc.id == widget.appointmentDoc.id) continue;
-          final d = doc.data();
+        for (final d in snapProf) {
+          if (d['id'] == widget.appointmentDoc['id']) continue;
           final status = (d['status'] ?? '').toString().toLowerCase();
           if (status == 'cancelado' ||
               status == 'recusado' ||
               status == 'excluido') continue;
 
-          final dt = (d['data_agendamento'] as Timestamp).toDate();
-          final dur = int.tryParse(d['duracao_min']?.toString() ?? '') ?? 30;
+          final dt = DateTime.parse(d['scheduled_at'].toString());
+          final dur = int.tryParse(d['duration_min']?.toString() ?? '') ?? 30;
           final startMin = dt.hour * 60 + dt.minute;
           final endMin = startMin + dur;
 
@@ -296,23 +295,22 @@ class _EditAppointmentConfirmPageState
       }
 
       if (clientId != null && clientId.isNotEmpty) {
-        final snapClient = await FirebaseFirestore.instance
-            .collection('appointments')
-            .where('clientId', isEqualTo: clientId)
-            .where('data_agendamento', isGreaterThanOrEqualTo: dayStart)
-            .where('data_agendamento', isLessThanOrEqualTo: dayEnd)
-            .get();
+        final snapClient = await Supabase.instance.client
+            .from('appointments')
+            .select()
+            .eq('client_id', clientId)
+            .gte('scheduled_at', dayStart.toIso8601String())
+            .lte('scheduled_at', dayEnd.toIso8601String());
 
-        for (final doc in snapClient.docs) {
-          if (doc.id == widget.appointmentDoc.id) continue;
-          final d = doc.data();
+        for (final d in snapClient) {
+          if (d['id'] == widget.appointmentDoc['id']) continue;
           final status = (d['status'] ?? '').toString().toLowerCase();
           if (status == 'cancelado' ||
               status == 'recusado' ||
               status == 'excluido') continue;
 
-          final dt = (d['data_agendamento'] as Timestamp).toDate();
-          final dur = int.tryParse(d['duracao_min']?.toString() ?? '') ?? 30;
+          final dt = DateTime.parse(d['scheduled_at'].toString());
+          final dur = int.tryParse(d['duration_min']?.toString() ?? '') ?? 30;
           final startMin = dt.hour * 60 + dt.minute;
           final endMin = startMin + dur;
 
@@ -324,10 +322,13 @@ class _EditAppointmentConfirmPageState
       }
       // --- FIM RE-VALIDAÇÃO ---
 
-      await widget.appointmentDoc.reference.update({
-        ...?widget.pendingUpdates,
-        'data_agendamento': _newDateTime,
-      });
+      await Supabase.instance.client
+          .from('appointments')
+          .update({
+            ...?widget.pendingUpdates,
+            'scheduled_at': _newDateTime.toIso8601String(),
+          })
+          .eq('id', widget.appointmentDoc['id']);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -355,10 +356,12 @@ class _EditAppointmentConfirmPageState
 
   @override
   Widget build(BuildContext context) {
-    final data = widget.appointmentDoc.data() as Map<String, dynamic>;
+    final data = widget.appointmentDoc;
     final pending = widget.pendingUpdates ?? {};
 
-    final originalDt = (data['data_agendamento'] as Timestamp).toDate();
+    final originalDt = data['scheduled_at'] is String
+        ? DateTime.parse(data['scheduled_at'])
+        : (data['scheduled_at'] as DateTime);
     final dateFormat = DateFormat('dd/MM/yyyy', 'pt_BR');
     final timeFormat = DateFormat('HH:mm', 'pt_BR');
 
@@ -702,7 +705,7 @@ class _EditAppointmentConfirmPageState
               Padding(
                 padding: const EdgeInsets.only(left: 48.0),
                 child: DropdownButtonFormField<String>(
-                  initialValue: selectedId,
+                  value: selectedId,
                   isExpanded: true,
                   decoration: InputDecoration(
                     contentPadding:
@@ -820,10 +823,10 @@ class _EditAppointmentConfirmPageState
     final d = widget.conflictData!;
     final conflictName = d['client_nome'] ?? d['cliente_nome'] ?? 'Cliente';
     final conflictService = d['servico_nome'] ?? 'Serviço';
-    Timestamp? ts = d['data_agendamento'] as Timestamp?;
+    final ts = d['scheduled_at'];
     String conflictTime = '';
     if (ts != null) {
-      final dt = ts.toDate();
+      final dt = ts is String ? DateTime.parse(ts) : (ts as DateTime);
       conflictTime =
           '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
     }

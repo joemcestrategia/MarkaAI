@@ -1,6 +1,7 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/services/session_service.dart';
 
 class PurchasesPage extends StatefulWidget {
   const PurchasesPage({super.key});
@@ -10,314 +11,212 @@ class PurchasesPage extends StatefulWidget {
 }
 
 class _PurchasesPageState extends State<PurchasesPage> {
-  final CollectionReference productsRef =
-      FirebaseFirestore.instance.collection('products');
-  final CollectionReference purchasesRef =
-      FirebaseFirestore.instance.collection('purchases');
-  final CollectionReference movementsRef =
-      FirebaseFirestore.instance.collection('stock_movements');
-
+  final productsRef = Supabase.instance.client.from('products');
+  final purchasesRef = Supabase.instance.client.from('purchases');
+  
+  List<Map<String, dynamic>> products = [];
   List<Map<String, dynamic>> lines = [];
+  bool _isLoadingProducts = true;
+  bool _isSaving = false;
 
-  double _calculateTotal() =>
-      lines.fold(0.0, (t, e) => t + ((e['price'] ?? 0.0) * (e['qty'] ?? 1)));
-
-  Future<void> _addLineSheet() async {
-    final prodSnap = await productsRef.orderBy('name').get();
-    final prodList = prodSnap.docs;
-    String? selectedId;
-    int qty = 1;
-
-    if (!mounted) return;
-
-    await showModalBottomSheet(
-      context: context,
-      useSafeArea: true,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => StatefulBuilder(
-        builder: (c, setStateLocal) {
-          return ClipRRect(
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-            child: Container(
-              color: Colors.white,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 24, vertical: 20),
-                    decoration: BoxDecoration(
-                      border: Border(
-                          bottom: BorderSide(color: Colors.grey.shade200)),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text('Adicionar Produto',
-                            style: TextStyle(
-                                fontSize: 18, fontWeight: FontWeight.w700)),
-                        IconButton(
-                          icon: const Icon(Icons.close),
-                          onPressed: () => Navigator.pop(ctx),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 24, vertical: 24),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Selecione o Produto',
-                            style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.grey[700])),
-                        const SizedBox(height: 12),
-                        Container(
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey.shade300),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          child: DropdownButton<String>(
-                            isExpanded: true,
-                            underline: const SizedBox(),
-                            value: selectedId,
-                            hint: const Text('Escolha o produto'),
-                            items: prodList.map((d) {
-                              final data =
-                                  (d.data() as Map<String, dynamic>?) ?? {};
-                              return DropdownMenuItem(
-                                value: d.id,
-                                child: Text('${data['name'] ?? '-'}'),
-                              );
-                            }).toList(),
-                            onChanged: (v) =>
-                                setStateLocal(() => selectedId = v),
-                          ),
-                        ),
-                        const SizedBox(height: 24),
-                        Text('Quantidade',
-                            style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.grey[700])),
-                        const SizedBox(height: 12),
-                        Container(
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey.shade300),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: IconButton(
-                                  icon: const Icon(Icons.remove),
-                                  onPressed: qty > 1
-                                      ? () => setStateLocal(() => qty--)
-                                      : null,
-                                ),
-                              ),
-                              Expanded(
-                                child: TextField(
-                                  textAlign: TextAlign.center,
-                                  keyboardType: TextInputType.number,
-                                  decoration: InputDecoration(
-                                    border: InputBorder.none,
-                                    hintText: qty.toString(),
-                                  ),
-                                  onChanged: (v) => setStateLocal(
-                                      () => qty = int.tryParse(v) ?? 1),
-                                ),
-                              ),
-                              Expanded(
-                                child: IconButton(
-                                  icon: const Icon(Icons.add),
-                                  onPressed: () => setStateLocal(() => qty++),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 24),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.primaryPurple,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10)),
-                            ),
-                            onPressed: () {
-                              if (selectedId != null && qty > 0) {
-                                final p = prodList
-                                    .firstWhere((d) => d.id == selectedId);
-                                final data = p.data() as Map<String, dynamic>;
-                                lines.add({
-                                  'productId': selectedId,
-                                  'name': data['name'],
-                                  'qty': qty,
-                                  'price': data['cost'] ?? 0.0,
-                                });
-                                Navigator.pop(ctx);
-                                setState(() {});
-                              }
-                            },
-                            child: const Text('Adicionar',
-                                style: TextStyle(
-                                    fontWeight: FontWeight.w600, fontSize: 15)),
-                          ),
-                        ),
-                        const SizedBox(height: 24),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
-    );
+  @override
+  void initState() {
+    super.initState();
+    _loadProducts();
   }
 
-  Future<void> _receivePurchase() async {
+  Future<void> _loadProducts() async {
+    try {
+      final shopId = await SessionService.getShopId();
+      if (shopId == null) return;
+
+      final data = await productsRef.select().eq('shop_id', shopId);
+      setState(() {
+        products = List<Map<String, dynamic>>.from(data);
+        _isLoadingProducts = false;
+      });
+    } catch (e) {
+      debugPrint('Erro ao carregar produtos: $e');
+      setState(() => _isLoadingProducts = false);
+    }
+  }
+
+  void _addLine() {
+    setState(() {
+      lines.add({
+        'productId': null,
+        'qty': 1,
+        'price': 0.0,
+        'name': '',
+      });
+    });
+  }
+
+  double _calculateTotal() {
+    return lines.fold(0, (sum, item) => sum + ((item['price'] ?? 0.0) * (item['qty'] ?? 1)));
+  }
+
+  Future<void> _finalizePurchase() async {
     if (lines.isEmpty) return;
+    if (lines.any((l) => l['productId'] == null)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Selecione todos os produtos')),
+      );
+      return;
+    }
+
+    final shopId = await SessionService.getShopId();
+    if (shopId == null) return;
+
+    setState(() => _isSaving = true);
 
     try {
-      final purchaseDoc = purchasesRef.doc();
-      final createdAt = FieldValue.serverTimestamp();
+      final supabase = Supabase.instance.client;
 
-      for (final line in lines) {
-        final pid = line['productId'] as String;
-        final qty = line['qty'] as int;
-        final prodDoc = productsRef.doc(pid);
+      // Criar a compra
+      final purchaseData = {
+        'shopId': shopId,
+        'items': lines,
+        'total': _calculateTotal(),
+        'created_at': DateTime.now().toIso8601String(),
+      };
 
-        await FirebaseFirestore.instance.runTransaction((tx) async {
-          final snap = await tx.get(prodDoc);
-          if (!snap.exists) throw Exception('Produto não encontrado');
-          final map = (snap.data() as Map<String, dynamic>?) ?? {};
-          final cur = (map['qty'] ?? 0) as int;
-          final newQty = cur + qty;
-          tx.update(prodDoc, {'qty': newQty});
-          final mv = movementsRef.doc();
-          tx.set(mv, {
-            'productId': pid,
-            'delta': qty,
-            'type': 'purchase',
-            'refId': purchaseDoc.id,
-            'created_at': FieldValue.serverTimestamp(),
-          });
+      final purchaseResponse = await supabase.from('purchases').insert(purchaseData).select().single();
+      final purchaseId = purchaseResponse['id'];
+
+      // Atualizar estoque e criar movimentações
+      for (var item in lines) {
+        final pDoc = await productsRef.select().eq('id', item['productId']).single();
+        final currentQty = (pDoc['qty'] ?? 0) as int;
+
+        await productsRef.update({'qty': currentQty + item['qty']}).eq('id', item['productId']);
+
+        await supabase.from('stock_movements').insert({
+          'shopId': shopId,
+          'productId': item['productId'],
+          'type': 'purchase',
+          'delta': item['qty'],
+          'refId': purchaseId,
+          'created_at': DateTime.now().toIso8601String(),
         });
       }
 
-      await purchaseDoc.set({
-        'items': lines,
-        'status': 'received',
-        'created_at': createdAt,
-      });
-
-      setState(() => lines.clear());
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Entrada aplicada com sucesso'),
-            backgroundColor: Colors.green.shade600,
-            behavior: SnackBarBehavior.floating,
-          ),
+          const SnackBar(content: Text('Compra registrada e estoque atualizado!')),
         );
+        setState(() {
+          lines.clear();
+          _isSaving = false;
+        });
       }
     } catch (e) {
+      debugPrint('Erro ao salvar compra: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Erro: $e'),
-            backgroundColor: Colors.red.shade600,
-            behavior: SnackBarBehavior.floating,
-          ),
+          SnackBar(content: Text('Erro: $e')),
         );
+        setState(() => _isSaving = false);
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final isMobile = MediaQuery.of(context).size.width < 768;
-
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F9FD),
       appBar: AppBar(
-        title: const Text('Entradas e Compras',
+        title: const Text('Entradas de Estoque',
             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
         backgroundColor: AppColors.primaryPurple,
         foregroundColor: Colors.white,
         elevation: 0,
       ),
-      body: isMobile ? _buildMobileLayout() : _buildDesktopLayout(),
-      floatingActionButton: Column(
-        mainAxisSize: MainAxisSize.min,
+      body: Row(
         children: [
-          if (lines.isNotEmpty)
-            FloatingActionButton(
-              heroTag: 'receive',
-              backgroundColor: Colors.green.shade600,
-              onPressed: _receivePurchase,
-              tooltip: 'Receber compra',
-              child: const Icon(Icons.check_circle),
-            ),
-          if (lines.isNotEmpty) const SizedBox(height: 12),
-          FloatingActionButton(
-            heroTag: 'add',
-            backgroundColor: AppColors.primaryPurple,
-            foregroundColor: Colors.white,
-            onPressed: _addLineSheet,
-            tooltip: 'Adicionar produto',
-            child: const Icon(Icons.add),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMobileLayout() {
-    return SingleChildScrollView(
-      child: Column(
-        children: [
-          if (lines.isNotEmpty) ...[
-            Padding(
-              padding: const EdgeInsets.all(16),
+          Expanded(
+            flex: 2,
+            child: Padding(
+              padding: const EdgeInsets.all(20),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Entrada Atual',
-                      style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.grey[800])),
-                  const SizedBox(height: 12),
-                  _buildCurrentPurchase(),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Itens da Compra',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                      ElevatedButton.icon(
+                        onPressed: _addLine,
+                        icon: const Icon(Icons.add),
+                        label: const Text('Adicionar Item'),
+                        style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primaryPurple,
+                            foregroundColor: Colors.white),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  Expanded(child: _buildLinesList()),
                 ],
               ),
             ),
-            const Divider(height: 1),
-          ],
-          Padding(
-            padding: const EdgeInsets.all(16),
+          ),
+          Container(
+            width: 350,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8F9FA),
+              border: Border(left: BorderSide(color: Colors.grey.shade200)),
+            ),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Histórico',
-                    style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.grey[800])),
-                const SizedBox(height: 12),
-                _buildPurchasesHistory(),
+                const Padding(
+                  padding: EdgeInsets.all(20),
+                  child: Text('Histórico Recente',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                ),
+                Expanded(child: _buildPurchasesHistory()),
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                        color: Colors.white, borderRadius: BorderRadius.circular(16)),
+                    child: Column(
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Total:',
+                                style: TextStyle(fontWeight: FontWeight.bold)),
+                            Text('R\$ ${_calculateTotal().toStringAsFixed(2)}',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 20,
+                                    color: Colors.blue)),
+                          ],
+                        ),
+                        const SizedBox(height: 20),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 50,
+                          child: ElevatedButton(
+                            onPressed: (_isSaving || lines.isEmpty) ? null : _finalizePurchase,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.blue,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12)),
+                            ),
+                            child: _isSaving
+                                ? const CircularProgressIndicator(color: Colors.white)
+                                : const Text('SALVAR ENTRADA',
+                                    style: TextStyle(fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -326,205 +225,87 @@ class _PurchasesPageState extends State<PurchasesPage> {
     );
   }
 
-  Widget _buildDesktopLayout() {
-    return Row(
-      children: [
-        Expanded(
-          flex: 1,
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Entrada Atual',
-                        style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.grey[800])),
-                    const SizedBox(height: 12),
-                  ],
-                ),
-              ),
-              if (lines.isEmpty)
-                Expanded(
-                  child: Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.shopping_cart_outlined,
-                            size: 48, color: Colors.grey[300]),
-                        const SizedBox(height: 12),
-                        Text('Nenhum item',
-                            style: TextStyle(color: Colors.grey[600])),
-                      ],
-                    ),
-                  ),
-                )
-              else
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: _buildCurrentPurchase(),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        Container(width: 1, color: Colors.grey.shade200),
-        Expanded(
-          flex: 1,
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text('Histórico',
-                    style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.grey[800])),
-              ),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: _buildPurchasesHistory(),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
+  Widget _buildLinesList() {
+    if (_isLoadingProducts) {
+      return const Center(child: CircularProgressIndicator());
+    }
 
-  Widget _buildCurrentPurchase() {
-    return Column(
-      children: [
-        Expanded(
-          child: ListView.builder(
-            itemCount: lines.length,
-            itemBuilder: (context, i) {
-              final line = lines[i];
-              final price = ((line['price'] ?? 0) as num).toStringAsFixed(2);
-              final subtotal = ((line['price'] ?? 0.0) * (line['qty'] ?? 1))
-                  .toStringAsFixed(2);
+    return ListView.builder(
+      itemCount: lines.length,
+      itemBuilder: (context, i) {
+        final line = lines[i];
+        final subtotal = (line['qty'] * line['price']).toStringAsFixed(2);
 
-              return Container(
-                margin: const EdgeInsets.only(bottom: 12),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.grey.shade100, width: 1),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.02),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 44,
-                        height: 44,
-                        decoration: BoxDecoration(
-                          color: Colors.blue.withValues(alpha: 0.08),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: const Icon(Icons.shopping_bag_outlined,
-                            color: Colors.blue, size: 20),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(line['name'],
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold, fontSize: 13)),
-                            const SizedBox(height: 4),
-                            Text('${line['qty']}x R\$ $price',
-                                style: TextStyle(
-                                    fontSize: 12, color: Colors.grey[600])),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: Colors.blue.withValues(alpha: 0.08),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                              color: Colors.blue.withValues(alpha: 0.2)),
-                        ),
-                        child: Text('R\$ $subtotal',
-                            style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: Colors.blue[700],
-                                fontSize: 11)),
-                      ),
-                      const SizedBox(width: 8),
-                      GestureDetector(
-                        onTap: () => setState(() => lines.removeAt(i)),
-                        child: Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: Colors.red.withValues(alpha: 0.05),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(Icons.close,
-                              size: 16, color: Colors.red.shade400),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-        Container(
+        return Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            border: Border(top: BorderSide(color: Colors.grey.shade200)),
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.grey.shade100),
           ),
-          padding: const EdgeInsets.all(12),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('Total:',
-                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-              Text('R\$ ${_calculateTotal().toStringAsFixed(2)}',
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 16,
-                      color: Colors.blue)),
+              Expanded(
+                flex: 3,
+                child: DropdownButtonFormField<String>(
+                  decoration: const InputDecoration(labelText: 'Produto'),
+                  value: line['productId'],
+                  items: products.map((p) {
+                    return DropdownMenuItem<String>(
+                      value: p['id'],
+                      child: Text(p['name'] ?? ''),
+                    );
+                  }).toList(),
+                  onChanged: (val) {
+                    final p = products.firstWhere((element) => element['id'] == val);
+                    setState(() {
+                      lines[i]['productId'] = val;
+                      lines[i]['name'] = p['name'];
+                      // Opcional: sugerir preço de custo se houver
+                    });
+                  },
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextFormField(
+                  decoration: const InputDecoration(labelText: 'Qtd'),
+                  keyboardType: TextInputType.number,
+                  initialValue: line['qty'].toString(),
+                  onChanged: (v) => setState(() => lines[i]['qty'] = int.tryParse(v) ?? 1),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextFormField(
+                  decoration: const InputDecoration(labelText: 'Preço Un.'),
+                  keyboardType: TextInputType.number,
+                  initialValue: line['price'].toString(),
+                  onChanged: (v) => setState(() => lines[i]['price'] = double.tryParse(v) ?? 0.0),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Text('R\$ $subtotal', style: const TextStyle(fontWeight: FontWeight.bold)),
+              IconButton(
+                icon: const Icon(Icons.delete, color: Colors.red),
+                onPressed: () => setState(() => lines.removeAt(i)),
+              ),
             ],
           ),
-        ),
-      ],
+        );
+      },
     );
   }
 
   Widget _buildPurchasesHistory() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: purchasesRef
-          .orderBy('created_at', descending: true)
-          .limit(50)
-          .snapshots(),
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: purchasesRef.stream(primaryKey: ['id']).limit(50),
       builder: (context, snap) {
         if (!snap.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
-        final docs = snap.data!.docs;
+        final docs = snap.data!;
 
         if (docs.isEmpty) {
           return Center(
@@ -533,66 +314,48 @@ class _PurchasesPageState extends State<PurchasesPage> {
           );
         }
 
+        // Ordenar por data manualmente se o stream não suportar orderBy na versão atual
+        final sortedDocs = List<Map<String, dynamic>>.from(docs);
+        sortedDocs.sort((a, b) => (b['created_at'] ?? '').toString().compareTo((a['created_at'] ?? '')));
+
         return ListView.builder(
-          itemCount: docs.length,
+          itemCount: sortedDocs.length,
           itemBuilder: (context, i) {
-            final d = docs[i];
-            final data = d.data() as Map<String, dynamic>;
+            final data = sortedDocs[i];
             final items = (data['items'] as List<dynamic>?) ?? [];
-            final timestamp = (data['created_at'] as Timestamp?)?.toDate();
-            final dateStr =
-                timestamp != null ? '${timestamp.day}/${timestamp.month}' : '-';
+            final dateStr = (data['created_at'] ?? '').toString();
+            final dateDisplay = dateStr.isNotEmpty ? dateStr.substring(8, 10) + '/' + dateStr.substring(5, 7) : '-';
 
             return Container(
-              margin: const EdgeInsets.only(bottom: 12),
+              margin: const EdgeInsets.all(8),
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.grey.shade100, width: 1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey.shade100),
               ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: ExpansionTile(
-                  shape: const RoundedRectangleBorder(side: BorderSide.none),
-                  collapsedShape:
-                      const RoundedRectangleBorder(side: BorderSide.none),
-                  title: Text('Compra ${d.id.substring(0, 8)}',
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w600, fontSize: 13)),
-                  subtitle: Text('$dateStr • ${items.length} itens',
-                      style: const TextStyle(fontSize: 12)),
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: items.map((item) {
-                          final i = item as Map<String, dynamic>;
-                          final price =
-                              ((i['price'] ?? 0) as num).toStringAsFixed(2);
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Expanded(
-                                  child: Text('${i['name']}',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(fontSize: 12)),
-                                ),
-                                Text('${i['qty']}x R\$ $price',
-                                    style: const TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w500)),
-                              ],
-                            ),
-                          );
-                        }).toList(),
-                      ),
+              child: ExpansionTile(
+                title: Text('Compra #${data['id'].toString().substring(0, 5)}',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                subtitle: Text('$dateDisplay • ${items.length} itens'),
+                children: [
+                   Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      children: items.map((item) {
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(item['name'] ?? ''),
+                              Text('${item['qty']}x R\$ ${item['price']}'),
+                            ],
+                          ),
+                        );
+                      }).toList(),
                     ),
-                  ],
-                ),
+                  )
+                ],
               ),
             );
           },

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as sb;
+import '../../core/services/auth_service.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
@@ -25,6 +25,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   bool _isLoading = true;
   String? shopId;
   PlanFeatures _currentFeatures = planFeaturesConfig[PlanKey.free]!;
+  Stream<PlanFeatures>? _featuresStream;
 
   // --- ESTADOS DAS CONFIGURAÇÕES ---
   bool _allowMultiple = false;
@@ -85,28 +86,31 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       String? sId = await SessionService.getShopId();
 
       if (sId == null || sId.isEmpty) {
-        final user = FirebaseAuth.instance.currentUser;
+        final user = AuthService().currentUser;
         if (user != null) {
-          final userDoc = await FirebaseFirestore.instance
-              .collection('users')
-              .doc(user.uid)
-              .get();
-          if (userDoc.exists) sId = userDoc.data()?['shopId'];
+          final userDoc = await sb.Supabase.instance.client
+              .from('users')
+              .select('shop_id')
+              .eq('id', user.id)
+              .maybeSingle();
+          if (userDoc != null) sId = userDoc['shop_id'];
         }
       }
 
       shopId = sId;
 
       if (shopId != null) {
+        _featuresStream = PlanFeaturesService.streamFeaturesByShopId(shopId!);
         _currentFeatures =
             await PlanFeaturesService.loadFeaturesByShopId(shopId!);
 
-        final doc = await FirebaseFirestore.instance
-            .collection('shops')
-            .doc(shopId)
-            .get();
-        if (doc.exists && doc.data() != null) {
-          final data = doc.data()!;
+        final doc = await sb.Supabase.instance.client
+            .from('shops')
+            .select('config')
+            .eq('id', shopId!)
+            .maybeSingle();
+        if (doc != null) {
+          final data = doc;
           if (data.containsKey('config')) {
             final config = data['config'] as Map<String, dynamic>;
             if (mounted) {
@@ -117,7 +121,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     config['cliente_escolhe_prof'] ?? true;
                 _onlineBookingActive =
                     config['agendamento_online_ativo'] ?? true;
-                _autoBlockHolidays = config['bloquear_feriados_auto'] ?? false;
+                _autoBlockHolidays = config['auto_block_holidays'] ?? false;
 
                 _appointmentIntervalMinutes =
                     config['intervalo_agenda_min'] ?? 60;
@@ -225,19 +229,19 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         }
       }
 
-      await FirebaseFirestore.instance.collection('shops').doc(shopId).update({
+      await sb.Supabase.instance.client.from('shops').update({
         'config': {
           'permitir_multiplos': _allowMultiple,
           'permitir_reagendamento': _allowReschedule,
           'cliente_escolhe_prof': _clientChoosesProfessional,
           'agendamento_online_ativo': _onlineBookingActive,
-          'bloquear_feriados_auto': _autoBlockHolidays,
+          'auto_block_holidays': _autoBlockHolidays,
           'intervalo_agenda_min': _appointmentIntervalMinutes,
           'evitar_buracos_agenda': _preventGaps,
           'janela_agendamento_dias':
               _bookingWindowDays.round(), // Salva o novo campo
           'limite_minimo_agendamento_horas':
-              _minAdvanceHours.round(), // â° Salva limite mínimo
+              _minAdvanceHours.round(), // â ° Salva limite mínimo
           'tempo_cancelamento_horas': finalCancelHours,
           'cartao_online': _cartaoOnline,
           'debito_presencial': _debitoPresencial,
@@ -260,9 +264,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           'vip_min_visits': _vipMinVisits.round(),
           'vip_avg_interval': _vipAvgInterval.round(),
           'sumido_max_days': _sumidoMaxDays.round(),
-          'atualizado_em': FieldValue.serverTimestamp(),
+          'atualizado_em': DateTime.now().toIso8601String(),
+        },
+        'notification_settings': {
+          'send_reminders': _notifyClientAppointment,
+          'default_reminder_days': _notifyDaysBefore,
+          'email_template': 'default',
         }
-      });
+      }).eq('id', shopId!);
 
       if (mounted) {
         _showSnack("Configurações salvas com sucesso!", isError: false);
@@ -317,7 +326,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     }
 
     return StreamBuilder<PlanFeatures>(
-      stream: PlanFeaturesService.streamFeaturesByShopId(shopId!),
+      stream: _featuresStream!,
       builder: (context, snapshot) {
         if (snapshot.hasData) {
           _currentFeatures = snapshot.data!;

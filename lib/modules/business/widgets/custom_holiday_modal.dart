@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_colors.dart';
 
@@ -47,14 +46,19 @@ class _CustomHolidayModalState extends State<CustomHolidayModal> {
     setState(() => _isLoading = true);
     try {
       final iso = _selectedDate!.toIso8601String().split('T')[0];
-      final callable = FirebaseFunctions.instance.httpsCallable('salvarFeriadoPersonalizado');
+      final supabase = Supabase.instance.client;
       
-      await callable.call({
-        'shopId': widget.shopId,
+      // No Supabase, geralmente atualizamos o json b diretamente ou via function
+      // Tentaremos obter o dado atual e atualizar locally para simplificar ou usar rpc
+      final res = await supabase.from('shops').select('custom_holidays').eq('id', widget.shopId).single();
+      List<dynamic> list = List.from(res['custom_holidays'] ?? []);
+      
+      list.add({
         'date': iso,
         'name': _nameController.text.trim().isEmpty ? "Folga Customizada" : _nameController.text.trim(),
-        'action': 'add',
       });
+
+      await supabase.from('shops').update({'custom_holidays': list}).eq('id', widget.shopId);
 
       if (mounted) {
         Navigator.pop(context);
@@ -76,13 +80,13 @@ class _CustomHolidayModalState extends State<CustomHolidayModal> {
   Future<void> _remove(String iso) async {
     setState(() => _isLoading = true);
     try {
-      final callable = FirebaseFunctions.instance.httpsCallable('salvarFeriadoPersonalizado');
-      await callable.call({
-        'shopId': widget.shopId,
-        'date': iso,
-        'action': 'remove',
-      });
-      // Refresh list is handled by StreamBuilder in the build method
+      final supabase = Supabase.instance.client;
+      final res = await supabase.from('shops').select('custom_holidays').eq('id', widget.shopId).single();
+      List<dynamic> list = List.from(res['custom_holidays'] ?? []);
+      
+      list.removeWhere((item) => item['date'] == iso);
+
+      await supabase.from('shops').update({'custom_holidays': list}).eq('id', widget.shopId);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -124,8 +128,6 @@ class _CustomHolidayModalState extends State<CustomHolidayModal> {
               style: TextStyle(fontSize: 13, color: Colors.grey),
             ),
             const SizedBox(height: 24),
-            
-            // Form para Adicionar
             Row(
               children: [
                 Expanded(
@@ -175,11 +177,9 @@ class _CustomHolidayModalState extends State<CustomHolidayModal> {
                   : const Text("ADICIONAR DATA", style: TextStyle(fontWeight: FontWeight.bold)),
               ),
             ),
-            
             const SizedBox(height: 32),
             const Text("Já adicionados:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
             const SizedBox(height: 12),
-            
             _buildCustomHolidaysList(),
           ],
         ),
@@ -188,13 +188,14 @@ class _CustomHolidayModalState extends State<CustomHolidayModal> {
   }
 
   Widget _buildCustomHolidaysList() {
-    return StreamBuilder<DocumentSnapshot>(
-      stream: FirebaseFirestore.instance.collection('shops').doc(widget.shopId).snapshots(),
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: Supabase.instance.client.from('shops').stream(primaryKey: ['id']).eq('id', widget.shopId),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+        if (snapshot.data!.isEmpty) return const SizedBox();
         
-        final data = snapshot.data!.data() as Map<String, dynamic>?;
-        final List<dynamic> list = data?['feriados_personalizados'] ?? [];
+        final data = snapshot.data!.first;
+        final List<dynamic> list = data['custom_holidays'] ?? [];
         
         if (list.isEmpty) {
           return Padding(
@@ -210,7 +211,7 @@ class _CustomHolidayModalState extends State<CustomHolidayModal> {
             itemCount: list.length,
             itemBuilder: (context, index) {
               final item = list[index];
-              final date = DateTime.parse(item['date']);
+              final date = DateTime.tryParse(item['date'] ?? '') ?? DateTime.now();
               return ListTile(
                 dense: true,
                 leading: const Icon(Icons.star, color: Colors.blue, size: 20),

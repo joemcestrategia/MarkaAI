@@ -1,4 +1,4 @@
-﻿import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -12,44 +12,52 @@ class BusinessHistoryPage extends StatelessWidget {
   Future<List<Map<String, dynamic>>> _loadEvents() async {
     final List<Map<String, dynamic>> events = [];
 
+    final supabase = sb.Supabase.instance.client;
+
     // Appointments
-    final apptSnap = await FirebaseFirestore.instance
-        .collection('appointments')
-        .where('shopId', isEqualTo: shopId)
-        .orderBy('data_agendamento', descending: true)
-        .limit(300)
-        .get();
-    for (var d in apptSnap.docs) {
-      final data = d.data();
-      final ts = data['data_agendamento'] as Timestamp?;
+    final apptRes = await supabase
+        .from('appointments')
+        .select()
+        .eq('shop_id', shopId)
+        .order('scheduled_at', ascending: false)
+        .limit(300);
+
+    for (var data in apptRes) {
+      final rawDate = data['scheduled_at'];
+      final dt = rawDate != null ? DateTime.tryParse(rawDate.toString()) : null;
       events.add({
         'type': 'agendamento',
-        'id': d.id,
-        'when': ts?.toDate(),
+        'id': data['id'],
+        'when': dt,
         'payload': data,
       });
     }
 
-    // Payments (optional - may be empty in many projects)
+    // Payments (financial_transactions)
     try {
-      final paySnap = await FirebaseFirestore.instance
-          .collection('payments')
-          .where('shopId', isEqualTo: shopId)
-          .orderBy('createdAt', descending: true)
-          .limit(200)
-          .get();
-      for (var d in paySnap.docs) {
-        final data = d.data();
-        final ts = data['createdAt'] as Timestamp?;
+      final transRes = await supabase
+          .from('financial_transactions')
+          .select()
+          .eq('shop_id', shopId)
+          .order('data', ascending: false)
+          .limit(200);
+
+      for (var data in transRes) {
+        final rawDate = data['data'] ?? data['createdAt'];
+        final dt = rawDate != null ? DateTime.tryParse(rawDate.toString()) : null;
         events.add({
           'type': 'pagamento',
-          'id': d.id,
-          'when': ts?.toDate(),
-          'payload': data,
+          'id': data['id'],
+          'when': dt,
+          'payload': {
+            'amount': (data['valor'] as num?)?.toDouble()?.abs() ?? 0.0,
+            'description': data['descricao'] ?? data['description'] ?? 'Transação',
+            ...data,
+          },
         });
       }
     } catch (_) {
-      // ignore if collection doesn't exist
+      // ignore
     }
 
     // Sort by date desc
@@ -183,12 +191,13 @@ class BusinessHistoryPage extends StatelessWidget {
     final time = when != null ? DateFormat('HH:mm').format(when) : '--:--';
 
     final status = (payload['status'] ?? 'agendado').toString().toLowerCase();
-    final clientName =
-        payload['client_nome'] ?? payload['cliente_nome'] ?? 'Cliente';
-    final clientId = payload['clientId'];
+    final rawClientName = (payload['client_name'] ?? payload['client_nome'] ?? payload['cliente_nome'] ?? '').toString().trim();
+    final clientName = (rawClientName.toLowerCase() == 'null' || rawClientName.isEmpty) ? 'Cliente' : rawClientName;
+    final clientId = payload['clientId'] ?? payload['client_id'];
     final clientPhone = payload['client_phone'] ?? payload['cliente_telefone'];
-    final serviceName = payload['servico_nome'] ?? 'Serviço';
-    final val = double.tryParse(payload['valor_total']?.toString() ?? '0') ?? 0;
+    final rawServiceName = (payload['service_name'] ?? payload['servico_nome'] ?? '').toString().trim();
+    final serviceName = (rawServiceName.toLowerCase() == 'null' || rawServiceName.isEmpty) ? 'Serviço' : rawServiceName;
+    final val = double.tryParse(payload['total_value']?.toString() ?? payload['valor_total']?.toString() ?? payload['total_price']?.toString() ?? '0') ?? 0;
 
     // Classification Logic
     Color accentColor;

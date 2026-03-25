@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import '../../core/services/auth_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 import '../../core/services/plan_features_service.dart';
@@ -24,7 +24,7 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
 
   // Controle do Painel Lateral (Apenas Desktop)
   bool _showPanel = false;
-  DocumentSnapshot? _employeeToEdit;
+  Map<String, dynamic>? _employeeToEdit;
 
   @override
   void initState() {
@@ -36,14 +36,15 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
   Future<void> _loadShopId() async {
     String? id = await SessionService.getShopId();
     if (id == null || id.isEmpty) {
-      final user = FirebaseAuth.instance.currentUser;
+      final user = AuthService().currentUser;
       if (user != null) {
-        final doc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .get();
-        if (doc.exists) {
-          id = doc.data()?['shopId'];
+        final doc = await sb.Supabase.instance.client
+            .from('users')
+            .select()
+            .eq('id', user.id)
+            .maybeSingle();
+        if (doc != null) {
+          id = doc['shop_id'];
         }
       }
     }
@@ -62,7 +63,7 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
 
   // 🧠 NAVEGAÇÃO INTELIGENTE (O Segredo da Responsividade)
   void _handleMemberTap(
-      BuildContext context, DocumentSnapshot? doc, bool isMobile) {
+      BuildContext context, Map<String, dynamic>? doc, bool isMobile) {
     if (doc == null) {
       // Validar Limite antes de permitir novo cadastro
       if (_currentEmployeeCount >= _currentFeatures.maxProfessionals) {
@@ -90,7 +91,7 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
               elevation: 0,
             ),
             body: EmployeeRegisterPage(
-              key: ValueKey(doc?.id ?? 'novo'), // Força recriação
+              key: ValueKey(doc?['id'] ?? 'novo'), // Força recriação
               employeeToEdit: doc,
               onClose: () => Navigator.pop(context), // Fecha a tela no mobile
             ),
@@ -103,7 +104,7 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
     }
   }
 
-  void _openPanelDesktop(DocumentSnapshot? doc) {
+  void _openPanelDesktop(Map<String, dynamic>? doc) {
     setState(() {
       _showPanel = false;
     }); // Reseta para forçar rebuild
@@ -173,7 +174,7 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
                         color: Colors.white,
                         child: _showPanel
                             ? EmployeeRegisterPage(
-                                key: ValueKey(_employeeToEdit?.id ?? 'novo_membro'),
+                                key: ValueKey(_employeeToEdit?['id'] ?? 'novo_membro'),
                                 employeeToEdit: _employeeToEdit,
                                 onClose: _closePanelDesktop,
                               )
@@ -223,11 +224,11 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
 
         // LISTA
         Expanded(
-          child: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance
-                .collection('employees')
-                .where('shopId', isEqualTo: shopId)
-                .snapshots(),
+          child: StreamBuilder<List<Map<String, dynamic>>>(
+            stream: sb.Supabase.instance.client
+                .from('employees')
+                .stream(primaryKey: ['id'])
+                .eq('shop_id', shopId!),
             builder: (context, snapshot) {
               if (snapshot.hasError) {
                 return Center(child: Text("Erro: ${snapshot.error}"));
@@ -237,25 +238,24 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
               }
               
               // Atualiza o contador para validação de limite
-              _currentEmployeeCount = snapshot.data!.docs.length;
+              _currentEmployeeCount = snapshot.data!.length;
 
-              if (snapshot.data!.docs.isEmpty) return _buildEmptyState();
+              if (snapshot.data!.isEmpty) return _buildEmptyState();
 
               return ListView.separated(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-                itemCount: snapshot.data!.docs.length,
+                itemCount: snapshot.data!.length,
                 separatorBuilder: (_, __) => const SizedBox(height: 12),
                 itemBuilder: (context, index) {
-                  var doc = snapshot.data!.docs[index];
-                  var data = doc.data() as Map<String, dynamic>;
+                  var data = snapshot.data![index];
                   // No desktop, destaca o selecionado. No mobile, ninguém fica selecionado visualmente.
                   bool isSelected =
-                      !isMobile && _showPanel && _employeeToEdit?.id == doc.id;
+                      !isMobile && _showPanel && _employeeToEdit?['id'] == data['id'];
 
                   return GestureDetector(
                     onTap: () => _handleMemberTap(
-                        context, doc, isMobile), // Editar Membro
+                        context, data, isMobile), // Editar Membro
                     child: _buildEmployeeCard(data, isSelected),
                   );
                 },
@@ -291,10 +291,10 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
             radius: 28,
             backgroundColor: AppColors.primaryPurple.withValues(alpha: 0.1),
             backgroundImage:
-                (data['foto_url'] != null && data['foto_url'].isNotEmpty)
-                    ? CachedNetworkImageProvider(data['foto_url'])
+                (data['photo_url'] != null && data['photo_url'].isNotEmpty)
+                    ? CachedNetworkImageProvider(data['photo_url'])
                     : null,
-            child: (data['foto_url'] == null || data['foto_url'].isEmpty)
+            child: (data['photo_url'] == null || data['photo_url'].isEmpty)
                 ? const Icon(Icons.person, color: AppColors.primaryPurple)
                 : null,
           ),
@@ -303,12 +303,12 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(data['nome'] ?? "Sem nome",
+                Text(data['name'] ?? "Sem nome",
                     style: const TextStyle(
                         fontWeight: FontWeight.bold, fontSize: 15)),
                 const SizedBox(height: 4),
                 Text(
-                  "🕒 ${data['horario_inicio'] ?? '--:--'} às ${data['horario_fim'] ?? '--:--'}",
+                  "🕒 ${data['start_time'] ?? '--:--'} às ${data['end_time'] ?? '--:--'}",
                   style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                 ),
               ],

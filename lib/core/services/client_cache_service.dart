@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 
 class ClientCacheService {
   static const String _keyPrefix = 'cached_clients_';
@@ -45,8 +44,6 @@ class ClientCacheService {
       newItem.forEach((key, value) {
         if (value is DateTime) {
           newItem[key] = {'__type__': 'DateTime', 'value': value.toIso8601String()};
-        } else if (value is Timestamp) {
-          newItem[key] = {'__type__': 'Timestamp', 'seconds': value.seconds, 'nanos': value.nanoseconds};
         }
       });
       return newItem;
@@ -60,8 +57,6 @@ class ClientCacheService {
         if (value is Map && value.containsKey('__type__')) {
           if (value['__type__'] == 'DateTime') {
             newItem[key] = DateTime.parse(value['value'] as String);
-          } else if (value['__type__'] == 'Timestamp') {
-            newItem[key] = Timestamp(value['seconds'] as int, value['nanos'] as int);
           }
         }
       });

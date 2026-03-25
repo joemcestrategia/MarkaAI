@@ -1,5 +1,5 @@
 ﻿import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:geolocator/geolocator.dart';
 import '../../core/theme/app_colors.dart';
@@ -50,7 +50,7 @@ class _ClientSearchPageState extends State<ClientSearchPage> {
     super.dispose();
   }
 
-  void _openServiceDetails({required DocumentSnapshot serviceDoc}) {
+  void _openServiceDetails({required Map<String, dynamic> serviceDoc}) {
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -93,142 +93,94 @@ class _ClientSearchPageState extends State<ClientSearchPage> {
       ),
       body: Column(
         children: [
-          // Subheader com info de localização e resultados
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
             decoration: const BoxDecoration(
               color: Colors.white,
-              border:
-                  Border(bottom: BorderSide(color: Colors.black12, width: 0.5)),
+              border: Border(bottom: BorderSide(color: Colors.black12, width: 0.5)),
             ),
             child: Row(
               children: [
-                const Icon(Icons.location_on,
-                    size: 14, color: AppColors.primaryPurple),
+                const Icon(Icons.location_on, size: 14, color: AppColors.primaryPurple),
                 const SizedBox(width: 4),
                 Text(
                   _currentCity.isEmpty ? "Todas as cidades" : _currentCity,
-                  style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.primaryPurple),
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.primaryPurple),
                 ),
                 const Spacer(),
-                const Text("Resultados",
-                    style: TextStyle(fontSize: 12, color: Colors.grey)),
+                const Text("Resultados", style: TextStyle(fontSize: 12, color: Colors.grey)),
               ],
             ),
           ),
 
           Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream:
-                  FirebaseFirestore.instance.collection('shops').snapshots(),
+            child: StreamBuilder<List<Map<String, dynamic>>>(
+              stream: Supabase.instance.client.from('shops').stream(primaryKey: ['id']),
               builder: (context, snapshot) {
-                if (!snapshot.hasData) {
-                  return const Center(child: CircularProgressIndicator());
-                }
+                if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
 
                 final query = _searchCtrl.text.trim().toLowerCase();
                 final city = _currentCity.toLowerCase();
 
-                final filtered = snapshot.data!.docs.where((doc) {
-                  final d = doc.data() as Map<String, dynamic>;
+                final filtered = snapshot.data!.where((d) {
                   final bool isActive = d['ativo'] ?? true;
-
                   final name = (d['nome'] ?? "").toString().toLowerCase();
-                  final category =
-                      (d['categoria'] ?? "").toString().toLowerCase();
-                  // 📍 Recupera cidade e estado com fallbacks (raiz e 'endereco')
+                  final category = (d['categoria'] ?? "").toString().toLowerCase();
+
                   String getLocField(String key, List<String> fallbacks) {
-                    if (d[key] != null && d[key].toString().trim().isNotEmpty) {
-                      return d[key].toString().trim();
-                    }
+                    if (d[key] != null && d[key].toString().trim().isNotEmpty) return d[key].toString().trim();
                     if (d['endereco'] is Map) {
                       final map = d['endereco'] as Map;
-                      if (map[key] != null &&
-                          map[key].toString().trim().isNotEmpty) {
-                        return map[key].toString().trim();
-                      }
+                      if (map[key] != null && map[key].toString().trim().isNotEmpty) return map[key].toString().trim();
                       for (var fb in fallbacks) {
-                        if (map[fb] != null &&
-                            map[fb].toString().trim().isNotEmpty) {
-                          return map[fb].toString().trim();
-                        }
+                        if (map[fb] != null && map[fb].toString().trim().isNotEmpty) return map[fb].toString().trim();
                       }
                     }
                     for (var fb in fallbacks) {
-                      if (d[fb] != null && d[fb].toString().trim().isNotEmpty) {
-                        return d[fb].toString().trim();
-                      }
+                      if (d[fb] != null && d[fb].toString().trim().isNotEmpty) return d[fb].toString().trim();
                     }
                     return '';
                   }
 
                   final String shopCidadeRaw = getLocField('cidade', ['city']);
-                  final String shopEstadoRaw =
-                      getLocField('estado', ['uf', 'state']);
+                  final String shopEstadoRaw = getLocField('estado', ['uf', 'state']);
+                  if (shopCidadeRaw.isEmpty) return false;
 
-                  if (shopCidadeRaw.isEmpty) {
-                    return false;
-                  }
-
-                  // Normalização para comparação robusta
-                  final String shopCidade =
-                      StringUtils.removeDiacritics(shopCidadeRaw).toLowerCase();
+                  final String shopCidade = StringUtils.removeDiacritics(shopCidadeRaw).toLowerCase();
                   final String shopEstado = shopEstadoRaw.toLowerCase();
                   final String fullLocation = "$shopCidade $shopEstado";
-                  final String searchLower =
-                      StringUtils.removeDiacritics(query).toLowerCase();
+                  final String searchLower = StringUtils.removeDiacritics(query).toLowerCase();
 
-                  final matchesText = searchLower.isEmpty ||
-                      name.contains(searchLower) ||
-                      category.contains(searchLower) ||
-                      fullLocation.contains(searchLower);
+                  final matchesText = searchLower.isEmpty || name.contains(searchLower) || category.contains(searchLower) || fullLocation.contains(searchLower);
 
                   bool matchesLoc = true;
                   if (city.isNotEmpty) {
-                    final normalizedSearchCity =
-                        StringUtils.removeDiacritics(city).toLowerCase();
-                    // Rigorosamente a cidade correta
+                    final normalizedSearchCity = StringUtils.removeDiacritics(city).toLowerCase();
                     matchesLoc = shopCidade == normalizedSearchCity;
                   }
 
-                  // ðŸ›°ï¸ Filtro por Raio (se disponível)
-                  if (_userLat != null &&
-                      _userLng != null &&
-                      d['lat'] != null &&
-                      d['lng'] != null) {
+                  if (_userLat != null && _userLng != null && d['lat'] != null && d['lng'] != null) {
                     final double dist = Geolocator.distanceBetween(
-                          _userLat!,
-                          _userLng!,
-                          (d['lat'] as num).toDouble(),
-                          (d['lng'] as num).toDouble(),
-                        ) /
-                        1000.0;
+                      _userLat!,
+                      _userLng!,
+                      (d['lat'] as num).toDouble(),
+                      (d['lng'] as num).toDouble(),
+                    ) / 1000.0;
                     matchesLoc = dist <= _selectedRadius;
                   }
 
                   return isActive && matchesText && matchesLoc;
                 }).toList();
 
-                // 🔄 Ordenação por Qualidade do Perfil (Media)
                 filtered.sort((a, b) {
-                  final da = a.data() as Map<String, dynamic>;
-                  final db = b.data() as Map<String, dynamic>;
-
                   int getScore(Map<String, dynamic> d) {
                     int s = 0;
                     if ((d['logoUrl'] ?? '').toString().isNotEmpty) s += 10;
-                    if ((d['coverUrl'] ?? '').toString().isNotEmpty ||
-                        (d['imageUrl'] ?? '').toString().isNotEmpty) {
-                      s += 10;
-                    }
+                    if ((d['coverUrl'] ?? '').toString().isNotEmpty || (d['imageUrl'] ?? '').toString().isNotEmpty) s += 10;
                     if (d['is_boosted'] == true) s += 100;
                     return s;
                   }
-
-                  return getScore(db).compareTo(getScore(da));
+                  return getScore(b).compareTo(getScore(a));
                 });
 
                 if (filtered.isEmpty) {
@@ -236,11 +188,9 @@ class _ClientSearchPageState extends State<ClientSearchPage> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.search_off,
-                            size: 60, color: Colors.grey[300]),
+                        Icon(Icons.search_off, size: 60, color: Colors.grey[300]),
                         const SizedBox(height: 16),
-                        const Text("Nenhuma loja encontrada.",
-                            style: TextStyle(color: Colors.grey)),
+                        const Text("Nenhuma loja encontrada.", style: TextStyle(color: Colors.grey)),
                       ],
                     ),
                   );
@@ -285,14 +235,13 @@ class _ClientSearchPageState extends State<ClientSearchPage> {
 }
 
 class _SearchCard extends StatelessWidget {
-  final DocumentSnapshot shop;
+  final Map<String, dynamic> shop;
   final VoidCallback onTap;
-
   const _SearchCard({required this.shop, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    final data = shop.data() as Map<String, dynamic>;
+    final data = shop;
     final imgUrl = data['coverUrl'] ?? data['imageUrl'] ?? "";
     final logoUrl = data['logoUrl'] ?? "";
 
@@ -303,10 +252,7 @@ class _SearchCard extends StatelessWidget {
           color: Colors.white,
           borderRadius: BorderRadius.circular(12),
           boxShadow: [
-            BoxShadow(
-                color: Colors.black.withValues(alpha: 0.04),
-                blurRadius: 10,
-                offset: const Offset(0, 4))
+            BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4))
           ],
         ),
         child: Column(
@@ -318,31 +264,18 @@ class _SearchCard extends StatelessWidget {
                 children: [
                   Positioned.fill(
                     child: ClipRRect(
-                      borderRadius:
-                          const BorderRadius.vertical(top: Radius.circular(12)),
+                      borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
                       child: imgUrl.isNotEmpty
-                          ? CachedNetworkImage(
-                              imageUrl: imgUrl,
-                              fit: BoxFit.cover,
-                              placeholder: (c, u) =>
-                                  Container(color: Colors.grey[200]))
-                          : Container(
-                              color: Colors.grey[200],
-                              child:
-                                  const Icon(Icons.store, color: Colors.grey)),
+                          ? CachedNetworkImage(imageUrl: imgUrl, fit: BoxFit.cover, placeholder: (c, u) => Container(color: Colors.grey[200]))
+                          : Container(color: Colors.grey[200], child: const Icon(Icons.store, color: Colors.grey)),
                     ),
                   ),
-                  // Rating Badge
                   Positioned(
                     top: 6,
                     right: 6,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.black54,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(8)),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -350,16 +283,12 @@ class _SearchCard extends StatelessWidget {
                           const SizedBox(width: 2),
                           Text(
                             (data['rating'] ?? 5.0).toStringAsFixed(1),
-                            style: const TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white),
+                            style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white),
                           ),
                         ],
                       ),
                     ),
                   ),
-                  // Logo overlay
                   if (logoUrl.isNotEmpty)
                     Positioned(
                       bottom: 6,
@@ -367,14 +296,8 @@ class _SearchCard extends StatelessWidget {
                       child: Container(
                         width: 24,
                         height: 24,
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 1.5),
-                        ),
-                        child: ClipOval(
-                            child: CachedNetworkImage(
-                                imageUrl: logoUrl, fit: BoxFit.cover)),
+                        decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 1.5)),
+                        child: ClipOval(child: CachedNetworkImage(imageUrl: logoUrl, fit: BoxFit.cover)),
                       ),
                     ),
                 ],
@@ -388,20 +311,9 @@ class _SearchCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text(
-                      data['nome'] ?? "Loja",
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 10),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                    Text(data['nome'] ?? "Loja", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 10), maxLines: 1, overflow: TextOverflow.ellipsis),
                     const SizedBox(height: 2),
-                    Text(
-                      data['categoria'] ?? "Serviços",
-                      style: TextStyle(color: Colors.grey[600], fontSize: 8),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                    Text(data['categoria'] ?? "Serviços", style: TextStyle(color: Colors.grey[600], fontSize: 8), maxLines: 1, overflow: TextOverflow.ellipsis),
                   ],
                 ),
               ),

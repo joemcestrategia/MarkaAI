@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MarkaAI — OAuth Debug</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Sora:wght@300;400;600;700&display=swap');
+  :root {
+    --bg:#0a0a0f;--surface:#111118;--border:#1e1e2e;--accent:#7c3aed;--accent2:#06b6d4;
+    --success:#10b981;--error:#ef4444;--warning:#f59e0b;--text:#e2e8f0;--muted:#64748b;
+    --mono:'JetBrains Mono',monospace;--sans:'Sora',sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;padding:2rem;
+    background-image:radial-gradient(ellipse at 20% 0%,rgba(124,58,237,.12) 0%,transparent 50%),
+    radial-gradient(ellipse at 80% 100%,rgba(6,182,212,.08) 0%,transparent 50%)}
+  header{display:flex;align-items:center;gap:1rem;margin-bottom:2rem;padding-bottom:1.5rem;border-bottom:1px solid var(--border)}
+  .logo{width:40px;height:40px;background:linear-gradient(135deg,var(--accent),var(--accent2));border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;font-weight:700;color:#fff}
+  h1{font-size:1.25rem;font-weight:600}
+  h1 span{color:var(--muted);font-weight:300;font-size:.9rem;margin-left:.5rem}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:1.5rem}
+  @media(max-width:768px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1.5rem}
+  .card h2{font-size:.75rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin-bottom:1rem;font-weight:600}
+  .field{display:flex;flex-direction:column;gap:.4rem;margin-bottom:1rem}
+  .field label{font-size:.75rem;color:var(--muted);font-family:var(--mono)}
+  .field input{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:.6rem .8rem;color:var(--text);font-family:var(--mono);font-size:.8rem;width:100%;outline:none;transition:border-color .2s}
+  .field input:focus{border-color:var(--accent)}
+  .btn{display:inline-flex;align-items:center;gap:.5rem;padding:.65rem 1.2rem;border-radius:8px;border:none;cursor:pointer;font-family:var(--sans);font-size:.85rem;font-weight:600;transition:all .2s}
+  .btn-p{background:var(--accent);color:#fff;width:100%;justify-content:center;margin-top:.5rem}
+  .btn-p:hover{background:#6d28d9;transform:translateY(-1px)}
+  .btn-s{background:transparent;border:1px solid var(--border);color:var(--text);font-size:.75rem;padding:.4rem .8rem}
+  .btn-s:hover{border-color:var(--accent);color:var(--accent)}
+  .status-grid{display:flex;flex-direction:column;gap:.6rem}
+  .status-item{display:flex;align-items:center;justify-content:space-between;padding:.6rem .8rem;background:var(--bg);border-radius:6px;border:1px solid var(--border)}
+  .status-label{font-size:.8rem;color:var(--muted);font-family:var(--mono)}
+  .badge{font-size:.7rem;font-weight:600;padding:.2rem .6rem;border-radius:20px;font-family:var(--mono)}
+  .ok{background:rgba(16,185,129,.15);color:var(--success)}
+  .err{background:rgba(239,68,68,.15);color:var(--error)}
+  .warn{background:rgba(245,158,11,.15);color:var(--warning)}
+  .idle{background:rgba(100,116,139,.15);color:var(--muted)}
+  .info-b{background:rgba(124,58,237,.15);color:#a78bfa}
+  .sdk-banner{padding:.6rem .8rem;border-radius:6px;font-size:.78rem;font-family:var(--mono);margin-bottom:1rem}
+  .sdk-ok{background:rgba(16,185,129,.1);color:var(--success);border:1px solid rgba(16,185,129,.3)}
+  .sdk-err{background:rgba(239,68,68,.1);color:var(--error);border:1px solid rgba(239,68,68,.3)}
+  .log-panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+  .log-hdr{display:flex;align-items:center;justify-content:space-between;padding:.8rem 1.2rem;border-bottom:1px solid var(--border);background:rgba(0,0,0,.3)}
+  .log-hdr h2{font-size:.75rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:600}
+  .log-body{padding:1rem 1.2rem;font-family:var(--mono);font-size:.78rem;line-height:1.8;max-height:400px;overflow-y:auto}
+  .le{display:flex;gap:.8rem;padding:.15rem 0;border-bottom:1px solid rgba(255,255,255,.02)}
+  .lt{color:var(--muted);min-width:60px;font-size:.72rem}
+  .lk{min-width:65px}
+  .lm{color:var(--text);flex:1;word-break:break-all}
+  .l-ok .lk::before{content:'✓ OK';color:var(--success)}
+  .l-err .lk::before{content:'✗ ERR';color:var(--error)}
+  .l-warn .lk::before{content:'⚠ WARN';color:var(--warning)}
+  .l-info .lk::before{content:'→ INFO';color:#a78bfa}
+  .l-step .lk::before{content:'◆ STEP';color:var(--accent2)}
+  .url-bar{background:var(--bg);border:1px solid var(--accent);border-radius:6px;padding:.6rem .8rem;font-family:var(--mono);font-size:.75rem;color:#a78bfa;word-break:break-all;margin-bottom:.8rem;min-height:2.2rem}
+  .btn-row{display:flex;gap:.5rem;flex-wrap:wrap}
+  .session-box{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:1rem;font-family:var(--mono);font-size:.75rem;color:var(--success);white-space:pre-wrap;word-break:break-all;margin-top:1rem;display:none;max-height:150px;overflow-y:auto}
+  .pulse{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--success);animation:pulse 1.5s infinite;margin-right:6px}
+  @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.8)}}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">M</div>
+  <div><h1>MarkaAI OAuth Debug <span>Supabase + Google</span></h1></div>
+</header>
+
+<div class="grid">
+  <div class="card">
+    <h2>⚙ Configuração</h2>
+    <div id="sdkBanner" class="sdk-banner sdk-err">⏳ Carregando biblioteca...</div>
+    <div class="field">
+      <label>SUPABASE_URL</label>
+      <input id="sbUrl" value="https://uhccgcojwqvkfyzrmebv.supabase.co">
+    </div>
+    <div class="field">
+      <label>PUBLISHABLE KEY (anon key)</label>
+      <input id="sbKey" placeholder="sb_publishable_...">
+    </div>
+    <button class="btn btn-p" onclick="initSB()">▶ Inicializar & Verificar Sessão</button>
+  </div>
+
+  <div class="card">
+    <h2>◉ Status</h2>
+    <div class="status-grid">
+      <div class="status-item"><span class="status-label">SDK carregado</span><span class="badge idle" id="s0">aguardando</span></div>
+      <div class="status-item"><span class="status-label">SDK inicializado</span><span class="badge idle" id="s1">aguardando</span></div>
+      <div class="status-item"><span class="status-label">?code= na URL</span><span class="badge idle" id="s2">—</span></div>
+      <div class="status-item"><span class="status-label">Troca PKCE</span><span class="badge idle" id="s3">pendente</span></div>
+      <div class="status-item"><span class="status-label">Sessão</span><span class="badge idle" id="s4">nenhuma</span></div>
+      <div class="status-item"><span class="status-label">Usuário</span><span class="badge idle" id="s5">—</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:1.5rem">
+  <h2>🔗 URL Atual</h2>
+  <div class="url-bar" id="urlBar">—</div>
+  <div class="btn-row">
+    <button class="btn btn-s" onclick="doGoogle()">🔑 Testar Login Google</button>
+    <button class="btn btn-s" onclick="doLogout()">🚪 Logout</button>
+    <button class="btn btn-s" onclick="checkSession()">🔄 Verificar Sessão</button>
+  </div>
+  <div class="session-box" id="sessionBox"></div>
+</div>
+
+<div class="log-panel">
+  <div class="log-hdr">
+    <h2><span class="pulse"></span>Logs de Diagnóstico</h2>
+    <button class="btn btn-s" onclick="document.getElementById('logBody').innerHTML=''">Limpar</button>
+  </div>
+  <div class="log-body" id="logBody"></div>
+</div>
+
+<script>
+var sb = null;
+var t0 = Date.now();
+
+function ts(){ return '+'+((Date.now()-t0)/1000).toFixed(1)+'s'; }
+
+function log(msg, type){
+  type = type||'info';
+  var b = document.getElementById('logBody');
+  var d = document.createElement('div');
+  d.className = 'le l-'+type;
+  d.innerHTML = '<span class="lt">'+ts()+'</span><span class="lk"></span><span class="lm">'+msg+'</span>';
+  b.appendChild(d);
+  b.scrollTop = b.scrollHeight;
+}
+
+function st(id, txt, cls){
+  var el = document.getElementById(id);
+  el.textContent = txt;
+  el.className = 'badge '+cls;
+}
+
+function checkSDK(){
+  var banner = document.getElementById('sdkBanner');
+  if(window.supabase && window.supabase.createClient){
+    banner.className='sdk-banner sdk-ok';
+    banner.textContent='✅ @supabase/supabase-js carregado com sucesso';
+    st('s0','ok ✓','ok');
+    log('SDK carregado — window.supabase.createClient disponível','ok');
+    return true;
+  } else {
+    banner.className='sdk-banner sdk-err';
+    banner.textContent='❌ SDK não carregou — tente recarregar a página';
+    st('s0','erro','err');
+    log('window.supabase não encontrado. Verifique conexão com internet.','err');
+    return false;
+  }
+}
+
+function initSB(){
+  if(!checkSDK()){ log('Recarregue a página e tente novamente','warn'); return; }
+  var url = document.getElementById('sbUrl').value.trim();
+  var key = document.getElementById('sbKey').value.trim();
+  if(!url||!key){ log('Preencha URL e Key primeiro','warn'); return; }
+  log('Inicializando com URL: '+url,'step');
+  log('Key: '+key.substring(0,25)+'...','info');
+  try {
+    sb = window.supabase.createClient(url, key, {
+      auth:{ autoRefreshToken:true, persistSession:true, detectSessionInUrl:true, flowType:'pkce' }
+    });
+    st('s1','ok ✓','ok');
+    log('Cliente criado com detectSessionInUrl=true, flowType=pkce','ok');
+
+    sb.auth.onAuthStateChange(function(event, session){
+      log('🔔 AuthStateChange: "'+event+'"','step');
+      if(event==='SIGNED_IN' && session){
+        st('s3','sucesso ✓','ok'); st('s4','ativa ✓','ok');
+        st('s5', session.user.email||session.user.id.substring(0,8),'ok');
+        log('✅ SIGNED_IN: '+session.user.email,'ok');
+        log('   ID: '+session.user.id,'info');
+        log('   Provider: '+(session.user.app_metadata&&session.user.app_metadata.provider),'info');
+        window.history.replaceState({},'',window.location.pathname);
+        document.getElementById('urlBar').textContent=window.location.href;
+        var box=document.getElementById('sessionBox');
+        box.style.display='block';
+        box.textContent=JSON.stringify({
+          email:session.user.email,
+          id:session.user.id,
+          provider:session.user.app_metadata&&session.user.app_metadata.provider,
+          expires:new Date(session.expires_at*1000).toISOString()
+        },null,2);
+      } else if(event==='SIGNED_OUT'){
+        st('s4','encerrada','warn'); st('s5','—','idle');
+        log('Sessão encerrada','warn');
+        document.getElementById('sessionBox').style.display='none';
+      } else if(event==='INITIAL_SESSION'&&!session){
+        log('INITIAL_SESSION sem sessão — processando OAuth ou sem login','warn');
+        st('s3','aguardando...','warn');
+      } else if(event==='TOKEN_REFRESHED'){
+        log('Token renovado','info');
+      }
+    });
+    checkSession();
+  } catch(e){
+    st('s1','erro','err');
+    log('❌ Erro: '+e.message,'err');
+  }
+}
+
+async function checkSession(){
+  if(!sb){ log('Inicialize primeiro','warn'); return; }
+  log('Chamando getSession()...','step');
+  try {
+    var r = await sb.auth.getSession();
+    if(r.error){ log('❌ getSession erro: '+r.error.message,'err'); st('s4','erro','err'); return; }
+    var session = r.data.session;
+    if(session){
+      st('s4','ativa ✓','ok'); st('s5',session.user.email||'—','ok');
+      log('✅ Sessão ativa: '+session.user.email,'ok');
+    } else {
+      st('s4','nenhuma','idle');
+      log('Nenhuma sessão ativa','info');
+      var p=new URLSearchParams(window.location.search);
+      if(p.get('code')){
+        st('s3','falhou','err');
+        log('❌ Havia ?code= mas sessão é null — falha na troca PKCE!','err');
+        log('Verifique: Site URL no Supabase | Publishable Key correta | Porta correta','warn');
+      }
+    }
+  } catch(e){ log('❌ Exceção: '+e.message,'err'); }
+}
+
+async function doGoogle(){
+  if(!sb){ log('Inicialize primeiro','warn'); return; }
+  var redir = window.location.href.split('?')[0];
+  log('OAuth Google → redirectTo: '+redir,'step');
+  try {
+    var r = await sb.auth.signInWithOAuth({
+      provider:'google',
+      options:{ redirectTo: redir }
+    });
+    if(r.error) log('❌ '+r.error.message,'err');
+    else log('Redirecionando para Google...','info');
+  } catch(e){ log('❌ '+e.message,'err'); }
+}
+
+async function doLogout(){
+  if(!sb){ log('Inicialize primeiro','warn'); return; }
+  log('Fazendo logout...','step');
+  var r = await sb.auth.signOut();
+  if(r.error) log('❌ '+r.error.message,'err');
+  else log('✅ Logout OK','ok');
+}
+
+// Ao carregar
+window.addEventListener('DOMContentLoaded', function(){
+  document.getElementById('urlBar').textContent = window.location.href;
+  var p = new URLSearchParams(window.location.search);
+  if(p.get('error')){
+    st('s2','erro OAuth','err');
+    log('❌ Google retornou erro: '+p.get('error'),'err');
+    log('Descrição: '+p.get('error_description'),'err');
+  } else if(p.get('code')){
+    st('s2','encontrado ✓','ok');
+    log('✅ ?code= na URL: '+p.get('code').substring(0,12)+'...','ok');
+    log('Inicialize o SDK para trocar o código','warn');
+  } else {
+    st('s2','ausente','idle');
+    log('Sem ?code= na URL','info');
+  }
+  setTimeout(checkSDK, 800);
+  setInterval(function(){ document.getElementById('urlBar').textContent=window.location.href; },1000);
+});
+</script>
+</body>
+</html>

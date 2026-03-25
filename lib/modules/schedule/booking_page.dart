@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import '../../core/theme/app_colors.dart';
 import '../../pages/checkout_page.dart';
+import '../clients/rescheduling_success_page.dart';
 
 import '../../core/utils/availability_utils.dart';
 import '../../core/services/client_verification_service.dart';
@@ -15,8 +14,8 @@ import 'package:table_calendar/table_calendar.dart';
 import '../../core/services/brasilapi_service.dart';
 
 class BookingPage extends StatefulWidget {
-  final DocumentSnapshot shop;
-  final DocumentSnapshot serviceDoc;
+  final Map<String, dynamic> shop;
+  final Map<String, dynamic> serviceDoc;
   final Map<String, dynamic>? selectedVariation;
   final bool isReschedule;
   final String? appointmentId;
@@ -38,9 +37,8 @@ class BookingPage extends StatefulWidget {
     this.oldServiceName,
   });
 
-  Map<String, dynamic> get serviceData =>
-      serviceDoc.data() as Map<String, dynamic>;
-  String get serviceId => serviceDoc.id;
+  Map<String, dynamic> get serviceData => serviceDoc;
+  String get serviceId => (serviceDoc['id'] ?? '').toString();
 
   @override
   State<BookingPage> createState() => _BookingPageState();
@@ -49,7 +47,7 @@ class BookingPage extends StatefulWidget {
 class _BookingPageState extends State<BookingPage> {
   final currencyFormat = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
 
-  DocumentSnapshot? _selectedProfessional;
+  Map<String, dynamic>? _selectedProfessional;
 
   late String shopId;
   late Map<String, dynamic> shopData;
@@ -58,7 +56,6 @@ class _BookingPageState extends State<BookingPage> {
   int _intervalMinutes = 60;
   bool _clientChoosesProfessional = true;
   // o controle de evitar buracos é lido via shopConfig quando necessário
-  int _bookingWindowDays = 90;
   int _minAdvanceHours = 7;
   
   late PlanFeatures _planFeatures;
@@ -70,17 +67,17 @@ class _BookingPageState extends State<BookingPage> {
   @override
   void initState() {
     super.initState();
-    shopId = widget.shop.id;
-    shopData = widget.shop.data() as Map<String, dynamic>;
+    shopId = (widget.shop['id'] ?? '').toString();
+    shopData = widget.shop;
     _loadShopSettings();
     _checkRestriction();
   }
 
   Future<void> _checkRestriction() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user != null && !user.isAnonymous) {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user != null) {
       try {
-        _clientStatus = await ClientVerificationService.getClientStatus(user.uid, shopId);
+        _clientStatus = await ClientVerificationService.getClientStatus(user.id, shopId);
         final restrictProblematic = _shopConfig['restrict_problematic_clients'] ?? false;
         if (_clientStatus!['isProblematic'] == true && restrictProblematic) {
           if (mounted) {
@@ -103,8 +100,12 @@ class _BookingPageState extends State<BookingPage> {
   }
 
   void _loadShopSettings() {
+    debugPrint('🚀 BookingPage: _loadShopSettings | shopId: $shopId');
     if (shopData.containsKey('config')) {
-      _shopConfig = shopData['config'] as Map<String, dynamic>;
+      final rawConfig = shopData['config'];
+      debugPrint('🔍 BookingPage: rawConfig type: ${rawConfig?.runtimeType} | value: $rawConfig');
+      
+      _shopConfig = (rawConfig as Map<String, dynamic>?) ?? {};
       _planFeatures = PlanFeaturesService.getFeaturesForShop(shopData);
       setState(() {
         _intervalMinutes = _shopConfig['intervalo_agenda_min'] ?? 60;
@@ -114,15 +115,17 @@ class _BookingPageState extends State<BookingPage> {
         final configAllowsChoice = _shopConfig['cliente_escolhe_prof'] ?? true;
         _clientChoosesProfessional = _planFeatures.clientChoosesProfessional ? configAllowsChoice : false;
         
-        _bookingWindowDays = _shopConfig['janela_agendamento_dias'] ?? 90;
         _minAdvanceHours = _shopConfig['limite_minimo_agendamento_horas'] ?? 7;
       });
+    } else {
+      debugPrint('⚠️ BookingPage: Chave "config" não encontrada no shopData');
+      _planFeatures = PlanFeaturesService.getFeaturesForShop(shopData);
     }
   }
 
 
   Widget _buildHeader() {
-    String serviceName = widget.serviceData['nome'];
+    String serviceName = (widget.serviceData['name'] ?? widget.serviceData['nome'] ?? 'Serviço').toString();
     if (widget.selectedVariation != null) {
       serviceName += " (${widget.selectedVariation!['name']})";
     }
@@ -189,7 +192,7 @@ class _BookingPageState extends State<BookingPage> {
                           overflow: TextOverflow.ellipsis),
                       const SizedBox(height: 4),
                       Text(
-                          "${widget.serviceData['tempo_min'] ?? 30} min • ${currencyFormat.format(widget.selectedVariation?['price'] ?? widget.serviceData['preco'])}",
+                          "${widget.serviceData['duration_min'] ?? 30} min • ${currencyFormat.format(widget.selectedVariation?['price'] ?? widget.serviceData['price'])}",
                           style: const TextStyle(
                               color: Colors.white70, fontSize: 13)),
                     ],
@@ -204,11 +207,11 @@ class _BookingPageState extends State<BookingPage> {
   }
 
   Widget _buildProfessionalList() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('employees')
-          .where('shopId', isEqualTo: shopId)
-          .snapshots(),
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: Supabase.instance.client
+          .from('employees')
+          .stream(primaryKey: ['id'])
+          .eq('shop_id', shopId),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           debugPrint(
@@ -225,9 +228,9 @@ class _BookingPageState extends State<BookingPage> {
               child: CircularProgressIndicator(color: AppColors.primaryPurple));
         }
 
-        final profs = snapshot.data!.docs.where((d) {
+        final profs = (snapshot.data ?? []).where((d) {
           final skills =
-              (d.data() as Map)['servicos_habilidade'] as List? ?? [];
+              d['services_ids'] ?? d['servicos_habilidade'] as List? ?? [];
           return skills.isEmpty || skills.contains(widget.serviceId);
         }).toList();
 
@@ -287,8 +290,9 @@ class _BookingPageState extends State<BookingPage> {
                 itemCount: profs.length,
                 itemBuilder: (context, index) {
                   final doc = profs[index];
-                  final data = doc.data() as Map<String, dynamic>;
-                  final isSelected = _selectedProfessional?.id == doc.id;
+                  final data = doc;
+                  final isSelected =
+                      _selectedProfessional != null && _selectedProfessional!['id'] == doc['id'];
 
                   return Material(
                     color: Colors.transparent,
@@ -340,11 +344,11 @@ class _BookingPageState extends State<BookingPage> {
                             CircleAvatar(
                               radius: 35,
                               backgroundColor: Colors.grey[100],
-                              backgroundImage: data['foto_url'] != null
-                                  ? NetworkImage(data['foto_url'])
+                              backgroundImage: data['photo_url'] != null
+                                  ? NetworkImage(data['photo_url'])
                                   : null,
-                              child: data['foto_url'] == null
-                                  ? Text(data['nome'][0].toUpperCase(),
+                              child: data['photo_url'] == null
+                                  ? Text(data['name'][0].toUpperCase(),
                                       style: TextStyle(
                                           fontSize: 24,
                                           fontWeight: FontWeight.bold,
@@ -354,7 +358,7 @@ class _BookingPageState extends State<BookingPage> {
                                   : null,
                             ),
                             const SizedBox(height: 12),
-                            Text(data['nome'],
+                            Text(data['name'],
                                 style: TextStyle(
                                     fontWeight: FontWeight.bold,
                                     fontSize: 16,
@@ -414,10 +418,10 @@ class _BookingPageState extends State<BookingPage> {
 // PÁGINA DE SELEÇÃO DE DATA - SEM PROBLEMAS
 // ========================================
 class BookingTimePage extends StatefulWidget {
-  final DocumentSnapshot shop;
-  final DocumentSnapshot serviceDoc;
+  final Map<String, dynamic> shop;
+  final Map<String, dynamic> serviceDoc;
   final Map<String, dynamic>? selectedVariation;
-  final DocumentSnapshot professionalDoc;
+  final Map<String, dynamic> professionalDoc;
   final Map<String, dynamic> shopConfig;
   final int intervalMinutes;
   final int minAdvanceHours;
@@ -442,8 +446,7 @@ class BookingTimePage extends StatefulWidget {
  
   final Map<String, bool>? clientStatus;
 
-  Map<String, dynamic> get serviceData =>
-      serviceDoc.data() as Map<String, dynamic>;
+  Map<String, dynamic> get serviceData => serviceDoc;
 
   @override
   State<BookingTimePage> createState() => _BookingTimePageState();
@@ -466,12 +469,12 @@ class _BookingTimePageState extends State<BookingTimePage> {
   void initState() {
     super.initState();
     debugPrint(
-        '🚀 BookingPage: initState | shopId: ${widget.shop.id} | serviceId: ${widget.serviceDoc.id}');
+        '🚀 BookingPage: initState | shopId: ${(widget.shop['id'] ?? '').toString()} | serviceId: ${(widget.serviceDoc['id'] ?? '').toString()}');
 
     // Proteção de Rota Direta (Web Bypass Prevention)
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null || user.isAnonymous) {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user == null) {
         if (mounted) {
           Navigator.of(context).pushReplacementNamed('/');
         }
@@ -507,20 +510,18 @@ class _BookingTimePageState extends State<BookingTimePage> {
       final startOfMonth = DateTime(month.year, month.month, 1);
       final endOfMonth = DateTime(month.year, month.month + 1, 0, 23, 59, 59);
 
-      final snapshot = await FirebaseFirestore.instance
-          .collection('appointments')
-          .where('shopId', isEqualTo: widget.shop.id)
-          .where('profissionalId', isEqualTo: widget.professionalDoc.id)
-          .where('data_agendamento',
-              isGreaterThanOrEqualTo: Timestamp.fromDate(startOfMonth))
-          .where('data_agendamento',
-              isLessThanOrEqualTo: Timestamp.fromDate(endOfMonth))
-          .get();
+      final snapshot = await Supabase.instance.client
+          .from('appointments')
+          .select()
+          .eq('shop_id', (widget.shop['id'] ?? '').toString())
+          .eq('professional_id', (widget.professionalDoc['id'] ?? '').toString())
+          .gte('scheduled_at', startOfMonth.toIso8601String())
+          .lte('scheduled_at', endOfMonth.toIso8601String());
 
       // Agrupar appointments por dia
       Map<int, List<Map<String, int>>> groupedByDay = {};
-      for (var doc in snapshot.docs) {
-        final data = doc.data();
+      for (var doc in snapshot) {
+        final data = doc as Map<String, dynamic>;
         final status = data['status']?.toString().toLowerCase() ?? '';
         if (status == 'cancelado' ||
             status == 'rejeitado' ||
@@ -528,11 +529,12 @@ class _BookingTimePageState extends State<BookingTimePage> {
           continue;
         }
 
-        final dt = (data['data_agendamento'] as Timestamp).toDate();
+        final dt = DateTime.parse(data['scheduled_at']);
         final day = dt.day;
 
         int startMin = dt.hour * 60 + dt.minute;
-        int? duration = int.tryParse(data['duracao_min']?.toString() ?? '') ??
+        int? duration = int.tryParse(data['duration_min']?.toString() ?? '') ??
+            int.tryParse(data['duracao_min']?.toString() ?? '') ??
             int.tryParse(data['duracao']?.toString() ?? '') ??
             30;
 
@@ -542,10 +544,10 @@ class _BookingTimePageState extends State<BookingTimePage> {
         });
       }
 
-      final profData = widget.professionalDoc.data() as Map<String, dynamic>;
-      final startStr = profData['horario_inicio'] ?? "08:00";
-      final endStr = profData['horario_fim'] ?? "18:00";
-      final rawWorkDays = profData['dias_trabalho'] ?? [1, 2, 3, 4, 5, 6];
+      final profData = widget.professionalDoc;
+      final startStr = profData['work_start'] ?? profData['horario_inicio'] ?? "08:00";
+      final endStr = profData['work_end'] ?? profData['horario_fim'] ?? "18:00";
+      final rawWorkDays = profData['work_days'] ?? profData['dias_trabalho'] ?? [1, 2, 3, 4, 5, 6];
       final workDays = rawWorkDays.map((e) => int.parse(e.toString())).toList();
       final preventGaps = widget.shopConfig['evitar_buracos_agenda'] ?? false;
 
@@ -562,10 +564,10 @@ class _BookingTimePageState extends State<BookingTimePage> {
 
         // NOVO: Verifica Decisões de Feriados/Folgas
         final iso = date.toIso8601String().split('T')[0];
-        final shopData = widget.shop.data() as Map<String, dynamic>;
-        final configurados = shopData['feriados_configurados'] ?? {};
-        final pendentes = shopData['feriados_pendentes'] ?? [];
-        final autoBlock = widget.shopConfig['bloquear_feriados_auto'] ?? false;
+        final shopData = widget.shop;
+        final configurados = shopData['configured_holidays'] ?? {};
+        final pendentes = shopData['pending_holidays'] ?? [];
+        final autoBlock = widget.shopConfig['auto_block_holidays'] ?? false;
         if (autoBlock) {
           // Bloqueia se for feriado pendente OU feriado nacional da BrasilAPI
           bool isNational = _nationalHolidays.any((f) => f['date'] == iso);
@@ -582,7 +584,7 @@ class _BookingTimePageState extends State<BookingTimePage> {
             continue;
           } else if (config is Map && config.containsKey('escala')) {
             final List escala = config['escala'] ?? [];
-            if (!escala.contains(widget.professionalDoc.id)) {
+            if (!escala.contains(widget.professionalDoc['id'])) {
               newAvail[date] = false;
               continue;
             }
@@ -595,7 +597,7 @@ class _BookingTimePageState extends State<BookingTimePage> {
           endStr: endStr,
           interval: widget.intervalMinutes,
           serviceDuration:
-              int.tryParse(widget.serviceData['tempo_min'].toString()) ?? 30,
+              int.tryParse((widget.serviceData['duration_min'] ?? widget.serviceData['tempo_min']).toString()) ?? 30,
           busyIntervals: busy,
           preventGaps: preventGaps,
           minAdvanceHours: widget.minAdvanceHours,
@@ -629,10 +631,10 @@ class _BookingTimePageState extends State<BookingTimePage> {
       }
       return;
     }
-    final user = FirebaseAuth.instance.currentUser;
-    if (user != null && !user.isAnonymous) {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user != null) {
       final status = await ClientVerificationService.getClientStatus(
-          user.uid, widget.shop.id);
+          user.id, (widget.shop['id'] ?? '').toString());
       final restrictProblematic = widget.shopConfig['restrict_problematic_clients'] ?? false;
       if (status['isProblematic'] == true && restrictProblematic) {
         if (mounted) {
@@ -657,10 +659,10 @@ class _BookingTimePageState extends State<BookingTimePage> {
       }
       return;
     }
-    final user = FirebaseAuth.instance.currentUser;
-    if (user != null && !user.isAnonymous) {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user != null) {
       final status = await ClientVerificationService.getClientStatus(
-          user.uid, widget.shop.id);
+          user.id, (widget.shop['id'] ?? '').toString());
       if (mounted) {
         setState(() {
           _isVip = status['isVip'] ?? false;
@@ -690,7 +692,7 @@ class _BookingTimePageState extends State<BookingTimePage> {
       );
     }
 
-    final svcName = widget.serviceData['nome'] ?? 'Serviço';
+    final svcName = (widget.serviceData['name'] ?? widget.serviceData['nome'] ?? 'Serviço').toString();
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
 
@@ -946,10 +948,10 @@ class _BookingTimePageState extends State<BookingTimePage> {
 // PÁGINA DE SELEÇÃO DE HORÁRIOS
 // ========================================
 class BookingSlotsPage extends StatefulWidget {
-  final DocumentSnapshot shop;
-  final DocumentSnapshot serviceDoc;
+  final Map<String, dynamic> shop;
+  final Map<String, dynamic> serviceDoc;
   final Map<String, dynamic>? selectedVariation;
-  final DocumentSnapshot professionalDoc;
+  final Map<String, dynamic> professionalDoc;
   final Map<String, dynamic> shopConfig;
   final int intervalMinutes;
   final int minAdvanceHours;
@@ -1013,8 +1015,7 @@ class BookingSlotsPage extends StatefulWidget {
     this.oldServiceName,
   });
 
-  Map<String, dynamic> get serviceData =>
-      serviceDoc.data() as Map<String, dynamic>;
+  Map<String, dynamic> get serviceData => serviceDoc;
 
   @override
   State<BookingSlotsPage> createState() => _BookingSlotsPageState();
@@ -1026,11 +1027,24 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
   /// Dados do último conflito detectado ao selecionar um slot no modo dono.
   Map<String, dynamic>? _lastConflictData;
 
+  Future<List<Map<String, dynamic>>>? _slotsFuture;
+
   @override
   void initState() {
     super.initState();
     debugPrint(
         '🚀 BookingSlotsPage: initState | date: ${widget.selectedDate}');
+    _initSlotsFuture();
+  }
+
+  void _initSlotsFuture() {
+    final startDay = DateTime(widget.selectedDate.year,
+        widget.selectedDate.month, widget.selectedDate.day);
+    final endDay = startDay.add(const Duration(hours: 23, minutes: 59));
+    final isOwnerMode = widget.ownerExcludeAppointmentId != null ||
+        widget.allowOccupiedSelection;
+
+    _slotsFuture = _fetchAppointmentsAndIntervals(startDay, endDay, isOwnerMode);
   }
 
   @override
@@ -1097,16 +1111,14 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                   )
                               // ── Modo cliente: fluxo original inalterado ──
                               : () async {
-                                  final shopId = widget.shop.id;
-                                  final shopData = widget.shop.data()
-                                      as Map<String, dynamic>;
+                                  final shopId = (widget.shop['id'] ?? '').toString();
+                                  final shopData = widget.shop;
 
-                                  final profData = widget.professionalDoc.data()
-                                      as Map<String, dynamic>;
+                                  final profData = widget.professionalDoc;
 
-                                  String finalName = widget.serviceData['nome'];
+                                  String finalName = widget.serviceData['name'] ?? '';
                                   double finalPrice = double.tryParse(widget
-                                          .serviceData['preco']
+                                          .serviceData['price']
                                           .toString()) ??
                                       0.0;
 
@@ -1168,21 +1180,22 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                     );
 
                                     try {
-                                      final functions = FirebaseFunctions.instance;
-
                                       // --- TRAVA DE SEGURANÇA FINAL ---
-                                      final appDoc = await FirebaseFirestore.instance
-                                          .collection('appointments')
-                                          .doc(widget.appointmentId)
-                                          .get();
-                                      if (appDoc.exists) {
+                                      final appDoc = await Supabase.instance.client
+                                          .from('appointments')
+                                          .select()
+                                          .eq('id', widget.appointmentId!)
+                                          .maybeSingle();
+
+                                      if (appDoc != null) {
                                         final validation =
                                             await ClientVerificationService
                                                 .canModifyAppointment(appDoc);
                                         if (!validation['can']) {
                                           if (!mounted) return;
-                                          Navigator.pop(context); // tira o loading
-                                          sm.showSnackBar(SnackBar(
+                                          Navigator.of(context).pop(); // tira o loading
+                                          if (!mounted) return;
+                                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                                               content:
                                                   Text(validation['reason']),
                                               backgroundColor: Colors.red));
@@ -1190,79 +1203,74 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                         }
                                       }
 
-                                      await functions
-                                          .httpsCallable(
-                                              'rescheduleAppointment')
-                                          .call({
+                                      final response = await Supabase.instance.client
+                                          .functions.invoke(
+                                              'rescheduleAppointment',
+                                              body: {
                                         'appointmentId': widget.appointmentId,
                                         'newDateISO': utcDateTimeIso,
-                                        'newServiceId': widget.serviceDoc.id,
+                                        'newServiceId': (widget.serviceDoc['id'] ?? '').toString(),
                                         'newServiceName': finalName,
                                         'newPrice': finalPrice,
                                         'newProfessionalId':
-                                            widget.professionalDoc.id,
+                                            widget.professionalDoc['id'],
                                         'newProfessionalName':
                                             profData['nome'] ?? 'Profissional',
                                       });
+
+                                      if (!mounted) return;
+                                      Navigator.of(context).pop();
+
+                                      if (response.status != 200) {
+                                        throw response.data?['error'] ?? 'Erro desconhecido';
+                                      }
 
                                       if (!mounted) return;
 
                                       // Em vez de voltar 3 telas, vamos direcionar para a página de sucesso
                                       // passando os dados antigos e novos
 
-                                      Navigator.of(context)
-                                          .pop(); // tira o loading dialog
-
-                                      Navigator.pushReplacementNamed(
-                                          context, '/reschedule_success',
-                                          arguments: {
-                                            'appointmentId':
-                                                widget.appointmentId,
-                                            'newDate': newDateTime,
-                                            'newProfessional':
-                                                profData['nome'] ??
-                                                    'Profissional',
-                                            'newServiceName': finalName,
-                                            'oldDate': widget.oldDate,
-                                            'oldProfessional':
-                                                widget.oldProfessional ?? '',
-                                            'oldServiceName': widget
-                                                    .oldServiceName ??
-                                                widget.serviceData['nome'] ??
-                                                '',
-                                          });
+                                      Navigator.pushReplacement(
+                                          context,
+                                          MaterialPageRoute(
+                                              builder: (context) =>
+                                                  RescheduleSuccessPage(
+                                                    appointmentId: widget.appointmentId!,
+                                                    newDate: newDateTime,
+                                                    newProfessional: profData['nome'] ?? 'Profissional',
+                                                    newServiceName: finalName,
+                                                    oldDate: widget.oldDate,
+                                                    oldProfessional: widget.oldProfessional ?? '',
+                                                    oldServiceName: widget.oldServiceName ?? '',
+                                                  )));
                                     } catch (e) {
                                       if (!mounted) return;
-                                      if (Navigator.canPop(context)) {
-                                        Navigator.pop(context);
+                                      if (Navigator.of(context).canPop()) {
+                                        Navigator.of(context).pop(); // fecha loading se ainda aberto
                                       }
-                                      final errMsg =
-                                          e is FirebaseFunctionsException
-                                              ? (e.message ?? e.toString())
-                                              : e.toString();
-                                      sm.showSnackBar(
-                                        SnackBar(
-                                          content: Text(
-                                              'Erro ao reagendar: $errMsg'),
-                                          backgroundColor: Colors.red,
-                                        ),
-                                      );
+                                      sm.showSnackBar(SnackBar(
+                                          content: Text("Erro: $e"),
+                                          backgroundColor: Colors.red));
                                     }
                                   } else {
+                                    // ── Modo normal (Checkout) ──
+                                    final shopId = (widget.shop['id'] ?? '').toString();
+                                    final shopData = widget.shop;
+                                    final profData = widget.professionalDoc;
+
                                     Navigator.push(
                                       context,
                                       MaterialPageRoute(
-                                        builder: (c) => CheckoutPage(
+                                        builder: (context) => CheckoutPage(
                                           shopId: shopId,
                                           shopData: shopData,
                                           shopConfig: widget.shopConfig,
                                           serviceDoc: widget.serviceDoc,
-                                          serviceNameOverride: finalName,
-                                          servicePriceOverride: finalPrice,
-                                          professionalDoc:
-                                              widget.professionalDoc,
+                                          professionalDoc: profData,
                                           date: widget.selectedDate,
                                           time: _selectedTime!,
+                                          selectedVariation:
+                                              widget.selectedVariation,
                                           fromSubdomain: widget.fromSubdomain,
                                         ),
                                       ),
@@ -1304,18 +1312,18 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
 
   Future<List<Map<String, dynamic>>> _fetchAppointmentsAndIntervals(
       DateTime startDay, DateTime endDay, bool isOwnerMode) async {
-    final querySnapshot = await FirebaseFirestore.instance
-        .collection('appointments')
-        .where('shopId', isEqualTo: widget.shop.id)
-        .where('profissionalId', isEqualTo: widget.professionalDoc.id)
-        .where('data_agendamento', isGreaterThanOrEqualTo: startDay)
-        .where('data_agendamento', isLessThanOrEqualTo: endDay)
-        .get();
+      final querySnapshot = await Supabase.instance.client
+          .from('appointments')
+          .select()
+          .eq('shop_id', (widget.shop['id'] ?? '').toString())
+          .eq('professional_id', (widget.professionalDoc['id'] ?? '').toString())
+          .gte('scheduled_at', startDay.toIso8601String())
+          .lte('scheduled_at', endDay.toIso8601String());
 
     List<Map<String, dynamic>> results = [];
 
-    for (var d in querySnapshot.docs) {
-      final data = d.data();
+    for (var d in querySnapshot) {
+      final data = d as Map<String, dynamic>;
       final status = (data['status'] ?? '').toString().toLowerCase();
 
       if (status == 'cancelado' ||
@@ -1325,7 +1333,7 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
       }
 
       if (widget.ownerExcludeAppointmentId != null &&
-          d.id == widget.ownerExcludeAppointmentId) {
+          data['id'] == widget.ownerExcludeAppointmentId) {
         continue;
       }
 
@@ -1336,16 +1344,15 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
         String? savedServiceId = data['servicoId'] ?? data['servico_id'];
         if (savedServiceId != null && savedServiceId.isNotEmpty) {
           try {
-            final svcDoc = await FirebaseFirestore.instance
-                .collection('services')
-                .doc(savedServiceId)
-                .get();
-            if (svcDoc.exists) {
-              final svcData = svcDoc.data();
-              if (svcData != null) {
-                agDuration =
-                    int.tryParse(svcData['tempo_min']?.toString() ?? '');
-              }
+            final svcDoc = await Supabase.instance.client
+                .from('services')
+                .select()
+                .eq('id', savedServiceId)
+                .maybeSingle();
+            if (svcDoc != null) {
+              final svcData = svcDoc as Map<String, dynamic>;
+              agDuration =
+                  int.tryParse(svcData['tempo_min']?.toString() ?? '');
             }
           } catch (_) {}
         }
@@ -1354,7 +1361,7 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
 
       results.add({
         ...data,
-        'id': d.id,
+        'id': data['id'],
         'computed_duration': agDuration,
       });
     }
@@ -1363,7 +1370,7 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
   }
 
   Widget _buildSlotsList() {
-    final profData = widget.professionalDoc.data() as Map<String, dynamic>;
+    final profData = widget.professionalDoc;
     int duration =
         int.tryParse(widget.serviceData['tempo_min'].toString()) ?? 30;
     final startDay = DateTime(widget.selectedDate.year,
@@ -1373,7 +1380,7 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
         widget.allowOccupiedSelection;
 
     return FutureBuilder<List<Map<String, dynamic>>>(
-      future: _fetchAppointmentsAndIntervals(startDay, endDay, isOwnerMode),
+      future: _slotsFuture,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(
@@ -1390,12 +1397,12 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
           );
         }
 
-        final dataList = snapshot.data ?? [];
+        final List<dynamic> docs = snapshot.data ?? [];
         final Map<int, Map<String, dynamic>> occupiedSlotData = {};
         List<Map<String, int>> busyIntervals = [];
 
-        for (var data in dataList) {
-          final dt = (data['data_agendamento'] as Timestamp).toDate();
+        for (var data in docs) {
+          final dt = DateTime.parse(data['scheduled_at']);
           int startMin = dt.hour * 60 + dt.minute;
           int agDuration = data['computed_duration'] as int;
           int endMin = startMin + agDuration;
@@ -1468,7 +1475,7 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                     selMin + duration > entry.key) {
                   // entry.value disponível para future use (ex: callback de sobreposição)
                   final conflictDt =
-                      (entry.value['data_agendamento'] as Timestamp).toDate();
+                      DateTime.parse(entry.value['scheduled_at'].toString());
                   final conflictTime =
                       '${conflictDt.hour.toString().padLeft(2, '0')}:${conflictDt.minute.toString().padLeft(2, '0')}';
                   final conflictClient = entry.value['client_nome'] ??

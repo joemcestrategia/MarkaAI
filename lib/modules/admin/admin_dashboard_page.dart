@@ -1,5 +1,5 @@
-import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+﻿import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/services/session_service.dart';
 import '../../core/widgets/splash_loading_widget.dart';
 import 'widgets/admin_overview_widget.dart';
@@ -123,7 +123,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 const SizedBox(height: 16),
                 TextButton(
                   onPressed: () async {
-                    await FirebaseAuth.instance.signOut();
+                    await Supabase.instance.client.auth.signOut();
                     if (context.mounted) Navigator.pushReplacementNamed(context, '/login');
                   },
                   child: Text(
@@ -253,9 +253,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             style: TextStyle(color: textColor, fontSize: 13, fontWeight: FontWeight.bold)),
                         subtitle: const Text('Sair do sistema',
                             style: TextStyle(color: Colors.grey, fontSize: 10)),
-                        onTap: () {
-                          FirebaseAuth.instance.signOut();
-                          Navigator.pushReplacementNamed(context, '/login');
+                        onTap: () async {
+                          await Supabase.instance.client.auth.signOut();
+                          if (mounted) Navigator.pushReplacementNamed(context, '/login');
                         },
                       ),
                     ],
@@ -431,7 +431,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             ),
           ),
           const SizedBox(width: 24),
-          Icon(Icons.notifications_none_rounded, color: Colors.grey),
+          const Icon(Icons.notifications_none_rounded, color: Colors.grey),
           const SizedBox(width: 24),
           Container(
             height: 32,
@@ -439,38 +439,39 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             color: borderColor,
           ),
           const SizedBox(width: 24),
-          FutureBuilder<User?>(
-            future: Future.value(FirebaseAuth.instance.currentUser),
-            builder: (context, snapshot) {
-              final user = snapshot.data;
-              return Row(
-                children: [
-                  Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        user?.displayName ?? 'Admin Master',
-                        style: TextStyle(color: textColor, fontSize: 13, fontWeight: FontWeight.bold),
-                      ),
-                      const Text(
-                        'Full Access',
-                        style: TextStyle(color: Color(0xFF4F8EF7), fontSize: 10, fontWeight: FontWeight.bold),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(width: 12),
-                  CircleAvatar(
-                    radius: 18,
-                    backgroundColor: const Color(0xFF4F8EF7).withValues(alpha: 0.1),
-                    child: const Icon(Icons.person_outline, color: Color(0xFF4F8EF7), size: 20),
-                  ),
-                ],
-              );
-            },
-          ),
+          _buildUserInfo(textColor),
         ],
       ),
+    );
+  }
+
+  Widget _buildUserInfo(Color textColor) {
+    final user = Supabase.instance.client.auth.currentUser;
+    final fullName = user?.userMetadata?['full_name'] ?? 'Admin Master';
+    
+    return Row(
+      children: [
+        Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              fullName,
+              style: TextStyle(color: textColor, fontSize: 13, fontWeight: FontWeight.bold),
+            ),
+            const Text(
+              'Full Access',
+              style: TextStyle(color: Color(0xFF4F8EF7), fontSize: 10, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        const SizedBox(width: 12),
+        CircleAvatar(
+          radius: 18,
+          backgroundColor: const Color(0xFF4F8EF7).withValues(alpha: 0.1),
+          child: const Icon(Icons.person_outline, color: Color(0xFF4F8EF7), size: 20),
+        ),
+      ],
     );
   }
 

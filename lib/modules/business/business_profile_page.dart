@@ -1,11 +1,12 @@
-﻿// ignore_for_file: use_build_context_synchronously
+// ignore_for_file: use_build_context_synchronously
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/services.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 import 'package:image_picker/image_picker.dart';
-import 'dart:typed_data';
+import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/location_service.dart';
+import '../../core/services/image_service.dart';
 import '../clients/address_selector_page.dart';
 
 // Lista fixa das UFs brasileiras
@@ -52,6 +53,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
   bool _isLoading = false;
   bool _isUploading = false;
   bool _isLoadingCep = false;
+  double _uploadProgress = 0.0;
 
   // Campos básicos
   final _nameCtrl = TextEditingController();
@@ -59,6 +61,8 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
   final _phoneCtrl = TextEditingController();
   final _categoryCtrl = TextEditingController();
   final _instagramCtrl = TextEditingController();
+  final _tiktokCtrl = TextEditingController();
+  final _youtubeCtrl = TextEditingController();
 
   // Campos de endereço
   bool _semEnderecoFixo = false;
@@ -69,6 +73,16 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
   final _bairroCtrl = TextEditingController();
   final _cidadeCtrl = TextEditingController();
   String? _estadoSelecionado;
+
+  // Máscaras
+  final _phoneMask = MaskTextInputFormatter(
+    mask: '(##) #####-####',
+    filter: {"#": RegExp(r'[0-9]')},
+  );
+  final _cepMask = MaskTextInputFormatter(
+    mask: '#####-###',
+    filter: {"#": RegExp(r'[0-9]')},
+  );
 
   // Localização geográfica (lat/lng, mantidos para buscas por raio)
   double? _lat;
@@ -94,6 +108,8 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
     _phoneCtrl.dispose();
     _categoryCtrl.dispose();
     _instagramCtrl.dispose();
+    _tiktokCtrl.dispose();
+    _youtubeCtrl.dispose();
     _cepCtrl.dispose();
     _logradouroCtrl.dispose();
     _numeroCtrl.dispose();
@@ -109,46 +125,49 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
     setState(() => _isLoading = true);
 
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('shops')
-          .doc(widget.shopId)
-          .get();
+      final doc = await sb.Supabase.instance.client
+          .from('shops')
+          .select()
+          .eq('id', widget.shopId)
+          .maybeSingle();
 
-      if (doc.exists) {
-        final data = doc.data() as Map<String, dynamic>;
+      if (doc != null) {
+        final data = doc;
 
-        _nameCtrl.text = data['nome'] ?? '';
-        _descCtrl.text = data['descricao'] ?? data['bio'] ?? '';
-        _phoneCtrl.text = data['telefone'] ?? data['whatsapp'] ?? '';
-        _categoryCtrl.text = data['categoria'] ?? '';
+        _nameCtrl.text = data['name'] ?? '';
+        _descCtrl.text = data['description'] ?? data['bio'] ?? '';
+        _phoneCtrl.text = data['phone'] ?? data['whatsapp'] ?? '';
+        _categoryCtrl.text = data['category'] ?? '';
         _instagramCtrl.text = data['instagram'] ?? '';
-        _cidadeCtrl.text = data['cidade'] ?? data['city'] ?? '';
+        _tiktokCtrl.text = data['tiktok'] ?? '';
+        _youtubeCtrl.text = data['youtube'] ?? '';
+        _cidadeCtrl.text = data['city'] ?? '';
 
         // Estado salvo como UF (2 letras)
         final estadoRaw =
-            (data['estado'] ?? '').toString().toUpperCase().trim();
+            (data['state'] ?? '').toString().toUpperCase().trim();
         _estadoSelecionado = _kUFs.contains(estadoRaw) ? estadoRaw : null;
 
         // Campos de endereço detalhados
-        _semEnderecoFixo = data['sem_endereco_fixo'] ?? false;
-        _cepCtrl.text = data['cep'] ?? '';
-        _logradouroCtrl.text = data['logradouro'] ?? '';
-        _numeroCtrl.text = data['numero'] ?? '';
-        _complementoCtrl.text = data['complemento'] ?? '';
-        _bairroCtrl.text = data['bairro'] ?? '';
+        _semEnderecoFixo = data['no_fixed_address'] ?? false;
+        _cepCtrl.text = data['zip_code'] ?? '';
+        _logradouroCtrl.text = data['street'] ?? '';
+        _numeroCtrl.text = data['number'] ?? '';
+        _complementoCtrl.text = data['complement'] ?? '';
+        _bairroCtrl.text = data['neighborhood'] ?? '';
 
         _lat = data['lat'] != null ? (data['lat'] as num).toDouble() : null;
         _lng = data['lng'] != null ? (data['lng'] as num).toDouble() : null;
 
         if (mounted) {
           setState(() {
-            _imageUrl = (data['imageUrl'] != null &&
-                    data['imageUrl'].toString().isNotEmpty)
-                ? data['imageUrl']
+            _imageUrl = (data['image_url'] != null &&
+                    data['image_url'].toString().isNotEmpty)
+                ? data['image_url']
                 : null;
-            _logoUrl = (data['logoUrl'] != null &&
-                    data['logoUrl'].toString().isNotEmpty)
-                ? data['logoUrl']
+            _logoUrl = (data['logo_url'] != null &&
+                    data['logo_url'].toString().isNotEmpty)
+                ? data['logo_url']
                 : data['foto'];
           });
         }
@@ -180,7 +199,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
         final uf = result.estado.toUpperCase();
         _estadoSelecionado = _kUFs.contains(uf) ? uf : null;
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('?? CEP encontrado: ${result.cidade}/${result.estado}'),
+          content: Text('✅ CEP encontrado: ${result.cidade}/${result.estado}'),
           backgroundColor: Colors.green,
           duration: const Duration(seconds: 2),
         ));
@@ -204,7 +223,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
     if (cidade.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text(
-            '?? Cidade é obrigatória para que sua loja seja encontrada pelos clientes.'),
+            '⚠️ Cidade é obrigatória para que sua loja seja encontrada pelos clientes.'),
         backgroundColor: Colors.red,
       ));
       _cidadeFocus.requestFocus();
@@ -212,7 +231,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
     }
     if (estado == null || estado.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('?? Estado (UF) é obrigatório.'),
+        content: Text('⚠️ Estado (UF) é obrigatório.'),
         backgroundColor: Colors.red,
       ));
       return;
@@ -220,29 +239,31 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
 
     setState(() => _isLoading = true);
     try {
-      await FirebaseFirestore.instance
-          .collection('shops')
-          .doc(widget.shopId)
+      await sb.Supabase.instance.client
+          .from('shops')
           .update({
-        'nome': _nameCtrl.text.trim(),
-        'descricao': _descCtrl.text.trim(),
-        'telefone': _phoneCtrl.text.trim(),
-        'categoria': _categoryCtrl.text.trim(),
+        'name': _nameCtrl.text.trim(),
+        'description': _descCtrl.text.trim(),
+        'phone': _phoneCtrl.text.replaceAll(RegExp(r'\D'), ''),
+        'whatsapp': _phoneCtrl.text.replaceAll(RegExp(r'\D'), ''),
+        'category': _categoryCtrl.text.trim(),
         'instagram': _instagramCtrl.text.trim(),
-        'imageUrl': _imageUrl,
-        'logoUrl': _logoUrl,
+        'tiktok': _tiktokCtrl.text.trim(),
+        'youtube': _youtubeCtrl.text.trim(),
+        'image_url': _imageUrl,
+        'logo_url': _logoUrl,
         'lat': _lat,
         'lng': _lng,
         // Campos de localização
-        'cidade': cidade,
-        'estado': estado,
-        'cep': _cepCtrl.text.trim(),
-        'logradouro': _logradouroCtrl.text.trim(),
-        'numero': _numeroCtrl.text.trim(),
-        'complemento': _complementoCtrl.text.trim(),
-        'bairro': _bairroCtrl.text.trim(),
-        'sem_endereco_fixo': _semEnderecoFixo,
-      });
+        'city': cidade,
+        'state': estado,
+        'zip_code': _cepCtrl.text.trim(),
+        'street': _logradouroCtrl.text.trim(),
+        'number': _numeroCtrl.text.trim(),
+        'complement': _complementoCtrl.text.trim(),
+        'neighborhood': _bairroCtrl.text.trim(),
+        'no_fixed_address': _semEnderecoFixo,
+      }).eq('id', widget.shopId);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -280,48 +301,56 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
   Future<void> _pickAndUploadImage(bool isCover) async {
     final ImagePicker picker = ImagePicker();
     try {
-      final XFile? image = await picker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: isCover ? 1920 : 800,
-        maxHeight: isCover ? 1080 : 800,
-        imageQuality: 85,
-      );
+      final XFile? image = await picker.pickImage(source: ImageSource.gallery);
       if (image == null) return;
 
-      setState(() => _isUploading = true);
-      final Uint8List bytes = await image.readAsBytes();
-      final String fileName = isCover
-          ? 'cover_${DateTime.now().millisecondsSinceEpoch}.jpg'
-          : 'logo_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      setState(() {
+        _isUploading = true;
+        _uploadProgress = 0.1;
+      });
 
-      final Reference ref = FirebaseStorage.instance
-          .ref()
-          .child('shops/${widget.shopId}/$fileName');
-
-      await ref.putData(bytes, SettableMetadata(contentType: 'image/jpeg'));
-      final String downloadUrl = await ref.getDownloadURL();
+      String newUrl;
+      if (isCover) {
+        newUrl = await ImageService.uploadStoreCover(
+          image, 
+          widget.shopId,
+          updateDatabase: false,
+          onProgress: (p) => setState(() => _uploadProgress = p),
+        );
+      } else {
+        newUrl = await ImageService.uploadStoreLogo(
+          image, 
+          widget.shopId,
+          updateDatabase: false,
+          onProgress: (p) => setState(() => _uploadProgress = p),
+        );
+      }
 
       if (mounted) {
         setState(() {
           if (isCover) {
-            _imageUrl = downloadUrl;
+            _imageUrl = newUrl;
           } else {
-            _logoUrl = downloadUrl;
+            _logoUrl = newUrl;
           }
           _isUploading = false;
+          _uploadProgress = 0.0;
         });
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(isCover
-              ? '?? Capa carregada! Clique em SALVAR.'
-              : '?? Logo carregada! Clique em SALVAR.'),
+              ? '✅ Capa carregada! Clique em SALVAR.'
+              : '✅ Logo carregada! Clique em SALVAR.'),
           backgroundColor: Colors.blue,
         ));
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _isUploading = false);
+        setState(() {
+          _isUploading = false;
+          _uploadProgress = 0.0;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red));
+            SnackBar(content: Text("❌ Erro: $e"), backgroundColor: Colors.red));
       }
     }
   }
@@ -341,32 +370,23 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
           if (_isUploading)
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
+              child: Column(
                 children: [
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: Colors.blue[50],
-                      borderRadius: BorderRadius.circular(25),
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                        SizedBox(width: 10),
-                        Text('Enviando...',
-                            style: TextStyle(
-                                fontSize: 13,
-                                color: Colors.blue,
-                                fontWeight: FontWeight.bold)),
-                      ],
-                    ),
+                  LinearProgressIndicator(
+                    value: _uploadProgress,
+                    backgroundColor: Colors.grey[200],
+                    valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primaryPurple),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      Text('${(_uploadProgress * 100).toInt()}% Enviando...',
+                          style: const TextStyle(
+                              fontSize: 13,
+                              color: AppColors.primaryPurple,
+                              fontWeight: FontWeight.bold)),
+                    ],
                   ),
                 ],
               ),
@@ -415,12 +435,26 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
                         Row(children: [
                           Expanded(
                               child: _buildInput('Telefone / WhatsApp',
-                                  _phoneCtrl, Icons.phone)),
+                                  _phoneCtrl, Icons.phone,
+                                  keyboardType: TextInputType.phone,
+                                  inputFormatters: [_phoneMask])),
                           const SizedBox(width: 10),
                           Expanded(
                               child: _buildInput(
                                   'Instagram', _instagramCtrl, Icons.camera_alt,
-                                  hint: '@seu_usuario')),
+                                  hint: '@seu_usuario', required: false)),
+                        ]),
+                        const SizedBox(height: 10),
+                        Row(children: [
+                          Expanded(
+                              child: _buildInput(
+                                  'TikTok', _tiktokCtrl, Icons.music_note,
+                                  hint: '@seu_usuario', required: false)),
+                          const SizedBox(width: 10),
+                          Expanded(
+                              child: _buildInput(
+                                  'YouTube', _youtubeCtrl, Icons.play_circle_fill,
+                                  hint: 'link do canal', required: false)),
                         ]),
                       ],
                     ),
@@ -460,7 +494,7 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
                             child: TextFormField(
                               controller: _cepCtrl,
                               keyboardType: TextInputType.number,
-                              maxLength: 9,
+                              inputFormatters: [_cepMask],
                               style: const TextStyle(fontSize: 14),
                               decoration: InputDecoration(
                                 labelText:
@@ -897,10 +931,14 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
     int maxLines = 1,
     String? hint,
     bool required = true,
+    TextInputType? keyboardType,
+    List<TextInputFormatter>? inputFormatters,
   }) {
     return TextFormField(
       controller: ctrl,
       maxLines: maxLines,
+      keyboardType: keyboardType,
+      inputFormatters: inputFormatters,
       style: const TextStyle(fontSize: 14),
       decoration: InputDecoration(
         labelText: label,

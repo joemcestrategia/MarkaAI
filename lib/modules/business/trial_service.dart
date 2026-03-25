@@ -1,10 +1,10 @@
-﻿import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/services/session_service.dart';
 import 'package:flutter/material.dart';
 
 class TrialService {
   static const String _collection = 'shops';
-  static const int trialDurationDays = 90;
+  static const int trialDurationDays = 30;
 
   /// Retorna as informações do trial para a loja logada
   static Future<Map<String, dynamic>> getTrialStatus() async {
@@ -12,33 +12,37 @@ class TrialService {
       final shopId = await SessionService.getShopId();
       if (shopId == null) return _defaultTrialStatus();
 
-      final doc = await FirebaseFirestore.instance
-          .collection(_collection)
-          .doc(shopId)
-          .get();
-      if (!doc.exists) return _defaultTrialStatus();
+      final supabase = Supabase.instance.client;
+      final data = await supabase
+          .from(_collection)
+          .select()
+          .eq('id', shopId)
+          .maybeSingle();
+          
+      if (data == null) return _defaultTrialStatus();
 
-      final data = doc.data()!;
-
-      bool trialUsed = data['trial_used'] ?? false;
+      final sub = data['subscription'] as Map<String, dynamic>? ?? {};
+      bool trialUsed = sub['trial_used'] ?? false;
       bool trialActive = data['trial_active'] ?? false;
-      String? trialPlan = data['trial_plan'];
-      Timestamp? trialEndTimestamp = data['trial_end_date'];
+      String? trialPlan = sub['trial_plan'] ?? sub['plan_id'];
+      String? trialEndDateStr = (sub['trial_end_date'] ?? sub['trial_ends_at'])?.toString();
 
       int daysRemaining = 0;
       bool trialExpired = false;
+      DateTime? endDate;
 
-      if (trialActive && trialEndTimestamp != null) {
-        final endDate = trialEndTimestamp.toDate();
-        final now = DateTime.now();
-        final diff = endDate.difference(now);
+      if (trialActive && trialEndDateStr != null) {
+        endDate = DateTime.tryParse(trialEndDateStr);
+        if (endDate != null) {
+          final now = DateTime.now();
+          final diff = endDate.difference(now);
 
-        if (diff.isNegative) {
-          trialExpired = true;
-          trialActive =
-              false; // Deveria ser atualizado no backend, mas marcamos como expirado localmente
-        } else {
-          daysRemaining = diff.inDays;
+          if (diff.isNegative) {
+            trialExpired = true;
+            trialActive = false; // Expirado localmente
+          } else {
+            daysRemaining = diff.inDays;
+          }
         }
       }
 
@@ -48,7 +52,7 @@ class TrialService {
         'trialExpired': trialExpired,
         'daysRemaining': daysRemaining,
         'trialPlan': trialPlan,
-        'endDate': trialEndTimestamp?.toDate(),
+        'endDate': endDate,
       };
     } catch (e) {
       debugPrint("Erro ao obter status do trial: $e");
@@ -62,26 +66,30 @@ class TrialService {
       final shopId = await SessionService.getShopId();
       if (shopId == null) return;
 
-      final doc = await FirebaseFirestore.instance
-          .collection(_collection)
-          .doc(shopId)
-          .get();
-      if (!doc.exists) return;
+      final supabase = Supabase.instance.client;
+      final data = await supabase
+          .from(_collection)
+          .select()
+          .eq('id', shopId)
+          .maybeSingle();
+          
+      if (data == null) return;
 
-      final data = doc.data()!;
       bool trialActive = data['trial_active'] ?? false;
-      Timestamp? trialEndTimestamp = data['trial_end_date'];
+      final sub = data['subscription'] as Map<String, dynamic>? ?? {};
+      String? trialEndDateStr = (sub['trial_end_date'] ?? sub['trial_ends_at'])?.toString();
 
-      if (trialActive && trialEndTimestamp != null) {
-        final endDate = trialEndTimestamp.toDate();
-        if (endDate.difference(DateTime.now()).isNegative) {
+      if (trialActive && trialEndDateStr != null) {
+        final endDate = DateTime.tryParse(trialEndDateStr);
+        if (endDate != null && endDate.difference(DateTime.now()).isNegative) {
           // O Trial expirou! Atualizamos no banco
-          await FirebaseFirestore.instance
-              .collection(_collection)
-              .doc(shopId)
+          await supabase
+              .from(_collection)
               .update({
-            'trial_active': false,
-          });
+                'trial_active': false,
+                'plan_id': 'free',
+              })
+              .eq('id', shopId);
           debugPrint("TrialService: Trial expirado e desativado com sucesso.");
         }
       }
@@ -96,14 +104,17 @@ class TrialService {
       final shopId = await SessionService.getShopId();
       if (shopId == null) return false;
 
-      final doc = await FirebaseFirestore.instance
-          .collection(_collection)
-          .doc(shopId)
-          .get();
-      if (!doc.exists) return false;
+      final supabase = Supabase.instance.client;
+      final data = await supabase
+          .from(_collection)
+          .select()
+          .eq('id', shopId)
+          .maybeSingle();
+          
+      if (data == null) return false;
 
-      final data = doc.data()!;
-      if (data['trial_used'] == true) {
+      final existingSub = data['subscription'] as Map<String, dynamic>? ?? {};
+      if (existingSub['trial_used'] == true) {
         debugPrint("Tentativa inválida: Trial já foi utilizado.");
         return false;
       }
@@ -111,16 +122,22 @@ class TrialService {
       final now = DateTime.now();
       final endDate = now.add(const Duration(days: trialDurationDays));
 
-      await FirebaseFirestore.instance
-          .collection(_collection)
-          .doc(shopId)
+      await supabase
+          .from(_collection)
           .update({
-        'trial_used': true,
-        'trial_plan': planId,
+        'plan_id': planId,
         'trial_active': true,
-        'trial_start_date': FieldValue.serverTimestamp(),
-        'trial_end_date': Timestamp.fromDate(endDate),
-      });
+        'subscription': {
+          'status': 'trial',
+          'plan_id': planId,
+          'trial_used': true,
+          'trial_plan': planId,
+          'trial_start_date': now.toIso8601String(),
+          'trial_end_date': endDate.toIso8601String(),
+          'trial_ends_at': endDate.toIso8601String(),
+          'updated_at': now.toIso8601String(),
+        },
+      }).eq('id', shopId);
 
       return true;
     } catch (e) {

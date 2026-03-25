@@ -1,15 +1,15 @@
-﻿import 'dart:io';
+import 'dart:io' if (dart.library.html) 'package:flutter_application_1/core/utils/io_stub.dart' as io;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 import 'package:image_picker/image_picker.dart';
-import 'package:flutter_image_compress/flutter_image_compress.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import '../../core/services/image_service.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
+import '../../core/models/user_model.dart';
+import '../../core/models/shop_model.dart';
 // ?? IMPORT CORRIGIDO: Apontando para a Home de Negócios real
 import 'business_home_page.dart';
 
@@ -54,7 +54,9 @@ class _BusinessOnboardingPageState extends State<BusinessOnboardingPage> {
   final PageController _pageController = PageController();
   int _currentStep = 0;
   bool _isSaving = false;
-  File? _logoImage;
+  double _uploadProgress = 0.0;
+  io.File? _logoImage;
+  UserModel? _userModel;
 
   final _nomeLojaController = TextEditingController();
   final _categoriaController = TextEditingController();
@@ -65,8 +67,6 @@ class _BusinessOnboardingPageState extends State<BusinessOnboardingPage> {
   final _phoneMask = MaskTextInputFormatter(
       mask: '(##) #####-####', filter: {"#": RegExp(r'[0-9]')});
 
-  // Guarda os dados de endereco vindos do cadastro do usuario para nao perder
-  Map<String, dynamic>? _enderecoOriginal;
 
   @override
   void initState() {
@@ -75,24 +75,27 @@ class _BusinessOnboardingPageState extends State<BusinessOnboardingPage> {
   }
 
   Future<void> _loadUserData() async {
-    final user = FirebaseAuth.instance.currentUser;
+    final supabase = sb.Supabase.instance.client;
+    final user = supabase.auth.currentUser;
     if (user != null) {
       try {
-        final doc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .get();
-        if (doc.exists && doc.data() != null) {
-          final data = doc.data()!;
+        final data = await supabase
+            .from('users')
+            .select()
+            .eq('id', user.id)
+            .maybeSingle();
+
+        if (data != null) {
+          _userModel = UserModel.fromMap(data);
           if (mounted) {
             setState(() {
-              _donoNomeController.text = data['nome'] ?? '';
-              _telefoneController.text = data['telefone'] ?? '';
-              _nomeLojaController.text = data['nome_negocio'] ?? '';
+              _donoNomeController.text = _userModel!.name;
+              _telefoneController.text = _userModel!.phone;
+              _nomeLojaController.text = data['business_name'] ?? supabase.auth.currentUser?.userMetadata?['business_name'] ?? '';
 
-              if (data['cidade'] != null) {
+              if (_userModel!.city != null) {
                 // Tenta extrair a Cidade e UF se vier no formato "Cidade - UF" (do login_page)
-                String cidadeRaw = data['cidade'];
+                String cidadeRaw = _userModel!.city!;
                 if (cidadeRaw.contains(' - ')) {
                   final parts = cidadeRaw.split(' - ');
                   _cidadeController.text = parts[0];
@@ -105,55 +108,24 @@ class _BusinessOnboardingPageState extends State<BusinessOnboardingPage> {
                 }
               }
 
-              // Guarda o objeto de endereco inteiro se existir
-              if (data['endereco'] != null && data['endereco'] is Map) {
-                _enderecoOriginal = Map<String, dynamic>.from(data['endereco']);
-              }
             });
           }
         }
       } catch (e) {
-        debugPrint("Erro ao carregar dados do usuário: \$e");
+        debugPrint("Erro ao carregar dados do usuário: $e");
       }
     }
   }
 
   Future<void> _pickLogo() async {
     final ImagePicker picker = ImagePicker();
-    final XFile? original = await picker.pickImage(source: ImageSource.gallery);
-
-    if (original != null) {
-      final dir = await getTemporaryDirectory();
-      final targetPath =
-          "${dir.absolute.path}/temp_logo_${DateTime.now().millisecondsSinceEpoch}.jpg";
-
-      final XFile? compressed = await FlutterImageCompress.compressAndGetFile(
-        original.path,
-        targetPath,
-        quality: 70,
-        minWidth: 500,
-        minHeight: 500,
-      );
-
-      if (compressed != null) {
-        setState(() => _logoImage = File(compressed.path));
-      }
+    final XFile? image = await picker.pickImage(source: ImageSource.gallery, maxWidth: 800);
+    if (image != null) {
+      setState(() => _logoImage = io.File(image.path));
     }
   }
 
-  Future<String> _uploadLogo(String shopId) async {
-    if (_logoImage == null) return "";
-    try {
-      final ref = FirebaseStorage.instance
-          .ref()
-          .child('business_logos')
-          .child('$shopId.jpg');
-      await ref.putFile(_logoImage!);
-      return await ref.getDownloadURL();
-    } catch (e) {
-      return "";
-    }
-  }
+  // Removida a função antiga _uploadLogo e substituída pelo uso direto do ImageService no _finalizarCadastroEmpresa
 
   void _nextPage() {
     _pageController.nextPage(
@@ -164,72 +136,95 @@ class _BusinessOnboardingPageState extends State<BusinessOnboardingPage> {
   Future<void> _finalizarCadastroEmpresa() async {
     if (_telefoneController.text.isEmpty) return;
 
-    final currentUser = FirebaseAuth.instance.currentUser;
+    final supabase = sb.Supabase.instance.client;
+    final currentUser = supabase.auth.currentUser;
     if (currentUser == null) return;
 
     setState(() => _isSaving = true);
 
     try {
-      // ??? Usamos o ID do usuário logado para manter a integridade
-      final String uid = currentUser.uid;
-      final newShopRef = FirebaseFirestore.instance.collection('shops').doc();
+      final String uid = currentUser.id;
+      
+      // Criar um ID para a loja usando timestamp ou UUID
+      final String generatedShopId = DateTime.now().millisecondsSinceEpoch.toString(); 
 
-      String logoUrl = await _uploadLogo(newShopRef.id);
+      String logoUrl = "";
+      // Invertida a ordem: primeiro inserimos no banco para o RLS do storage funcionar
 
-      // Formata a string de endereco final para salvar no shop (padrao do store_profile)
       String enderecoSalvo = '';
-      if (_enderecoOriginal != null) {
-        final cep = _enderecoOriginal!['cep'] ?? '';
-        final rua = _enderecoOriginal!['rua'] ?? '';
-        final numero = _enderecoOriginal!['numero'] ?? '';
-        final bairro = _enderecoOriginal!['bairro'] ?? '';
-        final cidadeFull =
-            "${_cidadeController.text.trim()} - ${_estadoSelecionado ?? ''}";
+      String cepSalvo = '';
+      String bairroSalvo = '';
 
-        enderecoSalvo = "$rua, $numero, $bairro - $cidadeFull - CEP: $cep";
+      if (_userModel != null) {
+        cepSalvo = _userModel!.zipCode ?? '';
+        bairroSalvo = _userModel!.neighborhood ?? '';
+        final rua = _userModel!.street ?? '';
+        final numero = _userModel!.number ?? '';
+
+        if (rua.isNotEmpty) {
+          enderecoSalvo = numero.isNotEmpty ? "$rua, $numero" : rua;
+        }
       }
 
       // 1. Salva a Loja (Shop)
-      await newShopRef.set({
-        'id': newShopRef.id,
-        'nome': _nomeLojaController.text.trim(),
-        'categoria': _categoriaController.text.trim(),
-        'nicho':
-            _categoriaController.text.trim(), // Adicionado para consistencia
-        'dono_id': uid,
-        'telefone': _telefoneController.text.trim(),
-        'whatsapp':
-            _telefoneController.text.trim(), // Adicionado para consistencia
-        'imageUrl': logoUrl, // Sincronizado com o nome usado na ClientHomePage
-        'cidade': _cidadeController.text.trim(), // ?? NOVO
-        'estado': _estadoSelecionado ?? '', // ?? NOVO
-        'endereco':
-            enderecoSalvo, // Salva o endereco formatado montado dos dados do user
-        'sem_endereco_fixo': false,
-        'criado_em': FieldValue.serverTimestamp(),
-        // ?? Configuração de Assinatura (Trial de 90 dias)
-        'subscription': {
-          'plan_id': 'starter', // Plano base após o trial
-          'status': 'trial',
-          'trial_ends_at':
-              Timestamp.fromDate(DateTime.now().add(const Duration(days: 90))),
-          'updated_at': FieldValue.serverTimestamp(),
-        },
-      });
+      final shop = ShopModel(
+        id: generatedShopId,
+        name: _nomeLojaController.text.trim(),
+        category: _categoriaController.text.trim(),
+        niche: _categoriaController.text.trim(),
+        phone: _telefoneController.text.trim(),
+        whatsapp: _telefoneController.text.trim(),
+        imageUrl: logoUrl,
+        city: _cidadeController.text.trim(),
+        state: _estadoSelecionado ?? '',
+        address: enderecoSalvo,
+        zipCode: cepSalvo,
+        neighborhood: bairroSalvo,
+        planId: 'free', // Adicionado
+      );
+
+      await supabase.from('shops').insert(shop.toMap());
+
+      // Agora que a loja existe no banco, o RLS permitirá o upload
+      if (_logoImage != null) {
+        setState(() => _uploadProgress = 0.1);
+        logoUrl = await ImageService.uploadStoreLogo(
+          _logoImage!, 
+          generatedShopId,
+          updateDatabase: true, // Já atualiza o campo logo_url no banco
+          onProgress: (p) => setState(() => _uploadProgress = p),
+        );
+      }
 
       // 2. Atualiza o perfil do Usuário como Dono (Business)
-      // Atualiza tanto 'tipo' quanto 'role' para manter consistência com rotas existentes
-      await FirebaseFirestore.instance.collection('users').doc(uid).update({
-        'nome': _donoNomeController.text.trim(),
-        'role': 'business',
-        'tipo': 'dono',
-        'shopId': newShopRef.id,
-        'telefone': _telefoneController.text.trim(),
-      });
+      if (_userModel != null) {
+        final updatedUser = UserModel(
+          id: _userModel!.id,
+          name: _donoNomeController.text.trim(),
+          email: _userModel!.email,
+          phone: _telefoneController.text.trim(),
+          role: 'business',
+          shopId: generatedShopId,
+          plan: _userModel!.plan,
+          isActive: _userModel!.isActive,
+          photoUrl: _userModel!.photoUrl,
+          zipCode: _userModel!.zipCode,
+          street: _userModel!.street,
+          number: _userModel!.number,
+          city: _cidadeController.text.trim(), // Atualizado com o que a pessoa digitou na Onboarding
+          state: _estadoSelecionado ?? '',    // Usar estado e cidade atualizados da Onboarding para a Loja
+          neighborhood: _userModel!.neighborhood,
+          address: _userModel!.address,
+          documentCpf: _userModel!.documentCpf,
+          gender: _userModel!.gender,
+          bio: _userModel!.bio,
+        );
+        await supabase.from('users').update(updatedUser.toMap()).eq('id', uid);
+      }
 
       // 3. Salva Sessão
       await SessionService.saveLogin(
-          userType: 'pro', userId: uid, shopId: newShopRef.id);
+          userType: 'pro', userId: uid, shopId: generatedShopId);
 
       if (mounted) {
         // ?? NAVEGAÇÃO CORRIGIDA: Vai para o Painel de Negócios real
@@ -241,10 +236,13 @@ class _BusinessOnboardingPageState extends State<BusinessOnboardingPage> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text("Erro ao criar negócio: $e")));
+            .showSnackBar(SnackBar(content: Text("❌ Erro ao criar negócio: $e"), backgroundColor: Colors.red));
       }
     } finally {
-      if (mounted) setState(() => _isSaving = false);
+      if (mounted) setState(() {
+        _isSaving = false;
+        _uploadProgress = 0.0;
+      });
     }
   }
 
@@ -272,11 +270,24 @@ class _BusinessOnboardingPageState extends State<BusinessOnboardingPage> {
                       radius: 60,
                       backgroundColor: Colors.grey[100],
                       backgroundImage:
-                          _logoImage != null ? FileImage(_logoImage!) : null,
+                          _logoImage != null ? (kIsWeb ? NetworkImage(_logoImage!.path) as ImageProvider : FileImage(io.File(_logoImage!.path) as dynamic) as ImageProvider) : null,
                       child: _logoImage == null
                           ? const Icon(Icons.add_a_photo,
                               size: 40, color: AppColors.primaryPurple)
                           : null)),
+              if (_uploadProgress > 0 && _uploadProgress < 1.0) ...[
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: 200,
+                  child: LinearProgressIndicator(
+                    value: _uploadProgress,
+                    backgroundColor: Colors.grey[200],
+                    valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primaryPurple),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text("${(_uploadProgress * 100).toInt()}% enviando logo..."),
+              ],
               const SizedBox(height: 30),
               TextFormField(
                   controller: _nomeLojaController,

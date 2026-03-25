@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 import '../../modules/business/subscription_service.dart';
+import '../services/session_service.dart';
+import '../services/plan_features_service.dart';
 
 /// Widget que bloqueia visualmente um filho quando o plano atual não permite a feature.
 ///
@@ -31,22 +33,19 @@ class PlanGateWidget extends StatefulWidget {
 }
 
 class _PlanGateWidgetState extends State<PlanGateWidget> {
-  bool _hasAccess = true;
-  bool _checked = false;
+  String? _shopId;
 
   @override
   void initState() {
     super.initState();
-    _checkAccess();
+    _loadShopId();
   }
 
-  Future<void> _checkAccess() async {
-    final plan = await SubscriptionService.getCurrentPlan();
-    final access = plan.index >= widget.requiredPlan.index;
+  Future<void> _loadShopId() async {
+    final id = await SessionService.getShopId();
     if (mounted) {
       setState(() {
-        _hasAccess = access;
-        _checked = true;
+        _shopId = id;
       });
     }
   }
@@ -66,9 +65,25 @@ class _PlanGateWidgetState extends State<PlanGateWidget> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_checked) return widget.child;
-    if (_hasAccess) return widget.child;
+    if (_shopId == null) return widget.child;
 
+    return StreamBuilder<SubscriptionPlan>(
+      stream: PlanFeaturesService.streamPlanByShopId(_shopId!),
+      builder: (context, snapshot) {
+        // Se ainda não carregou ou deu erro, mostramos o conteúdo (não bloqueamos até ter certeza)
+        if (!snapshot.hasData) return widget.child;
+
+        final currentPlan = snapshot.data!;
+        final bool hasAccess = currentPlan.index >= widget.requiredPlan.index;
+
+        if (hasAccess) return widget.child;
+
+        return _buildLockedOverlay();
+      },
+    );
+  }
+
+  Widget _buildLockedOverlay() {
     return Stack(
       children: [
         // Conteúdo bloqueado — visual desfocado
@@ -88,8 +103,9 @@ class _PlanGateWidgetState extends State<PlanGateWidget> {
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
                   children: [
                     Container(
                       padding: const EdgeInsets.all(10),
@@ -146,6 +162,7 @@ class _PlanGateWidgetState extends State<PlanGateWidget> {
                     ]
                   ],
                 ),
+               ),
               ),
             ),
           ),

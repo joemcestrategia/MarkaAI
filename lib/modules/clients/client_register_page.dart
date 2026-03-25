@@ -1,16 +1,16 @@
 // ignore_for_file: use_build_context_synchronously
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:intl/intl.dart';
-import 'package:image_picker/image_picker.dart'; // NECESSÁRIO PARA FOTO
-import 'dart:io'; // NECESSÁRIO PARA FOTO
+import 'package:image_picker/image_picker.dart';
+import 'package:flutter/foundation.dart';
+import 'dart:io' if (dart.library.html) 'package:flutter_application_1/core/utils/io_stub.dart' as io;
 import '../../core/theme/app_colors.dart';
 import '../../core/services/viacep_service.dart';
-import '../../core/services/session_service.dart'; // NECESSÁRIO PARA PEGAR ID DA LOJA
+import '../../core/services/session_service.dart';
 import 'client_home_page.dart';
+import '../../core/services/image_service.dart';
 
 class ClientRegisterPage extends StatefulWidget {
   final User? user;
@@ -39,9 +39,10 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
   final _cityController = TextEditingController();
 
   DateTime? _birthDate;
-  File? _imageFile; // ARMAZENA A FOTO SELECIONADA
+  XFile? _imageFile;
   bool _isLoadingCep = false;
   bool _isSaving = false;
+  double _uploadProgress = 0.0;
 
   var phoneMask = MaskTextInputFormatter(
       mask: '(##) #####-####', filter: {"#": RegExp(r'[0-9]')});
@@ -59,33 +60,43 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
       _verificarTelefoneExistente();
       _loadExistingUserData();
       _checkBirthdayLock();
+    } else {
+      _checkCurrentSession();
+    }
+  }
+
+  Future<void> _checkCurrentSession() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user != null) {
+      _loadExistingUserData();
+      _checkBirthdayLock();
     }
   }
 
   Future<void> _checkBirthdayLock() async {
-    if (widget.user == null) return;
+    final uid = widget.user?.id ?? Supabase.instance.client.auth.currentUser?.id;
+    if (uid == null) return;
     try {
-      final userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.user!.uid)
-          .get();
-      if (userDoc.exists) {
-        final data = userDoc.data();
-        if (data?['birthday_locked'] == true) {
+      final userDoc = await Supabase.instance.client
+          .from('users')
+          .select()
+          .eq('id', uid)
+          .maybeSingle();
+      if (userDoc != null) {
+        if (userDoc['birthday_locked'] == true) {
           setState(() => _isBirthdayLocked = true);
           return;
         }
       }
 
-      // Fallback: check appointments for any applied birthday discount
-      final appointments = await FirebaseFirestore.instance
-          .collection('appointments')
-          .where('clientId', isEqualTo: widget.user!.uid)
-          .where('birthday_discount_applied', isEqualTo: true)
-          .limit(1)
-          .get();
+      final appointments = await Supabase.instance.client
+          .from('appointments')
+          .select()
+          .eq('client_id', uid)
+          .eq('birthday_discount_applied', true)
+          .limit(1);
 
-      if (appointments.docs.isNotEmpty) {
+      if (appointments.isNotEmpty) {
         setState(() => _isBirthdayLocked = true);
       }
     } catch (e) {
@@ -94,70 +105,68 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
   }
 
   Future<void> _loadExistingUserData() async {
-    if (widget.user == null) return;
+    final uid = widget.user?.id ?? Supabase.instance.client.auth.currentUser?.id;
+    if (uid == null) return;
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.user!.uid)
-          .get();
-      if (!doc.exists) return;
-      final data = doc.data() ?? {};
-      if (mounted) {
-        setState(() {
-          _nameController.text = data['nome'] ?? _nameController.text;
-          _phoneController.text = data['telefone'] ?? _phoneController.text;
-          // aniversario may be stored as string 'dd/MM/yyyy'
-          final an = data['aniversario'];
-          if (an is String && an.isNotEmpty) {
-            try {
-              final parts = an.split('/');
-              if (parts.length == 3) {
-                final d = int.parse(parts[0]);
-                final m = int.parse(parts[1]);
-                final y = int.parse(parts[2]);
-                _birthDate = DateTime(y, m, d);
-              }
-            } catch (_) {}
-          }
-          final endereco = data['endereco'] as Map<String, dynamic>?;
-          if (endereco != null) {
-            _cepController.text = endereco['cep'] ?? '';
-            _addressController.text = endereco['rua'] ?? '';
-            _numberController.text = endereco['numero']?.toString() ?? '';
-            _districtController.text = endereco['bairro'] ?? '';
-            _cityController.text = endereco['cidade'] ?? '';
-          }
-        });
+      final doc = await Supabase.instance.client
+          .from('users')
+          .select()
+          .eq('id', uid)
+          .maybeSingle();
+      if (doc != null) {
+        if (mounted) {
+          setState(() {
+            _nameController.text = doc['name'] ?? '';
+            _phoneController.text = doc['phone'] ?? '';
+            _cepController.text = doc['zip_code'] ?? '';
+            _addressController.text = doc['address'] ?? '';
+            _numberController.text = doc['number'] ?? '';
+            _districtController.text = doc['neighborhood'] ?? '';
+            _cityController.text = doc['city'] ?? '';
+            if (doc['birth_date'] != null) {
+              _birthDate = DateTime.tryParse(doc['birth_date']);
+            }
+          });
+        }
       }
     } catch (e) {
-      debugPrint('Erro ao carregar dados do usuário: $e');
+      debugPrint('Erro ao carregar dados existentes: $e');
     }
   }
 
   void _preencherDadosGoogle() {
-    _nameController.text = widget.user?.displayName ?? "";
-  }
-
-  Future<void> _verificarTelefoneExistente() async {
-    if (widget.user == null) return;
-    final doc = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(widget.user!.uid)
-        .get();
-    if (doc.exists && doc.data()?['telefone'] != null) {
-      setState(() {
-        _phoneController.text = doc.data()!['telefone'];
-      });
+    if (widget.user != null) {
+      _nameController.text = widget.user!.userMetadata?['full_name'] ?? '';
     }
   }
 
-  // --- NOVA FUNÇÃO: SELECIONAR FOTO ---
+  Future<void> _verificarTelefoneExistente() async {
+    final uid = widget.user?.id ?? Supabase.instance.client.auth.currentUser?.id;
+    if (uid == null) return;
+    try {
+      final res = await Supabase.instance.client
+          .from('users')
+          .select('phone')
+          .eq('id', uid)
+          .maybeSingle();
+      if (res != null && res['phone'] != null) {
+        if (mounted) {
+          setState(() {
+            _phoneController.text = res['phone'];
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Erro ao verificar telefone: $e');
+    }
+  }
+
   Future<void> _pickImage() async {
     final pickedFile =
         await ImagePicker().pickImage(source: ImageSource.gallery);
     if (pickedFile != null) {
       setState(() {
-        _imageFile = File(pickedFile.path);
+        _imageFile = pickedFile;
       });
     }
   }
@@ -203,7 +212,6 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
   Future<void> _salvarCliente() async {
     if (!_formKey.currentState!.validate()) return;
 
-    // Validar e Extrair Telefone Clean
     String rawPhone = phoneMask.getUnmaskedText();
     if (rawPhone.isEmpty) {
       rawPhone = _phoneController.text.replaceAll(RegExp(r'\D'), '');
@@ -221,81 +229,50 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
     setState(() => _isSaving = true);
 
     try {
-      String? docId = widget.user?.uid;
+      final uid = widget.user?.id ?? Supabase.instance.client.auth.currentUser?.id;
+      if (uid == null) throw Exception("Usuário não autenticado");
 
-      // --- LÃ“GICA DO VÍNCULO (LOJAS VINCULADAS) ---
-      String? currentShopId;
-      if (widget.isBusinessAdding) {
-        currentShopId = await SessionService.getShopId();
-      }
-
-      // --- LÃ“GICA DE UPLOAD DE FOTO ---
-      String? uploadedFotoUrl;
+      String? imageUrl;
       if (_imageFile != null) {
-        final storageRef = FirebaseStorage.instance
-            .ref()
-            .child('profile_photos')
-            .child('${docId ?? DateTime.now().millisecondsSinceEpoch}.jpg');
-
-        final uploadTask = await storageRef.putFile(_imageFile!);
-        uploadedFotoUrl = await uploadTask.ref.getDownloadURL();
+        setState(() => _uploadProgress = 0.1);
+        imageUrl = await ImageService.uploadProfilePhoto(
+          _imageFile!, 
+          uid,
+          onProgress: (p) => setState(() => _uploadProgress = p),
+        );
       }
 
-      Map<String, dynamic> clientData = {
-        'nome': _nameController.text.trim(),
-        'nome_normalizado': _nameController.text
-            .trim()
-            .toLowerCase()
-            .replaceAll(RegExp(r'[áàãâä]'), 'a')
-            .replaceAll(RegExp(r'[éèêë]'), 'e')
-            .replaceAll(RegExp(r'[íìîï]'), 'i')
-            .replaceAll(RegExp(r'[óòõôö]'), 'o')
-            .replaceAll(RegExp(r'[úùûü]'), 'u')
-            .replaceAll(RegExp(r'[ç]'), 'c'),
-        'telefone': rawPhone,
-        'tipo': 'cliente',
-        'aniversario': _birthDate != null
-            ? DateFormat('dd/MM/yyyy').format(_birthDate!)
-            : null,
-        'endereco': {
-          'cep': _cepController.text,
-          'rua': _addressController.text,
-          'numero': _numberController.text,
-          'bairro': _districtController.text,
-          'cidade': _cityController.text,
-        },
-        'criado_em': FieldValue.serverTimestamp(),
+      String cidade = _cityController.text.trim();
+      String estado = '';
+      if (cidade.contains(" - ")) {
+        final parts = cidade.split(" - ");
+        cidade = parts[0].trim();
+        if (parts.length > 1) estado = parts[1].trim();
+      }
+
+      final userData = {
+        'id': uid,
+        'name': _nameController.text.trim(),
+        'email': widget.user?.email ?? Supabase.instance.client.auth.currentUser?.email,
+        'phone': rawPhone,
+        'zip_code': _cepController.text.trim(),
+        'street': _addressController.text.trim(),
+        'number': _numberController.text.trim(),
+        'neighborhood': _districtController.text.trim(),
+        'city': cidade,
+        'state': estado,
+        'birth_date': _birthDate?.toIso8601String(),
+        'updated_at': DateTime.now().toIso8601String(),
+        'role': 'cliente',
       };
 
-      if (uploadedFotoUrl != null) {
-        clientData['foto'] = uploadedFotoUrl;
+      if (imageUrl != null) {
+        userData['photo_url'] = imageUrl;
+      } else if (widget.user?.userMetadata?['avatar_url'] != null) {
+        userData['photo_url'] = widget.user!.userMetadata!['avatar_url'];
       }
 
-      // VINCULA O CLIENTE Ã€ LOJA ATUAL
-      if (currentShopId != null) {
-        clientData['lojasVinculadas'] = FieldValue.arrayUnion([currentShopId]);
-      } else {
-        clientData['lojasVinculadas'] = []; // Cliente novo sem vínculo
-      }
-
-      if (widget.user != null) {
-        // Auto-cadastro / Edição de perfil
-        clientData['uid'] = widget.user!.uid;
-        clientData['email'] = widget.user!.email;
-        // Se já tinha foto do Google e não subiu uma nova, mantém a do Google se 'foto' estiver vazio
-        if (clientData['foto'] == null && uploadedFotoUrl == null) {
-          clientData['foto'] = widget.user!.photoURL;
-        }
-        clientData['ultimo_login'] = FieldValue.serverTimestamp();
-
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(docId)
-            .set(clientData, SetOptions(merge: true));
-      } else {
-        // Dono cadastrando cliente manualmente
-        await FirebaseFirestore.instance.collection('users').add(clientData);
-      }
+      await Supabase.instance.client.from('users').upsert(userData);
 
       if (mounted) {
         if (widget.isBusinessAdding) {
@@ -322,6 +299,8 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
 
   @override
   Widget build(BuildContext context) {
+    String? existingPhoto = widget.user?.userMetadata?['avatar_url'];
+
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FD),
       appBar: AppBar(
@@ -334,30 +313,28 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
       ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(
-              24, 24, 24, 100), // Substantial bottom padding
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 100),
           child: Form(
             key: _formKey,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // --- SEÇÃO DE FOTO ATUALIZADA ---
                 Center(
                   child: GestureDetector(
-                    onTap: _pickImage, // Permitido para todos
+                    onTap: _pickImage,
                     child: Stack(
                       children: [
                         CircleAvatar(
                           radius: 50,
                           backgroundColor: Colors.grey[200],
-                          // Prioridade: 1. Foto selecionada (File) | 2. Foto existente no Doc / Google | 3. Nulo
                           backgroundImage: _imageFile != null
-                              ? FileImage(_imageFile!)
-                              : (widget.user?.photoURL != null
-                                  ? NetworkImage(widget.user!.photoURL!)
-                                  : null) as ImageProvider?,
-                          child: (_imageFile == null &&
-                                  widget.user?.photoURL == null)
+                              ? (kIsWeb
+                                  ? NetworkImage(_imageFile!.path) as ImageProvider
+                                  : FileImage(io.File(_imageFile!.path) as dynamic) as ImageProvider)
+                              : (existingPhoto != null
+                                  ? NetworkImage(existingPhoto) as ImageProvider
+                                  : null),
+                          child: (_imageFile == null && existingPhoto == null)
                               ? const Icon(Icons.person,
                                   size: 50, color: Colors.grey)
                               : null,
@@ -378,6 +355,16 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
                     ),
                   ),
                 ),
+                if (_uploadProgress > 0 && _uploadProgress < 1.0) ...[
+                  const SizedBox(height: 16),
+                  LinearProgressIndicator(
+                    value: _uploadProgress,
+                    backgroundColor: Colors.grey[200],
+                    valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primaryPurple),
+                  ),
+                  const SizedBox(height: 8),
+                  Center(child: Text("${(_uploadProgress * 100).toInt()}% enviando foto...")),
+                ],
                 const SizedBox(height: 24),
 
                 TextFormField(
@@ -393,15 +380,15 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
                     decoration: _deco("WhatsApp ou Fixo", Icons.phone),
                     onChanged: (val) {
                       String unmasked = phoneMask.getUnmaskedText();
-                      if (unmasked.length <= 10 &&
-                          phoneMask.getMask() != '(##) ####-####') {
-                        setState(() {
-                          phoneMask.updateMask(mask: '(##) ####-####');
-                        });
-                      } else if (unmasked.length > 10 &&
+                      if (unmasked.length > 10 &&
                           phoneMask.getMask() != '(##) #####-####') {
                         setState(() {
                           phoneMask.updateMask(mask: '(##) #####-####');
+                        });
+                      } else if (unmasked.length <= 10 &&
+                          phoneMask.getMask() != '(##) ####-####') {
+                        setState(() {
+                          phoneMask.updateMask(mask: '(##) ####-####');
                         });
                       }
                     },

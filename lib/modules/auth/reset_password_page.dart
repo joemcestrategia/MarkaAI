@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/theme/app_colors.dart';
 
 class ResetPasswordPage extends StatefulWidget {
@@ -72,9 +72,10 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
     setState(() => _isLoading = true);
 
     try {
-      await FirebaseAuth.instance.confirmPasswordReset(
-        code: widget.oobCode,
-        newPassword: pass,
+      // No Supabase, se o usuário chegou aqui via link de recuperação, 
+      // ele já tem uma sessão ativa (ou pendente). O método correto é updateUser.
+      await Supabase.instance.client.auth.updateUser(
+        UserAttributes(password: pass),
       );
 
       _showSuccess("Senha redefinida com sucesso! Redirecionando...");
@@ -87,13 +88,8 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
               .pushNamedAndRemoveUntil('/login', (route) => false);
         }
       }
-    } on FirebaseAuthException catch (e) {
-      if (e.code == 'expired-action-code' || e.code == 'invalid-action-code') {
-        _showError(
-            "O link de redefinição expirou ou é inválido. Tente solicitar novamente na tela de login.");
-      } else {
-        _showError("Erro: ${e.message}");
-      }
+    } on AuthException catch (e) {
+      _showError("Erro: ${e.message}");
     } catch (e) {
       _showError("Ocorreu um erro inesperado.");
     } finally {

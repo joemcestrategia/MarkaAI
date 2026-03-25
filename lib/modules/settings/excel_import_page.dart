@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:excel/excel.dart' hide Border;
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import '../../core/services/session_service.dart';
 import '../../core/theme/app_colors.dart';
@@ -80,8 +80,7 @@ class _ExcelImportPageState extends State<ExcelImportPage> {
       int totalRows = table.maxRows;
       setState(() => _logs += "\nArquivo carregado. $totalRows linhas.");
 
-      CollectionReference appointments =
-          FirebaseFirestore.instance.collection('appointments');
+      final supabase = Supabase.instance.client;
       int importedCount = 0;
 
       for (int i = 1; i < table.rows.length; i++) {
@@ -125,18 +124,17 @@ class _ExcelImportPageState extends State<ExcelImportPage> {
           nomeServico += " + $descProd";
         }
 
-        await appointments.add({
+        await supabase.from('appointments').insert({
           'shopId': shopId,
           'client_name': _getCellValue(cellCliente),
           'service_name': nomeServico,
           'valor_mao_de_obra': valMaoObra,
           'valor_produtos': valCusto,
           'valor_total': valTotal,
-          'data_agendamento': Timestamp.fromDate(date),
+          'scheduled_at': date.toIso8601String(),
           'status': 'concluido',
-          'historico_importado':
-              true, // Marca crucial para podermos apagar depois
-          'created_at': FieldValue.serverTimestamp(),
+          'historico_importado': true,
+          'created_at': DateTime.now().toIso8601String(),
         });
 
         importedCount++;
@@ -157,20 +155,19 @@ class _ExcelImportPageState extends State<ExcelImportPage> {
     } catch (e) {
       setState(() {
         _isLoading = false;
-        _logs += "\nâŒ ERRO: $e";
+        _logs += "\n❌ ERRO: $e";
       });
     }
   }
 
-  // --- ðŸ—‘ï¸ FUNÇÃO DE LIMPEZA (NOVA) ---
+  // --- LIMPEZA ---
   Future<void> _deleteImportedHistory() async {
-    // Confirmação de Segurança
     bool confirm = await showDialog(
           context: context,
           builder: (context) => AlertDialog(
             title: const Text("Apagar Importações?"),
             content: const Text(
-                "Isso excluirá TODOS os registros marcados como 'Histórico Importado' desta loja.\n\nDados lançados manualmente NÃO serão afetados.\n\nTem a certeza?"),
+                "Isso excluirá TODOS os registros marcados como 'Histórico Importado' desta loja.\n\nTem a certeza?"),
             actions: [
               TextButton(
                   onPressed: () => Navigator.pop(context, false),
@@ -190,57 +187,33 @@ class _ExcelImportPageState extends State<ExcelImportPage> {
 
     setState(() {
       _isLoading = true;
-      _logs = "Iniciando limpeza...";
+      _logs = "Iniciating limpeza...";
     });
 
     try {
       final shopId = await SessionService.getShopId();
       if (shopId == null) throw "Erro de login.";
 
-      // Busca apenas os documentos importados
-      var collection = FirebaseFirestore.instance.collection('appointments');
-      var snapshot = await collection
-          .where('shopId', isEqualTo: shopId)
-          .where('historico_importado', isEqualTo: true) // O Segredo está aqui
-          .get();
-
-      int total = snapshot.docs.length;
+      final response = await Supabase.instance.client
+          .from('appointments')
+          .select('id')
+          .eq('shop_id', shopId)
+          .eq('historico_importado', true);
+      
+      int total = response.length;
       setState(() => _logs += "\nEncontrados $total registros para exclusão.");
 
-      if (total == 0) {
-        setState(() {
-          _isLoading = false;
-          _logs += "\nNenhum histórico importado encontrado.";
-        });
-        return;
+      if (total > 0) {
+        await Supabase.instance.client
+            .from('appointments')
+            .delete()
+            .eq('shop_id', shopId)
+            .eq('historico_importado', true);
       }
-
-      // Deleta em Lotes (Batch) para ser rápido
-      WriteBatch batch = FirebaseFirestore.instance.batch();
-      int count = 0;
-      int deletedCount = 0;
-
-      for (var doc in snapshot.docs) {
-        batch.delete(doc.reference);
-        count++;
-        deletedCount++;
-
-        // O Firestore limita batches a 500 operações
-        if (count >= 400) {
-          await batch.commit();
-          batch = FirebaseFirestore.instance.batch();
-          count = 0;
-          setState(() => _logs += "\nLimpando lote... ($deletedCount/$total)");
-        }
-      }
-
-      // Comita o restante
-      if (count > 0) await batch.commit();
 
       setState(() {
         _isLoading = false;
-        _logs +=
-            "\n\nðŸ—‘ï¸ LIMPEZA CONCLUÍDA!\n$deletedCount registros apagados.";
+        _logs += "\n\nLIMPEZA CONCLUÍDA!\n$total registros apagados.";
       });
 
       if (!mounted) return;
@@ -250,7 +223,7 @@ class _ExcelImportPageState extends State<ExcelImportPage> {
     } catch (e) {
       setState(() {
         _isLoading = false;
-        _logs += "\nâŒ ERRO AO APAGAR: $e";
+        _logs += "\n❌ ERRO AO APAGAR: $e";
       });
     }
   }
@@ -289,7 +262,6 @@ class _ExcelImportPageState extends State<ExcelImportPage> {
                         color: AppColors.primaryPurple),
                   const SizedBox(height: 20),
 
-                  // BOTÃO DE IMPORTAR
                   SizedBox(
                     width: double.infinity,
                     height: 50,
@@ -307,7 +279,6 @@ class _ExcelImportPageState extends State<ExcelImportPage> {
 
                   const SizedBox(height: 15),
 
-                  // ðŸ—‘ï¸ BOTÃO DE APAGAR (NOVO)
                   SizedBox(
                     width: double.infinity,
                     height: 45,

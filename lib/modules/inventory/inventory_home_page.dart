@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 import '../../core/services/plan_features_service.dart';
@@ -33,13 +32,14 @@ class _InventoryHomePageState extends State<InventoryHomePage> {
     try {
       String? id = await SessionService.getShopId();
       if (id == null || id.isEmpty) {
-        final user = FirebaseAuth.instance.currentUser;
+        final user = Supabase.instance.client.auth.currentUser;
         if (user != null) {
-          final doc = await FirebaseFirestore.instance
-              .collection('users')
-              .doc(user.uid)
-              .get();
-          if (doc.exists) id = doc.data()?['shopId'];
+          final doc = await Supabase.instance.client
+              .from('users')
+              .select('shop_id')
+              .eq('id', user.id)
+              .maybeSingle();
+          if (doc != null) id = doc['shop_id'] as String?;
         }
       }
       if (mounted) {
@@ -388,9 +388,8 @@ class _ModuleCardState extends State<_ModuleCard>
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(
-                  color: widget.isLocked
-                      ? Colors.grey.shade200
-                      : Colors.grey.shade100,
+                  color:
+                      widget.isLocked ? Colors.grey.shade200 : Colors.grey.shade100,
                   width: 1,
                 ),
                 boxShadow: [
@@ -428,8 +427,8 @@ class _ModuleCardState extends State<_ModuleCard>
                               color: Colors.white,
                               shape: BoxShape.circle,
                             ),
-                            child: const Icon(Icons.lock,
-                                size: 12, color: Colors.grey),
+                            child:
+                                const Icon(Icons.lock, size: 12, color: Colors.grey),
                           ),
                         ),
                     ],
@@ -459,8 +458,8 @@ class _ModuleCardState extends State<_ModuleCard>
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 6, vertical: 2),
                                 decoration: BoxDecoration(
-                                  color: AppColors.primaryPurple
-                                      .withValues(alpha: 0.1),
+                                  color:
+                                      AppColors.primaryPurple.withValues(alpha: 0.1),
                                   borderRadius: BorderRadius.circular(4),
                                 ),
                                 child: const Text(

@@ -2,13 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'dart:async';
-import 'package:http/http.dart' as http;
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:flutter_typeahead/flutter_typeahead.dart';
 import '../../core/utils/string_utils.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/data/cidades_brasil.dart';
 
 const String _kCidadePrefsKey = 'app_cidade_selecionada';
 const String _kCidadesListKey = 'app_cidades_salvas_v2';
@@ -215,97 +215,26 @@ class SeletorDeCidadeModal extends StatefulWidget {
   });
 
   static Future<List<CidadeOpcao>> getCitySuggestions(String query) async {
-    try {
-      final Map<String, CidadeOpcao> seen = {};
-
-      // Se houver busca, tenta buscar especificamente por cidade para garantir que apareça
-      if (query.length >= 2) {
-        final qNormalized = query[0].toUpperCase() + query.substring(1).toLowerCase();
+    if (query.isEmpty) return [];
+    final q = StringUtils.removeDiacritics(query).toLowerCase().trim();
+    final matches = kMunicipiosBrasil
+        .where((e) => StringUtils.removeDiacritics(e.$1).toLowerCase().contains(q))
+        .map((e) => CidadeOpcao(cidade: e.$1, estado: e.$2, count: 0))
+        .toList();
         
-        // Busca 1: Cidade exata ou começando com (Capitalizado)
-        final q1 = FirebaseFirestore.instance
-            .collection('shops')
-            .where('cidade', isGreaterThanOrEqualTo: qNormalized)
-            .where('cidade', isLessThanOrEqualTo: '$qNormalized\uf8ff')
-            .limit(100);
-            
-        // Busca 2: Cidade exata (Tudo minúsculo para compatibilidade)
-        final q2 = FirebaseFirestore.instance
-            .collection('shops')
-            .where('cidade', isEqualTo: query.toLowerCase())
-            .limit(50);
-
-        final snaps = await Future.wait([q1.get(), q2.get()]);
-        
-        for (var snap in snaps) {
-          for (var doc in snap.docs) {
-            _processCityDoc(doc.data(), seen);
-          }
-        }
-      }
-
-      // Se ainda tivermos pouco resultado ou for busca vazia, pega os top-shops (fallback)
-      if (seen.length < 20) {
-        final snap = await FirebaseFirestore.instance.collection('shops').limit(200).get();
-        for (final doc in snap.docs) {
-          _processCityDoc(doc.data(), seen);
-        }
-      }
-
-      var result = seen.values.toList()
-        ..sort((a, b) => b.count.compareTo(a.count));
-
-      if (query.isNotEmpty) {
-        final q2 = StringUtils.removeDiacritics(query).toLowerCase();
-        result = result.where((c) {
-          final cityName = StringUtils.removeDiacritics(c.cidade).toLowerCase();
-          final stateName = StringUtils.removeDiacritics(c.estado).toLowerCase();
-          final combined = "$cityName $stateName";
-          return cityName.contains(q2) ||
-              stateName.contains(q2) ||
-              combined.contains(q2);
-        }).toList();
-      }
-      return result.take(15).toList();
-    } catch (e) {
-      debugPrint('[SeletorDeCidade] Error fetching suggestions: $e');
-      return [];
-    }
+    matches.sort((a, b) {
+      final aNome = StringUtils.removeDiacritics(a.cidade).toLowerCase();
+      final bNome = StringUtils.removeDiacritics(b.cidade).toLowerCase();
+      final aStarts = aNome.startsWith(q) ? 0 : 1;
+      final bStarts = bNome.startsWith(q) ? 0 : 1;
+      if (aStarts != bStarts) return aStarts.compareTo(bStarts);
+      return a.cidade.compareTo(b.cidade);
+    });
+    
+    return matches.take(15).toList();
   }
 
-  static void _processCityDoc(Map<String, dynamic> d, Map<String, CidadeOpcao> seen) {
-    String getVal(List<String> keys) {
-      for (var k in keys) {
-        if (d[k] != null && d[k].toString().trim().isNotEmpty) {
-          return d[k].toString().trim();
-        }
-      }
-      if (d['endereco'] is Map) {
-        final m = d['endereco'] as Map;
-        for (var k in keys) {
-          if (m[k] != null && m[k].toString().trim().isNotEmpty) {
-            return m[k].toString().trim();
-          }
-        }
-      }
-      return '';
-    }
 
-    final c = getVal(['cidade', 'city']);
-    final e = getVal(['estado', 'uf', 'state']).toUpperCase();
-
-    if (c.isEmpty) return;
-    final key = '${c.toLowerCase()}|${e.toLowerCase()}';
-
-    if (!seen.containsKey(key)) {
-      seen[key] = CidadeOpcao(cidade: c, estado: e, count: 0);
-    }
-    seen[key] = CidadeOpcao(
-      cidade: seen[key]!.cidade,
-      estado: seen[key]!.estado,
-      count: seen[key]!.count + 1,
-    );
-  }
 
   @override
   State<SeletorDeCidadeModal> createState() => _SeletorDeCidadeModalState();
@@ -821,14 +750,12 @@ class _SeletorDeCidadePageState extends State<SeletorDeCidadePage> {
   /// Carrega uma vez do Firestore quais cidades têm lojas e quantas
   Future<void> _loadShopCities() async {
     try {
-      final snap = await FirebaseFirestore.instance
-          .collection('shops')
-          .where('cidade', isGreaterThan: '')
-          .get();
+      final snap = await Supabase.instance.client
+          .from('shops')
+          .select('city, state');
       final Map<String, int> counts = {};
-      for (final doc in snap.docs) {
-        final d = doc.data();
-        final cidade = (d['cidade'] ?? '').toString().trim().toLowerCase();
+      for (final item in snap) {
+        final cidade = (item['city'] ?? item['cidade'] ?? '').toString().trim().toLowerCase();
         if (cidade.isNotEmpty) {
           counts[cidade] = (counts[cidade] ?? 0) + 1;
         }
@@ -854,8 +781,8 @@ class _SeletorDeCidadePageState extends State<SeletorDeCidadePage> {
     });
   }
 
-  /// Busca cidades via API IBGE (todas as ~5.570 cidades do Brasil)
-  Future<void> _buscarCidades(String query) async {
+  /// Busca cidades via lista estática de municípios embutida no app
+  void _buscarCidades(String query) {
     if (query.isEmpty) {
       // Sem query: mostra cidades com lojas cadastradas, ordenadas por popularidade
       final comLojas = _shopCountByCity.entries.toList()
@@ -873,42 +800,33 @@ class _SeletorDeCidadePageState extends State<SeletorDeCidadePage> {
       return;
     }
 
-    setState(() => _loading = true);
-    try {
-      final url = Uri.parse(
-          'https://servicodados.ibge.gov.br/api/v1/localidades/municipios?orderBy=nome');
-      final resp = await http.get(url).timeout(const Duration(seconds: 8));
-      if (resp.statusCode != 200) throw Exception('IBGE API error');
+    if (mounted) setState(() => _loading = true);
+    
+    final q = StringUtils.removeDiacritics(query).toLowerCase().trim();
+    final matches = kMunicipiosBrasil
+        .where((e) => StringUtils.removeDiacritics(e.$1).toLowerCase().contains(q))
+        .map((e) {
+          final count = _shopCountByCity[e.$1.toLowerCase()] ?? 0;
+          return CidadeOpcao(cidade: e.$1, estado: e.$2, count: count);
+        }).toList();
 
-      final List<dynamic> raw = jsonDecode(resp.body);
-      final q = _normalize(query);
+    // Ordenação inteligente: shops count e depois prefixo
+    matches.sort((a, b) {
+      if (b.count != a.count) return b.count.compareTo(a.count);
+      final aNome = StringUtils.removeDiacritics(a.cidade).toLowerCase();
+      final bNome = StringUtils.removeDiacritics(b.cidade).toLowerCase();
+      final aStarts = aNome.startsWith(q) ? 0 : 1;
+      final bStarts = bNome.startsWith(q) ? 0 : 1;
+      if (aStarts != bStarts) return aStarts.compareTo(bStarts);
+      return a.cidade.compareTo(b.cidade);
+    });
 
-      final result = raw.where((m) {
-        final nome = _normalize((m['nome'] ?? '').toString());
-        return nome.contains(q);
-      }).map((m) {
-        final nome = (m['nome'] ?? '').toString();
-        final uf = (m['microrregiao']?['mesorregiao']?['UF']?['sigla'] ?? '')
-            .toString();
-        final count = _shopCountByCity[nome.toLowerCase()] ?? 0;
-        return CidadeOpcao(cidade: nome, estado: uf, count: count);
-      }).toList();
-
-      // Ordena: cidades com lojas primeiro (por contagem), depois alfabético
-      result.sort((a, b) {
-        if (b.count != a.count) return b.count.compareTo(a.count);
-        return a.cidade.compareTo(b.cidade);
+    if (mounted) {
+      setState(() {
+        _sugestoes = matches.take(60).toList();
+        _loading = false;
+        _firstLoad = false;
       });
-
-      if (mounted) {
-        setState(() {
-          _sugestoes = result.take(60).toList();
-          _loading = false;
-          _firstLoad = false;
-        });
-      }
-    } catch (_) {
-      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -920,17 +838,7 @@ class _SeletorDeCidadePageState extends State<SeletorDeCidadePage> {
     }).join(' ');
   }
 
-  /// Remove acentos para busca sem diacríticos
-  String _normalize(String s) {
-    const from =
-        'àáâãäåæçèéêëìíîïðñòóôõöùúûüýÿÃ€ÁÂÃÄÃ…Ã†ÇÈÉÊËÃŒÍÃŽÏÐÃ‘Ã’Ã“Ã”ÕÖÙÚÛÜÝ';
-    const to = 'aaaaaaaceeeeiiiidnoooooouuuuyy AAAAAAACEEEEIIIIDNOOOOOOUUUUY';
-    var result = s.toLowerCase();
-    for (var i = 0; i < from.length; i++) {
-      result = result.replaceAll(from[i], to[i].toLowerCase());
-    }
-    return result;
-  }
+
 
   void _selecionarCidade(CidadeOpcao opcao) {
     setState(() {

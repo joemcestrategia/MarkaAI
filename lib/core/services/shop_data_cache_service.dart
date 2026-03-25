@@ -1,9 +1,9 @@
 import 'dart:convert';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Singleton ShopDataCacheService
-/// Reduz drasticamente as leituras do Firestore para dados estáticos/lentos.
+/// Reduz drasticamente as leituras do Supabase para dados estáticos/lentos.
 class ShopDataCacheService {
   static final ShopDataCacheService _instance = ShopDataCacheService._internal();
   factory ShopDataCacheService() => _instance;
@@ -11,7 +11,7 @@ class ShopDataCacheService {
     loadFromPersistent();
   }
 
-  final Map<String, Map<String, dynamic>> _cache = {};
+  final Map<String, dynamic> _cache = {};
   
   // TTLs em minutos
   static const int ttlServices = 10;
@@ -22,7 +22,7 @@ class ShopDataCacheService {
   Map<String, dynamic>? getCached(String key) {
     if (!_cache.containsKey(key)) return null;
     
-    final entry = _cache[key]!;
+    final entry = _cache[key] as Map<String, dynamic>;
     final expiresAt = entry['expiresAt'] as int;
     
     if (DateTime.now().millisecondsSinceEpoch > expiresAt) {
@@ -51,7 +51,7 @@ class ShopDataCacheService {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('shop_data_cache', jsonEncode(_cache));
     } catch (e) {
-      // Ignora erro de persistência (ex: storage cheio)
+      // Ignora erro de persistência
     }
   }
 
@@ -75,23 +75,31 @@ class ShopDataCacheService {
     }
   }
 
-  // --- MÉTODOS DE ACESSO (Padrão para o MarkaAI) ---
+  // --- MÉTODOS DE ACESSO ---
 
   Future<List<Map<String, dynamic>>> getServices(String shopId) async {
     final key = 'services_$shopId';
     final cached = getCached(key);
     if (cached != null) return List<Map<String, dynamic>>.from(cached['list']);
 
-    final snapshot = await FirebaseFirestore.instance
-        .collection('shops')
-        .doc(shopId)
-        .collection('services')
-        .where('active', isEqualTo: true)
-        .get();
+    final data = await Supabase.instance.client
+        .from('services')
+        .select()
+        .eq('shop_id', shopId);
 
-    final data = snapshot.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
-    setCache(key, {'list': data}, ttlServices);
-    return data;
+    // Filtragem local: trata null como ativo (dados migrados) + ordenação alfabética
+    final filtered = List<Map<String, dynamic>>.from(data)
+        .where((s) => s['is_active'] == null || s['is_active'] == true)
+        .toList();
+
+    filtered.sort((a, b) {
+      final nameA = (a['name'] ?? '').toString().toLowerCase();
+      final nameB = (b['name'] ?? '').toString().toLowerCase();
+      return nameA.compareTo(nameB);
+    });
+
+    setCache(key, {'list': filtered}, ttlServices);
+    return filtered;
   }
 
   Future<List<Map<String, dynamic>>> getEmployees(String shopId) async {
@@ -99,16 +107,14 @@ class ShopDataCacheService {
     final cached = getCached(key);
     if (cached != null) return List<Map<String, dynamic>>.from(cached['list']);
 
-    final snapshot = await FirebaseFirestore.instance
-        .collection('shops')
-        .doc(shopId)
-        .collection('employees')
-        .where('active', isEqualTo: true)
-        .get();
+    final data = await Supabase.instance.client
+        .from('employees')
+        .select()
+        .eq('shop_id', shopId)
+        .eq('is_active', true);
 
-    final data = snapshot.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
     setCache(key, {'list': data}, ttlEmployees);
-    return data;
+    return List<Map<String, dynamic>>.from(data);
   }
 
   // --- CONTROLE ---

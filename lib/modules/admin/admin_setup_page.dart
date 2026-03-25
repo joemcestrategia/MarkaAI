@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/theme/app_colors.dart';
 
 class AdminSetupPage extends StatefulWidget {
@@ -23,7 +22,7 @@ class _AdminSetupPageState extends State<AdminSetupPage> {
 
   Future<void> _claimAdmin() async {
     try {
-      final user = FirebaseAuth.instance.currentUser;
+      final user = Supabase.instance.client.auth.currentUser;
       if (user == null) {
         setState(() {
           _message = "Você precisa estar logado para configurar o admin.";
@@ -32,13 +31,11 @@ class _AdminSetupPageState extends State<AdminSetupPage> {
         return;
       }
 
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
+      await Supabase.instance.client
+          .from('users')
           .update({
-        'is_admin_dev': true,
-        'roles': FieldValue.arrayUnion(['admin']),
-      });
+        'role': 'admin',
+      }).eq('id', user.id);
 
       setState(() {
         _message = "Sucesso! Sua conta agora tem permissões de Administrador.";

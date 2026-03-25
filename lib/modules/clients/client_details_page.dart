@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
@@ -37,6 +37,7 @@ class ClientDetailsPage extends StatefulWidget {
 
 class _ClientDetailsPageState extends State<ClientDetailsPage>
     with SingleTickerProviderStateMixin {
+  final _supabase = Supabase.instance.client;
   String? shopId;
   bool _isLoading = true;
   bool _showTagEditor = false;
@@ -80,15 +81,14 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
 
   Future<void> _loadTags(String sid) async {
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('shops')
-          .doc(sid)
-          .collection('clients')
-          .doc(widget.clientId)
-          .get();
-      if (mounted && doc.exists) {
-        final data = doc.data()!;
-        final tags = List<String>.from(data['manualTags'] ?? []);
+      final doc = await _supabase
+          .from('shop_clients')
+          .select()
+          .eq('shop_id', sid)
+          .eq('user_id', widget.clientId)
+          .maybeSingle();
+      if (mounted && doc != null) {
+        final tags = List<String>.from(doc['manual_tags'] ?? doc['manualTags'] ?? []);
         setState(() => _manualTags = tags);
       }
     } catch (e) {
@@ -111,18 +111,15 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
         classification = 'novo';
       }
 
-      await FirebaseFirestore.instance
-          .collection('shops')
-          .doc(shopId)
-          .collection('clients')
-          .doc(widget.clientId)
-          .set({
-        'manualTags': _manualTags.map((t) => t.toLowerCase().trim()).toList(),
+      await _supabase.from('shop_clients').upsert({
+        'shopId': shopId,
+        'user_id': widget.clientId,
+        'manual_tags': _manualTags.map((t) => t.toLowerCase().trim()).toList(),
         'classification': classification ?? '',
         // Se houver uma classificação manual definida, marcamos como override
-        'classificationOverride': classification != null,
-        'lastUpdated': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+        'classification_override': classification != null,
+        'last_updated': DateTime.now().toIso8601String(),
+      });
     } catch (e) {
       debugPrint('Erro ao salvar tags: $e');
     }
@@ -335,24 +332,23 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
           if (nameChanged) updateData['nome'] = newName;
           if (phoneChanged) {
             updateData['telefone'] = newPhone;
-            updateData['whatsapp'] = newPhone;
           }
 
-          // 1. Atualiza no perfil do cliente (subcoleção da loja)
+          // 1. Atualiza no perfil do cliente (tabela shop_clients)
           if (shopId != null) {
-            await FirebaseFirestore.instance
-                .collection('shops')
-                .doc(shopId)
-                .collection('clients')
-                .doc(widget.clientId)
-                .set(updateData, SetOptions(merge: true));
+            await _supabase.from('shop_clients').upsert({
+              'shopId': shopId,
+              'user_id': widget.clientId,
+              ...updateData,
+              'last_updated': DateTime.now().toIso8601String(),
+            });
           }
 
-          // 2. Atualiza no documento global do usuário (se existir)
-          await FirebaseFirestore.instance
-              .collection('users')
-              .doc(widget.clientId)
-              .set(updateData, SetOptions(merge: true));
+          // 2. Atualiza no documento global do usuário (se necessário)
+          await _supabase
+              .from('users')
+              .update(updateData)
+              .eq('id', widget.clientId);
 
           if (mounted) {
             setState(() {
@@ -375,58 +371,75 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
   }
 
   // Stream de histórico (passado)
-  Stream<QuerySnapshot> _getHistoryStream() {
-    final query = FirebaseFirestore.instance
-        .collection('appointments')
-        .where('shopId', isEqualTo: shopId);
+  Stream<List<Map<String, dynamic>>> _getHistoryStream() {
+    if (shopId == null) return const Stream.empty();
 
-    if (widget.clientData['origem'] == 'manual') {
-      final tel = widget.clientData['telefone'] ?? '';
-      final nome = widget.clientData['nome'] ?? '';
-      if (tel.isNotEmpty && tel != 'Não informado') {
-        return query
-            .where('client_phone', isEqualTo: tel)
-            .orderBy('data_agendamento', descending: true)
-            .snapshots();
-      } else {
-        return query
-            .where('client_name', isEqualTo: nome)
-            .orderBy('data_agendamento', descending: true)
-            .snapshots();
-      }
-    }
+    final query = _supabase
+        .from('appointments')
+        .stream(primaryKey: ['id']);
 
-    return query
-        .where('clientId', isEqualTo: widget.clientId)
-        .orderBy('data_agendamento', descending: true)
-        .snapshots();
+    return query.map((list) {
+      final filtered = list.where((d) {
+        final matchesShop = (d['shop_id'] ?? d['shopId']) == shopId;
+        if (!matchesShop) return false;
+
+        if (widget.clientData['origem'] == 'manual') {
+          final tel = widget.clientData['telefone'] ?? '';
+          final nome = widget.clientData['nome'] ?? '';
+          if (tel.isNotEmpty && tel != 'Não informado') {
+            return d['client_phone'] == tel;
+          } else {
+            return d['client_name'] == nome;
+          }
+        }
+        return d['clientId'] == widget.clientId;
+      }).toList();
+
+      // Ordenar manualmente já que não podemos usar .order() com filtros no stream
+      filtered.sort((a, b) {
+        final dateA = DateTime.tryParse(a['scheduled_at'].toString()) ?? DateTime(2000);
+        final dateB = DateTime.tryParse(b['scheduled_at'].toString()) ?? DateTime(2000);
+        return dateB.compareTo(dateA); // asscending: false
+      });
+
+      return filtered;
+    });
   }
 
   // Stream de próximos agendamentos
-  Stream<QuerySnapshot> _getUpcomingStream() {
+  Stream<List<Map<String, dynamic>>> _getUpcomingStream() {
+    if (shopId == null) return const Stream.empty();
     final now = DateTime.now();
-    final query = FirebaseFirestore.instance
-        .collection('appointments')
-        .where('shopId', isEqualTo: shopId)
-        .where('data_agendamento',
-            isGreaterThanOrEqualTo: Timestamp.fromDate(now));
 
-    if (widget.clientData['origem'] == 'manual') {
-      final tel = widget.clientData['telefone'] ?? '';
-      if (tel.isNotEmpty && tel != 'Não informado') {
-        return query
-            .where('client_phone', isEqualTo: tel)
-            .orderBy('data_agendamento', descending: false)
-            .limit(5)
-            .snapshots();
-      }
-    }
+    final query = _supabase
+        .from('appointments')
+        .stream(primaryKey: ['id']);
 
-    return query
-        .where('clientId', isEqualTo: widget.clientId)
-        .orderBy('data_agendamento', descending: false)
-        .limit(5)
-        .snapshots();
+    return query.map((list) {
+      final filtered = list.where((d) {
+        final matchesShop = (d['shop_id'] ?? d['shopId']) == shopId;
+        if (!matchesShop) return false;
+
+        final appDate = DateTime.tryParse(d['scheduled_at'].toString()) ?? DateTime(2000);
+        if (appDate.isBefore(now)) return false;
+
+        if (widget.clientData['origem'] == 'manual') {
+          final tel = widget.clientData['telefone'] ?? '';
+          if (tel.isNotEmpty && tel != 'Não informado') {
+            return d['client_phone'] == tel;
+          }
+        }
+        return d['clientId'] == widget.clientId;
+      }).toList();
+
+      filtered.sort((a, b) {
+        final dateA = DateTime.tryParse(a['scheduled_at'].toString()) ?? DateTime(2000);
+        final dateB = DateTime.tryParse(b['scheduled_at'].toString()) ?? DateTime(2000);
+        return dateA.compareTo(dateB); // ascending: true
+      });
+
+      return filtered.take(5).toList();
+    });
   }
 
   @override
@@ -619,10 +632,10 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
         ),
 
         // ── KPI BAR ───────────────────────────────────────────────────
-        StreamBuilder<QuerySnapshot>(
+        StreamBuilder<List<Map<String, dynamic>>>(
           stream: _getHistoryStream(),
           builder: (context, snap) {
-            final docs = snap.data?.docs ?? [];
+            final docs = snap.data ?? [];
             final currency =
                 NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
 
@@ -631,8 +644,7 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
             DateTime? lastVisit;
             int completed = 0;
 
-            for (final doc in docs) {
-              final d = doc.data() as Map<String, dynamic>;
+            for (final d in docs) {
               final val =
                   double.tryParse(d['valor_total']?.toString() ?? '0') ?? 0;
               final status = (d['status'] ?? '').toString().toLowerCase();
@@ -640,9 +652,16 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
                 totalGasto += val;
                 completed++;
               }
-              final ts = d['data_agendamento'] as Timestamp?;
-              if (ts != null) {
-                final dt = ts.toDate();
+              
+              final dynDate = d['scheduled_at'];
+              if (dynDate != null) {
+                DateTime dt;
+                if (dynDate is DateTime) {
+                  dt = dynDate;
+                } else {
+                  dt = DateTime.parse(dynDate.toString());
+                }
+                
                 if (lastVisit == null || dt.isAfter(lastVisit)) {
                   // Only past dates for "last visit"
                   if (dt.isBefore(DateTime.now())) lastVisit = dt;
@@ -769,13 +788,13 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
             controller: _tabController,
             children: [
               // ABA 1: HISTÓRICO
-              StreamBuilder<QuerySnapshot>(
+              StreamBuilder<List<Map<String, dynamic>>>(
                 stream: _getHistoryStream(),
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
                     return const Center(child: CircularProgressIndicator());
                   }
-                  final docs = snapshot.data?.docs ?? [];
+                  final docs = snapshot.data ?? [];
                   if (docs.isEmpty) {
                     return _emptyState(
                         icon: Icons.history,
@@ -787,21 +806,20 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
                     itemCount: docs.length,
                     separatorBuilder: (_, __) => const Divider(height: 1),
                     itemBuilder: (context, i) {
-                      final data = docs[i].data() as Map<String, dynamic>;
-                      return _buildHistoryCard(data);
+                      return _buildHistoryCard(docs[i]);
                     },
                   );
                 },
               ),
 
               // ABA 2: PRÓXIMOS
-              StreamBuilder<QuerySnapshot>(
+              StreamBuilder<List<Map<String, dynamic>>>(
                 stream: _getUpcomingStream(),
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
                     return const Center(child: CircularProgressIndicator());
                   }
-                  final docs = snapshot.data?.docs ?? [];
+                  final docs = snapshot.data ?? [];
                   if (docs.isEmpty) {
                     return _emptyState(
                         icon: Icons.event_available,
@@ -813,8 +831,7 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
                     itemCount: docs.length,
                     separatorBuilder: (_, __) => const Divider(height: 1),
                     itemBuilder: (context, i) {
-                      final data = docs[i].data() as Map<String, dynamic>;
-                      return _buildUpcomingCard(data);
+                      return _buildUpcomingCard(docs[i]);
                     },
                   );
                 },
@@ -986,7 +1003,14 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
     final currency = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     DateTime date;
     try {
-      date = (data['data_agendamento'] as Timestamp).toDate();
+      final dynDate = data['scheduled_at'];
+      if (dynDate is DateTime) {
+        date = dynDate;
+      } else if (dynDate is String) {
+        date = DateTime.parse(dynDate);
+      } else {
+        date = DateTime.now();
+      }
     } catch (_) {
       date = DateTime.now();
     }
@@ -1076,7 +1100,14 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
   Widget _buildUpcomingCard(Map<String, dynamic> data) {
     DateTime date;
     try {
-      date = (data['data_agendamento'] as Timestamp).toDate();
+      final dynDate = data['scheduled_at'];
+      if (dynDate is DateTime) {
+        date = dynDate;
+      } else if (dynDate is String) {
+        date = DateTime.parse(dynDate);
+      } else {
+        date = DateTime.now();
+      }
     } catch (_) {
       date = DateTime.now();
     }

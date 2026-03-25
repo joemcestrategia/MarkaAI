@@ -1,4 +1,4 @@
-﻿// ignore_for_file: use_build_context_synchronously, avoid_web_libraries_in_flutter
+// ignore_for_file: use_build_context_synchronously, avoid_web_libraries_in_flutter
 import 'dart:async';
 import 'dart:convert';
 import 'web_helper_stub.dart' if (dart.library.html) 'web_helper_real.dart'
@@ -6,8 +6,7 @@ import 'web_helper_stub.dart' if (dart.library.html) 'web_helper_real.dart'
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 
@@ -31,7 +30,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
   String _importStatus = '';
   int _importedCount = 0;
 
-  // ── Script do bookmarklet ─────────────────────────────────────────────────
+  // -- Script do bookmarklet -------------------------------------------------
   // Usa window.opener (quando aberto pelo MarkaAI) OU postMessage via origem
   // Se ambos falharem, copia o JSON pro clipboard como último recurso.
   //
@@ -42,7 +41,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
 (async () => {
   const delay = ms => new Promise(r => setTimeout(r, ms));
 
-  // ── Helpers ──────────────────────────────────────────────────────────────
+  // -- Helpers --------------------------------------------------------------
   // Extrai preço numérico de um texto (suporta BRL, R$, valores puros)
   function extractPrice(text) {
     if (!text) return null;
@@ -83,7 +82,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
     return '';
   }
 
-  // ── Rola o catálogo para carregar tudo ────────────────────────────────────
+  // -- Rola o catálogo para carregar tudo ------------------------------------
   const panel = document.querySelector('[role="list"]');
   if (panel) {
     panel.scrollTop = 0; await delay(400);
@@ -96,7 +95,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
     panel.scrollTop = 0; await delay(700);
   }
 
-  // ── Extração dos produtos ────────────────────────────────────────────────
+  // -- Extração dos produtos ------------------------------------------------
   const produtos = [];
 
   // Estratégia A: Buscar por itens de lista no catálogo via [role="list"] > items
@@ -205,7 +204,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
   if (window.opener && !window.opener.closed) {
     try { window.opener.postMessage(payload, '""" +
       targetOrigin +
-      r"""'); alert('✅ ' + uniqueProdutos.length + ' produtos enviados para o MarkaAI!'); return; } catch(e) {}
+      r"""'); alert('? ' + uniqueProdutos.length + ' produtos enviados para o MarkaAI!'); return; } catch(e) {}
   }
 
   // Fallback: tenta abrir o MarkaAI com dados na URL hash
@@ -215,15 +214,15 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
     window.open('""" +
       targetOrigin +
       r"""/#catalog=' + encoded, '_blank');
-    alert('✅ ' + uniqueProdutos.length + ' produtos! A aba do MarkaAI vai receber os dados.');
+    alert('? ' + uniqueProdutos.length + ' produtos! A aba do MarkaAI vai receber os dados.');
   } else {
     // Muitos dados: copia JSON pro clipboard
-    try { await navigator.clipboard.writeText(payload); alert('✅ ' + uniqueProdutos.length + ' produtos copiados! Cole no MarkaAI.'); }
+    try { await navigator.clipboard.writeText(payload); alert('? ' + uniqueProdutos.length + ' produtos copiados! Cole no MarkaAI.'); }
     catch(e) {
       const ta = document.createElement('textarea');
       ta.value = payload; document.body.appendChild(ta);
       ta.select(); document.execCommand('copy'); ta.remove();
-      alert('✅ ' + uniqueProdutos.length + ' produtos copiados! Cole no MarkaAI.');
+      alert('? ' + uniqueProdutos.length + ' produtos copiados! Cole no MarkaAI.');
     }
   }
 })();
@@ -245,13 +244,14 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
   Future<void> _loadShopId() async {
     String? sId = await SessionService.getShopId();
     if (sId == null || sId.isEmpty) {
-      final user = FirebaseAuth.instance.currentUser;
+      final user = Supabase.instance.client.auth.currentUser;
       if (user != null) {
-        final doc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .get();
-        sId = doc.data()?['shopId'];
+        final data = await Supabase.instance.client
+            .from('users')
+            .select('shopId')
+            .eq('id', user.id)
+            .maybeSingle();
+        sId = data?['shop_id'] ?? data?['shopId'];
       }
     }
     if (mounted) setState(() => _shopId = sId);
@@ -300,7 +300,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
     super.dispose();
   }
 
-  // ── Formata número e abre WhatsApp Web ───────────────────────────────────
+  // -- Formata número e abre WhatsApp Web -----------------------------------
   void _openCatalog() {
     // Abre web.whatsapp.com diretamente para evitar que o Windows intercepte
     // o link wa.me e abra o app do WhatsApp Desktop.
@@ -347,7 +347,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
         behavior: SnackBarBehavior.floating));
   }
 
-  // ── Helpers de seleção ────────────────────────────────────────────────────
+  // -- Helpers de seleção ----------------------------------------------------
   int get _selectedCount => _products.where((p) => p.selected).length;
 
   void _toggleAll(bool val) {
@@ -362,7 +362,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
     setState(() => _products.removeAt(index));
   }
 
-  // ── Importação Firestore + Storage ───────────────────────────────────────
+  // -- Importação Firestore + Storage ---------------------------------------
   Future<void> _startImport() async {
     if (_shopId == null) {
       _snack('ID da loja não encontrado.', Colors.red);
@@ -374,7 +374,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
       return;
     }
 
-    debugPrint('🚀 Importação: shopId=$_shopId, ${toImport.length} itens');
+    debugPrint('?? Importação: shopId=$_shopId, ${toImport.length} itens');
 
     setState(() {
       _step = 4;
@@ -392,33 +392,29 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
         final precoStr = p.preco.replaceAll(RegExp(r'[^\d.]'), '');
         final preco = double.tryParse(precoStr) ?? 0.0;
 
-        // Gera ID no mesmo formato do service_register_page
-        final docId =
-            FirebaseFirestore.instance.collection('services').doc().id;
-
         debugPrint(
-            '  → Salvando "${p.nome}" (R\$ $preco) em services/$docId [shopId=$_shopId]');
+            '  ? Salvando "${p.nome}" (R\$ $preco) em services [shopId=$_shopId]');
 
         // Salva na coleção TOP-LEVEL 'services' com shopId como campo
         // (mesmo padrão do service_register_page.dart)
-        await FirebaseFirestore.instance.collection('services').doc(docId).set({
-          'nome': p.nome,
-          'descricao': p.descricao,
-          'preco': preco,
-          'custo': 0,
-          'tempo_min': 60,
-          'ativo': true,
-          'shopId': _shopId,
-          'fotos_urls': <String>[],
+        await Supabase.instance.client.from('services').insert({
+          'name': p.nome,
+          'description': p.descricao,
+          'price': preco,
+          'cost': 0,
+          'duration_min': 60,
+          'is_active': true,
+          'shop_id': _shopId,
+          'photos_urls': <String>[],
           'variations': <Map<String, dynamic>>[],
           'requer_aviso': false,
           'mensagem_aviso': '',
           'importado_whatsapp': true,
-          'atualizado_em': FieldValue.serverTimestamp(),
+          'atualizado_em': DateTime.now().toIso8601String(),
         });
         success++;
         setState(() => _importedCount = success);
-        debugPrint('  ✅ "${p.nome}" importado com sucesso');
+        debugPrint('  ? "${p.nome}" importado com sucesso');
       } catch (e) {
         debugPrint('  âŒ Erro ${p.nome}: $e');
         errors.add('${p.nome}: $e');
@@ -435,7 +431,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
         'ðŸ Importação finalizada: $success/${toImport.length} OK, ${errors.length} erros');
   }
 
-  // ── Build ─────────────────────────────────────────────────────────────────
+  // -- Build -----------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
     if (!kIsWeb) {
@@ -547,7 +543,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
     }
   }
 
-  // ── STEP 0 ────────────────────────────────────────────────────────────────
+  // -- STEP 0 ----------------------------------------------------------------
   Widget _step0() =>
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         _hdr('ðŸŒ', 'Abrir WhatsApp Web',
@@ -596,7 +592,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
         .toList();
   }
 
-  // ── STEP 1: Bookmarklet ───────────────────────────────────────────────────
+  // -- STEP 1: Bookmarklet ---------------------------------------------------
   Widget _step1() =>
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         _hdr('ðŸ”–', 'Instalar o Favorito (uma única vez)',
@@ -607,9 +603,9 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
             'Como instalar:',
             [
               '1. Pressione Ctrl+Shift+B para exibir a barra de favoritos',
-              '2. Clique com o botão direito na barra de favoritos → "Adicionar página"',
+              '2. Clique com o botão direito na barra de favoritos ? "Adicionar página"',
               '3. Cole a URL copiada pelo botão abaixo no campo de endereço',
-              '4. Salve com o nome: 📦 MarkaAI — Importar Catálogo',
+              '4. Salve com o nome: ?? MarkaAI — Importar Catálogo',
             ],
             color: Colors.blue[700]!),
         const SizedBox(height: 20),
@@ -622,7 +618,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
             'Próximo passo:',
             [
               'Na aba do WhatsApp Web aberta, role o catálogo até o FINAL.',
-              'Depois clique no favorito "📦 MarkaAI — Importar Catálogo".',
+              'Depois clique no favorito "?? MarkaAI — Importar Catálogo".',
               'Os dados chegam aqui automaticamente — sem copiar nada!',
             ],
             color: const Color(0xFF25D366)),
@@ -645,7 +641,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
         ]),
       ]);
 
-  // ── STEP 2: Aguardando ────────────────────────────────────────────────────
+  // -- STEP 2: Aguardando ----------------------------------------------------
   Widget _step2() => Center(
           child: Padding(
         padding: const EdgeInsets.all(48),
@@ -662,15 +658,15 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
           Text(
             'Na aba do WhatsApp Web:\n'
             '1. Role o catálogo até o FINAL (carrega as imagens)\n'
-            '2. Clique no favorito "📦 MarkaAI — Importar Catálogo"\n'
+            '2. Clique no favorito "?? MarkaAI — Importar Catálogo"\n'
             '3. Os dados chegam aqui automaticamente!',
             textAlign: TextAlign.center,
             style:
                 TextStyle(color: Colors.grey[600], fontSize: 14, height: 1.7),
           ),
           const SizedBox(height: 28),
-          // ── Opção A: automático via postMessage (já ouvindo) ──────────────────
-          // ── Opção B: colar do clipboard (fallback quando opener=null) ─────────
+          // -- Opção A: automático via postMessage (já ouvindo) ------------------
+          // -- Opção B: colar do clipboard (fallback quando opener=null) ---------
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
@@ -691,7 +687,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
               ]),
               const SizedBox(height: 8),
               Text(
-                  'Se apareceu "✅ X produtos copiados! Cole no MarkaAI.", clique aqui:',
+                  'Se apareceu "? X produtos copiados! Cole no MarkaAI.", clique aqui:',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Colors.grey[700], fontSize: 13)),
               const SizedBox(height: 12),
@@ -725,15 +721,15 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
         ]),
       ));
 
-  // ── STEP 3: Tabela de seleção ─────────────────────────────────────────────
+  // -- STEP 3: Tabela de seleção ---------------------------------------------
   Widget _step3() {
     final allSelected = _products.every((p) => p.selected);
     final noneSelected = _products.every((p) => !p.selected);
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      _hdr('✅', '${_products.length} itens encontrados',
+      _hdr('?', '${_products.length} itens encontrados',
           'Selecione os serviços que deseja importar. Edite nome, descrição e preço clicando no campo.'),
       const SizedBox(height: 14),
-      // ── Toolbar ──────────────────────────────────────────────────────────
+      // -- Toolbar ----------------------------------------------------------
       Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         decoration: BoxDecoration(
@@ -775,7 +771,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
         ]),
       ),
       const SizedBox(height: 12),
-      // ── Tabela ───────────────────────────────────────────────────────────
+      // -- Tabela -----------------------------------------------------------
       _card(Column(
           children: _products.asMap().entries.map((e) {
         final i = e.key;
@@ -790,13 +786,13 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
                   p.looksInvalid && !p.selected ? Colors.amber.shade50 : null,
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
               child: Row(children: [
-                // ── Checkbox ──────────────────────────────────────────────
+                // -- Checkbox ----------------------------------------------
                 Checkbox(
                   value: p.selected,
                   activeColor: AppColors.primaryPurple,
                   onChanged: (v) => setState(() => p.selected = v ?? false),
                 ),
-                // ── Imagem ───────────────────────────────────────────────
+                // -- Imagem -----------------------------------------------
                 Container(
                     width: 44,
                     height: 44,
@@ -815,7 +811,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
                                     color: Colors.grey)))
                         : const Icon(Icons.image_not_supported,
                             size: 20, color: Colors.grey)),
-                // ── Nome + Descrição (editável) ──────────────────────────
+                // -- Nome + Descrição (editável) --------------------------
                 Expanded(
                     child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -835,7 +831,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
                           hint: 'Descrição'),
                     ])),
                 const SizedBox(width: 8),
-                // ── Preço (editável) ─────────────────────────────────────
+                // -- Preço (editável) -------------------------------------
                 SizedBox(
                     width: 120,
                     child: _editableField(
@@ -848,13 +844,13 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
                         hint: '0.00',
                         prefix: 'R\$ ')),
                 const SizedBox(width: 4),
-                // ── Warning icon ─────────────────────────────────────────
+                // -- Warning icon -----------------------------------------
                 if (p.looksInvalid)
                   Tooltip(
                       message: 'Parece ser trecho de conversa',
                       child: Icon(Icons.warning_amber_rounded,
                           size: 18, color: Colors.orange.shade400)),
-                // ── Remove button ────────────────────────────────────────
+                // -- Remove button ----------------------------------------
                 IconButton(
                     icon:
                         Icon(Icons.close, size: 17, color: Colors.red.shade300),
@@ -892,7 +888,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
     ]);
   }
 
-  // ── Campo editável inline ─────────────────────────────────────────────────
+  // -- Campo editável inline -------------------------------------------------
   Widget _editableField({
     required String value,
     required ValueChanged<String> onChanged,
@@ -925,7 +921,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
     );
   }
 
-  // ── STEP 4: Importando ───────────────────────────────────────────────────
+  // -- STEP 4: Importando ---------------------------------------------------
   Widget _step4() {
     final prog = _products.isNotEmpty ? _importedCount / _products.length : 0.0;
     return Center(
@@ -957,14 +953,14 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
     ));
   }
 
-  // ── STEP 5: Concluído ────────────────────────────────────────────────────
+  // -- STEP 5: Concluído ----------------------------------------------------
   Widget _step5() => Center(
           child: Padding(
         padding: const EdgeInsets.all(60),
         child: Column(children: [
           const Icon(Icons.check_circle, size: 76, color: Colors.green),
           const SizedBox(height: 22),
-          const Text('Importação concluída! 🎉',
+          const Text('Importação concluída! ??',
               style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
           const SizedBox(height: 10),
           Text(_importStatus,
@@ -985,7 +981,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
         ]),
       ));
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
+  // -- Helpers ---------------------------------------------------------------
   Widget _hdr(String emoji, String title, String sub) =>
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(emoji, style: const TextStyle(fontSize: 38)),
@@ -1072,7 +1068,7 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
       );
 }
 
-// ── Bookmarklet Copy Button ────────────────────────────────────────────────
+// -- Bookmarklet Copy Button ------------------------------------------------
 // Cria um <a> real via HtmlElementView para ser arrastável para os favoritos,
 // mais um botão Flutter fallback para copiar a URL.
 class _BookmarkletCopyButton extends StatefulWidget {
@@ -1128,7 +1124,7 @@ class _BookmarkletCopyButtonState extends State<_BookmarkletCopyButton> {
   }
 }
 
-// ── Modelo ────────────────────────────────────────────────────────────────────
+// -- Modelo --------------------------------------------------------------------
 class _CatalogProduct {
   String nome, descricao, preco, imagemUrl;
   bool selected = true;

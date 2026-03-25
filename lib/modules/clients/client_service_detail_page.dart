@@ -1,7 +1,6 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/theme/app_colors.dart';
 import '../schedule/booking_page.dart';
 import '../login/login_page.dart';
@@ -10,7 +9,7 @@ import 'client_register_page.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class ClientServiceDetailPage extends StatefulWidget {
-  final DocumentSnapshot serviceDoc;
+  final Map<String, dynamic> serviceDoc;
   final bool isReschedule;
   final String? rescheduleAppointmentId;
   final bool fromSubdomain;
@@ -23,9 +22,8 @@ class ClientServiceDetailPage extends StatefulWidget {
     this.fromSubdomain = false,
   });
 
-  Map<String, dynamic> get serviceData =>
-      serviceDoc.data() as Map<String, dynamic>;
-  String get serviceId => serviceDoc.id;
+  Map<String, dynamic> get serviceData => serviceDoc;
+  String get serviceId => serviceDoc['id'] ?? '';
 
   @override
   State<ClientServiceDetailPage> createState() =>
@@ -38,7 +36,7 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
   Map<String, dynamic>? _selectedVariation;
   bool _isNavigating = false;
 
-  DocumentSnapshot? _shopDoc;
+  Map<String, dynamic>? _shopDoc;
   bool _isLoadingShop = true;
   bool _isOnlineBookingActive = true;
 
@@ -51,15 +49,17 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
 
   Future<void> _loadShopConfig() async {
     try {
-      final shopId = widget.serviceData['shopId'];
+      final shopId = widget.serviceData['shopId'] ?? widget.serviceData['shop_id'];
       if (shopId != null) {
-        final doc = await FirebaseFirestore.instance
-            .collection('shops')
-            .doc(shopId)
-            .get();
-        if (doc.exists) {
+        final doc = await Supabase.instance.client
+            .from('shops')
+            .select()
+            .eq('id', shopId)
+            .maybeSingle();
+            
+        if (doc != null) {
           _shopDoc = doc;
-          final config = doc.data()?['config'] as Map<String, dynamic>?;
+          final config = doc['config'] as Map<String, dynamic>?;
           _isOnlineBookingActive = config?['agendamento_online_ativo'] ?? true;
         }
       }
@@ -84,15 +84,18 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
 
     setState(() => _isNavigating = true);
 
-    DocumentSnapshot? shopDoc = _shopDoc;
+    Map<String, dynamic>? shopDoc = _shopDoc;
     try {
       if (shopDoc == null) {
-        if (widget.serviceData['shopId'] != null) {
-          shopDoc = await FirebaseFirestore.instance
-              .collection('shops')
-              .doc(widget.serviceData['shopId'])
-              .get();
-          if (!shopDoc.exists) throw "Loja não encontrada.";
+        final shopId = widget.serviceData['shopId'] ?? widget.serviceData['shop_id'];
+        if (shopId != null) {
+          shopDoc = await Supabase.instance.client
+              .from('shops')
+              .select()
+              .eq('id', shopId)
+              .maybeSingle();
+              
+          if (shopDoc == null) throw "Loja não encontrada.";
           _shopDoc = shopDoc;
         } else {
           throw "ID da loja não encontrado.";
@@ -108,14 +111,13 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
       return;
     }
 
-    // 1. Verificar se o usuário está logado (Late Auth) com Double Check para Anonymous State
-    final userState = await FirebaseAuth.instance.authStateChanges().first;
-    if (userState == null || userState.isAnonymous) {
+    // 1. Verificar se o usuário está logado
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) {
       if (mounted) setState(() => _isNavigating = false);
 
-      final serviceName = widget.serviceData['nome'] ?? 'o serviço';
-      final shopData = shopDoc.data() as Map<String, dynamic>? ?? {};
-      final shopName = shopData['nome'] ?? 'nossa loja';
+      final serviceName = widget.serviceData['name'] ?? 'o serviço';
+      final shopName = shopDoc['name'] ?? 'nossa loja';
 
       if (mounted) {
         final success = await Navigator.push<bool>(
@@ -133,20 +135,19 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
           _goToBooking();
         }
       }
-      return; // â›” TRAVA DEFINITIVA: Impede qualquer execução adicional se não estava logado quando clicou
+      return;
     }
-    final user = userState;
 
     // 1.5 Verificar se o perfil está completo
     final complete =
-        await ProfileCheckService.isClientProfileComplete(user.uid);
+        await ProfileCheckService.isClientProfileComplete(user.id);
     if (!complete && mounted) {
       final go = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
           title: const Text('Perfil incompleto'),
           content: const Text(
-            'Seu perfil ainda não foi todo preenchido. Para agendar, complete seus dados (nome, telefone, endereço). Deseja completar agora?',
+            'Seu perfil ainda não foi todo preenchido. Para agendar, complete seus dados (nome, endereço). Deseja completar agora?',
           ),
           actions: [
             TextButton(
@@ -197,7 +198,6 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
     try {
       if (!mounted) return;
 
-      // Navega para o BookingPage OBRIGANDO a passar o serviço
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -222,7 +222,8 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
   }
 
   void _agendarViaWhatsApp() async {
-    final shopData = _shopDoc!.data() as Map<String, dynamic>;
+    if (_shopDoc == null) return;
+    final shopData = _shopDoc!;
     final phone = shopData['telefone'] ?? shopData['whatsapp'];
     if (phone == null || phone.toString().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -272,7 +273,6 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
         children: [
           CustomScrollView(
             slivers: [
-              // AppBar expansível com imagem do serviço
               SliverAppBar(
                 expandedHeight: 400,
                 pinned: true,
@@ -342,7 +342,6 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
                               ),
                             ),
 
-                      // Indicador de páginas (se houver múltiplas fotos)
                       if (hasPhotos && photos.length > 1)
                         Positioned(
                           bottom: 16,
@@ -372,81 +371,92 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
                 ),
               ),
 
-              // Conteúdo do serviço
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.all(24),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Nome do serviço
-                      Text(
-                        widget.serviceData['nome'] ?? "Serviço",
-                        style: const TextStyle(
-                          fontSize: 26,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87,
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 0),
+                        child: Text(
+                          widget.serviceData['name'] ?? '',
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black,
+                          ),
                         ),
                       ),
                       const SizedBox(height: 12),
 
-                      // Preço e duração
                       Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 8,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.green.shade50,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              "R\$ ${widget.serviceData['preco']}",
-                              style: TextStyle(
-                                fontSize: 22,
-                                color: Colors.green[700],
-                                fontWeight: FontWeight.bold,
+                          Expanded(
+                            child: Container(
+                              height: 60,
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: AppColors.primaryPurple
+                                    .withOpacity(0.05),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: AppColors.primaryPurple
+                                      .withOpacity(0.1),
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const Icon(Icons.payments_outlined,
+                                      color: AppColors.primaryPurple, size: 20),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    "R\$ ${widget.serviceData['price'] ?? '0'}",
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: AppColors.primaryPurple,
+                                      fontSize: 16,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ),
                           const SizedBox(width: 12),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 8,
-                            ),
-                            decoration: BoxDecoration(
-                              color: AppColors.primaryPurple
-                                  .withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Row(
-                              children: [
-                                const Icon(
-                                  Icons.access_time,
-                                  size: 18,
-                                  color: AppColors.primaryPurple,
-                                ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  "${widget.serviceData['tempo_min'] ?? '30'} min",
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    color: AppColors.primaryPurple,
-                                    fontWeight: FontWeight.w600,
+                          Expanded(
+                            child: Container(
+                              height: 60,
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.grey[50],
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: Colors.grey.shade200),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const Icon(Icons.timer_outlined,
+                                      color: Colors.grey, size: 20),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    "${widget.serviceData['duration_min'] ?? '30'} min",
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.black87,
+                                      fontSize: 16,
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
                         ],
                       ),
 
-                      // Descrição
-                      if (widget.serviceData['descricao'] != null &&
-                          widget.serviceData['descricao']
+                      if (widget.serviceData['description'] != null &&
+                          widget.serviceData['description']
                               .toString()
                               .isNotEmpty) ...[
                         const SizedBox(height: 24),
@@ -460,7 +470,7 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          widget.serviceData['descricao'],
+                          widget.serviceData['description'],
                           style: TextStyle(
                             fontSize: 15,
                             color: Colors.grey[700],
@@ -469,7 +479,6 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
                         ),
                       ],
 
-                      // Variações
                       if (hasVariations) ...[
                         const SizedBox(height: 24),
                         const Text(
@@ -532,7 +541,7 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
                         ),
                       ],
 
-                      const SizedBox(height: 100), // Espaço para o botão fixo
+                      const SizedBox(height: 100),
                     ],
                   ),
                 ),
@@ -540,7 +549,6 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
             ],
           ),
 
-          // Botão de agendamento fixo na parte inferior
           Positioned(
             bottom: 0,
             left: 0,

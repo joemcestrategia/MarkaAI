@@ -1,16 +1,14 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/services/mercado_pago_service.dart';
 import 'booking_success_page.dart';
 
 class CheckoutReviewPage extends StatefulWidget {
   final Map<String, dynamic> paymentData;
-  final DocumentSnapshot serviceDoc;
-  final DocumentSnapshot professionalDoc;
+  final Map<String, dynamic> serviceDoc;
+  final Map<String, dynamic> professionalDoc;
   final DateTime date;
   final String time;
   final String shopId;
@@ -40,44 +38,26 @@ class _CheckoutReviewPageState extends State<CheckoutReviewPage> {
     setState(() => _isProcessing = true);
 
     try {
-      final user = FirebaseAuth.instance.currentUser;
+      final user = Supabase.instance.client.auth.currentUser;
       if (user == null) throw Exception('Usuário não autenticado');
 
-      final idToken = await user.getIdToken();
-
-      final response = await http.post(
-        Uri.parse(
-            'https://us-central1-wismart-118c3.cloudfunctions.net/criarPagamento'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'data': {
-            'cardToken': widget.paymentData['cardToken'],
-            'email': user.email ?? 'cliente@markaai.com.br',
-            'installments': widget.paymentData['installments'],
-            'valor': widget.paymentData['valor'],
-            'shopId': widget.shopId,
-            'orderId': widget.orderId,
-            'descricao': "Reserva: ${widget.serviceDoc['nome'] ?? 'Serviço'}",
-            'idToken': idToken,
-            'cpf': widget.paymentData['cpf'],
-            'paymentMethodId': widget.paymentData['paymentMethodId'],
-            'issuerId': widget.paymentData['issuerId'],
-          }
-        }),
+      final result = await MercadoPagoService.criarPagamentoCartao(
+        shopId: widget.shopId,
+        cardToken: widget.paymentData['cardToken'],
+        amount: (widget.paymentData['valor'] as num).toDouble(),
+        installments: widget.paymentData['installments'],
+        email: user.email ?? 'cliente@markaai.com.br',
+        description: "Reserva: ${widget.serviceDoc['name'] ?? 'Serviço'}",
+        cpf: widget.paymentData['cpf'],
+        paymentMethodId: widget.paymentData['paymentMethodId'],
+        issuerId: widget.paymentData['issuerId'],
       );
 
-      if (response.statusCode == 200) {
-        final result =
-            jsonDecode(response.body)['data'] ?? jsonDecode(response.body);
-        if (result['success'] == true) {
-          await _saveAppointment(result['paymentId'].toString());
-        } else {
-          _showError(_getFriendlyErrorMessage(result['error']?.toString(),
-              statusDetail: result['status_detail']?.toString()));
-        }
+      if (result['success'] == true) {
+        await _saveAppointment(result['paymentId']?.toString() ?? '');
       } else {
-        final error = jsonDecode(response.body);
-        _showError(_getFriendlyErrorMessage(error['error']?.toString()));
+        _showError(_getFriendlyErrorMessage(result['error']?.toString(),
+            statusDetail: result['status_detail']?.toString()));
       }
     } catch (e) {
       _showError('Erro ao confirmar reserva: $e');
@@ -87,7 +67,7 @@ class _CheckoutReviewPageState extends State<CheckoutReviewPage> {
   }
 
   Future<void> _saveAppointment(String paymentId) async {
-    final user = FirebaseAuth.instance.currentUser!;
+    final user = Supabase.instance.client.auth.currentUser!;
     final bookingDate = DateTime(
       widget.date.year,
       widget.date.month,
@@ -96,18 +76,20 @@ class _CheckoutReviewPageState extends State<CheckoutReviewPage> {
       int.parse(widget.time.split(':')[1]),
     );
 
-    await FirebaseFirestore.instance.collection('appointments').add({
-      'shopId': widget.shopId,
-      'clientId': user.uid,
-      'serviceId': widget.serviceDoc.id,
-      'professionalId': widget.professionalDoc.id,
-      'date': Timestamp.fromDate(bookingDate),
-      'time': widget.time,
+    await Supabase.instance.client.from('appointments').insert({
+      'shop_id': widget.shopId,
+      'client_id': user.id,
+      'client_name': user.userMetadata?['full_name'] ?? user.email ?? 'Cliente',
+      'client_email': user.email ?? 'cliente@markaai.com.br',
+      'service_id': widget.serviceDoc['id'],
+      'service_name': widget.serviceDoc['name'] ?? 'Serviço',
+      'professional_id': widget.professionalDoc['id'],
+      'professional_name': widget.professionalDoc['name'] ?? 'Profissional',
+      'scheduled_at': bookingDate.toIso8601String(),
       'status': 'confirmado',
-      'paymentId': paymentId,
-      'paymentMethod': 'Cartão de Crédito',
-      'valor': widget.paymentData['valor'],
-      'created_at': FieldValue.serverTimestamp(),
+      'payment_method': 'Cartão de Crédito',
+      'total_value': widget.paymentData['valor'],
+      'metadata': {'payment_id': paymentId},
     });
 
     if (mounted) {
@@ -115,8 +97,8 @@ class _CheckoutReviewPageState extends State<CheckoutReviewPage> {
         context,
         MaterialPageRoute(
           builder: (_) => BookingSuccessPage(
-            serviceName: widget.serviceDoc['nome'] ?? 'Serviço',
-            professionalName: widget.professionalDoc['nome'] ?? 'Profissional',
+            serviceName: widget.serviceDoc['name'] ?? 'Serviço',
+            professionalName: widget.professionalDoc['name'] ?? 'Profissional',
             date: DateFormat('dd/MM/yyyy').format(widget.date),
             time: widget.time,
             isPaid: true,
@@ -128,7 +110,6 @@ class _CheckoutReviewPageState extends State<CheckoutReviewPage> {
   }
 
   String _getFriendlyErrorMessage(String? code, {String? statusDetail}) {
-    // Check common raw error strings first (from Exception messages or API responses)
     final lowerCode = code?.toLowerCase() ?? '';
 
     if (lowerCode.contains('invalid transaction amount') ||
@@ -248,7 +229,7 @@ class _CheckoutReviewPageState extends State<CheckoutReviewPage> {
     final secondaryColor = Colors.grey[600];
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F9FA), // Slightly off-white background
+      backgroundColor: const Color(0xFFF8F9FA),
       appBar: AppBar(
         title: const Text('Revisar Reserva',
             style: TextStyle(color: Colors.black, fontWeight: FontWeight.w700)),
@@ -280,7 +261,7 @@ class _CheckoutReviewPageState extends State<CheckoutReviewPage> {
                         _buildEnhancedReviewItem(
                           icon: Icons.auto_awesome,
                           label: 'Serviço',
-                          value: widget.serviceDoc['nome'] ?? 'Serviço',
+                          value: widget.serviceDoc['name'] ?? 'Serviço',
                         ),
                         if (widget.showProfessional) ...[
                           const Padding(
@@ -290,7 +271,7 @@ class _CheckoutReviewPageState extends State<CheckoutReviewPage> {
                           _buildEnhancedReviewItem(
                             icon: Icons.person_outline,
                             label: 'Profissional',
-                            value: widget.professionalDoc['nome'] ??
+                            value: widget.professionalDoc['name'] ??
                                 'Profissional',
                           ),
                         ],
@@ -364,10 +345,8 @@ class _CheckoutReviewPageState extends State<CheckoutReviewPage> {
               ),
             ),
           ),
-          // Resumo e Botão
           Container(
-            padding: const EdgeInsets.fromLTRB(
-                24, 24, 24, 32), // 32px bottom padding as requested
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
             decoration: BoxDecoration(
               color: Colors.white,
               boxShadow: [
@@ -456,7 +435,7 @@ class _CheckoutReviewPageState extends State<CheckoutReviewPage> {
           offset: const Offset(0, 4),
         ),
       ],
-      border: Border.all(color: Colors.white), // Better refinement
+      border: Border.all(color: Colors.white),
     );
   }
 

@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/theme/app_colors.dart';
 
 class ServiceDetailsPage extends StatelessWidget {
-  final DocumentSnapshot doc;
+  final Map<String, dynamic> doc;
   final VoidCallback onClose;
   final VoidCallback onEdit;
 
@@ -17,8 +16,8 @@ class ServiceDetailsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final data = doc.data() as Map<String, dynamic>;
-    List<dynamic> fotos = data['fotos_urls'] ?? [];
+    final data = doc;
+    List<dynamic> fotos = data['photos_urls'] ?? [];
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -120,7 +119,7 @@ class ServiceDetailsPage extends StatelessWidget {
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      Text(data['nome'] ?? "",
+                                      Text(data['name'] ?? "",
                                           style: const TextStyle(
                                               fontSize: 22,
                                               fontWeight: FontWeight.bold)),
@@ -128,10 +127,10 @@ class ServiceDetailsPage extends StatelessWidget {
                                       Row(
                                         children: [
                                           _buildBadge(
-                                              data['categoria'] ?? "Serviço",
+                                              data['category'] ?? "Serviço",
                                               AppColors.primaryPurple),
                                           const SizedBox(width: 8),
-                                          if (data['ativo'] == false)
+                                          if (data['is_active'] == false)
                                             _buildBadge("INATIVO", Colors.red),
                                         ],
                                       ),
@@ -150,11 +149,11 @@ class ServiceDetailsPage extends StatelessWidget {
                                     child: _buildInfoCard(
                                         Icons.timer_outlined,
                                         "Duração",
-                                        "${data['tempo_min']} min")),
+                                        "${data['duration_min']} min")),
                                 const SizedBox(width: 12),
                                 Expanded(
                                     child: _buildInfoCard(Icons.attach_money,
-                                        "Valor", "R\$ ${data['preco']}")),
+                                        "Valor", "R\$ ${data['price']}")),
                               ],
                             ),
 
@@ -170,8 +169,8 @@ class ServiceDetailsPage extends StatelessWidget {
                                     color: Colors.grey)),
                             const SizedBox(height: 8),
                             Text(
-                              data['descricao']?.toString().isNotEmpty == true
-                                  ? data['descricao']
+                              data['description']?.toString().isNotEmpty == true
+                                  ? data['description']
                                   : "Nenhuma descrição informada.",
                               style: const TextStyle(
                                   fontSize: 15,

@@ -1,9 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:http/http.dart' as http;
 import '../../core/theme/app_colors.dart';
@@ -24,16 +22,15 @@ class CheckoutPage extends StatefulWidget {
   final String shopId;
   final Map<String, dynamic> shopData;
   final Map<String, dynamic> shopConfig;
-  final DocumentSnapshot serviceDoc;
-  final DocumentSnapshot professionalDoc;
+  final Map<String, dynamic> serviceDoc;
+  final Map<String, dynamic> professionalDoc;
   final DateTime date;
   final TimeOfDay time;
   final String? serviceNameOverride;
   final double? servicePriceOverride;
   final bool fromSubdomain;
 
-  Map<String, dynamic> get serviceData =>
-      serviceDoc.data() as Map<String, dynamic>;
+  Map<String, dynamic> get serviceData => serviceDoc;
 
   const CheckoutPage({
     super.key,
@@ -47,8 +44,11 @@ class CheckoutPage extends StatefulWidget {
     this.serviceNameOverride,
     this.servicePriceOverride,
     this.fromSubdomain = false,
+    this.selectedVariation,
     this.clientStatus,
   });
+
+  final Map<String, dynamic>? selectedVariation;
  
   final Map<String, bool>? clientStatus;
 
@@ -98,13 +98,15 @@ class _CheckoutPageState extends State<CheckoutPage> {
   String? _appliedCouponId;
   String? _appliedCouponCode;
 
+  String? _preSavedAppointmentId;
+
   Timer? _timerPolling;
 
   @override
   void initState() {
     super.initState();
     debugPrint(
-        '🚀 CheckoutPage: initState | shopId: ${widget.shopId} | serviceId: ${widget.serviceDoc.id}');
+        '🚀 CheckoutPage: initState | shopId: ${widget.shopId} | serviceId: ${widget.serviceDoc['id']}');
     _initializeCheckout();
   }
 
@@ -123,14 +125,15 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
   Future<void> _loadShopPaymentConfig() async {
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('shops')
-          .doc(widget.shopId)
-          .get();
+      final doc = await Supabase.instance.client
+          .from('shops')
+          .select()
+          .eq('id', widget.shopId)
+          .maybeSingle();
           
-      if (!doc.exists) return;
+      if (doc == null) return;
 
-      final data = doc.data() as Map<String, dynamic>;
+      final data = doc as Map<String, dynamic>;
       final mpData = data['mercadopago'] as Map<String, dynamic>? ?? {};
       final config = data['config'] as Map<String, dynamic>? ?? widget.shopConfig;
 
@@ -175,36 +178,39 @@ class _CheckoutPageState extends State<CheckoutPage> {
       final bool trustedOnly = config['trusted_only_pay_in_person'] ?? false;
 
       // Carrega status do cliente (VIP/Aniversário) se logado antes de dar o setState final
-      final user = FirebaseAuth.instance.currentUser;
+      final user = Supabase.instance.client.auth.currentUser;
       bool isBirthday = false;
       bool isProblematic = false;
       bool isVip = false;
-      String? userPhone;
+      // _isVip is set by _checkVipStatus
+      // _userPhone is set by _loadAuthStatus
 
       if (user != null) {
         final status = widget.clientStatus ?? await ClientVerificationService.getClientStatus(
-            user.uid, widget.shopId);
+            user.id, widget.shopId);
         isProblematic = status['isProblematic'] ?? false;
         isVip = status['isVip'] ?? false;
-        isBirthday = await ClientVerificationService.isBirthdayMonth(user.uid,
+        
+        isBirthday = await ClientVerificationService.isBirthdayMonth(user.id,
             targetMonth: widget.date.month);
 
         if (isBirthday && birthdayEnabled) {
           final hasUsed =
               await ClientVerificationService.hasUsedBirthdayDiscountInYear(
-                  user.uid, widget.shopId);
+                  user.id, widget.shopId);
           if (hasUsed) isBirthday = false;
         }
 
         // Busca telefone do perfil para validação
-        final userDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .get();
-        if (userDoc.exists) {
-          userPhone =
-              userDoc.data()?['telefone'] ?? userDoc.data()?['whatsapp'];
-          if (userPhone != null && userPhone.trim().isEmpty) userPhone = null;
+        final userDoc = await Supabase.instance.client
+            .from('users')
+            .select()
+            .eq('id', user.id)
+            .maybeSingle();
+
+        if (userDoc != null) {
+          _userPhone = userDoc['telefone']?.toString();
+          if (_userPhone != null && _userPhone!.trim().isEmpty) _userPhone = null;
         }
       }
 
@@ -229,7 +235,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
           _isBirthdayMonth = isBirthday;
           _isProblematic = isProblematic;
           _isVip = isVip;
-          _userPhone = userPhone;
+          _userPhone = _userPhone;
           _trustedOnlyPayLocal = trustedOnly;
           _cardTaxPercent = cardTax;
 
@@ -268,7 +274,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         if (isBirthday && birthdayEnabled) {
           final hasUsed =
               await ClientVerificationService.hasUsedBirthdayDiscountInYear(
-                  user!.uid, widget.shopId);
+                  user!.id, widget.shopId);
           debugPrint('   - hasUsedBirthdayDiscountInYear: $hasUsed');
           if (!hasUsed) {
             debugPrint('   - Triggering _showBirthdayModal()');
@@ -290,7 +296,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
   void _calculateFinancials() {
     valorTotal = widget.servicePriceOverride ??
-        double.tryParse(widget.serviceDoc['preco'].toString()) ??
+        double.tryParse(widget.serviceDoc['price'].toString()) ??
         0.0;
     valorSinal = valorTotal * (percentualSinalInt / 100.0);
     valorFinalComJuros = valorTotal;
@@ -308,10 +314,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
         totalDiscountPercent += _birthdayDiscountPercent;
       }
 
-      // Aplica desconto de cupom se for PIX e estiver aplicado
-      if (_selectedMethod == 'pix' &&
-          _couponApplied &&
-          _selectedPaymentType != 'local') {
+      // Aplica desconto de cupom se for PIX e estiver aplicado (ou se for pagamento local)
+      if ((_selectedMethod == 'pix' || _selectedPaymentType == 'local') &&
+          _couponApplied) {
         totalDiscountPercent += _couponDiscountPercent;
       }
 
@@ -333,14 +338,14 @@ class _CheckoutPageState extends State<CheckoutPage> {
     final code = _couponController.text.trim();
     if (code.isEmpty) return;
 
-    final user = FirebaseAuth.instance.currentUser;
+    final user = Supabase.instance.client.auth.currentUser;
     if (user == null) return;
 
     setState(() => _isLoading = true);
     final result = await CouponService.validateCoupon(
       shopId: widget.shopId,
       code: code,
-      userId: user.uid,
+      userId: user.id,
     );
     setState(() => _isLoading = false);
 
@@ -441,24 +446,23 @@ class _CheckoutPageState extends State<CheckoutPage> {
           double valorParaCobrar = valorFinalComJuros;
 
           setState(() => _isLoading = true);
-          final user = FirebaseAuth.instance.currentUser;
+          final user = Supabase.instance.client.auth.currentUser;
           if (user == null) {
             setState(() => _isLoading = false);
             return;
           }
 
           try {
-            final savedCardsSnap = await FirebaseFirestore.instance
-                .collection('users')
-                .doc(user.uid)
-                .collection('saved_cards')
-                .where('shopId', isEqualTo: widget.shopId)
-                .get();
+            final savedCardsSnap = await Supabase.instance.client
+                .from('saved_cards')
+                .select()
+                .eq('user_id', user.id)
+                .eq('shop_id', widget.shopId);
 
             setState(() => _isLoading = false);
 
             if (!mounted) return;
-            if (savedCardsSnap.docs.isNotEmpty) {
+            if (savedCardsSnap.isNotEmpty) {
               final sheetResult = await showModalBottomSheet<dynamic>(
                 context: context,
                 isScrollControlled: true,
@@ -596,9 +600,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
                           Icons.cut,
                           "Serviço",
                           widget.serviceNameOverride ??
-                              widget.serviceDoc['nome']),
+                              widget.serviceDoc['name']),
                       _summaryItem(Icons.person, "Profissional",
-                          widget.professionalDoc['nome'] ?? ''),
+                          widget.professionalDoc['name'] ?? ''),
                       _summaryItem(Icons.calendar_today, "Data e Hora",
                           "${DateFormat('dd/MM').format(widget.date)} às ${widget.time.format(context)}"),
                       const Divider(height: 30),
@@ -624,9 +628,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
                       }),
                       const Divider(height: 30),
 
-                      // CAMPO DE CUPOM (SOMENTE SE O PLANO PERMITIR, FOR PIX OU TOTAL)
-                      if (_selectedMethod == 'pix' &&
-                          _selectedPaymentType != 'local' &&
+                      // CAMPO DE CUPOM (SOMENTE SE O PLANO PERMITIR, FOR PIX, TOTAL OU LOCAL)
+                      if ((_selectedMethod == 'pix' || _selectedPaymentType == 'local' || _selectedPaymentType == 'total') &&
                           PlanFeaturesService.getFeaturesForShop(widget.shopData).coupons) ...[
                         const Text("Tem um cupom?",
                             style: TextStyle(
@@ -731,7 +734,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                           ? "FINALIZAR AGENDAMENTO"
                           : "FINALIZAR E PAGAR AGORA";
 
-                      if (_selectedPaymentType != 'local') {
+                      if (true) { // Sempre mostrar o valor final com juros/descontos
                         valorExibido =
                             _currencyFormat.format(valorFinalComJuros);
                       }
@@ -860,15 +863,27 @@ class _CheckoutPageState extends State<CheckoutPage> {
     } else if (_selectedMethod == 'pix') {
       debugPrint('→ Pagamento PIX');
       double valor = valorFinalComJuros;
-
       String desc = (_selectedPaymentType == 'sinal') ? "Sinal" : "Total";
-      _generatePix(valor, desc);
+      
+      // SALVA O AGENDAMENTO COMO PENDENTE ANTES DE GERAR O PIX
+      // Isso garante que se a conexão cair ou o app fechar, o agendamento já existe
+      final appointmentId = await _saveBooking(
+        metodo: "Pix ($desc)",
+        status: "pendente",
+        valorPago: 0,
+        isPreSave: true,
+      );
+
+      if (appointmentId != null) {
+        _preSavedAppointmentId = appointmentId; // Salva na tela para reutilizar
+        _generatePix(valor, desc, externalRef: appointmentId);
+      }
     } else {
       debugPrint('→ Pagamento CARTÃO → cobrando com dados já coletados');
       double valorParaCobrar = valorFinalComJuros;
       if (_storedCardData != null) {
         if (_storedCardData!['useSavedCard'] == true) {
-          final fUser = FirebaseAuth.instance.currentUser;
+          final fUser = Supabase.instance.client.auth.currentUser;
           await _processarPagamentoCartaoSalvo(
             valor: valorParaCobrar,
             cardId: _storedCardData!['cardId'] as String,
@@ -923,7 +938,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
             'valor': valor,
             'shopId': widget.shopId,
             'orderId': 'ORD-${DateTime.now().millisecondsSinceEpoch}',
-            'descricao': "Reserva: ${widget.serviceDoc['nome'] ?? 'Serviço'}",
+            'descricao': "Reserva: ${widget.serviceDoc['name'] ?? 'Serviço'}",
             'idToken': idToken,
             if (paymentMethodId != null) 'paymentMethodId': paymentMethodId,
             if (issuerId != null) 'issuerId': issuerId,
@@ -981,7 +996,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
             'installments': installments,
             'amount': valor,
             'shopId': widget.shopId,
-            'description': "Reserva: ${widget.serviceDoc['nome'] ?? 'Serviço'}",
+            'description': "Reserva: ${widget.serviceDoc['name'] ?? 'Serviço'}",
             'idToken':
                 idToken, // Required for Auth validation in our onCall function
           }
@@ -1017,22 +1032,18 @@ class _CheckoutPageState extends State<CheckoutPage> {
   }
 
   Future<String?> _getPaymentIdToken() async {
-    final user = FirebaseAuth.instance.currentUser;
+    final user = Supabase.instance.client.auth.currentUser;
     if (user == null) {
       _showError(
           'Não foi possível validar sua sessão para o pagamento. Tente novamente.');
       return null;
     }
     try {
-      return await user.getIdToken(true);
+      return Supabase.instance.client.auth.currentSession?.accessToken;
     } catch (_) {
-      try {
-        return await user.getIdToken();
-      } catch (_) {
-        _showError(
-            'Não foi possível validar sua sessão para o pagamento. Tente novamente.');
-        return null;
-      }
+      _showError(
+          'Não foi possível validar sua sessão para o pagamento. Tente novamente.');
+      return null;
     }
   }
 
@@ -1045,7 +1056,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
       pageBuilder: (context, anim1, anim2) {
         return BirthdayCelebrationModal(
           discountPercent: _birthdayDiscountPercent,
-          shopName: widget.shopData['nome'] ?? 'O Studio',
+          shopName: widget.shopData['name'] ?? 'O Studio',
           onAccept: () {
             Navigator.pop(context);
             setState(() {
@@ -1171,7 +1182,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
               minHeight: 4,
               backgroundColor: Colors.grey[300],
               valueColor:
-                  AlwaysStoppedAnimation<Color>(AppColors.primaryPurple),
+                  const AlwaysStoppedAnimation<Color>(AppColors.primaryPurple),
             ),
           ),
         ],
@@ -1674,7 +1685,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
         (_selectedPaymentType == 'sinal') ? valorSinal : valorTotal;
 
     // We only show the "magic" if the gift was accepted and we are NOT in local payment
-    bool isActuallyDiscounted = _birthdayGiftAccepted && v < baseSemAniversario;
+    // We only show the "magic" if the gift was accepted
+    bool isActuallyDiscounted = (_birthdayGiftAccepted || _couponApplied) && v < baseSemAniversario;
 
     // Calcule o preço "cheio" para o riscado (Old Price)
     // Se for cartão, o "preço antigo" deve incluir a taxa se houver desconto, 
@@ -1682,7 +1694,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     double precoAntigo = baseSemAniversario;
     bool mostrarRiscado = isActuallyDiscounted;
 
-    if (_selectedMethod == 'card' && _selectedPaymentType != 'local') {
+    if (_selectedMethod == 'card' && (_selectedPaymentType == 'total' || _selectedPaymentType == 'sinal')) {
       if (isActuallyDiscounted) {
         // Mostra (Original + Taxa) vs (Desconto + Taxa)
         precoAntigo = baseSemAniversario * (1 + (_cardTaxPercent / 100.0));
@@ -1701,7 +1713,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 10,
             spreadRadius: 0,
           )
@@ -1784,7 +1796,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     );
   }
 
-  Future<void> _generatePix(double amount, String desc) async {
+  Future<void> _generatePix(double amount, String desc, {String? externalRef}) async {
     if (shopAccessToken == null) {
       _showError(
           'Esta loja não configurou os meios de pagamento online ainda.');
@@ -1801,12 +1813,13 @@ class _CheckoutPageState extends State<CheckoutPage> {
               fullscreenDialog: true));
     }
     try {
-      final user = FirebaseAuth.instance.currentUser!;
+      final user = Supabase.instance.client.auth.currentUser!;
       final result = await MercadoPagoService.gerarPix(
         shopId: widget.shopId,
         amount: amount,
         emailCliente: user.email ?? "cliente@app.com",
         description: desc,
+        externalReference: externalRef,
       );
       // O MercadoPagoService.gerarPix já retorna Map<String, dynamic>.from(result.data)
       final qrCode64 = result['point_of_interaction']?['transaction_data']
@@ -1817,6 +1830,17 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
       if (qrCode64 == null || copyPaste == null || paymentId.isEmpty) {
         throw Exception("Dados do PIX incompletos na resposta do servidor.");
+      }
+
+      // Atualiza imediatamente o agendamento com o paymentId gerado
+      if (_preSavedAppointmentId != null) {
+        try {
+          await Supabase.instance.client
+              .from('appointments')
+              .update({'payment_id': paymentId}).eq('id', _preSavedAppointmentId!);
+        } catch (e) {
+          debugPrint('Falha ao salvar paymentId no agendamento preventivo: $e');
+        }
       }
 
       if (mounted) {
@@ -1861,7 +1885,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 metodo: "Pix",
                 status: "confirmado",
                 valorPago: valorPago,
-                paymentId: paymentId);
+                paymentId: paymentId,
+                appointmentId: _preSavedAppointmentId);
           }
         }
       } catch (e) {
@@ -1907,18 +1932,21 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 metodo: "Pix",
                 status: "confirmado",
                 valorPago: valorPago,
-                paymentId: paymentId);
+                paymentId: paymentId,
+                appointmentId: _preSavedAppointmentId);
           },
         ),
       ),
     );
   }
 
-  Future<void> _saveBooking({
+  Future<String?> _saveBooking({
     required String metodo,
     required String status,
     required double valorPago,
     String? paymentId,
+    String? appointmentId,
+    bool isPreSave = false,
   }) async {
     // show full-screen loading while saving booking
     if (mounted) {
@@ -1933,7 +1961,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     // Extract context-dependent values before any async gap
     final horarioStr = widget.time.format(context);
     try {
-      final user = FirebaseAuth.instance.currentUser!;
+      final user = Supabase.instance.client.auth.currentUser!;
       final bookingDate = DateTime(
         widget.date.year,
         widget.date.month,
@@ -1943,15 +1971,14 @@ class _CheckoutPageState extends State<CheckoutPage> {
       );
 
       final int duration =
-          int.tryParse(widget.serviceData['tempo_min']?.toString() ?? '30') ??
+          int.tryParse(widget.serviceDoc['duration_min']?.toString() ?? '30') ??
               30;
 
       // Validação de Double-Booking via Cloud Function no Backend
       try {
-        final functions = FirebaseFunctions.instance;
-        final result = await functions.httpsCallable('checkAvailability').call({
-          'professionalId': widget.professionalDoc.id,
-          'startTime': bookingDate.toIso8601String(),
+        final result = await Supabase.instance.client.functions.invoke('checkAvailability', body: {
+          'professional_id': widget.professionalDoc['id'],
+          'start_time': bookingDate.toIso8601String(),
           'duration': duration,
         });
 
@@ -1975,7 +2002,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
             );
           }
           setState(() => _isLoading = false);
-          return;
+          return null;
         }
       } catch (e) {
         debugPrint('Erro na validação de disponibilidade (backend): $e');
@@ -1988,19 +2015,18 @@ class _CheckoutPageState extends State<CheckoutPage> {
       if (!permitirMultiplos) {
         final now = DateTime.now();
         // Para evitar necessidade de índice, buscamos agendamentos do cliente e filtramos localmente.
-        final clientAppts = await FirebaseFirestore.instance
-            .collection('appointments')
-            .where('clientId', isEqualTo: user.uid)
-            .get();
-        final conflicting = clientAppts.docs.where((d) {
-          final data = d.data();
-          final sId = data['shopId']?.toString() ?? '';
+        final clientAppts = await Supabase.instance.client
+            .from('appointments')
+            .select()
+            .eq('client_id', user.id);
+        final conflicting = clientAppts.where((data) {
+          final sId = data['shop_id']?.toString() ?? '';
           final status = (data['status'] ?? '').toString();
-          final ts = data['data_agendamento'];
+          final ts = data['scheduled_at'];
           DateTime? dt;
           try {
-            if (ts is Timestamp) {
-              dt = ts.toDate();
+            if (ts is String) {
+              dt = DateTime.parse(ts);
             } else if (ts is DateTime) {
               dt = ts;
             }
@@ -2023,78 +2049,90 @@ class _CheckoutPageState extends State<CheckoutPage> {
           // show nicer modal instead of snackbar
           if (mounted) await _showConflictDialog();
           setState(() => _isLoading = false);
-          return;
+          return null;
         }
       }
 
-      final profData = widget.professionalDoc.data() as Map<String, dynamic>;
+      final profData = widget.professionalDoc as Map<String, dynamic>;
       final DateTime endDate = bookingDate.add(Duration(minutes: duration));
 
-      await FirebaseFirestore.instance.collection('appointments').add({
-        'shopId': widget.shopId,
-        'clientId': user.uid,
-        'client_nome': user.displayName ?? user.email ?? 'Cliente',
-        'servico_nome': widget.serviceNameOverride ?? widget.serviceDoc['nome'],
-        'profissionalId': widget.professionalDoc.id,
-        'profissional_nome': profData['nome'] ?? 'Profissional',
-        'profissional_foto': profData['foto_url'],
-        'profissional_cargo': profData['cargo'] ?? '',
-        'servicoId': widget.serviceDoc.id,
-        'valor_total': valorTotal,
-        'valor_pago': valorPago,
-        'restante_a_pagar': (valorTotal - valorPago),
-        'duracao_min': duration,
-        'data_agendamento': Timestamp.fromDate(bookingDate),
-        'data_fim': Timestamp.fromDate(endDate),
+      final Map<String, dynamic> bookingData = {
+        'shop_id': widget.shopId,
+        'client_id': user.id,
+        'client_name': user.userMetadata?['full_name'] ?? user.email ?? 'Cliente',
+        'client_email': user.email, 
+        'service_name': widget.serviceNameOverride ?? widget.serviceDoc['name'],
+        'professional_id': widget.professionalDoc['id'],
+        'professional_name': profData['name'] ?? 'Profissional',
+        'professional_photo_url': profData['foto_url'],
+        'service_id': widget.serviceDoc['id'],
+        'total_price': valorTotal,
+        'valor_com_desconto': valorTotal * (1 - (_birthdayDiscountPercent + _couponDiscountPercent) / 100.0),
+        'paid_amount': valorPago,
+        'remaining_amount': (valorTotal * (1 - (_birthdayDiscountPercent + _couponDiscountPercent) / 100.0)) - valorPago,
+        'duration_min': duration,
+        'scheduled_at': bookingDate.toIso8601String(),
+        'end_at': endDate.toIso8601String(),
         'horario': horarioStr,
         'status': status,
-        'metodo_pagamento': metodo,
+        'payment_method': metodo,
         'payment_id': paymentId,
         'birthday_discount_applied': _birthdayGiftAccepted,
         'coupon_applied': _couponApplied,
         'coupon_code': _appliedCouponCode,
         'coupon_discount_percent': _couponDiscountPercent,
-        'criado_em': FieldValue.serverTimestamp(),
         'valor_sinal':
             (metodo.contains('Sinal') || _selectedPaymentType == 'sinal')
                 ? valorPago
                 : 0,
-      });
+      };
 
-      // Get the ID of the newly created appointment
-      final appointmentQuery = await FirebaseFirestore.instance
-          .collection('appointments')
-          .where('clientId', isEqualTo: user.uid)
-          .where('shopId', isEqualTo: widget.shopId)
-          .orderBy('criado_em', descending: true)
-          .limit(1)
-          .get();
-      
-      final String appointmentId = appointmentQuery.docs.isNotEmpty ? appointmentQuery.docs.first.id : "";
+      String finalAppointmentId;
+
+      if (appointmentId != null && appointmentId.isNotEmpty) {
+        // Se já existe um ID (ex: presave prévio), atualiza o doc existente
+        // Atualiza 'atualizado_em' para os registros
+        bookingData['updated_at'] = DateTime.now().toIso8601String();
+        await Supabase.instance.client.from('appointments').update(bookingData).eq('id', appointmentId);
+        finalAppointmentId = appointmentId;
+      } else {
+        // Se for novo, adiciona
+        bookingData['created_at'] = DateTime.now().toIso8601String();
+        final response = await Supabase.instance.client.from('appointments').insert(bookingData).select('id').single();
+        finalAppointmentId = response['id'];
+      }
+
+      if (isPreSave) {
+        // Se for pre-save, apenas retorna o ID para o fluxo de pagamento continuar
+        try {
+          Navigator.pop(context);
+        } catch (_) {}
+        return finalAppointmentId;
+      }
 
       // Se usou cupom, marca como usado para o cliente
       if (_couponApplied && _appliedCouponId != null) {
         await CouponService.markCouponAsUsed(
           shopId: widget.shopId,
           couponId: _appliedCouponId!,
-          userId: user.uid,
-          appointmentId: appointmentId,
+          userId: user.id,
+          appointmentId: finalAppointmentId,
         );
       }
 
       // Se usou presente de aniversário, registra o uso anual
       if (_birthdayGiftAccepted) {
         await ClientVerificationService.registerBirthdayDiscountUsage(
-          user.uid,
+          user.id,
           widget.shopId,
         );
       }
 
       if (mounted) {
         final svcName = widget.serviceNameOverride ??
-            widget.serviceDoc['nome'] ??
+            widget.serviceDoc['name'] ??
             'Serviço';
-        final profName = widget.professionalDoc['nome'] ?? 'Profissional';
+        final profName = widget.professionalDoc['name'] ?? 'Profissional';
         final dateStr = DateFormat('dd/MM/yyyy').format(widget.date);
         final timeStr = horarioStr;
         final paidFlag = (valorPago > 0);
@@ -2135,6 +2173,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     } finally {
       setState(() => _isLoading = false);
     }
+    return null;
   }
 
   void _showError(String m) {
@@ -2266,8 +2305,14 @@ class _SavedCardsSheetState extends State<_SavedCardsSheet> {
   final int _installments = 1;
 
   @override
+  void dispose() {
+    _cvvController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
+    final user = Supabase.instance.client.auth.currentUser;
     if (user == null) return const SizedBox.shrink();
 
     return Padding(
@@ -2287,120 +2332,145 @@ class _SavedCardsSheetState extends State<_SavedCardsSheet> {
                   fontWeight: FontWeight.bold,
                   color: AppColors.primaryPurple)),
           const SizedBox(height: 15),
-          StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance
-                .collection('users')
-                .doc(user.uid)
-                .collection('saved_cards')
-                .where('shopId', isEqualTo: widget.shopId)
-                .orderBy('createdAt', descending: true)
-                .snapshots(),
+          FutureBuilder<List<Map<String, dynamic>>>(
+            future: Supabase.instance.client
+                .from('saved_cards')
+                .select()
+                .eq('user_id', user.id)
+                .eq('shop_id', widget.shopId),
             builder: (context, snapshot) {
-              if (!snapshot.hasData) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(
                     child: Padding(
                         padding: EdgeInsets.all(20),
                         child: CircularProgressIndicator()));
               }
-              final docs = snapshot.data!.docs;
+              final docs = snapshot.data ?? [];
               if (docs.isEmpty) {
                 WidgetsBinding.instance.addPostFrameCallback((_) {
                   widget.onAddNewCard();
                 });
                 return const SizedBox.shrink();
               }
-              return ListView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: docs.length,
-                itemBuilder: (context, index) {
-                  final data = docs[index].data() as Map<String, dynamic>;
-                  final isSelected = _selectedCardId == docs[index].id;
-                  return InkWell(
-                    onTap: () =>
-                        setState(() => _selectedCardId = docs[index].id),
-                    child: Container(
-                      margin: const EdgeInsets.only(bottom: 10),
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        border: Border.all(
+              return Column(
+                children: [
+                  ListView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: docs.length,
+                    itemBuilder: (context, index) {
+                      final data = docs[index];
+                      final brand = data['brand'] ?? data['paymentMethodName'] ?? 'Cartão';
+                      final last4 = data['last_4'] ?? data['lastFourDigits'] ?? '****';
+                      final cardId = (data['id'] ?? '').toString();
+                      final isSelected = _selectedCardId == cardId;
+
+                      return GestureDetector(
+                        onTap: () => setState(() => _selectedCardId = cardId),
+                        child: Container(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
                             color: isSelected
-                                ? AppColors.primaryPurple
-                                : Colors.grey.shade300,
-                            width: isSelected ? 2 : 1),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              if (data['thumbnail'] != null &&
-                                  data['thumbnail'].isNotEmpty)
-                                Image.network(data['thumbnail'],
-                                    width: 40,
-                                    height: 25,
-                                    errorBuilder: (_, __, ___) =>
-                                        const Icon(Icons.credit_card)),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                  child: Text(
-                                      "•••• ${data['lastFourDigits']} - ${data['paymentMethodName'] ?? 'Cartão'}",
-                                      style: const TextStyle(
-                                          fontWeight: FontWeight.bold))),
-                              if (isSelected)
-                                const Icon(Icons.check_circle,
-                                    color: AppColors.primaryPurple),
-                            ],
+                                ? AppColors.primaryPurple.withValues(alpha: 0.05)
+                                : Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: isSelected
+                                  ? AppColors.primaryPurple
+                                  : Colors.grey.shade300,
+                              width: isSelected ? 2 : 1,
+                            ),
                           ),
-                          if (isSelected) ...[
-                            const SizedBox(height: 15),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: TextField(
-                                    controller: _cvvController,
-                                    keyboardType: TextInputType.number,
-                                    maxLength: 4,
-                                    obscureText: true,
-                                    decoration: const InputDecoration(
-                                      labelText: "CVV",
-                                      counterText: "",
-                                      border: OutlineInputBorder(),
+                          child: Column(
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(
+                                    _getCardIcon(brand),
+                                    color: isSelected
+                                        ? AppColors.primaryPurple
+                                        : Colors.grey.shade600,
+                                  ),
+                                  const SizedBox(width: 16),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          brand.toUpperCase(),
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            color: isSelected
+                                                ? AppColors.primaryPurple
+                                                : Colors.black87,
+                                          ),
+                                        ),
+                                        Text(
+                                          "Final **** $last4",
+                                          style: TextStyle(
+                                            color: Colors.grey.shade600,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                ),
-                                const SizedBox(width: 15),
-                                Expanded(
-                                  child: ElevatedButton(
-                                    style: ElevatedButton.styleFrom(
-                                        backgroundColor:
-                                            AppColors.primaryPurple,
-                                        padding: const EdgeInsets.symmetric(
-                                            vertical: 15)),
-                                    onPressed: () {
-                                      if (_cvvController.text.length < 3) {
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(const SnackBar(
-                                                content:
-                                                    Text('CVV inválido.')));
-                                        return;
-                                      }
-                                      widget.onCardSelected(data,
-                                          _cvvController.text, _installments);
-                                    },
-                                    child: const Text("Usar Cartão",
-                                        style: TextStyle(color: Colors.white)),
-                                  ),
+                                  if (isSelected)
+                                    const Icon(Icons.check_circle,
+                                        color: AppColors.primaryPurple),
+                                ],
+                              ),
+                              if (isSelected) ...[
+                                const SizedBox(height: 15),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: TextField(
+                                        controller: _cvvController,
+                                        keyboardType: TextInputType.number,
+                                        maxLength: 4,
+                                        obscureText: true,
+                                        decoration: const InputDecoration(
+                                          labelText: "CVV",
+                                          counterText: "",
+                                          border: OutlineInputBorder(),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 15),
+                                    Expanded(
+                                      child: ElevatedButton(
+                                        style: ElevatedButton.styleFrom(
+                                            backgroundColor:
+                                                AppColors.primaryPurple,
+                                            padding: const EdgeInsets.symmetric(
+                                                vertical: 15)),
+                                        onPressed: () {
+                                          if (_cvvController.text.length < 3) {
+                                            ScaffoldMessenger.of(context)
+                                                .showSnackBar(const SnackBar(
+                                                    content:
+                                                        Text('CVV inválido.')));
+                                            return;
+                                          }
+                                          widget.onCardSelected(data,
+                                              _cvvController.text, _installments);
+                                        },
+                                        child: const Text("Usar Cartão",
+                                            style: TextStyle(color: Colors.white)),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ],
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  );
-                },
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
               );
             },
           ),
@@ -2414,5 +2484,13 @@ class _SavedCardsSheetState extends State<_SavedCardsSheet> {
         ],
       ),
     );
+  }
+
+  IconData _getCardIcon(String brand) {
+    brand = brand.toLowerCase();
+    if (brand.contains('visa')) return Icons.credit_card;
+    if (brand.contains('master')) return Icons.credit_card;
+    if (brand.contains('amex')) return Icons.credit_card;
+    return Icons.credit_card;
   }
 }

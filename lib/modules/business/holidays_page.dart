@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/plan_features_service.dart';
 import 'widgets/holiday_decision_modal.dart';
 import 'widgets/custom_holiday_modal.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import '../../core/services/brasilapi_service.dart';
 
 class HolidaysPage extends StatefulWidget {
@@ -48,26 +47,26 @@ class _HolidaysPageState extends State<HolidaysPage> {
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<DocumentSnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('shops')
-          .doc(widget.shopId)
-          .snapshots(),
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: Supabase.instance.client
+          .from('shops')
+          .stream(primaryKey: ['id'])
+          .eq('id', widget.shopId),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return Center(child: Text('Erro: ${snapshot.error}'));
         }
 
-        if (!snapshot.hasData || !snapshot.data!.exists) {
+        if (!snapshot.hasData || snapshot.data!.isEmpty) {
           return const Center(child: CircularProgressIndicator());
         }
 
-        final shopData = snapshot.data!.data() as Map<String, dynamic>;
+        final shopData = snapshot.data!.first;
         final features = PlanFeaturesService.getFeaturesForShop(shopData);
         
-        final List<dynamic> pendentes = shopData['feriados_pendentes'] ?? [];
-        final Map<String, dynamic> configurados = shopData['feriados_configurados'] ?? {};
-        final List<dynamic> personalizados = shopData['feriados_personalizados'] ?? [];
+        final List<dynamic> pendentes = shopData['pending_holidays'] ?? [];
+        final Map<String, dynamic> configurados = shopData['configured_holidays'] ?? {};
+        final List<dynamic> personalizados = shopData['custom_holidays'] ?? [];
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FD),
@@ -99,7 +98,7 @@ class _HolidaysPageState extends State<HolidaysPage> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      "${pendentes.length} feriados aguardando sua decisão",
+                      "${pendentes.length} feriados aguardando sua decisÃ£o",
                       style: TextStyle(color: Colors.red.shade800, fontWeight: FontWeight.w600, fontSize: 13),
                     ),
                   ),
@@ -107,8 +106,8 @@ class _HolidaysPageState extends State<HolidaysPage> {
               ),
             ),
           
-          // Novo Banner: Bloqueio Automático Ativo
-          if (shopData['config']?['bloquear_feriados_auto'] ?? false)
+          // Novo Banner: Bloqueio AutomÃ¡tico Ativo
+          if (shopData['config']?['auto_block_holidays'] ?? false)
             Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
@@ -126,11 +125,11 @@ class _HolidaysPageState extends State<HolidaysPage> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          "Bloqueio Automático Ativo",
+                          "Bloqueio AutomÃ¡tico Ativo",
                           style: TextStyle(color: Colors.blue.shade900, fontWeight: FontWeight.bold, fontSize: 13),
                         ),
                         Text(
-                          "Feriados pendentes são bloqueados para agendamento online.",
+                          "Feriados pendentes sÃ£o bloqueados para agendamento online.",
                           style: TextStyle(color: Colors.blue.shade700, fontSize: 11),
                         ),
                       ],
@@ -191,7 +190,7 @@ class _HolidaysPageState extends State<HolidaysPage> {
                           
                           // 1. Pendente
                           if (pendentes.contains(iso)) {
-                            final autoBlock = shopData['config']?['bloquear_feriados_auto'] ?? false;
+                            final autoBlock = shopData['config']?['auto_block_holidays'] ?? false;
                             if (autoBlock) {
                               return _buildMarker(Colors.grey[700]!, Icons.block);
                             }
@@ -210,13 +209,13 @@ class _HolidaysPageState extends State<HolidaysPage> {
                             }
                           }
                           
-                          // 3. Personalizado (Apenas se não houver decisão)
+                          // 3. Personalizado (Apenas se nÃ£o houver decisÃ£o)
                           final isCustom = personalizados.any((f) => f['date'] == iso);
                           if (isCustom) {
                             return _buildMarker(Colors.blue, Icons.star);
                           }
 
-                          // 4. Feriado Nacional Sugerido (Marker discreto se ainda não configurado)
+                          // 4. Feriado Nacional Sugerido (Marker discreto se ainda nÃ£o configurado)
                           final national = _nationalHolidays.firstWhere((f) => f['date'] == iso, orElse: () => null);
                           if (national != null) {
                              return Positioned(
@@ -293,7 +292,7 @@ class _HolidaysPageState extends State<HolidaysPage> {
   }
 
   Widget _buildMonthlyHolidayList(Map<String, dynamic> shopData, List<dynamic> pendentes, Map<String, dynamic> configurados, List<dynamic> personalizados) {
-    // Filtra feriados para o mês atual
+    // Filtra feriados para o mÃªs atual
     final monthHolidays = _nationalHolidays.where((h) {
       final dt = DateTime.parse(h['date']);
       return dt.month == _focusedDay.month && dt.year == _focusedDay.year;
@@ -309,7 +308,7 @@ class _HolidaysPageState extends State<HolidaysPage> {
         children: [
           SizedBox(height: 20),
           Center(
-             child: Text("Nenhum feriado neste mês", style: TextStyle(color: Colors.grey)),
+             child: Text("Nenhum feriado neste mÃªs", style: TextStyle(color: Colors.grey)),
           ),
         ],
       );
@@ -382,12 +381,14 @@ class _HolidaysPageState extends State<HolidaysPage> {
 
     if (mounted) setState(() => _isLoadingHolidays = true);
     try {
-      final callable = FirebaseFunctions.instance.httpsCallable('salvarFeriadoPersonalizado');
-      await callable.call({
-        'shopId': widget.shopId,
-        'date': date,
-        'action': 'remove',
-      });
+      await Supabase.instance.client.functions.invoke(
+        'salvarFeriadoPersonalizado',
+        body: {
+          'shop_id': widget.shopId,
+          'date': date,
+          'action': 'remove',
+        },
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Data removida com sucesso!'), backgroundColor: Colors.green),
@@ -417,7 +418,7 @@ class _HolidaysPageState extends State<HolidaysPage> {
     Color statusColor = Colors.green;
     IconData statusIcon = Icons.check_circle_outline;
 
-    final autoBlock = shopData['config']?['bloquear_feriados_auto'] ?? false;
+    final autoBlock = shopData['config']?['auto_block_holidays'] ?? false;
 
     if (isPendente) {
       if (autoBlock) {
@@ -425,7 +426,7 @@ class _HolidaysPageState extends State<HolidaysPage> {
         statusColor = Colors.grey[700]!;
         statusIcon = Icons.block;
       } else {
-        statusText = "Aguardando Decisão";
+        statusText = "Aguardando DecisÃ£o";
         statusColor = Colors.red;
         statusIcon = Icons.priority_high;
       }

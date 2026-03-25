@@ -1,4 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/foundation.dart';
 
 /// Resultado da validação de um cupom
@@ -17,7 +17,7 @@ class CouponValidationResult {
 }
 
 class CouponService {
-  static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  static final _supabase = Supabase.instance.client;
 
   /// Valida um cupom para um determinado usuário e loja
   static Future<CouponValidationResult> validateCoupon({
@@ -32,73 +32,70 @@ class CouponService {
             isValid: false, message: 'Digite um código.');
       }
 
-      // 1. Busca o cupom
-      final couponQuery = await _firestore
-          .collection('shops')
-          .doc(shopId)
-          .collection('coupons')
-          .where('code', isEqualTo: normalizedCode)
-          .limit(1)
-          .get();
+      // 1. Busca o cupom no Supabase
+      final response = await _supabase
+          .from('coupons')
+          .select()
+          .eq('shop_id', shopId)
+          .eq('code', normalizedCode)
+          .maybeSingle();
 
-      if (couponQuery.docs.isEmpty) {
+      if (response == null) {
         return CouponValidationResult(
             isValid: false, message: 'Cupom inválido.');
       }
 
-      final couponDoc = couponQuery.docs.first;
-      final couponData = couponDoc.data();
-      final couponId = couponDoc.id;
-
+      final couponData = response as Map<String, dynamic>;
+      final couponId = couponData['id'].toString();
+ 
       // 2. Verifica se está ativo
-      if (couponData['isActive'] != true) {
+      if (couponData['is_active'] != true) {
         return CouponValidationResult(
             isValid: false, message: 'Este cupom não está mais ativo.');
       }
-
+ 
       // 3. Verifica validade (data)
-      final validUntil = couponData['validUntil'] as Timestamp?;
-      if (validUntil != null && validUntil.toDate().isBefore(DateTime.now())) {
-        return CouponValidationResult(
-            isValid: false, message: 'Este cupom expirou.');
+      final validUntilStr = couponData['valid_until'];
+      if (validUntilStr != null) {
+        final validUntil = DateTime.parse(validUntilStr.toString());
+        if (validUntil.isBefore(DateTime.now())) {
+          return CouponValidationResult(
+              isValid: false, message: 'Este cupom expirou.');
+        }
       }
-
+ 
       // 4. Verifica validade (mês específico)
-      final validMonth = couponData['validMonth'] as int?;
+      final validMonth = int.tryParse(couponData['valid_month']?.toString() ?? '');
       if (validMonth != null && DateTime.now().month != validMonth) {
         return CouponValidationResult(
             isValid: false, message: 'Este cupom não é válido neste mês.');
       }
-
+ 
       // 5. Verifica limite de uso global
-      final int usageCount = int.tryParse(couponData['usageCount']?.toString() ?? '0') ?? 0;
-      final int? maxUsage = int.tryParse(couponData['maxUsage']?.toString() ?? '') ?? 
-                            int.tryParse(couponData['uso_limite']?.toString() ?? '');
+      final int usageCount = int.tryParse(couponData['usage_count']?.toString() ?? '0') ?? 0;
+      final int? maxUsage = int.tryParse(couponData['max_usage']?.toString() ?? '');
       
-      if (maxUsage != null && usageCount >= maxUsage) {
+      if (maxUsage != null && maxUsage > 0 && usageCount >= maxUsage) {
         return CouponValidationResult(
             isValid: false, message: 'Este cupom atingiu o limite de usos.');
       }
-
+ 
       // 6. Verifica se o usuário já usou este cupom
-      final usageDoc = await _firestore
-          .collection('shops')
-          .doc(shopId)
-          .collection('coupons')
-          .doc(couponId)
-          .collection('usage')
-          .doc(userId)
-          .get();
-
-      if (usageDoc.exists) {
+      final usageResponse = await _supabase
+          .from('coupon_usage')
+          .select()
+          .eq('coupon_id', couponId)
+          .eq('user_id', userId)
+          .maybeSingle();
+ 
+      if (usageResponse != null) {
         return CouponValidationResult(
             isValid: false, message: 'Você já utilizou este cupom.');
       }
-
+ 
       return CouponValidationResult(
         isValid: true,
-        discountPercent:
-            (couponData['discountPercent'] as num?)?.toDouble() ?? 0.0,
+        discountPercent: (couponData['discount_percent'] as num?)?.toDouble() ?? 0.0,
         couponId: couponId,
       );
     } catch (e) {
@@ -107,7 +104,7 @@ class CouponService {
           isValid: false, message: 'Erro ao validar cupom.');
     }
   }
-
+ 
   /// Registra o uso do cupom após o agendamento ser confirmado
   static Future<void> markCouponAsUsed({
     required String shopId,
@@ -116,34 +113,23 @@ class CouponService {
     required String appointmentId,
   }) async {
     try {
-      final batch = _firestore.batch();
-
-      // Registra o uso na subcoleção de usage
-      final usageRef = _firestore
-          .collection('shops')
-          .doc(shopId)
-          .collection('coupons')
-          .doc(couponId)
-          .collection('usage')
-          .doc(userId);
-
-      batch.set(usageRef, {
-        'usedAt': FieldValue.serverTimestamp(),
-        'appointmentId': appointmentId,
+      // 1. Registra o uso na tabela coupon_usage
+      await _supabase.from('coupon_usage').insert({
+        'coupon_id': couponId,
+        'user_id': userId,
+        'appointment_id': appointmentId,
+        'used_at': DateTime.now().toIso8601String(),
       });
-
-      // Incrementa o contador de uso global do cupom
-      final couponRef = _firestore
-          .collection('shops')
-          .doc(shopId)
-          .collection('coupons')
-          .doc(couponId);
-
-      batch.update(couponRef, {
-        'usageCount': FieldValue.increment(1),
-      });
-
-      await batch.commit();
+ 
+      // 2. Incrementa o contador de uso global
+      try {
+        await _supabase.rpc('increment_coupon_usage', params: {'coupon_id': couponId});
+      } catch (e) {
+        // Fallback: update manual
+        final couponQuery = await _supabase.from('coupons').select('usage_count').eq('id', couponId).single();
+        final currentCount = int.tryParse(couponQuery['usage_count']?.toString() ?? '0') ?? 0;
+        await _supabase.from('coupons').update({'usage_count': currentCount + 1}).eq('id', couponId);
+      }
     } catch (e) {
       if (kDebugMode) print('Erro ao marcar cupom como usado: $e');
     }

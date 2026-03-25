@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import '../../core/services/session_service.dart';
 import '../../core/services/stripe_service.dart';
@@ -45,19 +45,25 @@ class _BoostShopPageState extends State<BoostShopPage>
     setState(() => _isLoading = true);
     shopId = await SessionService.getShopId();
     if (shopId != null) {
-      final doc = await FirebaseFirestore.instance
-          .collection('shops')
-          .doc(shopId)
-          .get();
-      if (doc.exists) {
-        final data = doc.data();
-        final ts = data?['boost_expires_at'] as Timestamp?;
-        if (ts != null) {
-          final date = ts.toDate();
-          if (date.isAfter(DateTime.now())) {
-            _currentBoostExpiration = date;
+      try {
+        final data = await Supabase.instance.client
+            .from('shops')
+            .select('boost')
+            .eq('id', shopId!)
+            .maybeSingle();
+            
+        if (data != null && data['boost'] != null) {
+          final boostData = data['boost'] as Map<String, dynamic>;
+          final expiresAtStr = boostData['expires_at']?.toString();
+          if (expiresAtStr != null) {
+            final date = DateTime.tryParse(expiresAtStr);
+            if (date != null && date.isAfter(DateTime.now())) {
+              _currentBoostExpiration = date;
+            }
           }
         }
+      } catch (e) {
+        debugPrint("Erro ao carregar status do impulsionamento: $e");
       }
     }
     if (mounted) setState(() => _isLoading = false);
@@ -105,6 +111,7 @@ class _BoostShopPageState extends State<BoostShopPage>
       amount: amount,
       currency: 'brl',
       description: description,
+      shopId: shopId,
     );
 
     if (!success) {
@@ -121,10 +128,13 @@ class _BoostShopPageState extends State<BoostShopPage>
     final newExpiration = start.add(Duration(days: daysToAdd));
 
     try {
-      await FirebaseFirestore.instance.collection('shops').doc(shopId).update({
-        'boost_expires_at': Timestamp.fromDate(newExpiration),
-        'is_boosted': true,
-      });
+      await Supabase.instance.client.from('shops').update({
+        'boost': {
+          'expires_at': newExpiration.toIso8601String(),
+          'is_active': true,
+          'updated_at': DateTime.now().toIso8601String(),
+        }
+      }).eq('id', shopId!);
 
       if (mounted) {
         PremiumDialogs.hideLoading(context);

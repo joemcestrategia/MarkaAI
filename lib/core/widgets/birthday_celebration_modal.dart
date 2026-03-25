@@ -91,7 +91,7 @@ class _BirthdayCelebrationModalState extends State<BirthdayCelebrationModal>
           GestureDetector(
             onTap: () => Navigator.pop(context),
             child: Container(
-              color: Colors.black.withOpacity(0.4),
+              color: Colors.black.withValues(alpha: 0.4),
             ),
           ),
 
@@ -128,7 +128,7 @@ class _BirthdayCelebrationModalState extends State<BirthdayCelebrationModal>
                     borderRadius: BorderRadius.circular(30),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.blue.withOpacity(0.3),
+                        color: Colors.blue.withValues(alpha: 0.3),
                         blurRadius: 20,
                         spreadRadius: 5,
                       )
@@ -153,7 +153,7 @@ class _BirthdayCelebrationModalState extends State<BirthdayCelebrationModal>
                         "${widget.shopName} quer te presentear!",
                         textAlign: TextAlign.center,
                         style: TextStyle(
-                          color: Colors.white.withOpacity(0.9),
+                          color: Colors.white.withValues(alpha: 0.9),
                           fontSize: 16,
                         ),
                       ),
@@ -162,9 +162,9 @@ class _BirthdayCelebrationModalState extends State<BirthdayCelebrationModal>
                         padding: const EdgeInsets.symmetric(
                             horizontal: 20, vertical: 12),
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.2),
+                          color: Colors.white.withValues(alpha: 0.2),
                           borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: Colors.white.withOpacity(0.3)),
+                          border: Border.all(color: Colors.white.withValues(alpha: 0.3)),
                         ),
                         child: Column(
                           children: [
@@ -196,7 +196,7 @@ class _BirthdayCelebrationModalState extends State<BirthdayCelebrationModal>
                       Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: Colors.orange.withOpacity(0.2),
+                          color: Colors.orange.withValues(alpha: 0.2),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: const Row(
@@ -312,7 +312,7 @@ class _Balloon {
       Colors.pinkAccent,
       Colors.purpleAccent,
       Colors.orangeAccent
-    ][random.nextInt(7)].withOpacity(0.5);
+    ][random.nextInt(7)].withValues(alpha: 0.5);
   }
 
   void update() {

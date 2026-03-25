@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
@@ -7,26 +7,28 @@ import 'service_register_page.dart';
 import 'category_management_page.dart';
 import '../../core/utils/service_image_keywords.dart';
 import '../../core/widgets/pexels_image_widget.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import '../../core/services/auth_service.dart';
+import '../../core/services/shop_data_cache_service.dart';
 import 'package:flutter/foundation.dart';
 
 // --- CLASSE DE DETALHES (MANTIDA E OTIMIZADA) ---
 class ServiceDetailsPage extends StatelessWidget {
-  final DocumentSnapshot doc;
+  final Map<String, dynamic> data;
+  final String id;
   final VoidCallback onClose;
   final VoidCallback onEdit;
 
   const ServiceDetailsPage({
     super.key,
-    required this.doc,
+    required this.data,
+    required this.id,
     required this.onClose,
     required this.onEdit,
   });
 
   @override
   Widget build(BuildContext context) {
-    final data = doc.data() as Map<String, dynamic>;
-    List<dynamic> fotos = data['fotos_urls'] ?? [];
+    List<dynamic> fotos = data['photos_urls'] ?? [];
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -141,7 +143,7 @@ class ServiceDetailsPage extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              data['nome'] ?? "",
+                              data['name'] ?? "",
                               style: const TextStyle(
                                   fontSize: 20, fontWeight: FontWeight.bold),
                               maxLines: 2,
@@ -150,9 +152,9 @@ class ServiceDetailsPage extends StatelessWidget {
                             const SizedBox(height: 8),
                             Row(
                               children: [
-                                _buildBadge(data['categoria'] ?? "Serviço",
+                                _buildBadge(data['category'] ?? "Serviço",
                                     AppColors.primaryPurple),
-                                if (data['ativo'] == false) ...[
+                                if (data['is_active'] == false) ...[
                                   const SizedBox(width: 8),
                                   _buildBadge("INATIVO", Colors.red),
                                 ]
@@ -165,7 +167,7 @@ class ServiceDetailsPage extends StatelessWidget {
                                   child: _buildInfoCard(
                                     Icons.timer_outlined,
                                     "Duração",
-                                    "${data['tempo_min']} min",
+                                    "${data['duration_min']} min",
                                   ),
                                 ),
                                 const SizedBox(width: 10),
@@ -173,7 +175,7 @@ class ServiceDetailsPage extends StatelessWidget {
                                   child: _buildInfoCard(
                                     Icons.attach_money,
                                     "Valor",
-                                    "R\$ ${data['preco']}",
+                                    "R\$ ${data['price']}",
                                   ),
                                 ),
                               ],
@@ -191,8 +193,8 @@ class ServiceDetailsPage extends StatelessWidget {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              data['descricao']?.toString().isNotEmpty == true
-                                  ? data['descricao']
+                              data['description']?.toString().isNotEmpty == true
+                                  ? data['description']
                                   : "Nenhuma descrição.",
                               style: const TextStyle(
                                 fontSize: 14,
@@ -287,7 +289,7 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
   // Controle Desktop
   bool _showPanel = false;
   bool _isEditing = false;
-  DocumentSnapshot? _selectedService;
+  Map<String, dynamic>? _selectedService;
 
   @override
   void initState() {
@@ -315,17 +317,17 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
 
   Future<void> _loadShopIdFromUser() async {
     try {
-      final user = FirebaseAuth.instance.currentUser;
+      final user = AuthService().currentUser;
       if (user != null) {
-        final userDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .get();
-        if (userDoc.exists) {
-          final userData = userDoc.data() as Map<String, dynamic>;
+        final userDoc = await sb.Supabase.instance.client
+            .from('users')
+            .select()
+            .eq('id', user.id)
+            .maybeSingle();
+        if (userDoc != null) {
           if (mounted) {
             setState(() {
-              shopId = userData['shopId'];
+              shopId = userDoc['shop_id'];
               _isLoading = false;
             });
           }
@@ -338,7 +340,7 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
 
   // 🧠 CÉREBRO DA NAVEGAÇÃO: Decide se abre painel (PC) ou navega (Mobile)
   void _handleServiceTap(
-      BuildContext context, DocumentSnapshot doc, bool isMobile) {
+      BuildContext context, Map<String, dynamic> data, bool isMobile) {
     if (isMobile) {
       // 📱 MOBILE: Navega para nova tela
       Navigator.push(
@@ -347,13 +349,14 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
           builder: (context) => Scaffold(
             body: SafeArea(
               child: ServiceDetailsPage(
-                doc: doc,
+                data: data,
+                id: data['id'],
                 onClose: () => Navigator.pop(context),
                 onEdit: () {
                   // Ao clicar em editar dentro do mobile, empilhamos a tela de edição
                   Navigator.pop(context); // Fecha detalhes
                   _handleCreateTap(context, isMobile,
-                      docToEdit: doc); // Abre edição
+                      docToEdit: data); // Abre edição
                 },
               ),
             ),
@@ -362,12 +365,12 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
       );
     } else {
       // 💻 DESKTOP: Abre painel lateral
-      _openDetailsModeDesktop(doc);
+      _openDetailsModeDesktop(data);
     }
   }
 
   void _handleCreateTap(BuildContext context, bool isMobile,
-      {DocumentSnapshot? docToEdit}) {
+      {Map<String, dynamic>? docToEdit}) {
     if (isMobile) {
       // 📱 MOBILE: Navega para tela de cadastro
       Navigator.push(
@@ -407,14 +410,14 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
     });
   }
 
-  void _openDetailsModeDesktop(DocumentSnapshot doc) {
+  void _openDetailsModeDesktop(Map<String, dynamic> data) {
     setState(() {
       _showPanel = false;
     }); // Reset para rebuild
     Future.delayed(const Duration(milliseconds: 50), () {
       if (mounted) {
         setState(() {
-          _selectedService = doc;
+          _selectedService = data;
           _isEditing = false;
           _showPanel = true;
         });
@@ -422,9 +425,9 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
     });
   }
 
-  void _openEditModeDesktop(DocumentSnapshot doc) {
+  void _openEditModeDesktop(Map<String, dynamic> data) {
     setState(() {
-      _selectedService = doc;
+      _selectedService = data;
       _isEditing = true;
       _showPanel = true;
     });
@@ -549,13 +552,14 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
                         flex: 2,
                         child: _isEditing
                             ? ServiceRegisterPage(
-                                key: ValueKey(_selectedService?.id ??
+                                key: ValueKey(_selectedService?['id'] ??
                                     'novo'), // Força rebuild
                                 serviceToEdit: _selectedService,
                                 onClose: _closePanel,
                               )
                             : ServiceDetailsPage(
-                                doc: _selectedService!,
+                                data: _selectedService!,
+                                id: _selectedService!['id'],
                                 onClose: _closePanel,
                                 onEdit: () =>
                                     _openEditModeDesktop(_selectedService!),
@@ -610,12 +614,16 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
 
         // LISTA (STREAM)
         Expanded(
-          child: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance
-                .collection('services')
-                .where('shopId', isEqualTo: shopId)
-                .orderBy('nome')
-                .snapshots(),
+          child: StreamBuilder<List<Map<String, dynamic>>>(
+            stream: sb.Supabase.instance.client
+                .from('services')
+                .stream(primaryKey: ['id'])
+                .eq('shop_id', shopId!)
+                .order('name')
+                .map((list) {
+                  list.sort((a, b) => (a['name'] ?? '').toString().toLowerCase().compareTo((b['name'] ?? '').toString().toLowerCase()));
+                  return list;
+                }),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(
@@ -627,24 +635,22 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
                 return Center(child: Text("Erro: ${snapshot.error}"));
               }
 
-              if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+              if (!snapshot.hasData || snapshot.data!.isEmpty) {
                 return _buildEmptyState();
               }
 
               return ListView.separated(
                 padding: const EdgeInsets.fromLTRB(24, 0, 24, 80),
-                itemCount: snapshot.data!.docs.length,
+                itemCount: snapshot.data!.length,
                 separatorBuilder: (_, __) => const SizedBox(height: 10),
                 itemBuilder: (context, index) {
-                  var doc = snapshot.data!.docs[index];
-                  Map<String, dynamic> data =
-                      doc.data() as Map<String, dynamic>;
+                  var data = snapshot.data![index];
                   // Seleção visual apenas no Desktop
                   bool isSelected =
-                      !isMobile && _showPanel && _selectedService?.id == doc.id;
+                      !isMobile && _showPanel && _selectedService?['id'] == data['id'];
 
                   return GestureDetector(
-                    onTap: () => _handleServiceTap(context, doc, isMobile),
+                    onTap: () => _handleServiceTap(context, data, isMobile),
                     child: Container(
                       decoration: isSelected
                           ? BoxDecoration(
@@ -653,7 +659,7 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
                               borderRadius: BorderRadius.circular(14),
                             )
                           : null,
-                      child: _buildCompactCard(doc, data, index),
+                      child: _buildCompactCard(data, index),
                     ),
                   );
                 },
@@ -665,11 +671,10 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
     );
   }
 
-  Widget _buildCompactCard(
-      DocumentSnapshot doc, Map<String, dynamic> data, int index) {
-    List<dynamic> fotos = data['fotos_urls'] ?? [];
-    String nome = data['nome'] ?? "";
-    bool ativo = data['ativo'] ?? true;
+  Widget _buildCompactCard(Map<String, dynamic> data, int index) {
+    List<dynamic> fotos = data['photos_urls'] ?? [];
+    String nome = data['name'] ?? "";
+    bool ativo = data['is_active'] ?? true;
 
     return Container(
       decoration: BoxDecoration(
@@ -712,10 +717,10 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
                 const SizedBox(height: 6),
                 Row(
                   children: [
-                    _buildTag(Icons.access_time, "${data['tempo_min']} min",
+                    _buildTag(Icons.access_time, "${data['duration_min']} min",
                         Colors.blue),
                     const SizedBox(width: 8),
-                    _buildTag(Icons.attach_money, "R\$ ${data['preco']}",
+                    _buildTag(Icons.attach_money, "R\$ ${data['price']}",
                         Colors.green),
                   ],
                 ),
@@ -724,7 +729,7 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
           ),
           IconButton(
             icon: const Icon(Icons.more_vert, size: 20, color: Colors.grey),
-            onPressed: () => _showOptions(doc),
+            onPressed: () => _showOptions(data),
           ),
         ],
       ),
@@ -793,9 +798,8 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
     );
   }
 
-  void _showOptions(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
-    final String nome = data['nome'] ?? "Serviço";
+  void _showOptions(Map<String, dynamic> data) {
+    final String nome = data['name'] ?? "Serviço";
 
     showModalBottomSheet(
       context: context,
@@ -874,9 +878,9 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
                 Navigator.pop(context);
                 bool isMobile = MediaQuery.of(context).size.width < 850;
                 if (isMobile) {
-                  _handleCreateTap(context, true, docToEdit: doc);
+                  _handleCreateTap(context, true, docToEdit: data);
                 } else {
-                  _openEditModeDesktop(doc);
+                  _openEditModeDesktop(data);
                 }
               },
             ),
@@ -887,7 +891,7 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
               color: Colors.redAccent,
               onTap: () {
                 Navigator.pop(context);
-                _confirmDelete(doc.id);
+                _confirmDelete(data['id']);
               },
             ),
           ],
@@ -938,20 +942,36 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
             child: const Text("Cancelar"),
           ),
           TextButton(
-            onPressed: () {
-              FirebaseFirestore.instance
-                  .collection('services')
-                  .doc(docId)
-                  .delete();
-              if (_selectedService?.id == docId) _closePanel();
-              Navigator.pop(context);
+            onPressed: () async {
+              try {
+                await sb.Supabase.instance.client
+                    .from('services')
+                    .delete()
+                    .eq('id', docId);
+                
+                ShopDataCacheService().invalidate(shopId!, 'services');
 
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text("Serviço excluído com sucesso"),
-                  backgroundColor: Colors.green,
-                ),
-              );
+                if (_selectedService?['id'] == docId) _closePanel();
+                if (mounted) Navigator.pop(context);
+
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text("Serviço excluído com sucesso"),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text("Erro ao excluir: $e"),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              }
             },
             child: const Text("Excluir", style: TextStyle(color: Colors.red)),
           ),

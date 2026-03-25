@@ -1,13 +1,10 @@
-// ignore_for_file: use_build_context_synchronously
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'catalog_import_page.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter_application_1/modules/business/store_profile_page.dart';
+import 'store_profile_page.dart';
 import 'package:intl/intl.dart';
 import 'dart:math';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -44,6 +41,7 @@ import '../help/help_guide_page.dart';
 import 'price_adjustment_page.dart';
 import '../../pages/privacy_settings_page.dart';
 import 'holidays_page.dart';
+import '../clients/client_affiliate_page.dart';
 
 class BusinessHomePage extends StatefulWidget {
   const BusinessHomePage({super.key});
@@ -66,9 +64,9 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
   bool _isLoading = true;
   // --- MOBILE AGENDA STATE ---
-  List<DocumentSnapshot> _mobileAppointments = [];
-  DocumentSnapshot? _mobileLastDoc;
-  DocumentSnapshot? _mobileFirstDoc;
+  List<Map<String, dynamic>> _mobileAppointments = [];
+  Map<String, dynamic>? _mobileLastDoc;
+  Map<String, dynamic>? _mobileFirstDoc;
   bool _mobileHasMore = true;
   bool _mobileLoading = false;
   final ScrollController _mobileScrollController = ScrollController();
@@ -92,6 +90,14 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   bool _isAdmin = false;
   PlanFeatures _currentFeatures = planFeaturesConfig[PlanKey.free]!;
 
+  // Dados da loja vindos do stream (evita múltiplos StreamBuilders)
+  int _pendingHolidaysCount = 0;
+
+  // Cached futures para evitar re-fetch em cada rebuild
+  Future<List<Map<String, dynamic>>>? _dashboardFuture;
+  Future<List<Map<String, dynamic>>>? _birthdayFuture;
+  int _lastDashboardYear = -999; // Sentinel para detectar mudança de ano
+
   @override
   void initState() {
     super.initState();
@@ -99,26 +105,16 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     _setupForegroundNotifications();
   }
 
+  @override
+  void dispose() {
+    _mobileScrollController.dispose();
+    super.dispose();
+  }
+
   void _setupForegroundNotifications() {
-    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      if (message.notification != null && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: AppColors.primaryPurple,
-            content: Text(
-              "${message.notification!.title}: ${message.notification!.body}",
-            ),
-            action: SnackBarAction(
-              label: "VER",
-              textColor: Colors.white,
-              onPressed: () {
-                setState(() => _selectedIndex = 1);
-              },
-            ),
-          ),
-        );
-      }
-    });
+    // Supabase Realtime ou Notificações Locais podem ser implementadas aqui
+    // Por enquanto, removemos a dependência do FirebaseMessaging
+    debugPrint("Notificações foreground (via Supabase/Local) podem ser configuradas aqui.");
   }
 
   // --- MOBILE APPOINTMENTS (infinite scroll, chronological) ---
@@ -156,18 +152,15 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       final windowStart = startOfToday.subtract(const Duration(days: 7));
       final windowEnd = startOfToday.add(const Duration(days: 14));
 
-      Query windowQuery = FirebaseFirestore.instance
-          .collection('appointments')
-          .where('shopId', isEqualTo: shopId)
-          .where('data_agendamento',
-              isGreaterThanOrEqualTo: Timestamp.fromDate(windowStart))
-          .where('data_agendamento',
-              isLessThanOrEqualTo: Timestamp.fromDate(windowEnd))
-          .orderBy('data_agendamento', descending: false)
+      final List<dynamic> windowSnap = await sb.Supabase.instance.client
+          .from('appointments')
+          .select()
+          .eq('shop_id', shopId!)
+          .gte('scheduled_at', windowStart.toIso8601String())
+          .lte('scheduled_at', windowEnd.toIso8601String())
+          .order('scheduled_at', ascending: true)
           .limit(100);
-
-      final windowSnap = await windowQuery.get();
-      final combined = windowSnap.docs;
+      final combined = List<Map<String, dynamic>>.from(windowSnap);
 
       // Estimate hasMore flags based on edges
       _mobileHasMore =
@@ -215,21 +208,20 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       _mobileLoading = true;
     });
     try {
-      final firstDate = (_mobileFirstDoc!.data()
-          as Map<String, dynamic>)['data_agendamento'] as Timestamp;
-      Query query = FirebaseFirestore.instance
-          .collection('appointments')
-          .where('shopId', isEqualTo: shopId)
-          .where('data_agendamento', isLessThan: firstDate)
-          .orderBy('data_agendamento', descending: true)
+      final firstDate = _mobileFirstDoc!['scheduled_at'] as String;
+      final List<dynamic> snap = await sb.Supabase.instance.client
+          .from('appointments')
+          .select()
+          .eq('shop_id', shopId!)
+          .lt('scheduled_at', firstDate)
+          .order('scheduled_at', ascending: false)
           .limit(_mobilePerPage);
-      final snap = await query.get();
       if (mounted) {
-        final newDocs = snap.docs.reversed.toList();
+        final newDocs = List<Map<String, dynamic>>.from(snap).reversed.toList();
         setState(() {
           _mobileAppointments = [...newDocs, ..._mobileAppointments];
           if (newDocs.isNotEmpty) _mobileFirstDoc = newDocs.first;
-          if (snap.docs.length < _mobilePerPage) _mobilePastHasMore = false;
+          if (snap.length < _mobilePerPage) _mobilePastHasMore = false;
         });
       }
     } catch (e) {
@@ -250,20 +242,22 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       _mobileLoading = true;
     });
     try {
-      Query query = FirebaseFirestore.instance
-          .collection('appointments')
-          .where('shopId', isEqualTo: shopId)
-          .orderBy('data_agendamento', descending: false)
-          .startAfterDocument(_mobileLastDoc!)
+      final lastDate = _mobileLastDoc!['scheduled_at'] as String;
+      final List<dynamic> snap = await sb.Supabase.instance.client
+          .from('appointments')
+          .select()
+          .eq('shop_id', shopId!)
+          .gt('scheduled_at', lastDate)
+          .order('scheduled_at', ascending: true)
           .limit(_mobilePerPage);
-      final snap = await query.get();
       if (mounted) {
+        final newDocs = List<Map<String, dynamic>>.from(snap);
         setState(() {
-          if (snap.docs.isNotEmpty) {
-            _mobileLastDoc = snap.docs.last;
-            _mobileAppointments.addAll(snap.docs);
+          if (newDocs.isNotEmpty) {
+            _mobileLastDoc = newDocs.last;
+            _mobileAppointments.addAll(newDocs);
           }
-          if (snap.docs.length < _mobilePerPage) _mobileHasMore = false;
+          if (snap.length < _mobilePerPage) _mobileHasMore = false;
         });
       }
     } catch (e) {
@@ -275,46 +269,45 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
   Future<void> _checkBusinessAndLoad() async {
     try {
-      final id = await SessionService.getShopId();
+      final user = sb.Supabase.instance.client.auth.currentUser;
       final sessionUserId = await SessionService.getUserId();
-      final user = FirebaseAuth.instance.currentUser;
-
-      // Prioritize session ID (for linked accounts via email)
-      final effectiveUid = sessionUserId ?? user?.uid;
+      
+      // PRIORIDADE: Supabase Auth (Sempre o mais confiável)
+      // Fallback: SessionService (Caso haja persistência local desejada, mas secundária)
+      final effectiveUid = user?.id ?? sessionUserId;
 
       if (effectiveUid == null) {
         _forceLogout();
         return;
       }
 
-      final userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(effectiveUid)
-          .get();
+      Map<String, dynamic>? userData = await sb.Supabase.instance.client
+          .from('users')
+          .select()
+          .eq('id', effectiveUid)
+          .maybeSingle();
 
-      if (!userDoc.exists) {
+      // Fallback para metadados (como feito no login_page) para contornar Race Condition/RLS recém-aplicado
+      if (userData == null && user?.userMetadata != null && user!.userMetadata!.containsKey('role')) {
+        userData = user.userMetadata;
+      }
+
+      if (userData == null) {
         _forceLogout();
         return;
       }
-
-      final userData = userDoc.data() as Map<String, dynamic>;
-      String tipo = userData['tipo'] ?? 'cliente';
+      final String role = userData['role'] ?? 'cliente';
+      final bool isAdmin = (role == 'admin');
       
       // Trust the user document first, then session (consistently with recent backend changes)
-      String currentShopId = userData['shopId'] ?? id ?? "";
+      String currentShopId = userData['shop_id'] ?? await SessionService.getShopId() ?? "";
 
-      final roles = userData['roles'] as List?;
-      final role = userData['role'] as String?;
-      final isAdmin = role == 'admin' || 
-                      (roles?.contains('admin') ?? false) || 
-                      userData['is_admin_dev'] == true;
-
-      if (tipo != 'dono' && tipo != 'business' && !isAdmin) {
+      if (role != 'dono' && role != 'business' && !isAdmin) {
         _forceLogout();
         return;
       }
 
-      if (currentShopId.isEmpty) {
+      if (currentShopId.isEmpty && !isAdmin) {
         _forceLogout();
         return;
       }
@@ -333,9 +326,9 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       if (mounted) {
         setState(() {
           shopId = currentShopId;
-          userName = userData['nome'] ?? "Profissional";
+          userName = userData!['name'] ?? "Profissional";
           userEmail = user?.email ?? "";
-          userPhotoUrl = user?.photoURL;
+          userPhotoUrl = user?.userMetadata?['avatar_url'] as String?;
           
           // Note: _currentFeatures will be updated via the StreamBuilder on shops collection below
           
@@ -353,13 +346,17 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
         // Verificar restrições do plano
         _checkPlanRestrictions();
-
-        // ðŸ”” Inicializar notificações push para o dono da loja
-        NotificationService.initialize().then((_) {
-          debugPrint('âœ… Notificações inicializadas para o dono da loja');
-        }).catchError((e) {
-          debugPrint('âŒ Erro ao inicializar notificações: $e');
-        });
+        // 🔔 Inicializar notificações push (com proteção de erros para Web)
+        try {
+          NotificationService.registerToken(effectiveUid);
+          NotificationService.initialize().then((_) {
+            debugPrint('✅ Notificações inicializadas para o dono da loja');
+          }).catchError((e) {
+            debugPrint('❌ Erro ao inicializar notificações (catchError): $e');
+          });
+        } catch (e) {
+          debugPrint('❌ Erro síncrono ao inicializar notificações: $e');
+        }
       }
     } catch (e) {
       debugPrint('Error loading business data: $e');
@@ -388,7 +385,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     } catch (_) {}
 
     try {
-      await FirebaseAuth.instance.signOut();
+      await sb.Supabase.instance.client.auth.signOut();
     } catch (_) {}
 
     if (mounted) {
@@ -403,11 +400,15 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     // This method is now effectively handled by the StreamBuilder in the build method
     // to ensure instantaneous updates when plan changes.
     if (shopId != null) {
-      final doc = await FirebaseFirestore.instance.collection('shops').doc(shopId).get();
-      if (doc.exists) {
+      final data = await sb.Supabase.instance.client
+          .from('shops')
+          .select()
+          .eq('id', shopId!)
+          .maybeSingle();
+      if (data != null) {
         if (mounted) {
           setState(() {
-            _updateFeaturesFromData(doc.data());
+            _updateFeaturesFromData(data);
           });
         }
       }
@@ -601,37 +602,42 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       );
     }
 
-    return StreamBuilder<DocumentSnapshot>(
+    return StreamBuilder<List<Map<String, dynamic>>>(
       stream: shopId != null
-          ? FirebaseFirestore.instance
-              .collection('shops')
-              .doc(shopId)
-              .snapshots()
+          ? sb.Supabase.instance.client
+              .from('shops')
+              .stream(primaryKey: ['id'])
+              .eq('id', shopId!)
           : null,
       builder: (context, snapshot) {
+        if (snapshot.hasData && snapshot.data!.isNotEmpty) {
+          final data = snapshot.data!.first;
+          
+          // Extrair dados da stream de forma síncrona (sem setState durante build)
+          // Estes valores são lidos diretamente nos widgets filhos
+          _updateFeaturesFromData(data);
+          shopName = data['name'] ?? "Meu Negócio";
 
-        if (snapshot.hasData && snapshot.data!.exists) {
-          final data = snapshot.data!.data() as Map<String, dynamic>;
-          shopName = data['nome'] ?? "Meu Negócio";
-
-          shopLogoUrl =
-              (data['logoUrl'] != null && data['logoUrl'].toString().isNotEmpty)
-                  ? data['logoUrl']
-                  : data['foto'];
-
-          shopImageUrl = (data['imageUrl'] != null &&
-                  data['imageUrl'].toString().isNotEmpty)
-              ? data['imageUrl']
+          shopLogoUrl = (data['logo_url'] != null &&
+                  data['logo_url'].toString().isNotEmpty)
+              ? data['logo_url']
               : null;
 
-          // Atualiza as features em tempo real
-          _updateFeaturesFromData(data);
+          shopImageUrl = (data['image_url'] != null &&
+                  data['image_url'].toString().isNotEmpty)
+              ? data['image_url']
+              : null;
+
+          // Consolidar dados de holidays para evitar StreamBuilders duplicados
+          final pendentes = data['pending_holidays'] as List?;
+          _pendingHolidaysCount = pendentes?.length ?? 0;
         }
 
         return LayoutBuilder(
           builder: (context, constraints) {
-            final bool isDesktop = constraints.maxWidth > 900;
-            return isDesktop ? _buildDesktopLayout() : _buildMobileLayout();
+            if (constraints.maxWidth >= 1024) return _buildDesktopLayout();
+            if (constraints.maxWidth >= 600) return _buildTabletLayout();
+            return _buildMobileLayout();
           },
         );
       },
@@ -649,21 +655,23 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     return planName;
   }
 
-  List<Widget> _buildScreens({required bool isDesktop}) {
-    return [
-      _buildHomeDashboard(isDesktop: isDesktop), // 0
-      BusinessSchedulePage(shopId: shopId ?? ""), // 1
-      BusinessHistoryPage(shopId: shopId ?? ""), // 2
-      const ServicesManagementPage(), // 3
-      const BusinessClientsScreen(), // 4
-      const FinancialDashboardPage(), // 5
-      const TeamManagementPage(), // 6
-      const InventoryHomePage(), // 7
-      const BusinessSettingsPage(), // 8
-      const PriceAdjustmentPage(), // 9
-      const PrivacySettingsPage(), // 10
-      HolidaysPage(shopId: shopId ?? ""), // 11
-    ];
+  Widget _buildCurrentScreen({required bool isDesktop}) {
+    switch (_selectedIndex) {
+      case 0: return _buildHomeDashboard(isDesktop: isDesktop);
+      case 1: return BusinessSchedulePage(shopId: shopId ?? "");
+      case 2: return BusinessHistoryPage(shopId: shopId ?? "");
+      case 3: return const ServicesManagementPage();
+      case 4: return const BusinessClientsScreen();
+      case 5: return const FinancialDashboardPage();
+      case 6: return const TeamManagementPage();
+      case 7: return const InventoryHomePage();
+      case 8: return const BusinessSettingsPage();
+      case 9: return const PriceAdjustmentPage();
+      case 10: return const PrivacySettingsPage();
+      case 11: return HolidaysPage(shopId: shopId ?? "");
+      case 12: return const ClientAffiliatePage();
+      default: return _buildHomeDashboard(isDesktop: isDesktop);
+    }
   }
 
   // ============================================================================
@@ -683,7 +691,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.all(20),
-                    child: _buildScreens(isDesktop: true)[_selectedIndex],
+                    child: _buildCurrentScreen(isDesktop: true),
                   ),
                 ),
               ],
@@ -742,44 +750,30 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 _buildDesktopMenuItem(
                     3, Icons.design_services_rounded, "Meus Serviços"),
                 
-                // Folgas e Feriados
-                StreamBuilder<DocumentSnapshot>(
-                  stream: shopId != null 
-                    ? FirebaseFirestore.instance.collection('shops').doc(shopId).snapshots()
-                    : null,
-                  builder: (context, snapshot) {
-                    int pendingCount = 0;
-                    if (snapshot.hasData && snapshot.data!.exists) {
-                      final data = snapshot.data!.data() as Map<String, dynamic>;
-                      final pendentes = data['feriados_pendentes'] as List?;
-                      pendingCount = pendentes?.length ?? 0;
-                    }
-                    
-                    return _buildDesktopMenuItem(
-                      11, 
-                      Icons.beach_access_rounded, 
-                      "Folgas e Feriados",
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (pendingCount > 0)
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: Colors.red,
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Text(
-                                pendingCount.toString(),
-                                style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                          if (!_currentFeatures.holidaysManagement)
-                            const Icon(Icons.lock, size: 16, color: Colors.grey)
-                        ],
-                      ),
-                    );
-                  }
+                // Folgas e Feriados (usa _pendingHolidaysCount do stream principal)
+                _buildDesktopMenuItem(
+                  11, 
+                  Icons.beach_access_rounded, 
+                  "Folgas e Feriados",
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_pendingHolidaysCount > 0)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.red,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            _pendingHolidaysCount.toString(),
+                            style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      if (!_currentFeatures.holidaysManagement)
+                        const Icon(Icons.lock, size: 16, color: Colors.grey)
+                    ],
+                  ),
                 ),
 
                 _buildDesktopMenuItem(
@@ -816,6 +810,13 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                         : null,
                   ),
                 ),
+
+                _buildDesktopMenuItem(
+                  12,
+                  Icons.stars_outlined,
+                  "Programa de Afiliados",
+                ),
+
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                   child: Divider(height: 1),
@@ -1038,6 +1039,167 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   }
 
   // ============================================================================
+  // TABLET LAYOUT (600–1024px) — Sidebar compacta + conteúdo
+  // ============================================================================
+
+  Widget _buildTabletLayout() {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF2F4F8),
+      body: Row(
+        children: [
+          // Sidebar compacta para tablet (apenas ícones + label curto)
+          SizedBox(
+            width: 72,
+            child: Material(
+              color: Colors.white,
+              elevation: 1,
+              child: Column(
+                children: [
+                  const SizedBox(height: 16),
+                  Image.asset(
+                    'assets/images/logo_purple.png',
+                    width: 36,
+                    errorBuilder: (_, __, ___) => const Icon(
+                      Icons.storefront_rounded,
+                      color: AppColors.primaryPurple,
+                      size: 28,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Expanded(
+                    child: ListView(
+                      padding: EdgeInsets.zero,
+                      children: [
+                        _buildTabletNavIcon(0, Icons.dashboard_rounded, "Painel"),
+                        _buildTabletNavIcon(1, Icons.event_note_rounded, "Agenda"),
+                        _buildTabletNavIcon(2, Icons.history, "Histórico"),
+                        _buildTabletNavIcon(6, Icons.people_outline, "Equipe"),
+                        _buildTabletNavIcon(4, Icons.groups_rounded, "Clientes"),
+                        _buildTabletNavIcon(3, Icons.design_services_rounded, "Serviços"),
+                        _buildTabletNavIcon(5, Icons.account_balance_wallet_rounded, "Financeiro"),
+                        _buildTabletNavIcon(7, Icons.inventory_2_outlined, "Estoque"),
+                        _buildTabletNavIcon(8, Icons.settings, "Config"),
+                        _buildTabletNavIcon(11, Icons.beach_access_rounded, "Folgas",
+                            badge: _pendingHolidaysCount),
+                      ],
+                    ),
+                  ),
+                  // Logout
+                  IconButton(
+                    icon: const Icon(Icons.logout_rounded, color: Colors.grey, size: 22),
+                    onPressed: _confirmLogout,
+                    tooltip: "Sair",
+                  ),
+                  const SizedBox(height: 12),
+                ],
+              ),
+            ),
+          ),
+          Expanded(
+            child: Column(
+              children: [
+                _buildDesktopHeader(),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: _buildCurrentScreen(isDesktop: true),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTabletNavIcon(int index, IconData icon, String label, {int badge = 0}) {
+    final isSelected = _selectedIndex == index;
+    final isRestricted = _restrictedIndices.contains(index);
+
+    return Tooltip(
+      message: label,
+      child: InkWell(
+        onTap: () {
+          if (isRestricted) {
+            _showUpgradeDialog(label);
+          } else {
+            setState(() => _selectedIndex = index);
+          }
+        },
+        child: Container(
+          width: 72,
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: isSelected
+                ? AppColors.primaryPurple.withValues(alpha: 0.08)
+                : Colors.transparent,
+            border: Border(
+              left: BorderSide(
+                color: isSelected ? AppColors.primaryPurple : Colors.transparent,
+                width: 3,
+              ),
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Icon(
+                    icon,
+                    size: 22,
+                    color: isSelected
+                        ? AppColors.primaryPurple
+                        : (isRestricted ? Colors.grey[400] : Colors.grey[600]),
+                  ),
+                  if (badge > 0)
+                    Positioned(
+                      right: -6,
+                      top: -4,
+                      child: Container(
+                        padding: const EdgeInsets.all(3),
+                        decoration: const BoxDecoration(
+                          color: Colors.red,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Text(
+                          badge.toString(),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 8,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  if (isRestricted)
+                    const Positioned(
+                      right: -4,
+                      bottom: -2,
+                      child: Icon(Icons.lock, size: 10, color: Colors.grey),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 3),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 9,
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                  color: isSelected ? AppColors.primaryPurple : Colors.grey[600],
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ============================================================================
   // MOBILE LAYOUT
   // ============================================================================
 
@@ -1102,7 +1264,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       body: Column(children: [
         if (_selectedIndex == 0) // Show only on dashboard
           const SizedBox(height: 8),
-        Expanded(child: _buildScreens(isDesktop: false)[_selectedIndex]),
+        Expanded(child: _buildCurrentScreen(isDesktop: false)),
       ]),
       bottomNavigationBar: _buildMobileBottomNav(),
     );
@@ -1230,38 +1392,24 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                   index: 9,
                 ),
                 
-                // Folgas e Feriados Mobile
-                StreamBuilder<DocumentSnapshot>(
-                  stream: shopId != null 
-                    ? FirebaseFirestore.instance.collection('shops').doc(shopId).snapshots()
+                // Folgas e Feriados (usa _pendingHolidaysCount do stream principal)
+                _buildDrawerItem(
+                  icon: Icons.beach_access_rounded,
+                  title: "Folgas e Feriados",
+                  index: 11,
+                  trailing: _pendingHolidaysCount > 0 
+                    ? Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.red,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          _pendingHolidaysCount.toString(),
+                          style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                        ),
+                      )
                     : null,
-                  builder: (context, snapshot) {
-                    int pendingCount = 0;
-                    if (snapshot.hasData && snapshot.data!.exists) {
-                      final data = snapshot.data!.data() as Map<String, dynamic>;
-                      final pendentes = data['feriados_pendentes'] as List?;
-                      pendingCount = pendentes?.length ?? 0;
-                    }
-                    
-                    return _buildDrawerItem(
-                      icon: Icons.beach_access_rounded,
-                      title: "Folgas e Feriados",
-                      index: 11,
-                      trailing: pendingCount > 0 
-                        ? Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: Colors.red,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Text(
-                              pendingCount.toString(),
-                              style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                            ),
-                          )
-                        : null,
-                    );
-                  }
                 ),
                 _buildDrawerItem(
                   icon: Icons.local_offer_outlined,
@@ -1502,6 +1650,31 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   // DASHBOARD - OTIMIZADO E COM MONITOR DE CUSTO
   // ============================================================================
 
+  Future<List<Map<String, dynamic>>> _fetchDashboardAppointments(
+      DateTime startData, DateTime endData) async {
+    if (shopId == null || shopId!.isEmpty) return [];
+    try {
+      final result = await sb.Supabase.instance.client
+          .from('appointments')
+          .select()
+          .eq('shop_id', shopId!)
+          .gte('scheduled_at', startData.toIso8601String())
+          .lte('scheduled_at', endData.toIso8601String())
+          .order('scheduled_at', ascending: true);
+      return List<Map<String, dynamic>>.from(result);
+    } catch (e) {
+      debugPrint('❌ [DASHBOARD] Erro ao buscar agendamentos: $e');
+      return [];
+    }
+  }
+
+  void _refreshDashboard() {
+    setState(() {
+      _dashboardFuture = null;
+      _birthdayFuture = null;
+    });
+  }
+
   Widget _buildHomeDashboard({required bool isDesktop}) {
     // 1. Definio do Intervalo de Tempo para Leitura (Range)
     // Se selecionado "Todos" (-1), pegamos um range amplo, mas idealmente voc limitaria.
@@ -1520,23 +1693,23 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       endData = DateTime(_selectedYear, 12, 31, 23, 59, 59);
     }
 
-    return StreamBuilder<QuerySnapshot>(
-      // ðŸ”¥ QUERY BLINDADA: Filtra por Shop + Intervalo de Data
-      // Isso exige um Índice Composto no Firebase (ShopId + Data Asc/Desc)
-      stream: FirebaseFirestore.instance
-          .collection('appointments')
-          .where('shopId', isEqualTo: shopId)
-          .where('data_agendamento', isGreaterThanOrEqualTo: startData)
-          .where('data_agendamento', isLessThanOrEqualTo: endData)
-          .snapshots(), // Ordenao pode ser feita em memria para economizar ndice ou no .orderBy
+    // Cache: só cria nova future se o ano mudou ou se foi invalidada (pull-to-refresh)
+    if (_dashboardFuture == null || _lastDashboardYear != _selectedYear) {
+      _lastDashboardYear = _selectedYear;
+      _dashboardFuture = _fetchDashboardAppointments(startData, endData);
+    }
+
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _dashboardFuture,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
+          debugPrint('❌ [DASHBOARD] Erro no future de agendamentos: ${snapshot.error}');
           return Center(
               child: Text(
-                  "Erro (Verifique ndices no Console): ${snapshot.error}"));
+                  "Erro ao carregar dashboard: ${snapshot.error}"));
         }
 
-        if (!snapshot.hasData) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(
             child: CircularProgressIndicator(
               color: AppColors.primaryPurple,
@@ -1544,19 +1717,12 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           );
         }
 
-        final docs = snapshot.data!.docs;
+        final docs = snapshot.data ?? [];
 
-        // (monitoring removed to silence linter; keep snapshot processing)
-        // Metadata diz a origem
-        if (snapshot.data!.metadata.isFromCache) {
-          debugPrint(
-              "ðŸ’° [ECONOMIA] Lendo ${docs.length} agendamentos do CACHE Local.");
-        } else {
-          debugPrint(
-              "ðŸ’¸ [CUSTO] Baixando ${docs.length} documentos do SERVIDOR ($shopId).");
-        }
+        debugPrint(
+            "📊 [DASHBOARD] ${docs.length} agendamentos carregados para $shopId (${_selectedYear == -1 ? 'todos' : _selectedYear}).");
 
-        // --- LÃ“GICA DE CÁLCULO (Mantida, mas operando sobre o subset filtrado) ---
+        // --- LÓGICA DE CÁLCULO (Mantida, mas operando sobre o subset filtrado) ---
 
         bool isAllYears = _selectedYear == -1;
         double faturamentoTotal = 0;
@@ -1586,24 +1752,19 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         dataMoney = List.filled(12, 0.0);
         dataQty = List.filled(12, 0.0);
 
-        for (var doc in docs) {
-          final data = doc.data() as Map<String, dynamic>;
-          if (data['data_agendamento'] is! Timestamp) continue;
+        for (var data in docs) {
+          final dateStr = data['scheduled_at'] as String?;
+          if (dateStr == null) continue;
 
-          DateTime date = (data['data_agendamento'] as Timestamp).toDate();
+          DateTime date = DateTime.tryParse(dateStr) ?? DateTime.now();
 
           // Filtra status concludo
           if ((data['status'] ?? 'agendado') == 'concluido') {
-            double total = double.tryParse(data['valor_total']?.toString() ??
-                    data['valor']?.toString() ??
-                    '0') ??
-                0.0;
-            double maoObra =
-                double.tryParse(data['valor_mao_de_obra']?.toString() ?? '0') ??
-                    0.0;
-            double produtos =
-                double.tryParse(data['valor_produtos']?.toString() ?? '0') ??
-                    0.0;
+            double total = double.tryParse(data['total_value']?.toString() ?? '0') ?? 0.0;
+            // TODO: Supabase schema não tem campos separados para mão de obra e produtos.
+            // Quando esses campos forem adicionados, usar 'service_value' e 'product_value'.
+            double maoObra = double.tryParse(data['service_value']?.toString() ?? '0') ?? 0.0;
+            double produtos = double.tryParse(data['product_value']?.toString() ?? '0') ?? 0.0;
 
             if (maoObra == 0 && produtos == 0) maoObra = total;
 
@@ -1625,21 +1786,24 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           // Lgica simplificada para multiplos anos (recalculando baseada nos docs recebidos)
           Map<int, double> yearMoney = {};
           Map<int, double> yearQty = {};
-          for (var doc in docs) {
-            final data = doc.data() as Map<String, dynamic>;
-            DateTime date = (data['data_agendamento'] as Timestamp).toDate();
+          for (var data in docs) {
+            // Supabase usa 'scheduled_at'; fallback para campo legado 'scheduled_at'
+            final dateStr = data['scheduled_at'] as String?;
+            if (dateStr == null) continue;
+            DateTime date = DateTime.tryParse(dateStr) ?? DateTime.now();
             if ((data['status'] ?? 'agendado') == 'concluido') {
               double total =
-                  double.tryParse(data['valor_total']?.toString() ?? '0') ?? 0;
+                  double.tryParse(data['total_value']?.toString() ?? '0') ?? 0;
               yearMoney[date.year] = (yearMoney[date.year] ?? 0) + total;
               yearQty[date.year] = (yearQty[date.year] ?? 0) + 1;
             }
           }
           chartLabels = yearMoney.keys.map((e) => e.toString()).toList();
           chartLabels.sort();
+          // ✅ FIX: usar ?? 0 ao invés de ! para evitar null crash
           dataMoney =
-              chartLabels.map((key) => yearMoney[int.parse(key)]!).toList();
-          dataQty = chartLabels.map((key) => yearQty[int.parse(key)]!).toList();
+              chartLabels.map((key) => yearMoney[int.parse(key)] ?? 0.0).toList();
+          dataQty = chartLabels.map((key) => yearQty[int.parse(key)] ?? 0.0).toList();
         }
 
         double ticketMedio =
@@ -1688,7 +1852,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     required List<String> chartLabels,
     required double faturamentoMaoDeObra,
     required double faturamentoProdutos,
-    List<QueryDocumentSnapshot>? appointmentDocs,
+    List<Map<String, dynamic>>? appointmentDocs,
   }) {
     return Column(
       children: [
@@ -1792,46 +1956,44 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   }
 
   Widget _buildEquipeComissoesCard(
-      String shopId, List<QueryDocumentSnapshot> appointmentDocs) {
+      String shopId, List<Map<String, dynamic>> appointmentDocs) {
     // Calcular produo por profissional
-    final concluidos = appointmentDocs.where((d) {
-      final data = d.data() as Map<String, dynamic>;
+    final concluidos = appointmentDocs.where((data) {
       return (data['status'] ?? '') == 'confirmado' ||
           (data['status'] ?? '') == 'concluido';
     }).toList();
 
     Map<String, double> producaoPorProf = {};
-    for (var d in concluidos) {
-      final data = d.data() as Map<String, dynamic>;
-      final pid = data['profissionalId']?.toString() ?? '';
+    for (var data in concluidos) {
+      final pid = data['professional_id']?.toString() ?? '';
       if (pid.isEmpty) continue;
-      final valor = double.tryParse(data['valor_pago']?.toString() ??
-              data['valor_total']?.toString() ??
-              '0') ??
-          0;
+      final valor = double.tryParse(data['total_value']?.toString() ?? '0') ?? 0;
       producaoPorProf[pid] = (producaoPorProf[pid] ?? 0) + valor;
     }
 
-    return FutureBuilder<QuerySnapshot>(
-      future: FirebaseFirestore.instance
-          .collection('employees')
-          .where('shopId', isEqualTo: shopId)
-          .get(),
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: sb.Supabase.instance.client
+          .from('employees')
+          .select()
+          .eq('shop_id', shopId),
       builder: (context, snap) {
-        if (!snap.hasData || snap.data!.docs.isEmpty) {
+        if (snap.hasError) {
+          debugPrint('❌ [DASHBOARD] Erro ao buscar funcionários: ${snap.error}');
           return const SizedBox.shrink();
         }
-        final employees = snap.data!.docs;
+        if (!snap.hasData || snap.data!.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        final employees = snap.data!;
         double totalComissao = 0;
         final List<Map<String, dynamic>> teamData = [];
 
         // Preparar dados
-        for (var emp in employees) {
-          final ed = emp.data() as Map<String, dynamic>?;
-          final nome = ed?['nome']?.toString() ?? 'Profissional';
-          final p = ed?['comissao_percent'];
+        for (var ed in employees) {
+          final nome = (ed['name'] ?? ed['nome'])?.toString() ?? 'Profissional';
+          final p = ed['commission_percent'];
           final percent = (p is num) ? p.toDouble() : 0.0;
-          final produzido = producaoPorProf[emp.id] ?? 0.0;
+          final produzido = producaoPorProf[ed['id']] ?? 0.0;
           final aReceber = percent > 0 ? (produzido * percent / 100) : 0.0;
 
           if (produzido > 0 || aReceber > 0) {
@@ -2041,16 +2203,15 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     required List<String> chartLabels,
     required double faturamentoMaoDeObra,
     required double faturamentoProdutos,
-    List<QueryDocumentSnapshot>? appointmentDocs,
+    List<Map<String, dynamic>>? appointmentDocs,
   }) {
     final now = DateTime.now();
     final hoje = appointmentDocs == null
         ? 0
-        : appointmentDocs.where((doc) {
-            final d = doc.data() as Map<String, dynamic>;
-            final ts = d['data_agendamento'];
-            if (ts is! Timestamp) return false;
-            final dt = ts.toDate();
+        : appointmentDocs.where((data) {
+            final dateStr = data['scheduled_at'] as String?;
+            if (dateStr == null) return false;
+            final dt = DateTime.tryParse(dateStr) ?? DateTime.now();
             return dt.year == now.year &&
                 dt.month == now.month &&
                 dt.day == now.day;
@@ -2058,14 +2219,20 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
     final fmt = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
 
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // -- Hero Header com gradiente ------------------------------------
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+    return RefreshIndicator(
+      color: AppColors.primaryPurple,
+      onRefresh: () async {
+        _refreshDashboard(); // Invalidate cached futures and rebuild
+      },
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // -- Hero Header com gradiente ------------------------------------
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
             decoration: const BoxDecoration(
               gradient: LinearGradient(
                 colors: [Color(0xFF6C3CE2), Color(0xFF9B5CF6)],
@@ -2203,6 +2370,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
             ),
           ),
         ],
+       ),
       ),
     );
   }
@@ -2289,15 +2457,14 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     );
   }
 
-  Widget _buildHojeCard(int hoje, List<QueryDocumentSnapshot>? allDocs) {
+  Widget _buildHojeCard(int hoje, List<Map<String, dynamic>>? appointmentDocs) {
     final now = DateTime.now();
     // Prximos agendamentos de hoje (somente agendado/confirmado)
-    final proximosHoje = allDocs?.where((doc) {
-          final d = doc.data() as Map<String, dynamic>;
-          final ts = d['data_agendamento'];
-          if (ts is! Timestamp) return false;
-          final dt = ts.toDate();
-          final status = (d['status'] ?? '').toString();
+    final proximosHoje = appointmentDocs?.where((data) {
+          final dateStr = data['scheduled_at'] as String?;
+          if (dateStr == null) return false;
+          final dt = DateTime.tryParse(dateStr) ?? DateTime.now();
+          final status = (data['status'] ?? '').toString();
           return dt.year == now.year &&
               dt.month == now.month &&
               dt.day == now.day &&
@@ -2372,17 +2539,13 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
             const SizedBox(height: 12),
             const Divider(height: 1),
             const SizedBox(height: 10),
-            ...proximosHoje.take(3).map((doc) {
-              final d = doc.data() as Map<String, dynamic>;
-              final ts = d['data_agendamento'] as Timestamp;
-              final hora = TimeOfDay.fromDateTime(ts.toDate()).format(context);
+            ...proximosHoje.take(3).map((data) {
+              final dateStr = data['scheduled_at'] as String?;
+              final date = DateTime.tryParse(dateStr ?? '') ?? DateTime.now();
+              final hora = DateFormat('HH:mm').format(date);
               final clienteNome =
-                  (d['client_name'] ?? d['clientName'] ?? 'Cliente').toString();
-              final servico = (d['service_name'] ??
-                      d['serviceName'] ??
-                      d['descricao'] ??
-                      '')
-                  .toString();
+                  (data['client_name'] ?? 'Cliente').toString();
+              final servico = (data['service_name'] ?? '').toString();
               return Padding(
                 padding: const EdgeInsets.only(bottom: 6),
                 child: Row(
@@ -2472,16 +2635,17 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
               child: Row(
                 children: [
                   Flexible(
-                    flex: (pctServico * 100).round(),
+                    // ✅ FIX: Clamp para evitar flex: 0 que causa Gray Screen no Flutter
+                    flex: (pctServico * 100).round().clamp(1, 100),
                     child: Container(color: const Color(0xFF6C3CE2)),
                   ),
                   Flexible(
-                    flex: (pctProduto * 100).round(),
+                    flex: (pctProduto * 100).round().clamp(1, 100),
                     child: Container(color: const Color(0xFF00C9A7)),
                   ),
                   if (pctServico + pctProduto < 0.99)
                     Flexible(
-                      flex: ((1 - pctServico - pctProduto) * 100).round(),
+                      flex: ((1 - pctServico - pctProduto) * 100).round().clamp(1, 100),
                       child: Container(color: Colors.grey[200]),
                     ),
                 ],
@@ -3064,45 +3228,65 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     );
   }
 
+  /// Busca aniversariantes entre os clientes que já agendaram nesta loja.
+  /// Usa appointments para identificar client_ids, depois filtra birth_date.
+  Future<List<Map<String, dynamic>>> _fetchBirthdayClients() async {
+    if (shopId == null) return [];
+    try {
+      final now = DateTime.now();
+      final mmdd = '${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+
+      // Busca clientes distintos desta loja via appointments
+      final appts = await sb.Supabase.instance.client
+          .from('appointments')
+          .select('client_id')
+          .eq('shop_id', shopId!);
+      
+      final clientIds = (appts as List)
+          .map((a) => a['client_id']?.toString())
+          .where((id) => id != null && id.isNotEmpty)
+          .toSet()
+          .toList();
+
+      if (clientIds.isEmpty) return [];
+
+      // Busca perfis desses clientes
+      final users = await sb.Supabase.instance.client
+          .from('users')
+          .select('id, name, phone, photo_url, birth_date')
+          .inFilter('id', clientIds);
+
+      // Filtra pelo dia/mês de nascimento
+      return List<Map<String, dynamic>>.from(users).where((u) {
+        final birth = u['birth_date']?.toString();
+        if (birth == null || birth.isEmpty) return false;
+        try {
+          final dt = DateTime.parse(birth);
+          final userMmdd = '${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
+          return userMmdd == mmdd;
+        } catch (_) {
+          return false;
+        }
+      }).toList();
+    } catch (e) {
+      debugPrint('[BirthdaysSection] Erro: $e');
+      return [];
+    }
+  }
+
   Widget _buildBirthdaysSection({required bool isDesktop}) {
     if (shopId == null) return const SizedBox.shrink();
 
-    final now = DateTime.now();
-    final todayStr = DateFormat('dd/MM').format(now);
+    _birthdayFuture ??= _fetchBirthdayClients();
 
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('users')
-          .where('lojasVinculadas', arrayContains: shopId)
-          .snapshots(),
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _birthdayFuture,
       builder: (context, snapshot) {
-        if (!snapshot.hasData) return const SizedBox.shrink();
+        if (!snapshot.hasData || snapshot.data!.isEmpty) {
+          return const SizedBox.shrink();
+        }
 
-        final aniversariantes = snapshot.data!.docs.where((doc) {
-          final data = doc.data() as Map<String, dynamic>;
-          final birth = data['data_nascimento'] ??
-              data['nascimento'] ??
-              data['birthDate'];
-          if (birth == null) return false;
-
-          String clientBirthStr = "";
-          if (birth is Timestamp) {
-            clientBirthStr = DateFormat('dd/MM').format(birth.toDate());
-          } else if (birth is String) {
-            // Tenta parsear string DD/MM/AAAA ou AAAA-MM-DD
-            if (birth.contains('/')) {
-              clientBirthStr = birth.split('/').take(2).join('/');
-            } else if (birth.contains('-')) {
-              final parts = birth.split('-');
-              if (parts.length >= 3) {
-                clientBirthStr = "${parts[2]}/${parts[1]}";
-              }
-            }
-          }
-          return clientBirthStr == todayStr;
-        }).toList();
-
-        if (aniversariantes.isEmpty) return const SizedBox.shrink();
+        final aniversariantes = snapshot.data!;
 
         return Container(
           margin: EdgeInsets.only(bottom: isDesktop ? 20 : 12),
@@ -3150,18 +3334,17 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                   scrollDirection: Axis.horizontal,
                   itemCount: aniversariantes.length,
                   itemBuilder: (context, index) {
-                    final client =
-                        aniversariantes[index].data() as Map<String, dynamic>;
-                    final nome = client['nome'] ?? "Cliente";
-                    final phone = client['telefone'] ?? client['whatsapp'];
-                    final foto = client['fotoUrl'] ?? client['foto'];
+                    final client = aniversariantes[index];
+                    final nome = (client['name'] ?? 'Cliente').toString();
+                    final phone = client['phone']?.toString();
+                    final foto = client['photo_url']?.toString();
 
                     return Padding(
                       padding: const EdgeInsets.only(right: 12),
                       child: InkWell(
                         onTap: () {
-                          if (phone != null) {
-                            _launchWhatsAppFromPhone(phone.toString());
+                          if (phone != null && phone.isNotEmpty) {
+                            _launchWhatsAppFromPhone(phone);
                           }
                         },
                         child: Column(
@@ -3169,10 +3352,10 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                             CircleAvatar(
                               radius: 20,
                               backgroundColor: Colors.pink.shade50,
-                              backgroundImage: foto != null
+                              backgroundImage: foto != null && foto.isNotEmpty
                                   ? CachedNetworkImageProvider(foto)
                                   : null,
-                              child: foto == null
+                              child: (foto == null || foto.isEmpty)
                                   ? const Icon(Icons.person,
                                       size: 20, color: Colors.pink)
                                   : null,

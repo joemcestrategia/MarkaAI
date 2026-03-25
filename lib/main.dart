@@ -2,128 +2,92 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'core/utils/url_strategy_stub.dart'
     if (dart.library.html) 'core/utils/url_strategy_web.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'core/theme/app_colors.dart';
-import 'core/services/notification_service.dart';
 import 'core/router/app_router.dart';
-import 'modules/clients/appointment_confirmation_page.dart';
 import 'modules/business/mobile_subscription_manager.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
+import 'core/constants/api_keys.dart';
 
-// ðŸš¨ IMPORTANTE: Importe o arquivo que o comando gerou
-import 'firebase_options.dart';
 
-// Handler para notificações em background (DEVE estar fora da main)
-@pragma('vm:entry-point')
-Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  await firebaseMessagingBackgroundHandler(message);
-}
 
 void main() async {
   try {
     WidgetsFlutterBinding.ensureInitialized();
-    debugPrint("=== BOOT STEP 0: FlutterBinding Inicializado ===");
-
-    // 1. Inicializar Firebase primeiro (essencial para quase tudo)
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
+    print("=== BOOT STEP 0: v2 - FlutterBinding Inicializado ===");
+    
+    // 1. Inicializar Supabase
+    print("=== BOOT STEP 1.1: Iniciando Supabase ===");
+    await Supabase.initialize(
+      url: ApiKeys.supabaseUrl,
+      anonKey: ApiKeys.supabaseAnonKey,
+      authOptions: const FlutterAuthClientOptions(
+        authFlowType: AuthFlowType.pkce,
+      ),
     );
-    debugPrint("=== BOOT STEP 1: Firebase Inicializado ===");
-
-    // 1.1 Ativar App Check (Comentado até ser configurado no Console do Firebase para evitar erro 403)
-    // await FirebaseAppCheck.instance.activate(
-    //   androidProvider: AndroidProvider.playIntegrity,
-    //   appleProvider: AppleProvider.deviceCheck,
-    //   webProvider: ReCaptchaV3Provider('recaptcha-v3-site-key'),
-    // );
-    // debugPrint("=== BOOT STEP 1.1: App Check Ativado (Simulado) ===");
-
-    // 2. Configurar handler de background imediatamente após Firebase
-    if (!kIsWeb) {
-      FirebaseMessaging.onBackgroundMessage(
-          _firebaseMessagingBackgroundHandler);
-      debugPrint(
-          "=== BOOT STEP 2: FCM Background Handler (Mobile) Configurado ===");
-    } else {
-      debugPrint("=== BOOT STEP 2: FCM Ignorado (Web) ===");
-    }
+    print("=== BOOT STEP 1: Supabase Inicializado ===");
 
     // 3. Inicializar Stripe
+    try {
+      if (!kIsWeb) {
+        print("=== BOOT STEP 3.1: Configurando Stripe Key (Mobile) ===");
+        Stripe.publishableKey = ApiKeys.stripePublishableKey;
+        print("=== BOOT STEP 3.2: Stripe Key Configurada (Mobile) ===");
+      } else {
+        print("=== BOOT STEP 3.1: Ignorando Stripe.publishableKey (Web) - Usando JS SDK ===");
+      }
+    } catch (e) {
+      print("=== BOOT STEP 3.0 ERRO: Stripe Key Falhou = $e ===");
+    }
+    
     if (!kIsWeb) {
-      Stripe.publishableKey =
-          'pk_live_51T97xzFzh8r5AMGzlcuoTt9mxupvYn3fD9UznF7pdPNxxZI4W0Jn6xb36tYKlSvtUnb7544CeIXtDX84XshUk6dF00d10axLwi';
       try {
+        print("=== BOOT STEP 3.3: Aplicando Configurações Stripe (Mobile) ===");
         await Stripe.instance.applySettings();
-        debugPrint("=== BOOT STEP 3: Stripe API (Mobile) Configurado ===");
+        print("=== BOOT STEP 3: Stripe API (Mobile) Configurado ===");
       } catch (e) {
-        debugPrint("=== BOOT STEP 3 ERRO: Stripe Falhou = $e ===");
+        print("=== BOOT STEP 3 ERRO: Stripe Falhou = $e ===");
       }
     } else {
-      debugPrint("=== BOOT STEP 3: Stripe Configurado (Web key) ===");
+      print("=== BOOT STEP 3: Stripe Configurado (Web key) ===");
     }
 
     // 4. Configure path-based URLs (remove #) on web hosting
+    print("=== BOOT STEP 4.1: Configurando Path Strategy ===");
     configurePathUrlStrategy();
-    debugPrint("=== BOOT STEP 4: Path URL Strategy Configurado ===");
+    print("=== BOOT STEP 4: Path URL Strategy Configurado ===");
 
     // 5. Inicializar IAP (In-App Purchases) - Perigosíssimo no Web
+    print("=== BOOT STEP 5.1: Checando IAP (kIsWeb=$kIsWeb) ===");
     if (!kIsWeb) {
       try {
+        print("=== BOOT STEP 5.2: Inicializando Mobile IAP ===");
         await MobileSubscriptionManager.initialize();
-        debugPrint("=== BOOT STEP 5: Mobile IAP Inicializado ===");
+        print("=== BOOT STEP 5: Mobile IAP Inicializado ===");
       } catch (e) {
-        debugPrint("=== BOOT STEP 5 ERRO: Falha ao inicializar IAP = $e ===");
+        print("=== BOOT STEP 5 ERRO: Falha ao inicializar IAP = $e ===");
       }
     } else {
-      debugPrint("=== BOOT STEP 5: Mobile IAP Ignorado (Web) ===");
+      print("=== BOOT STEP 5: Mobile IAP Ignorado (Web) ===");
     }
 
-    // Configurar handler de notificações (deep link para confirmação de agendamento)
-    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-      final appointmentId = message.data['appointmentId'];
-      final type = message.data['type'];
-      if (appointmentId != null && type == 'confirmacao') {
-        // Navegar para página de confirmação quando app está em background e usuário clica na notificação
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          MarkaAIApp.navigatorKey.currentState?.push(
-            MaterialPageRoute(
-              builder: (_) =>
-                  AppointmentConfirmationPage(appointmentId: appointmentId),
+    print("=== BOOT STEP 6: Configurando ErrorWidget ===");
+    print("=== BOOT FINAL: Executando runApp ===");
+    ErrorWidget.builder = (FlutterErrorDetails details) {
+      return Scaffold(
+        backgroundColor: Colors.white,
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Text(
+              'ERRO: ${details.exception}\n\n${details.stack}',
+              style: const TextStyle(color: Colors.red, fontSize: 12),
             ),
-          );
-        });
-      }
-    });
-
-    // Notificação quando app está fechado e usuário abre via notificação
-    FirebaseMessaging.instance
-        .getInitialMessage()
-        .then((RemoteMessage? message) {
-      if (message != null) {
-        final appointmentId = message.data['appointmentId'];
-        final type = message.data['type'];
-        if (appointmentId != null && type == 'confirmacao') {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            MarkaAIApp.navigatorKey.currentState?.push(
-              MaterialPageRoute(
-                builder: (_) =>
-                    AppointmentConfirmationPage(appointmentId: appointmentId),
-              ),
-            );
-          });
-        }
-      }
-    });
-
-    // Notificação recebida quando app está em foreground (tratada em cada página)
-    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      // Cada página (BusinessHomePage, ClientHomePage) trata suas próprias notificações
-    });
-
-    debugPrint("=== BOOT FINAL: Executando runApp ===");
+          ),
+        ),
+      );
+    };
     runApp(const MarkaAIApp());
   } catch (globalError, stackTrace) {
     debugPrint("=== BOOT PARALISOU TOTALMENTE: $globalError ===");

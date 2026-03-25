@@ -1,68 +1,34 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/foundation.dart';
-import 'package:intl/intl.dart';
 
 class ClientVerificationService {
-  static String _normalize(String text) {
-    return text
-        .toLowerCase()
-        .trim()
-        .replaceAll(RegExp(r'[àáâãäå]'), 'a')
-        .replaceAll(RegExp(r'[èéêë]'), 'e')
-        .replaceAll(RegExp(r'[ìíîï]'), 'i')
-        .replaceAll(RegExp(r'[òóôõö]'), 'o')
-        .replaceAll(RegExp(r'[ùúûü]'), 'u')
-        .replaceAll(RegExp(r'[ç]'), 'c');
-  }
+  static final _supabase = Supabase.instance.client;
+
+
 
   /// Retorna se o cliente é VIP, Fiel ou tem classificação manual de confiança.
   static Future<Map<String, bool>> getClientStatus(
       String userId, String shopId) async {
     try {
       // 1. Verificação de classificação e configuração da loja
-      final shopDoc = await FirebaseFirestore.instance
-          .collection('shops')
-          .doc(shopId)
-          .get();
-      final shopConfig = (shopDoc.data()?['config'] as Map?) ?? {};
-
-      final clientSettingDoc = await FirebaseFirestore.instance
-          .collection('shops')
-          .doc(shopId)
-          .collection('clients')
-          .doc(userId)
-          .get();
-
-      String? classification;
-      bool hasOverride = false;
-
-      if (clientSettingDoc.exists) {
-        final data = clientSettingDoc.data();
-        classification = data?['classification']?.toString().toLowerCase();
-        hasOverride = data?['classificationOverride'] ?? false;
-      }
-
-      if (hasOverride && classification != null) {
-        final cleanClass = _normalize(classification);
-        return {
-          'isVip': cleanClass == 'vip' || cleanClass == 'fiel',
-          'isSumido': cleanClass == 'sumido',
-          'isProblematic': cleanClass == 'problematico',
-          'isNovo': cleanClass == 'novo',
-          'isTrusted': cleanClass == 'vip' || cleanClass == 'fiel' || cleanClass == 'novo'
-        };
-      }
+      final shopDoc = await _supabase
+          .from('shops')
+          .select('config')
+          .eq('id', shopId)
+          .maybeSingle();
+      
+      final shopConfig = (shopDoc?['config'] as Map?) ?? {};
 
       // 2. Cálculo de histórico (VIP automático e Sumido)
-      final appointmentsSnap = await FirebaseFirestore.instance
-          .collection('appointments')
-          .where('shopId', isEqualTo: shopId)
-          .where('clientId', isEqualTo: userId)
-          .orderBy('data_agendamento', descending: true)
-          .get();
+      final appointmentsList = await _supabase
+          .from('appointments')
+          .select()
+          .eq('shop_id', shopId)
+          .eq('client_id', userId)
+          .order('scheduled_at', ascending: false);
 
-      final validAppointments = appointmentsSnap.docs.where((doc) {
-        final status = (doc.data()['status'] ?? '').toString().toLowerCase();
+      final validAppointments = appointmentsList.where((appt) {
+        final status = (appt['status'] ?? '').toString().toLowerCase();
         return status != 'cancelado' &&
             status != 'recusado' &&
             status != 'excluido';
@@ -72,16 +38,14 @@ class ClientVerificationService {
         return {
           'isVip': false,
           'isSumido': false,
-          'isProblematic': classification == 'problematico',
+          'isProblematic': false,
           'isNovo': true, // Primeiro agendamento
           'isTrusted': true,
         };
       }
 
       final int visits = validAppointments.length;
-      final DateTime lastVisit =
-          (validAppointments.first.data()['data_agendamento'] as Timestamp)
-              .toDate();
+      final DateTime lastVisit = DateTime.parse(validAppointments.first['scheduled_at']);
       final now = DateTime.now();
 
       // Thresholds da loja
@@ -96,11 +60,12 @@ class ClientVerificationService {
       return {
         'isVip': isVip,
         'isSumido': isSumido,
-        'isProblematic': _normalize(classification ?? '') == 'problematico',
+        'isProblematic': false,
         'isNovo': isNovo,
         'isTrusted': !isSumido && (isVip || isNovo || visits > 1)
       };
     } catch (e) {
+      debugPrint('Error in getClientStatus: $e');
       return {
         'isVip': false,
         'isSumido': false,
@@ -112,113 +77,116 @@ class ClientVerificationService {
   }
 
   /// Verifica se o cliente já usou o desconto de aniversário neste ano nesta loja.
-  /// Agora verifica também pelo hash de e-mail e telefone para evitar abusos com múltiplas contas.
   static Future<bool> hasUsedBirthdayDiscountInYear(
       String userId, String shopId) async {
     try {
       final now = DateTime.now();
-      final currentYear = now.year.toString();
+      final currentYear = now.year;
 
-      // 1. Verificação básica por ID de usuário nos agendamentos (rápida)
-      final startOfYear = DateTime(now.year, 1, 1);
-      final endOfYear = DateTime(now.year, 12, 31, 23, 59, 59);
+      // 1. Verificação básica por ID de usuário nos agendamentos
+      final startOfYear = DateTime(now.year, 1, 1).toIso8601String();
+      final endOfYear = DateTime(now.year, 12, 31, 23, 59, 59).toIso8601String();
 
-      final query = await FirebaseFirestore.instance
-          .collection('appointments')
-          .where('shopId', isEqualTo: shopId)
-          .where('clientId', isEqualTo: userId)
-          .where('birthday_discount_applied', isEqualTo: true)
-          .where('data_agendamento',
-              isGreaterThanOrEqualTo: Timestamp.fromDate(startOfYear))
-          .where('data_agendamento',
-              isLessThanOrEqualTo: Timestamp.fromDate(endOfYear))
-          .limit(1)
-          .get();
+      final appointments = await _supabase
+          .from('appointments')
+          .select()
+          .eq('shop_id', shopId)
+          .eq('client_id', userId)
+          .eq('birthday_discount_applied', true)
+          .gte('scheduled_at', startOfYear)
+          .lte('scheduled_at', endOfYear);
 
-      if (query.docs.isNotEmpty) return true;
+      if (appointments.isNotEmpty) return true;
 
       // 2. Verificação avançada no registro da loja por email/telefone (prevenção de multi-conta)
-      final userDoc = await FirebaseFirestore.instance.collection('users').doc(userId).get();
-      final userData = userDoc.data();
-      final email = (userData?['email'] ?? '').toString().toLowerCase().trim();
-      final phone = (userData?['telefone'] ?? '').toString().replaceAll(RegExp(r'\D'), '');
+      final userDoc = await _supabase
+          .from('users')
+          .select('email, telefone')
+          .eq('id', userId)
+          .maybeSingle();
+      
+      if (userDoc == null) return false;
+
+      final email = (userDoc['email'] ?? '').toString().toLowerCase().trim();
+      final phone = (userDoc['telefone'] ?? '').toString().replaceAll(RegExp(r'\D'), '');
 
       if (email.isNotEmpty) {
-        final registryEmail = await FirebaseFirestore.instance
-            .collection('shops')
-            .doc(shopId)
-            .collection('birthday_discount_registry')
-            .doc('email_$email')
-            .get();
-        if (registryEmail.exists && registryEmail.data()?['year'].toString() == currentYear) {
-          return true;
-        }
+        final registryEmail = await _supabase
+            .from('birthday_discount_registry')
+            .select()
+            .eq('shop_id', shopId)
+            .eq('identifier', 'email_$email')
+            .eq('year', currentYear)
+            .maybeSingle();
+        if (registryEmail != null) return true;
       }
 
       if (phone.isNotEmpty) {
-        final registryPhone = await FirebaseFirestore.instance
-            .collection('shops')
-            .doc(shopId)
-            .collection('birthday_discount_registry')
-            .doc('phone_$phone')
-            .get();
-        if (registryPhone.exists && registryPhone.data()?['year'].toString() == currentYear) {
-          return true;
-        }
+        final registryPhone = await _supabase
+            .from('birthday_discount_registry')
+            .select()
+            .eq('shop_id', shopId)
+            .eq('identifier', 'phone_$phone')
+            .eq('year', currentYear)
+            .maybeSingle();
+        if (registryPhone != null) return true;
       }
 
       return false;
     } catch (e) {
+      debugPrint('Error in hasUsedBirthdayDiscountInYear: $e');
       return false;
     }
   }
 
-  /// Registra o uso do desconto de aniversário para evitar reuso no mesmo ano.
-  /// Trava também a data de nascimento globalmente no perfil do usuário.
+  /// Registra o uso do desconto de aniversário.
   static Future<void> registerBirthdayDiscountUsage(
       String userId, String shopId) async {
     try {
       final now = DateTime.now();
-      final currentYear = now.year.toString();
+      final currentYear = now.year;
       
-      final userDoc = await FirebaseFirestore.instance.collection('users').doc(userId).get();
-      final userData = userDoc.data();
-      final email = (userData?['email'] ?? '').toString().toLowerCase().trim();
-      final phone = (userData?['telefone'] ?? '').toString().replaceAll(RegExp(r'\D'), '');
+      final userDoc = await _supabase
+          .from('users')
+          .select('email, telefone')
+          .eq('id', userId)
+          .maybeSingle();
+      
+      if (userDoc == null) return;
 
-      final batch = FirebaseFirestore.instance.batch();
+      final email = (userDoc['email'] ?? '').toString().toLowerCase().trim();
+      final phone = (userDoc['telefone'] ?? '').toString().replaceAll(RegExp(r'\D'), '');
 
       // 1. Registro no documento do usuário (Trava Global)
-      batch.update(FirebaseFirestore.instance.collection('users').doc(userId), {
+      await _supabase.from('users').update({
         'birthday_locked': true,
         'last_birthday_discount_year': currentYear,
-      });
+      }).eq('id', userId);
 
-      // 2. Registro na loja por e-mail
+      // 2. Registros na loja para evitar multi-conta
+      final List<Map<String, dynamic>> registros = [];
       if (email.isNotEmpty) {
-        batch.set(
-          FirebaseFirestore.instance
-              .collection('shops')
-              .doc(shopId)
-              .collection('birthday_discount_registry')
-              .doc('email_$email'),
-          {'year': currentYear, 'used_at': FieldValue.serverTimestamp(), 'userId': userId},
-        );
+        registros.add({
+          'shopId': shopId,
+          'identifier': 'email_$email',
+          'year': currentYear,
+          'user_id': userId,
+          'used_at': now.toIso8601String(),
+        });
       }
-
-      // 3. Registro na loja por telefone
       if (phone.isNotEmpty) {
-        batch.set(
-          FirebaseFirestore.instance
-              .collection('shops')
-              .doc(shopId)
-              .collection('birthday_discount_registry')
-              .doc('phone_$phone'),
-          {'year': currentYear, 'used_at': FieldValue.serverTimestamp(), 'userId': userId},
-        );
+        registros.add({
+          'shopId': shopId,
+          'identifier': 'phone_$phone',
+          'year': currentYear,
+          'user_id': userId,
+          'used_at': now.toIso8601String(),
+        });
       }
 
-      await batch.commit();
+      if (registros.isNotEmpty) {
+        await _supabase.from('birthday_discount_registry').upsert(registros);
+      }
     } catch (e) {
       debugPrint('Erro ao registrar uso de desconto de aniversário: $e');
     }
@@ -226,68 +194,51 @@ class ClientVerificationService {
 
   /// Verifica se o mês alvo (ou atual) é o mês de aniversário do cliente.
   static Future<bool> isBirthdayMonth(String userId, {int? targetMonth}) async {
-    debugPrint('🎂 DEBUG isBirthdayMonth Entry: userId=$userId, targetMonth=$targetMonth');
     try {
-      final userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(userId)
-          .get();
-      if (!userDoc.exists) {
-        debugPrint('   - USER DOC NOT FOUND in /users/$userId');
-        return false;
-      }
+      final userDoc = await _supabase
+          .from('users')
+          .select('aniversario, data_nascimento, nascimento, birthDate')
+          .eq('id', userId)
+          .maybeSingle();
+      
+      if (userDoc == null) return false;
 
-      final userData = userDoc.data();
-      final birthData = userData?['aniversario'] ??
-          userData?['data_nascimento'] ??
-          userData?['nascimento'] ??
-          userData?['birthDate'];
+      final birthData = userDoc['aniversario'] ??
+          userDoc['data_nascimento'] ??
+          userDoc['nascimento'] ??
+          userDoc['birthDate'];
 
-      debugPrint('🎂 DEBUG isBirthdayMonth Trace:');
-      debugPrint('   - Raw birthData: $birthData (${birthData.runtimeType})');
-      if (birthData == null) {
-        debugPrint('   - birthData is NULL. Available fields: ${userData?.keys}');
-        return false;
-      }
+      if (birthData == null) return false;
+
       DateTime? birthDate;
-      if (birthData is Timestamp) {
-        birthDate = birthData.toDate();
-      } else if (birthData is String) {
+      if (birthData is String) {
         final cleanData = birthData.trim();
-        // Tenta vários formatos comuns
         try {
-          birthDate = DateFormat('dd/MM/yyyy').parse(cleanData);
-        } catch (_) {
-          try {
-            birthDate = DateFormat('yyyy-MM-dd').parse(cleanData);
-          } catch (_) {
-            try {
-              birthDate = DateTime.parse(cleanData);
-            } catch (_) {
-               // Tenta formato ISO ou outros
-               if (cleanData.contains('/')) {
-                 final parts = cleanData.split('/');
-                 if (parts.length == 3) {
-                   if (parts[0].length == 4) { // yyyy/mm/dd
-                      birthDate = DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
-                   } else if (parts[2].length == 4) { // dd/mm/yyyy
-                      birthDate = DateTime(int.parse(parts[2]), int.parse(parts[1]), int.parse(parts[0]));
-                   }
-                 }
-               }
+          birthDate = DateTime.tryParse(cleanData);
+          if (birthDate == null) {
+            // Tenta formatos comuns se o parse simples falhar
+            if (cleanData.contains('/')) {
+              final parts = cleanData.split('/');
+              if (parts.length == 3) {
+                if (parts[0].length == 4) { // yyyy/mm/dd
+                  birthDate = DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
+                } else if (parts[2].length == 4) { // dd/mm/yyyy
+                  birthDate = DateTime(int.parse(parts[2]), int.parse(parts[1]), int.parse(parts[0]));
+                }
+              }
             }
           }
-        }
+        } catch (_) {}
+      } else if (birthData is DateTime) {
+        birthDate = birthData;
       }
 
-      debugPrint('   - Parsed birthDate: $birthDate');
       if (birthDate == null) return false;
 
       final compareMonth = targetMonth ?? DateTime.now().month;
-      final match = birthDate.month == compareMonth;
-      debugPrint('   - Month comparison: ${birthDate.month} == $compareMonth -> $match');
-      return match;
+      return birthDate.month == compareMonth;
     } catch (e) {
+      debugPrint('Error in isBirthdayMonth: $e');
       return false;
     }
   }
@@ -295,27 +246,25 @@ class ClientVerificationService {
   /// Auxiliar para carregar config da loja
   static Future<Map<String, dynamic>> getShopConfig(String shopId) async {
     try {
-      final shopDoc = await FirebaseFirestore.instance
-          .collection('shops')
-          .doc(shopId)
-          .get();
-      return (shopDoc.data()?['config'] as Map<String, dynamic>?) ?? {};
+      final shopDoc = await _supabase
+          .from('shops')
+          .select('config')
+          .eq('id', shopId)
+          .maybeSingle();
+      return (shopDoc?['config'] as Map<String, dynamic>?) ?? {};
     } catch (e) {
       return {};
     }
   }
 
   /// Verifica se um agendamento pode ser modificado (cancelado ou reagendado)
-  /// baseado na política de cancelamento da loja.
   static Future<Map<String, dynamic>> canModifyAppointment(
-      DocumentSnapshot appointment) async {
+      Map<String, dynamic> appointment) async {
     try {
-      final data = appointment.data() as Map<String, dynamic>;
-      final shopId = data['shopId'] as String;
-      final appointmentDate = (data['data_agendamento'] as Timestamp).toDate();
+      final shopId = (appointment['shop_id'] ?? appointment['shopId']) as String;
+      final appointmentDate = DateTime.parse(appointment['scheduled_at']);
       final now = DateTime.now();
 
-      // Se o agendamento já passou, não pode modificar
       if (appointmentDate.isBefore(now)) {
         return {'can': false, 'reason': 'Este agendamento já passou.'};
       }
@@ -334,7 +283,7 @@ class ClientVerificationService {
 
       return {'can': true};
     } catch (e) {
-      return {'can': true}; // Fallback seguro se der erro na verificação
+      return {'can': true};
     }
   }
 }

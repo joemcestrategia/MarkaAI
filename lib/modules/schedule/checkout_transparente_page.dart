@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:brasil_fields/brasil_fields.dart';
 import 'package:flutter/services.dart';
 
@@ -13,8 +12,8 @@ class CheckoutTransparentePage extends StatefulWidget {
   final String shopId;
   final double valor;
   final String orderId;
-  final DocumentSnapshot serviceDoc;
-  final DocumentSnapshot professionalDoc;
+  final Map<String, dynamic> serviceDoc;
+  final Map<String, dynamic> professionalDoc;
   final DateTime date;
   final TimeOfDay time;
   final bool collectOnly;
@@ -66,11 +65,16 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
   Future<void> _loadConfig() async {
     setState(() => _isLoading = true);
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('shops')
-          .doc(widget.shopId)
-          .get();
-      final data = doc.data() ?? {};
+      final data = await Supabase.instance.client
+          .from('shops')
+          .select()
+          .eq('id', widget.shopId)
+          .maybeSingle();
+
+      if (data == null) {
+        throw Exception('Loja não encontrada.');
+      }
+
       final mp = data['mercadopago'] as Map<String, dynamic>?;
       _publicKey =
           (mp?['public_key'] as String?) ?? (data['mp_public_key'] as String?);
@@ -89,28 +93,29 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
       _valorComTaxa = widget.valor;
 
       _paymentItems.add({
-        'label': 'Reserva na ${data['nome'] ?? 'Loja'}',
+        'label': 'Reserva na ${data['name'] ?? 'Loja'}',
         'amount': _valorComTaxa.toStringAsFixed(2),
       });
 
       // Pre-fill user data
-      final user = FirebaseAuth.instance.currentUser;
+      final user = Supabase.instance.client.auth.currentUser;
       if (user != null) {
-        final userDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .get();
-        final userData = userDoc.data();
+        final userData = await Supabase.instance.client
+            .from('users')
+            .select()
+            .eq('id', user.id)
+            .maybeSingle();
+            
         if (userData != null) {
           _holderNameController.text =
-              userData['nome'] ?? user.displayName ?? '';
-          _cpfController.text = userData['cpf'] ?? userData['documento'] ?? '';
+              userData['name'] ?? user.userMetadata?['full_name'] ?? '';
+          _cpfController.text = userData['document_cpf'] ?? '';
         }
       }
     } catch (e) {
       _showError(e.toString());
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -174,7 +179,7 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
           .replaceAll(' ', '')
           .substring(_cardNumberController.text.replaceAll(' ', '').length - 4);
 
-      final user = FirebaseAuth.instance.currentUser;
+      final user = Supabase.instance.client.auth.currentUser;
 
       Navigator.push(
         context,

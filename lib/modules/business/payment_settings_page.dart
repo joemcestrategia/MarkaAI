@@ -1,5 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:intl/intl.dart';
@@ -51,25 +50,25 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
     if (mounted) _animationController.forward();
   }
 
-  // 🔄 LISTENER EM TEMPO REAL - Atualiza quando há mudanças no Firestore
+  // 🔄 LISTENER EM TEMPO REAL - Atualiza quando há mudanças no Supabase
   void _setupRealtimeListener() {
     Future.delayed(const Duration(seconds: 1), () {
       if (_shopId == null || !mounted) return;
 
-      FirebaseFirestore.instance
-          .collection('shops')
-          .doc(_shopId)
-          .snapshots()
+      Supabase.instance.client
+          .from('shops')
+          .stream(primaryKey: ['id'])
+          .eq('id', _shopId!)
           .listen(
-        (docSnapshot) {
-          if (!mounted) return;
+        (data) {
+          if (!mounted || data.isEmpty) return;
 
-          final data = docSnapshot.data() ?? {};
-          final accessToken =
-              data['mercadopago']?['access_token']?.toString() ??
-                  data['mp_access_token']?.toString() ??
-                  '';
-          final connectedFlag = data['mercadopago']?['connected'];
+          final shopData = data.first;
+          final mpData = shopData['mercadopago'] as Map<String, dynamic>? ?? {};
+          final accessToken = mpData['access_token']?.toString() ??
+              shopData['mp_access_token']?.toString() ??
+              '';
+          final connectedFlag = mpData['connected'];
           final isConnected =
               connectedFlag is bool ? connectedFlag : accessToken.isNotEmpty;
 
@@ -80,11 +79,10 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
             setState(() {
               _isConnected = isConnected;
               if (_isConnected) {
-                final timestamp =
-                    data['mercadopago']?['updated_at'] as Timestamp?;
-                if (timestamp != null) {
-                  _connectedAt =
-                      DateFormat('dd/MM/yyyy HH:mm').format(timestamp.toDate());
+                final updatedAt = mpData['updated_at'];
+                if (updatedAt != null) {
+                  final date = DateTime.parse(updatedAt.toString());
+                  _connectedAt = DateFormat('dd/MM/yyyy HH:mm').format(date);
                 } else {
                   _connectedAt = "Data desconhecida";
                 }
@@ -92,7 +90,7 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
                 // Mostra notificação de sucesso
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('? Conectado com sucesso ao Mercado Pago!'),
+                    content: Text('⚡ Conectado com sucesso ao Mercado Pago!'),
                     backgroundColor: Colors.green,
                     duration: Duration(seconds: 3),
                   ),
@@ -102,7 +100,7 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
           }
         },
         onError: (error) {
-          debugPrint("? Erro no listener realtime: $error");
+          debugPrint("❌ Erro no listener realtime: $error");
         },
       );
     });
@@ -110,17 +108,19 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
 
   Future<void> _checkAuthAndShop() async {
     try {
-      final user = FirebaseAuth.instance.currentUser;
+      final user = Supabase.instance.client.auth.currentUser;
       String? id = await SessionService.getShopId();
 
       if ((id == null || id.isEmpty) && user != null) {
-        debugPrint("?? [Pagamentos] Buscando ID no servidor...");
-        final userDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .get();
-        if (userDoc.exists) {
-          id = userDoc.data()?['shopId'];
+        debugPrint("🔍 [Pagamentos] Buscando ID no servidor...");
+        final userDoc = await Supabase.instance.client
+            .from('users')
+            .select('shop_id')
+            .eq('id', user.id)
+            .maybeSingle();
+
+        if (userDoc != null) {
+          id = userDoc['shop_id'];
           if (id != null) await SessionService.saveShopId(id);
         }
       }
@@ -145,27 +145,28 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
 
       // Additional guard: ensure the current user is the owner of the shop (only owners can configure Mercado Pago)
       try {
-        final userDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .get();
-        final udata = userDoc.exists
-            ? userDoc.data() as Map<String, dynamic>
-            : <String, dynamic>{};
-        final userShopId = udata['shopId'];
-        final userRole = (udata['tipo'] ?? udata['role'] ?? '').toString();
-        // Se não for dono, permite visualizar (sem editar)
-        if (userShopId != _shopId ||
-            !(userRole == 'dono' || userRole == 'business')) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                content: Text(
-                    'Visualização apenas: apenas o dono pode alterar a conexão do Mercado Pago.'),
-                backgroundColor: Colors.orange));
-            _canEdit = false;
+        final userDoc = await Supabase.instance.client
+            .from('users')
+            .select('shop_id, role')
+            .eq('id', user.id)
+            .maybeSingle();
+
+        if (userDoc != null) {
+          final userShopId = userDoc['shop_id'];
+          final userRole = (userDoc['role'] ?? '').toString();
+          // Se não for dono, permite visualizar (sem editar)
+          if (userShopId != _shopId ||
+              !(userRole == 'dono' || userRole == 'business')) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                  content: Text(
+                      'Visualização apenas: apenas o dono pode alterar a conexão do Mercado Pago.'),
+                  backgroundColor: Colors.orange));
+              _canEdit = false;
+            }
+          } else {
+            _canEdit = true;
           }
-        } else {
-          _canEdit = true;
         }
       } catch (e) {
         // If any error occurs, fail silently and allow the page to continue (safety)
@@ -181,23 +182,19 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
     setState(() => _isLoading = true);
 
     try {
-      final docRef =
-          FirebaseFirestore.instance.collection('shops').doc(_shopId);
-      final doc = await docRef.get();
+      final doc = await Supabase.instance.client
+          .from('shops')
+          .select()
+          .eq('id', _shopId!)
+          .maybeSingle();
 
-      if (doc.metadata.isFromCache) {
-        // Cache read
-      } else {
-        debugPrint("💸 [SERVER] Baixando status de pagamento atualizado.");
-      }
+      if (doc == null) return;
 
-      if (!doc.exists) return;
-
-      final data = doc.data() ?? {};
-      final accessToken = data['mercadopago']?['access_token']?.toString() ??
-          data['mp_access_token']?.toString() ??
+      final mpData = doc['mercadopago'] as Map<String, dynamic>? ?? {};
+      final accessToken = mpData['access_token']?.toString() ??
+          doc['mp_access_token']?.toString() ??
           '';
-      final connectedFlag = data['mercadopago']?['connected'];
+      final connectedFlag = mpData['connected'];
       final isConnected =
           connectedFlag is bool ? connectedFlag : accessToken.isNotEmpty;
 
@@ -205,10 +202,10 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
         setState(() {
           _isConnected = isConnected;
           if (_isConnected) {
-            final timestamp = data['mercadopago']?['updated_at'] as Timestamp?;
-            if (timestamp != null) {
-              _connectedAt =
-                  DateFormat('dd/MM/yyyy HH:mm').format(timestamp.toDate());
+            final updatedAt = mpData['updated_at'];
+            if (updatedAt != null) {
+              final date = DateTime.parse(updatedAt.toString());
+              _connectedAt = DateFormat('dd/MM/yyyy HH:mm').format(date);
             } else {
               _connectedAt = "Data desconhecida";
             }
@@ -228,7 +225,7 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
 
     const clientId = '8404269586602737';
     const redirectUri =
-        'https://us-central1-wismart-118c3.cloudfunctions.net/mercadopagoCallback';
+        'https://uhccgcojwqvkfyzrmebv.supabase.co/functions/v1/mercadopagoCallback';
     final state = 'shop-$_shopId-${DateTime.now().millisecondsSinceEpoch}';
 
     final authUrl = Uri.parse(
@@ -341,21 +338,10 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
     setState(() => _isConnecting = true);
 
     try {
-      debugPrint("âœ‚ï¸ [WRITE] Removendo credenciais do Mercado Pago...");
-      await FirebaseFirestore.instance.collection('shops').doc(_shopId).update({
-        'mercadopago.access_token': FieldValue.delete(),
-        'mercadopago.refresh_token': FieldValue.delete(),
-        'mercadopago.user_id': FieldValue.delete(),
-        'mercadopago.public_key': FieldValue.delete(),
-        'mercadopago.connected': false,
-        'mercadopago.updated_at': FieldValue.serverTimestamp(),
-        'mp_access_token': FieldValue.delete(),
-        'mp_public_key': FieldValue.delete(),
-        'mp_refresh_token': FieldValue.delete(),
-        'mp_user_id': FieldValue.delete(),
-        'mp_expiration_date': FieldValue.delete(),
-        'payment_configured': false,
-      });
+      debugPrint("✂️ [WRITE] Removendo credenciais do Mercado Pago...");
+      await Supabase.instance.client.from('shops').update({
+        'mercadopago': null,
+      }).eq('id', _shopId!);
 
       if (mounted) {
         setState(() {

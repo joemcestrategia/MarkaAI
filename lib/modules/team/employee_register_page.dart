@@ -1,16 +1,19 @@
-import 'dart:io';
+import 'package:flutter/foundation.dart';
+import 'dart:io' if (dart.library.html) 'package:flutter_application_1/core/utils/io_stub.dart' as io;
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as sb;
+import 'package:uuid/uuid.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
+import '../../core/services/auth_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
+import '../../core/services/image_service.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 class EmployeeRegisterPage extends StatefulWidget {
-  final DocumentSnapshot? employeeToEdit;
+  final Map<String, dynamic>? employeeToEdit;
   final VoidCallback onClose;
 
   const EmployeeRegisterPage(
@@ -41,7 +44,7 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
   );
 
   // Estado
-  File? _imageFile;
+  io.File? _imageFile;
   String? _existingPhotoUrl;
   String? _shopId;
 
@@ -51,6 +54,7 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
 
   bool _isSaving = false;
   bool _isDeleting = false;
+  double _uploadProgress = 0.0;
 
   @override
   void initState() {
@@ -62,14 +66,15 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
     String? sId = await SessionService.getShopId();
 
     if (sId == null || sId.isEmpty) {
-      final user = FirebaseAuth.instance.currentUser;
+      final user = AuthService().currentUser;
       if (user != null) {
-        final doc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .get();
-        if (doc.exists) {
-          sId = doc.data()?['shopId'];
+        final doc = await sb.Supabase.instance.client
+            .from('users')
+            .select()
+            .eq('id', user.id)
+            .maybeSingle();
+        if (doc != null) {
+          sId = doc['shop_id'];
         }
       }
     }
@@ -79,30 +84,30 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
         _shopId = sId;
 
         if (widget.employeeToEdit != null) {
-          final data = widget.employeeToEdit!.data() as Map<String, dynamic>;
+          final data = widget.employeeToEdit!;
 
-          _nameController.text = data['nome'] ?? "";
+          _nameController.text = data['name'] ?? "";
           _emailController.text = data['email'] ?? "";
           _backupEmailController.text =
               data['backup_email'] ?? ""; // 🆕 Carrega email de backup
-          _phoneController.text = data['telefone'] ?? "";
-          _startWorkController.text = data['horario_inicio'] ?? "08:00";
-          _endWorkController.text = data['horario_fim'] ?? "18:00";
-          _existingPhotoUrl = data['foto_url'];
-          _comissaoController.text = (data['comissao_percent'] != null)
-              ? data['comissao_percent'].toString()
+          _phoneController.text = data['phone'] ?? "";
+          _startWorkController.text = data['start_time'] ?? "08:00";
+          _endWorkController.text = data['end_time'] ?? "18:00";
+          _existingPhotoUrl = data['photo_url'];
+          _comissaoController.text = (data['commission_percent'] != null)
+              ? data['commission_percent'].toString()
               : '0';
-          _cargoController.text = data['cargo'] ?? "";
-          if (data['servicos_habilidade'] != null) {
-            _selectedServices = List<String>.from(data['servicos_habilidade']);
+          _cargoController.text = data['role'] ?? data['position'] ?? "";
+          if (data['service_skills'] != null) {
+            _selectedServices = List<String>.from(data['service_skills']);
           }
 
-          if (data['dias_trabalho'] != null) {
-            _workDays = List<int>.from(data['dias_trabalho']);
+          if (data['work_days'] != null) {
+            _workDays = List<int>.from(data['work_days']);
           }
 
-          if (data['folgas'] != null) {
-            _folgas = List<Map<String, dynamic>>.from(data['folgas']);
+          if (data['breaks'] != null) {
+            _folgas = List<Map<String, dynamic>>.from(data['breaks']);
           }
         }
       });
@@ -111,7 +116,7 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
 
   Future<void> _pickImage() async {
     final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
-    if (picked != null) setState(() => _imageFile = File(picked.path));
+    if (picked != null) setState(() => _imageFile = io.File(picked.path));
   }
 
   Future<void> _showAddFolgaDialog() async {
@@ -168,13 +173,14 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
       if (obs.isNotEmpty) {
         setState(() {
           _folgas.add({
-            'inicio': Timestamp.fromDate(pickedRange.start),
-            'fim': Timestamp.fromDate(
-                pickedRange.end.add(const Duration(hours: 23, minutes: 59))),
-            'obs': obs,
+            'start': pickedRange.start.toIso8601String(),
+            'end': pickedRange.end
+                .add(const Duration(hours: 23, minutes: 59))
+                .toIso8601String(),
+            'notes': obs,
           });
           _folgas.sort((a, b) =>
-              (a['inicio'] as Timestamp).compareTo(b['inicio'] as Timestamp));
+              (a['start'] as String).compareTo(b['start'] as String));
         });
       }
     }
@@ -205,7 +211,11 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
     if (confirm && widget.employeeToEdit != null) {
       setState(() => _isDeleting = true);
       try {
-        await widget.employeeToEdit!.reference.delete();
+        await sb.Supabase.instance.client
+            .from('employees')
+            .delete()
+            .eq('id', widget.employeeToEdit!['id'])
+            .eq('shop_id', _shopId!); // Added this line based on the instruction's intent
         widget.onClose();
       } catch (e) {
         if (mounted) setState(() => _isDeleting = false);
@@ -228,55 +238,62 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
       String? photoUrl = _existingPhotoUrl;
 
       if (_imageFile != null) {
-        final ref = FirebaseStorage.instance
-            .ref()
-            .child('employees/${DateTime.now().millisecondsSinceEpoch}.jpg');
-        await ref.putFile(_imageFile!);
-        photoUrl = await ref.getDownloadURL();
+        setState(() => _uploadProgress = 0.1);
+        photoUrl = await ImageService.uploadProfilePhoto(
+          _imageFile!, 
+          const Uuid().v4(), // Usamos um UUID para o funcionário no bucket profiles
+          onProgress: (p) => setState(() => _uploadProgress = p),
+        );
       }
 
       final employeeData = {
-        'nome': _nameController.text.trim(),
+        'name': _nameController.text.trim(),
         'email': _emailController.text.trim(),
         'backup_email':
             _backupEmailController.text.trim(), // 🆕 Salva email de backup
-        'telefone': _phoneController.text.trim(),
-        'horario_inicio': _startWorkController.text,
-        'horario_fim': _endWorkController.text,
-        'foto_url': photoUrl,
-        'servicos_habilidade': _selectedServices,
-        'dias_trabalho': _workDays,
-        'folgas': _folgas,
-        'shopId': _shopId,
-        'tipo': 'funcionario',
-        'comissao_percent':
+        'phone': _phoneController.text.trim(),
+        'start_time': _startWorkController.text,
+        'end_time': _endWorkController.text,
+        'photo_url': photoUrl,
+        'service_skills': _selectedServices,
+        'work_days': _workDays,
+        'breaks': _folgas,
+        'shop_id': _shopId,
+        'commission_percent':
             double.tryParse(_comissaoController.text.replaceAll(',', '.')) ??
                 0.0,
-        'cargo': _cargoController.text.trim(),
-        'atualizado_em': FieldValue.serverTimestamp(),
+        'role': _cargoController.text.trim(),
+        'updated_at': DateTime.now().toIso8601String(),
       };
 
       if (widget.employeeToEdit == null) {
-        await FirebaseFirestore.instance
-            .collection('employees')
-            .add(employeeData);
+        employeeData['id'] = const Uuid().v4(); // 🆕 Gera ID para evitar erro de null value
+        await sb.Supabase.instance.client
+            .from('employees')
+            .insert(employeeData);
       } else {
-        await widget.employeeToEdit!.reference.update(employeeData);
+        await sb.Supabase.instance.client
+            .from('employees')
+            .update(employeeData)
+            .eq('id', widget.employeeToEdit!['id']);
       }
 
       widget.onClose();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text("Membro salvo com sucesso!"),
+            content: Text("✅ Membro e foto salvos com sucesso!"),
             backgroundColor: Colors.green));
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Erro: $e"), backgroundColor: Colors.red));
+            SnackBar(content: Text("❌ Erro ao salvar: $e"), backgroundColor: Colors.red));
       }
     } finally {
-      if (mounted) setState(() => _isSaving = false);
+      if (mounted) setState(() {
+        _isSaving = false;
+        _uploadProgress = 0.0;
+      });
     }
   }
 
@@ -323,22 +340,41 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
                   children: [
                     // FOTO
                     Center(
-                      child: GestureDetector(
-                        onTap: _pickImage,
-                        child: CircleAvatar(
-                          radius: 45,
-                          backgroundColor: Colors.grey[100],
-                          backgroundImage: _imageFile != null
-                              ? FileImage(_imageFile!)
-                              : (_existingPhotoUrl != null
-                                  ? NetworkImage(_existingPhotoUrl!)
-                                  : null) as ImageProvider?,
-                          child:
-                              (_imageFile == null && _existingPhotoUrl == null)
-                                  ? const Icon(Icons.camera_alt,
-                                      size: 24, color: Colors.grey)
-                                  : null,
-                        ),
+                      child: Column(
+                        children: [
+                          GestureDetector(
+                            onTap: _pickImage,
+                            child: CircleAvatar(
+                              radius: 45,
+                              backgroundColor: Colors.grey[100],
+                              backgroundImage: _imageFile != null
+                                  ? (kIsWeb 
+                                      ? NetworkImage(_imageFile!.path) as ImageProvider
+                                      : FileImage(io.File(_imageFile!.path) as dynamic) as ImageProvider)
+                                  : (_existingPhotoUrl != null
+                                      ? CachedNetworkImageProvider(_existingPhotoUrl!)
+                                      : null) as ImageProvider?,
+                              child:
+                                  (_imageFile == null && _existingPhotoUrl == null)
+                                      ? const Icon(Icons.camera_alt,
+                                          size: 24, color: Colors.grey)
+                                      : null,
+                            ),
+                          ),
+                          if (_uploadProgress > 0 && _uploadProgress < 1.0) ...[
+                            const SizedBox(height: 8),
+                            SizedBox(
+                              width: 100,
+                              child: LinearProgressIndicator(
+                                value: _uploadProgress,
+                                backgroundColor: Colors.grey[200],
+                                valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primaryPurple),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text("${(_uploadProgress * 100).toInt()}%", style: const TextStyle(fontSize: 10)),
+                          ],
+                        ],
                       ),
                     ),
                     const SizedBox(height: 30),
@@ -368,8 +404,10 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
                       icon: Icons.phone_outlined,
                       keyboardType: TextInputType.phone,
                       inputFormatters: [phoneMask],
-                      validator: (v) =>
-                          (v?.length ?? 0) < 14 ? "Telefone inválido" : null,
+                      validator: (v) {
+                        if (v == null || v.trim().isEmpty) return null; // Campo opcional
+                        return v.length < 14 ? "Telefone inválido" : null;
+                      },
                     ),
 
                     const SizedBox(height: 20),
@@ -558,16 +596,16 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
       );
     }
 
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('services')
-          .where('shopId', isEqualTo: _shopId)
-          .orderBy('nome')
-          .snapshots(),
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: sb.Supabase.instance.client
+          .from('services')
+          .stream(primaryKey: ['id'])
+          .eq('shop_id', _shopId!)
+          .order('name'),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const LinearProgressIndicator();
 
-        if (snapshot.data!.docs.isEmpty) {
+        if (snapshot.data!.isEmpty) {
           return Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
@@ -594,10 +632,9 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
           child: Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: snapshot.data!.docs.map((doc) {
-              final data = doc.data() as Map<String, dynamic>;
-              String sId = doc.id;
-              String nome = data['nome'] ?? "Serviço";
+            children: snapshot.data!.map((data) {
+              String sId = data['id'];
+              String nome = data['name'] ?? "Serviço";
               bool isSelected = _selectedServices.contains(sId);
 
               return FilterChip(
@@ -631,12 +668,14 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
     if (_folgas.isEmpty) return const SizedBox();
     return Column(
       children: _folgas.asMap().entries.map((e) {
-        final start = (e.value['inicio'] as Timestamp).toDate();
+        final start = e.value['start'] is String 
+            ? DateTime.parse(e.value['start'])
+            : (e.value['start'] as DateTime);
         return ListTile(
           dense: true,
           contentPadding: EdgeInsets.zero,
           leading: const Icon(Icons.event_busy, color: Colors.red, size: 20),
-          title: Text(e.value['obs'],
+          title: Text(e.value['notes'],
               style:
                   const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
           subtitle: Text(DateFormat('dd/MM/yyyy').format(start),

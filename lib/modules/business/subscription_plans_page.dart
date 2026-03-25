@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 import 'subscription_service.dart';
 import 'trial_service.dart';
+import '../../core/services/session_service.dart';
+import '../../core/services/plan_features_service.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class SubscriptionPlansPage extends StatefulWidget {
   const SubscriptionPlansPage({super.key});
@@ -13,28 +16,51 @@ class SubscriptionPlansPage extends StatefulWidget {
 class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
   SubscriptionPlan _currentPlan = SubscriptionPlan.free;
   bool _isLoading = true;
-  // Estado do trial
   bool _canUseTrial = false;
   bool _trialActive = false;
   int _trialDaysRemaining = 0;
+  String? _shopId;
+
+  // Afiliados
+  final TextEditingController _couponController = TextEditingController();
+  bool _isValidatingCoupon = false;
+  Map<String, dynamic>? _affiliateData;
+  String? _couponError;
 
   @override
   void initState() {
     super.initState();
-    _loadCurrentPlan();
+    _loadShopId();
+  }
+
+  Future<void> _loadShopId() async {
+    final id = await SessionService.getShopId();
+    if (mounted) {
+      setState(() {
+        _shopId = id;
+      });
+      _loadCurrentPlan();
+    }
   }
 
   Future<void> _loadCurrentPlan() async {
-    final plan = await SubscriptionService.getCurrentPlan();
-    final trialStatus = await TrialService.getTrialStatus();
-    if (mounted) {
-      setState(() {
-        _currentPlan = plan;
-        _canUseTrial = trialStatus['canUseTrial'] as bool;
-        _trialActive = trialStatus['trialActive'] as bool;
-        _trialDaysRemaining = trialStatus['daysRemaining'] as int;
-        _isLoading = false;
-      });
+    try {
+      final plan = await SubscriptionService.getCurrentPlan();
+      final trialStatus = await TrialService.getTrialStatus();
+      if (mounted) {
+        setState(() {
+          _currentPlan = plan;
+          _canUseTrial = trialStatus['canUseTrial'] as bool;
+          _trialActive = trialStatus['trialActive'] as bool;
+          _trialDaysRemaining = trialStatus['daysRemaining'] as int;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint("Erro ao carregar o plano atual: $e");
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -53,6 +79,7 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
 
     if (ok) {
       await _loadCurrentPlan();
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('🎉 Trial ativado! Aproveite 3 meses grátis.'),
@@ -70,6 +97,46 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
     }
   }
 
+  Future<void> _validarCupom() async {
+    final code = _couponController.text.trim();
+    if (code.isEmpty) return;
+
+    setState(() {
+      _isValidatingCoupon = true;
+      _couponError = null;
+      _affiliateData = null;
+    });
+
+    try {
+      final response = await Supabase.instance.client.functions.invoke(
+        'validate-coupon',
+        body: {'coupon_code': code, 'store_id': _shopId},
+      );
+
+      if (response.status == 200 && response.data['valid'] == true) {
+        setState(() {
+          _affiliateData = response.data;
+          _isValidatingCoupon = false;
+        });
+        if (mounted) {
+           ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('🎉 Cupom aplicado com sucesso!'), backgroundColor: Colors.green),
+          );
+        }
+      } else {
+        setState(() {
+          _couponError = response.data['message'] ?? 'Cupom inválido';
+          _isValidatingCoupon = false;
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _couponError = 'Erro ao validar cupom';
+        _isValidatingCoupon = false;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -81,143 +148,201 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
         elevation: 0,
       ),
       backgroundColor: const Color(0xFFF4F4F8),
-      body: _isLoading
+      body: _shopId == null
           ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(20),
-              children: [
-                _buildHeader(),
-                // Banner de trial disponível
-                if (_canUseTrial && !_trialActive) _buildTrialBanner(),
-                // Banner de trial ativo
-                if (_trialActive) _buildTrialActiveBanner(),
-                const SizedBox(height: 8),
-                _buildPlanCard(SubscriptionPlan.free,
-                    isCurrent: _currentPlan == SubscriptionPlan.free),
-                _buildPlanCard(SubscriptionPlan.start,
-                    isCurrent: _currentPlan == SubscriptionPlan.start),
-                _buildPlanCard(SubscriptionPlan.plus,
-                    isCurrent: _currentPlan == SubscriptionPlan.plus),
-                _buildPlanCard(SubscriptionPlan.pro,
-                    isCurrent: _currentPlan == SubscriptionPlan.pro),
-                const SizedBox(height: 20),
-                const Center(
-                  child: Text(
-                    "Dúvidas? Entre em contato com o suporte.",
-                    style: TextStyle(color: Colors.grey),
-                  ),
-                ),
-                const SizedBox(height: 40),
-              ],
+          : StreamBuilder<List<Map<String, dynamic>>>(
+              stream: Supabase.instance.client
+                  .from('shops')
+                  .stream(primaryKey: ['id'])
+                  .eq('id', _shopId!),
+              builder: (context, snapshot) {
+                if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+
+                final shopData = snapshot.data!.first;
+                final detection = PlanFeaturesService.detectPlan(shopData);
+                _currentPlan = detection['plan'] as SubscriptionPlan;
+                _trialActive = detection['trial'] as bool;
+                
+                if (_trialActive) {
+                  final sub = shopData['subscription'] as Map<String, dynamic>?;
+                  if (sub != null) {
+                    final endStr = (sub['trial_end_date'] ?? sub['trial_ends_at'])?.toString();
+                    if (endStr != null) {
+                      final end = DateTime.tryParse(endStr);
+                      if (end != null) {
+                        _trialDaysRemaining = end.difference(DateTime.now()).inDays;
+                      }
+                    }
+                  }
+                }
+                
+                _canUseTrial = shopData['subscription']?['trial_used'] != true;
+
+                return ListView(
+                  padding: const EdgeInsets.all(20),
+                  children: [
+                    _buildHeader(),
+                    if (_canUseTrial && !_trialActive) _buildTrialBanner(),
+                    if (_trialActive) _buildTrialActiveBanner(),
+                    const SizedBox(height: 16),
+                    _buildCouponSection(),
+                    const SizedBox(height: 16),
+                    _buildPlanCard(SubscriptionPlan.free,
+                        isCurrent: _currentPlan == SubscriptionPlan.free),
+                    _buildPlanCard(SubscriptionPlan.start,
+                        isCurrent: _currentPlan == SubscriptionPlan.start),
+                    _buildPlanCard(SubscriptionPlan.plus,
+                        isCurrent: _currentPlan == SubscriptionPlan.plus),
+                    _buildPlanCard(SubscriptionPlan.pro,
+                        isCurrent: _currentPlan == SubscriptionPlan.pro),
+                  ],
+                );
+              },
             ),
     );
   }
 
-  Widget _buildHeader() {
-    final planName =
-        SubscriptionService.getPlanDetails(_currentPlan)['name'] as String;
-    String statusLabel = 'Você está no plano $planName';
-    if (_trialActive) {
-      statusLabel =
-          'Testando o plano $planName · $_trialDaysRemaining dias restantes';
-    }
-    return Column(
-      children: [
-        const Text(
-          "Escolha o plano ideal para o seu negócio",
-          textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          "Upgrade a qualquer momento. Cancele quando quiser.",
-          textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 14, color: Colors.grey),
-        ),
-        const SizedBox(height: 16),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: _trialActive
-                  ? [const Color(0xFF0891B2), const Color(0xFF06B6D4)]
-                  : [const Color(0xFF6B21A8), const Color(0xFF9333EA)],
-            ),
-            borderRadius: BorderRadius.circular(30),
-            boxShadow: [
-              BoxShadow(
-                color: (_trialActive
-                        ? const Color(0xFF0891B2)
-                        : const Color(0xFF6B21A8))
-                    .withValues(alpha: 0.3),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
-              ),
-            ],
+  Widget _buildCouponSection() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _affiliateData != null ? Colors.green.shade300 : Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Tem um cupom de indicação?',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
+          const SizedBox(height: 12),
+          Row(
             children: [
-              Icon(
-                _trialActive ? Icons.timer : Icons.workspace_premium,
-                color: Colors.white,
-                size: 18,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                statusLabel,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
+              Expanded(
+                child: TextField(
+                  controller: _couponController,
+                  enabled: _affiliateData == null && !_isValidatingCoupon,
+                  decoration: InputDecoration(
+                    hintText: 'Digite o código',
+                    isDense: true,
+                    errorText: _couponError,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(color: Colors.grey),
+                    ),
+                  ),
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                  textCapitalization: TextCapitalization.characters,
                 ),
               ),
+              const SizedBox(width: 10),
+              _affiliateData != null
+                  ? TextButton.icon(
+                      onPressed: () {
+                        setState(() {
+                          _affiliateData = null;
+                          _couponController.clear();
+                        });
+                      },
+                      icon: const Icon(Icons.close, color: Colors.red),
+                      label: const Text('Remover', style: TextStyle(color: Colors.red)),
+                    )
+                  : ElevatedButton(
+                      onPressed: _isValidatingCoupon ? null : _validarCupom,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryPurple,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      child: _isValidatingCoupon
+                          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          : const Text('Aplicar'),
+                    ),
             ],
           ),
+          if (_affiliateData != null) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.green, size: 16),
+                const SizedBox(width: 6),
+                Text(
+                  'Desconto de ${_affiliateData!['discount_percent']}% aplicado ao primeiro mês!',
+                  style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 12),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return Column(
+      children: [
+        const Icon(Icons.rocket_launch, size: 60, color: AppColors.primaryPurple),
+        const SizedBox(height: 16),
+        const Text(
+          'Eleve o seu negócio',
+          style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900, letterSpacing: -0.5),
         ),
+        const SizedBox(height: 8),
+        Text(
+          'Escolha o plano ideal para a sua marca.',
+          style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+        ),
+        const SizedBox(height: 24),
       ],
     );
   }
 
   Widget _buildTrialBanner() {
     return Container(
-      margin: const EdgeInsets.only(top: 16, bottom: 8),
-      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF0891B2), Color(0xFF06B6D4)],
+        gradient: LinearGradient(
+          colors: [Colors.cyan.shade800, Colors.cyan.shade600],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF0891B2).withValues(alpha: 0.3),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
+              color: Colors.cyan.withValues(alpha: 0.3), blurRadius: 10, offset: const Offset(0, 4))
         ],
       ),
-      child: const Row(
+      child: Column(
         children: [
-          Icon(Icons.star_rounded, color: Colors.white, size: 28),
-          SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '🎁 3 meses grátis disponíveis!',
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15),
+          Row(
+            children: [
+              const Icon(Icons.card_giftcard, color: Colors.white, size: 28),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Presente da Marka!',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18),
+                    ),
+                    Text(
+                      'Ganhe 3 meses de Start, Plus ou Pro inteiramente grátis.',
+                      style: TextStyle(color: Colors.white70, fontSize: 13),
+                    ),
+                  ],
                 ),
-                SizedBox(height: 2),
-                Text(
-                  'Escolha um plano pago abaixo e clique em "Testar Grátis". Apenas 1 trial por conta.',
-                  style: TextStyle(color: Colors.white70, fontSize: 12),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ],
       ),
@@ -226,23 +351,23 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
 
   Widget _buildTrialActiveBanner() {
     return Container(
-      margin: const EdgeInsets.only(top: 16, bottom: 8),
+      margin: const EdgeInsets.only(bottom: 24),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.green.shade50,
-        border: Border.all(color: Colors.green.shade300),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.green.shade200),
       ),
       child: Row(
         children: [
-          Icon(Icons.check_circle, color: Colors.green.shade600, size: 28),
+          const Icon(Icons.auto_awesome, color: Colors.green, size: 24),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Período de teste ativo!',
+                  'Período de Teste Ativo!',
                   style: TextStyle(
                       color: Colors.green.shade800,
                       fontWeight: FontWeight.bold,
@@ -473,7 +598,11 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
                       onPressed: () async {
                         final success =
                             await SubscriptionService.startPurchaseFlow(
-                                context, plan);
+                                context, plan,
+                                affiliateId: _affiliateData?['affiliate_id'],
+                                affiliateCouponCode: _couponController.text,
+                                commissionType: _affiliateData?['commission_type'],
+                            );
                         if (success && mounted) {
                           setState(() => _currentPlan = plan);
                           await _loadCurrentPlan();
@@ -521,7 +650,11 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
                       onPressed: () async {
                         final success =
                             await SubscriptionService.startPurchaseFlow(
-                                context, plan);
+                                context, plan,
+                                affiliateId: _affiliateData?['affiliate_id'],
+                                affiliateCouponCode: _couponController.text,
+                                commissionType: _affiliateData?['commission_type'],
+                            );
                         if (success && mounted) {
                           setState(() => _currentPlan = plan);
                           await _loadCurrentPlan();
@@ -545,7 +678,11 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
                       onPressed: () async {
                         final success =
                             await SubscriptionService.startPurchaseFlow(
-                                context, plan);
+                                context, plan,
+                                affiliateId: _affiliateData?['affiliate_id'],
+                                affiliateCouponCode: _couponController.text,
+                                commissionType: _affiliateData?['commission_type'],
+                            );
                         if (success && mounted) {
                           setState(() => _currentPlan = plan);
                           await _loadCurrentPlan();
@@ -573,19 +710,15 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
     );
   }
 
-  Widget _buildFeatureItem(
-    String text, {
-    required bool isCheck,
-    required Color accentColor,
-  }) {
+  Widget _buildFeatureItem(String text, {required bool isCheck, required Color accentColor}) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.only(bottom: 8),
       child: Row(
         children: [
           Icon(
             isCheck ? Icons.check_circle : Icons.cancel,
-            color: isCheck ? accentColor : Colors.grey[400],
-            size: 20,
+            size: 18,
+            color: isCheck ? accentColor : Colors.grey[300],
           ),
           const SizedBox(width: 10),
           Expanded(

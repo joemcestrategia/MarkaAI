@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
@@ -91,7 +91,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
         MaterialPageRoute(
           builder: (context) => Scaffold(
             appBar: AppBar(
-                title: Text(client['nome']),
+                title: Text(client['name'] ?? 'Cliente'),
                 backgroundColor: AppColors.primaryPurple,
                 foregroundColor: Colors.white,
                 elevation: 0),
@@ -132,13 +132,13 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
     // Se tiver, bloqueia.
 
     // Verificação de limite de plano
-    final snapshot = await FirebaseFirestore.instance
-        .collection('appointments')
-        .where('shopId', isEqualTo: shopId)
-        .get();
+    final response = await sb.Supabase.instance.client
+        .from('appointments')
+        .select('client_id, client_phone')
+        .eq('shop_id', shopId!);
 
     final uniqueClients =
-        snapshot.docs.map((d) => d['clientId'] ?? d['client_phone']).toSet();
+        response.map((d) => d['client_id'] ?? d['client_phone']).toSet();
 
     final canAdd = await SubscriptionService.canAddClient(uniqueClients.length);
 
@@ -229,39 +229,55 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
     }
   }
   
-  // ?? STREAM REATIVO COMBINADO
+  // ✅ STREAM REATIVO COMBINADO
   Stream<Map<String, dynamic>> _buildCombinedStream() {
     if (shopId == null) return const Stream.empty();
 
-    final appointmentsStream = FirebaseFirestore.instance
-        .collection('appointments')
-        .where('shopId', isEqualTo: shopId)
-        .orderBy('data_agendamento', descending: true)
-        .snapshots();
+    final supabase = sb.Supabase.instance.client;
 
-    final clientSettingsStream = FirebaseFirestore.instance
-        .collection('shops')
-        .doc(shopId)
-        .collection('clients')
-        .snapshots();
-        
-    final shopStream = FirebaseFirestore.instance
-        .collection('shops')
-        .doc(shopId)
-        .snapshots();
+    final appointmentsAndUsersStream = supabase
+        .from('appointments')
+        .stream(primaryKey: ['id'])
+        .eq('shop_id', shopId!)
+        .order('scheduled_at', ascending: false)
+        .asyncMap((appointments) async {
+      final clientIds = appointments
+          .map((a) => (a['client_id'] ?? a['clientId'])?.toString())
+          .where((id) => id != null && id.isNotEmpty)
+          .toSet()
+          .toList();
+
+      List<dynamic> users = [];
+      if (clientIds.isNotEmpty) {
+        users = await supabase
+            .from('users')
+            .select('id, name, phone, email, photo_url, created_at')
+            .inFilter('id', clientIds);
+      }
+
+      return {
+        'appointments': appointments,
+        'users': users,
+      };
+    });
+
+    final shopStream = supabase
+        .from('shops')
+        .stream(primaryKey: ['id'])
+        .eq('id', shopId!)
+        .limit(1);
 
     final featuresStream = PlanFeaturesService.streamFeaturesByShopId(shopId!);
 
-    return Rx.combineLatest4(
-      appointmentsStream,
-      clientSettingsStream,
+    return Rx.combineLatest3(
+      appointmentsAndUsersStream,
       shopStream,
       featuresStream,
-      (appointmentsSnap, clientsSnap, shopSnap, features) {
+      (appData, shopList, features) {
         return {
-          'appointments': appointmentsSnap.docs,
-          'clients': clientsSnap.docs,
-          'shop': shopSnap.data() ?? {},
+          'appointments': appData['appointments'],
+          'users': appData['users'],
+          'shop': shopList.isNotEmpty ? shopList.first : {},
           'features': features,
         };
       },
@@ -453,19 +469,19 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                     }
 
                     final data = snapshot.data!;
-                    final appointmentDocs = data['appointments'] as List<QueryDocumentSnapshot>;
-                    final clientSettingsDocs = data['clients'] as List<QueryDocumentSnapshot>;
+                    final appointmentDocs = data['appointments'] as List<Map<String, dynamic>>;
+                    final usersDocs = data['users'] as List<dynamic>;
                     final shopConfig = (data['shop'] as Map?)?['config'] as Map? ?? {};
                     _currentFeatures = data['features'] as PlanFeatures;
 
-                    final Map<String, Map<String, dynamic>> clientSettings = {
-                      for (var doc in clientSettingsDocs)
-                        doc.id: doc.data() as Map<String, dynamic>
+                    final Map<String, Map<String, dynamic>> usersMap = {
+                      for (var doc in usersDocs)
+                        doc['id']: doc as Map<String, dynamic>
                     };
 
                     _cachedData = _processAppointments(
                         appointmentDocs,
-                        clientSettings,
+                        usersMap,
                         shopConfig);
 
                     List<Map<String, dynamic>> targetList =
@@ -475,7 +491,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
 
                     final filteredDocs = targetList.where((client) {
                       // Filtro de Texto
-                      final nome = (client['nome'] ?? "").toString();
+                      final nome = (client['name'] ?? "").toString();
                       final normalizedNome =
                           StringUtils.removeDiacritics(nome)
                               .toLowerCase();
@@ -531,38 +547,45 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
 
   // ... (Mantenha o _processAppointments IGUAL ao anterior, não mudei nada nele) ...
   Map<String, List<Map<String, dynamic>>> _processAppointments(
-      List<QueryDocumentSnapshot> docs,
-      Map<String, Map<String, dynamic>> clientSettings,
+      List<Map<String, dynamic>> docs,
+      Map<String, Map<String, dynamic>> usersMap,
       Map<dynamic, dynamic> shopConfig) {
     Map<String, Map<String, dynamic>> appClientsMap = {};
     Map<String, Map<String, dynamic>> manualClientsMap = {};
 
     for (var doc in docs) {
-      final data = doc.data() as Map<String, dynamic>;
+      final data = doc;
 
-      String nome = data['client_nome'] ??
+      String? userId = data['client_id'] ?? data['clientId'];
+      bool isManual = (userId == null || userId.isEmpty);
+
+      final user = isManual ? null : usersMap[userId];
+
+      String nome = user?['name'] ??
           data['client_name'] ??
+          data['client_nome'] ??
           data['clientName'] ??
           data['cliente_nome'] ??
           "Cliente Desconhecido";
-      String telefone =
-          data['client_phone'] ?? data['telefone'] ?? data['whatsapp'] ?? "";
-      String? userId = data['clientId'];
-
-      bool isManual = (userId == null || userId.isEmpty);
+          
+      String telefone = user?['phone'] ??
+          data['client_phone'] ?? data['phone'] ?? data['telefone'] ?? data['whatsapp'] ?? "";
+          
+      String email = user?['email'] ?? "";
+      String photoUrl = user?['photo_url'] ?? "";
 
       String key;
       if (!isManual) {
-        key = userId;
+        key = userId!;
       } else {
-        key = telefone.isNotEmpty ? telefone : "doc_${doc.id}";
+        key = telefone.isNotEmpty ? telefone : "doc_${doc['id']}";
       }
 
       double valor =
           double.tryParse(data['valor_total']?.toString() ?? "0") ?? 0.0;
       DateTime dataVisita;
       try {
-        dataVisita = (data['data_agendamento'] as Timestamp).toDate();
+        dataVisita = DateTime.parse(data['scheduled_at']);
       } catch (e) {
         dataVisita = DateTime.now();
       }
@@ -574,21 +597,20 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
           'id': key,
           'nome': nome,
           'telefone': telefone.isNotEmpty ? telefone : "Não informado",
-          'foto': null,
+          'foto': photoUrl, // Atualizado para usar avatar de user
           'origem': isManual ? 'manual' : 'app',
           'totalGasto': valor,
           'visitas': 1,
-          'primeiraVisita': dataVisita, // Keep track for avg interval
+          'primeiraVisita': dataVisita,
           'ultimaVisita': dataVisita,
-          'email': "",
-          'birthDate':
-              data['data_nascimento'] ?? data['nascimento'] ?? data['birthDate']
+          'email': email,
+          'created_at': user?['created_at'],
+          'birthDate': data['birth_date'] ?? data['data_nascimento'] ?? data['nascimento'] ?? data['birthDate']
         };
       } else {
         targetMap[key]!['totalGasto'] += valor;
         targetMap[key]!['visitas'] += 1;
 
-        // Update range
         if (dataVisita.isBefore(targetMap[key]!['primeiraVisita'])) {
           targetMap[key]!['primeiraVisita'] = dataVisita;
         }
@@ -597,14 +619,14 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
         }
 
         if (nome != "Cliente Desconhecido") {
-          targetMap[key]!['nome'] = nome;
+          targetMap[key]!['name'] = nome;
         }
       }
     }
 
     final allApps = appClientsMap.values.toList();
 
-    // 2. Add 'Vip', 'Novo', 'Sumido' tags AND Manual Classification Override
+    // 2. Add 'Vip', 'Novo', 'Sumido' tags automatically
     final now = DateTime.now();
 
     // Configurações da loja
@@ -613,9 +635,6 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
     final int sumidoMaxDays = shopConfig['sumido_max_days'] ?? 45;
 
     for (var c in allApps) {
-      final settings = clientSettings[c['id']];
-      
-      // 1. Calcular tag automática
       String? autoTag;
       final int visits = c['visitas'] as int;
       final DateTime lastVisit = c['ultimaVisita'] as DateTime;
@@ -641,30 +660,8 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
         }
       }
 
-      // 2. Classificação Manual tem PRIORIDADE ABSOLUTA
-      String? manualClass = settings?['classification']?.toString().toLowerCase().trim();
-      String finalClassification = manualClass ?? autoTag ?? '';
-      
-      // 3. Mesclar manualTags com a classification
-      List<String> displayTags = [];
-      if (settings?['manualTags'] != null) {
-        // Normaliza tags manuais para lowercase e remove acentos do problematico
-        displayTags = (settings!['manualTags'] as List)
-            .map((t) => StringUtils.removeDiacritics(t.toString().toLowerCase().trim()))
-            .toList();
-      }
-      
-      // Garante que o problematico esteja normalizado na classification também
-      if (finalClassification == 'problemático' || finalClassification == 'problematico') {
-        finalClassification = 'problematico';
-      }
-
-      if (finalClassification.isNotEmpty && !displayTags.contains(finalClassification)) {
-        displayTags.insert(0, finalClassification); // Principal primeiro
-      }
-
-      c['classification'] = finalClassification;
-      c['tags'] = displayTags;
+      c['classification'] = autoTag ?? '';
+      c['tags'] = autoTag != null ? [autoTag] : [];
     }
 
     return {
@@ -777,13 +774,13 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
             context, client, client['id'], isMobile), // <--- AQUI A MÁGICA
         leading: CircleAvatar(
           backgroundColor: themeColor.withValues(alpha: 0.1),
-          child: Text((client['nome'] ?? "?").substring(0, 1).toUpperCase(),
+          child: Text((client['name'] ?? "?").substring(0, 1).toUpperCase(),
               style: TextStyle(color: themeColor, fontWeight: FontWeight.bold)),
         ),
         title: Row(
           children: [
             Expanded(
-              child: Text(client['nome'],
+              child: Text(client['name'],
                   style: const TextStyle(
                       fontWeight: FontWeight.bold, fontSize: 14)),
             ),
@@ -905,9 +902,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
     final todayStr = DateFormat('dd/MM').format(now);
 
     String clientBirthStr = "";
-    if (birth is Timestamp) {
-      clientBirthStr = DateFormat('dd/MM').format(birth.toDate());
-    } else if (birth is String) {
+    if (birth is String) {
       if (birth.contains('/')) {
         clientBirthStr = birth.split('/').take(2).join('/');
       } else if (birth.contains('-')) {

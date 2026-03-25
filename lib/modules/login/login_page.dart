@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:google_sign_in/google_sign_in.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
@@ -11,6 +9,8 @@ import '../business/business_home_page.dart';
 import '../clients/client_home_page.dart';
 import '../auth/forgot_password_page.dart';
 import '../../core/services/session_service.dart';
+import '../../core/services/auth_service.dart';
+import '../../core/utils/date_parsing_utils.dart';
 
 // --- SERVIÇO AUXILIAR (MANTIDO) ---
 class ViaCepService {
@@ -87,7 +87,7 @@ class _LoginPageState extends State<LoginPage>
     super.initState();
     // Verificação inicial de sessão
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final user = FirebaseAuth.instance.currentUser;
+      final user = AuthService().currentUser;
       if (user != null) {
         _routeUser(user);
       }
@@ -111,34 +111,41 @@ class _LoginPageState extends State<LoginPage>
     super.dispose();
   }
 
-  // --- ðŸ›¡ï¸ MOTOR DE ROTEAMENTO (MANTIDO E BLINDADO) ---
-  Future<void> _routeUser(User user) async {
+  // --- motor de roteamento ---
+  Future<void> _routeUser(sb.User user, {bool isNewSignUp = false}) async {
     setState(() => _isLoading = true);
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
+      final supabase = sb.Supabase.instance.client;
+      final doc = await supabase
+          .from('users')
+          .select()
+          .eq('id', user.id)
+          .maybeSingle();
 
       bool needsRegistration = false;
-      Map<String, dynamic>? data;
+      Map<String, dynamic>? data = doc;
 
-      if (!doc.exists) {
+      // Se doc for null e for um registro novo (bypass RLS/delay), usamos o metadado.
+      if (data == null && isNewSignUp && user.userMetadata != null && user.userMetadata!.containsKey('role')) {
+        data = user.userMetadata;
+      }
+
+      if (data == null) {
         needsRegistration = true;
       } else {
-        data = doc.data();
-        // Verifica integridade
-        if (data == null ||
-            !data.containsKey('tipo') ||
-            !data.containsKey('telefone')) {
+        // Verifica integridade (Google Auth ou novos registros)
+        final String? r = data['role']?.toString();
+        final String? p = data['phone']?.toString();
+        
+        if (r == null || r.trim().isEmpty || p == null || p.trim().isEmpty) {
           needsRegistration = true;
         }
       }
 
       if (needsRegistration) {
         if (mounted) {
-          // Auto-preenchimento vindo do Provider (Google)
-          _nameCtrl.text = user.displayName ?? _nameCtrl.text;
+          // Auto-preenchimento vindo do Provider (Google/Auth)
+          _nameCtrl.text = user.userMetadata?['name']?.toString() ?? user.userMetadata?['full_name']?.toString() ?? _nameCtrl.text;
           _emailCtrl.text = user.email ?? _emailCtrl.text;
 
           setState(() {
@@ -158,13 +165,14 @@ class _LoginPageState extends State<LoginPage>
         return;
       }
 
-      String tipo = data?['tipo']?.toString() ?? 'cliente';
+      String tipo = data?['role']?.toString() ?? 'cliente';
 
       // Salva na sessão local
       await SessionService.saveLogin(
-        userId: user.uid,
+        userId: user.id,
         userType: tipo,
-        shopId: tipo == 'dono' || tipo == 'business' ? user.uid : null,
+        // Usar shop_id do banco se existir (para IDs do Firebase), senão usar o novo userId
+        shopId: (tipo == 'dono' || tipo == 'business') ? (data?['shop_id']?.toString() ?? user.id) : null,
       );
 
       // Roteamento Sucesso
@@ -204,7 +212,7 @@ class _LoginPageState extends State<LoginPage>
     }
   }
 
-  // --- LÃ“GICA DE CEP ---
+  // --- LÓGICA DE CEP ---
   Future<void> _handleCepSearch(String value) async {
     if (value.length == 9) {
       setState(() => _isLoading = true);
@@ -314,86 +322,93 @@ class _LoginPageState extends State<LoginPage>
     setState(() => _isLoading = true);
 
     try {
-      User? user = FirebaseAuth.instance.currentUser;
+      final authService = AuthService();
+      sb.User? user = authService.currentUser;
+
+      String cidade = _cidadeCtrl.text;
+      String estado = '';
+      if (cidade.contains(" - ")) {
+        final parts = cidade.split(" - ");
+        cidade = parts[0].trim();
+        if (parts.length > 1) estado = parts[1].trim();
+      }
 
       // Se não veio do Google, cria conta
       if (user == null) {
-        UserCredential res = await FirebaseAuth.instance
-            .createUserWithEmailAndPassword(
-                email: _emailCtrl.text.trim(), password: _passCtrl.text.trim());
+        final res = await authService.signUp(
+          email: _emailCtrl.text.trim(), 
+          password: _passCtrl.text.trim(),
+          name: _nameCtrl.text.trim(),
+          role: _selectedRole ?? 'cliente',
+          businessName: _bizCtrl.text.trim(), // Adicionado
+          phone: _phoneCtrl.text.replaceAll(RegExp(r'\D'), ''),
+          zipCode: _cepCtrl.text,
+          street: _ruaCtrl.text,
+          neighborhood: _bairroCtrl.text,
+          city: cidade,
+          state: estado,
+          number: _numCtrl.text,
+          birthDate: _selectedRole == 'cliente' ? DateParsingUtils.toIso8601(_birthCtrl.text) : null,
+        );
         user = res.user;
       }
 
-      // Null check explícito para evitar crash
+      // Null check explícito para evitar crash caso signUp falhe silenciosamente
       if (user == null) {
         _showError("Falha ao criar a conta. Tente novamente.");
         setState(() => _isLoading = false);
         return;
       }
 
-      // Salva dados no Firestore
-      final uid = user.uid;
-      Map<String, dynamic> data = {
-        'uid': uid,
-        'nome': _nameCtrl.text.trim(),
+      final uid = user.id;
+      final supabase = sb.Supabase.instance.client;
+      
+      // GARANTIA: Atualiza a public.users explicitamente para todos os fluxos.
+      // Isso sobrepõe casos onde o Trigger do Supabase não copiou o 'role' ou 'phone' completo dos Metadados.
+      Map<String, dynamic> updateData = {
+        'id': uid, // Garantia de PK para o upsert
+        'name': _nameCtrl.text.trim(),
         'email': _emailCtrl.text.trim(),
-        'telefone': _phoneCtrl.text.replaceAll(RegExp(r'\D'), ''),
-        'tipo': _selectedRole,
+        'phone': _phoneCtrl.text.replaceAll(RegExp(r'\D'), ''),
+        'role': _selectedRole,
         'verified': true,
-        // Campos raiz para facilitar queries
-        'bairro': _bairroCtrl.text,
-        'cidade': _cidadeCtrl.text,
-        'criado_em': FieldValue.serverTimestamp(),
-        'endereco': {
-          'cep': _cepCtrl.text,
-          'rua': _ruaCtrl.text,
-          'bairro': _bairroCtrl.text,
-          'cidade': _cidadeCtrl.text,
-          'numero': _numCtrl.text
-        }
+        'neighborhood': _bairroCtrl.text,
+        'city': cidade,
+        'state': estado,
+        'zip_code': _cepCtrl.text,
+        'street': _ruaCtrl.text,
+        'number': _numCtrl.text,
       };
 
       if (_selectedRole == 'cliente') {
-        data['aniversario'] = _birthCtrl.text;
-      } else {
-        data['nome_negocio'] = _bizCtrl.text;
-        data['shopId'] = uid;
+        updateData['birth_date'] = DateParsingUtils.toIso8601(_birthCtrl.text);
       }
 
-      await FirebaseFirestore.instance.collection('users').doc(uid).set(data);
+      await supabase.from('users').upsert(updateData);
 
-      // Se for dono, replica dados essenciais para o documento da loja
-      if (_selectedRole != 'cliente') {
-        Map<String, dynamic> shopData = {
-          'uid': uid,
-          'nome': _bizCtrl.text.trim(), // Nome do negócio
-          'dono_nome': _nameCtrl.text.trim(),
-          'email': _emailCtrl.text.trim(),
-          'telefone': _phoneCtrl.text.replaceAll(RegExp(r'\D'), ''),
-          'cep': _cepCtrl.text,
-          'rua': _ruaCtrl.text,
-          'bairro': _bairroCtrl.text,
-          'cidade': _cidadeCtrl.text,
-          'numero': _numCtrl.text,
-          'endereco': '${_ruaCtrl.text}, ${_numCtrl.text} - ${_bairroCtrl.text}',
-          'criado_em': FieldValue.serverTimestamp(),
-          'tipo': 'business',
-          'verified': true,
-          // Garante plano inicial free se não tiver nada
-          'subscription': {
-            'plan_id': 'free',
-            'status': 'active',
-          }
+      if (_selectedRole == 'dono') {
+        final shopData = {
+          'id': uid,
+          'name': _bizCtrl.text.trim(),
+          'phone': _phoneCtrl.text.replaceAll(RegExp(r'\D'), ''),
+          'city': cidade,
+          'state': estado,
+          'zip_code': _cepCtrl.text,
+          'address': '${_ruaCtrl.text.trim()}, ${_numCtrl.text.trim()}',
+          'neighborhood': _bairroCtrl.text.trim(),
+          'owner_id': uid,
+          'verified': false,
+          'plan_id': 'free',
         };
-        await FirebaseFirestore.instance.collection('shops').doc(uid).set(shopData, SetOptions(merge: true));
+
+        await supabase.from('shops').upsert(shopData);
+        await supabase.from('users').update({'shop_id': uid}).eq('id', uid);
       }
 
-      await _routeUser(user);
-    } on FirebaseAuthException catch (e) {
-      _handleFirebaseError(e);
-    } catch (e, st) {
-      debugPrint('[SIGNUP-ERR] ${e.runtimeType}: $e\n$st');
-      _showError('[${e.runtimeType}] ${e.toString()}');
+      await _routeUser(user, isNewSignUp: true);
+    } catch (e) {
+      debugPrint('[SIGNUP-ERR] ${e.runtimeType}: $e');
+      _handleAuthError(e);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -402,91 +417,28 @@ class _LoginPageState extends State<LoginPage>
   Future<void> _handleGoogle() async {
     setState(() => _isLoading = true);
     try {
-      final GoogleSignInAccount? gUser = await GoogleSignIn().signIn();
-      if (gUser == null) {
-        setState(() => _isLoading = false);
-        return;
-      }
-
-      final GoogleSignInAuthentication gAuth = await gUser.authentication;
-      final AuthCredential credential = GoogleAuthProvider.credential(
-          accessToken: gAuth.accessToken, idToken: gAuth.idToken);
-
-      final UserCredential uCred =
-          await FirebaseAuth.instance.signInWithCredential(credential);
-      // Check if user document exists and is complete; if not, force registration flow
-      final doc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(uCred.user!.uid)
-          .get();
-      bool needsRegistration = false;
-      if (!doc.exists) {
-        needsRegistration = true;
-      } else {
-        final data = doc.data();
-        if (data == null ||
-            !data.containsKey('tipo') ||
-            !data.containsKey('telefone')) {
-          needsRegistration = true;
-        }
-      }
-      if (needsRegistration) {
-        if (mounted) {
-          // Reuse the built registration flow instead of showing a separate modal.
-          _nameCtrl.text = uCred.user?.displayName ?? _nameCtrl.text;
-          _emailCtrl.text = uCred.user?.email ?? _emailCtrl.text;
-          setState(() {
-            _isRegistering = true;
-            _currentStep = 1; // start at role selection
-            _isLoading = false;
-          });
-        }
-        return;
-      }
-      await _routeUser(uCred.user!);
-    } on FirebaseAuthException catch (e) {
-      debugPrint('[GOOGLE-AUTH-ERR] code=${e.code} msg=${e.message}');
-      String msg = 'Erro Google Sign-In (${e.code})';
-      if (e.code == 'account-exists-with-different-credential') {
-        msg = 'Este e-mail já está cadastrado com outro método de login.';
-      } else if (e.code == 'network-request-failed') {
-        msg = 'Sem conexão com a internet. Verifique sua rede.';
-      } else if (e.code == 'sign_in_canceled') {
-        if (mounted) setState(() => _isLoading = false);
-        return; // usuário cancelou - sem mensagem de erro
-      } else if (e.message != null) {
-        msg = e.message!;
-      }
-      _showError(msg);
-      if (mounted) setState(() => _isLoading = false);
+      // Usar fluxo de OAuth nativo do Supabase (Mais estável no Web)
+      await AuthService().signInWithGoogleOAuth();
+      // O Supabase irá redirecionar o usuário.
     } catch (e) {
-      debugPrint('[GOOGLE-AUTH-ERR] ${e.runtimeType}: $e');
-      String msg = 'Não foi possível conectar com Google.';
-      // Tenta extrair código de erro do Google Sign-In
-      if (e.toString().contains('sign_in_failed')) {
-        msg = 'Login cancelado ou falhou. Verifique sua conta Google.';
-      } else if (e.toString().contains('network_error')) {
-        msg = 'Erro de rede. Verifique sua conexão.';
-      } else if (e.toString().contains('ApiException')) {
-        final match = RegExp(r'status=(\d+)').firstMatch(e.toString());
-        final code = match?.group(1) ?? '?';
-        msg = 'Erro Google API (código $code). Tente novamente.';
-      }
-      _showError(msg);
+      debugPrint('[GOOGLE-AUTH-ERR] $e');
+      _handleAuthError(e);
+    } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  void _handleFirebaseError(FirebaseAuthException e) {
+  void _handleAuthError(dynamic e) {
     String msg = "Erro na autenticação";
-    if (e.code == 'user-not-found') {
-      msg = "E-mail não cadastrado.";
-    } else if (e.code == 'wrong-password') {
-      msg = "Senha incorreta.";
-    } else if (e.code == 'email-already-in-use') {
-      msg = "Este e-mail já está em uso.";
-    } else if (e.code == 'weak-password') {
-      msg = "A senha deve ter pelo menos 6 caracteres.";
+    if (e is sb.AuthException) {
+      msg = e.message;
+      if (msg.contains('Invalid login credentials')) {
+        msg = "E-mail ou senha incorretos.";
+      } else if (msg.contains('User already registered')) {
+        msg = "Este e-mail já está em uso.";
+      }
+    } else {
+      msg = e.toString();
     }
     _showError(msg);
   }
@@ -709,26 +661,52 @@ class _LoginPageState extends State<LoginPage>
     setState(() => _isLoading = true);
 
     try {
-      UserCredential res = await FirebaseAuth.instance
-          .signInWithEmailAndPassword(
-              email: _emailCtrl.text.trim(), password: _passCtrl.text.trim());
-      await _routeUser(res.user!);
-    } on FirebaseAuthException catch (e) {
-      // If user not found, switch to the existing registration flow (no extra modal)
-      if (e.code == 'user-not-found') {
-        setState(() {
-          _isRegistering = true;
-          _currentStep = 1; // show role selection step
-          _emailCtrl.text = _emailCtrl.text.trim();
-          _isLoading = false;
-        });
-      } else {
-        _handleFirebaseError(e);
-        setState(() => _isLoading = false);
+      final supabase = sb.Supabase.instance.client;
+      final email = _emailCtrl.text.trim();
+      
+      // 1. Consultar se o e-mail existe na base (tabela users)
+      final doc = await supabase
+          .from('users')
+          .select('email')
+          .eq('email', email)
+          .maybeSingle();
+
+      if (doc == null) {
+        // E-mail NÃO encontrado -> redirecionar para tela de cadastro
+        if (mounted) {
+          setState(() {
+            _isRegistering = true;
+            _currentStep = 1; // Passo de seleção de perfil
+            _isLoading = false;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("E-mail não encontrado. Crie sua conta para continuar!"),
+              backgroundColor: AppColors.primaryPurple,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+
+      // E-mail ENCONTRADO -> tentar login
+      final authService = AuthService();
+      final res = await authService.signIn(
+          email: email, 
+          password: _passCtrl.text.trim()
+      );
+      if (res.user != null) {
+        await _routeUser(res.user!);
       }
     } catch (e) {
-      _showError("Erro ao fazer login.");
-      setState(() => _isLoading = false);
+      if (e.toString().contains('Invalid login credentials') || e.toString().contains('incorrect')) {
+         _showError("Senha incorreta.");
+         if (mounted) setState(() => _isLoading = false);
+      } else {
+        _handleAuthError(e);
+        if (mounted) setState(() => _isLoading = false);
+      }
     }
   }
 

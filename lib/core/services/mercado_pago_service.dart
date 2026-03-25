@@ -1,55 +1,50 @@
-﻿import 'package:cloud_functions/cloud_functions.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 
 class MercadoPagoService {
-  // Singleton do Firebase Functions
-  static final FirebaseFunctions _functions = FirebaseFunctions.instance;
+  static final _supabase = Supabase.instance.client;
 
   // ===========================================================================
-  // 1. GERAR PIX (Via Cloud Functions)
+  // 1. GERAR PIX (Via Supabase Functions)
   // ===========================================================================
   static Future<Map<String, dynamic>> gerarPix({
     required String shopId,
     required double amount,
     required String emailCliente,
     required String description,
+    String? externalReference,
   }) async {
     try {
-      debugPrint("â˜ï¸ [Service] Chamando Cloud Function: createPixPayment");
+      debugPrint("⚡ [Service] Chamando Supabase Function: create-pix-payment");
 
-      final result = await _functions.httpsCallable('createPixPayment').call({
-        'shopId': shopId, // Token lido no backend; nunca enviado pelo client
+      final response = await _supabase.functions.invoke('create-pix-payment', body: {
+        'shop_id': shopId,
         'amount': amount,
         'email': emailCliente,
         'description': description,
+        'external_reference': externalReference,
       });
 
-      return Map<String, dynamic>.from(result.data);
-    } on FirebaseFunctionsException catch (e) {
-      debugPrint("âŒ Erro na Cloud Function: ${e.code} - ${e.message}");
-      debugPrint("âŒ Detalhes: ${e.details}");
+      if (response.status != 200) {
+        throw Exception(response.data['message'] ?? 'Erro no servidor de pagamento.');
+      }
+
+      return Map<String, dynamic>.from(response.data);
+    } on FunctionException catch (e) {
+      debugPrint("❌ Erro na Supabase Function: ${e.status} - ${e.details}");
       // Detect specific backend error for collector not enabled for PIX QR
-      final detailsStr = (e.details ?? '').toString().toLowerCase();
-      final messageStr = (e.message ?? '').toString().toLowerCase();
-      if (messageStr.contains('collector_not_enabled_for_qr') ||
-          detailsStr.contains('collector_not_enabled_for_qr') ||
-          (detailsStr.contains('collector user') &&
-              detailsStr.contains('qr'))) {
+      final messageStr = (e.details ?? e.toString()).toLowerCase();
+      if (messageStr.contains('collector_not_enabled_for_qr')) {
         throw Exception('collector_not_enabled_for_qr');
       }
-      if (messageStr.contains('collector_no_pix_keys') ||
-          detailsStr.contains('collector_no_pix_keys') ||
-          detailsStr.contains('pix key') ||
-          detailsStr.contains('chave pix') ||
-          detailsStr.contains('chaves pix') ||
-          detailsStr.contains('collector without pix')) {
+      if (messageStr.contains('collector_no_pix_keys')) {
         throw Exception('collector_no_pix_keys');
       }
-      throw Exception(e.message ?? "Erro ao processar PIX no servidor.");
+      throw Exception(e.details?.toString() ?? "Erro ao processar PIX no servidor.");
     } catch (e) {
-      debugPrint("âŒ Erro local: $e");
+      debugPrint("❌ Erro local: $e");
       rethrow;
     }
   }
@@ -62,15 +57,17 @@ class MercadoPagoService {
     required String paymentId,
   }) async {
     try {
-      final result = await _functions.httpsCallable('getPaymentStatus').call({
-        'shopId': shopId, // Usado no backend para buscar o access_token
-        'paymentId': paymentId,
+      final response = await _supabase.functions.invoke('get-payment-status', body: {
+        'shop_id': shopId,
+        'payment_id': paymentId,
       });
 
-      final data = Map<String, dynamic>.from(result.data);
+      if (response.status != 200) return 'unknown';
+
+      final data = Map<String, dynamic>.from(response.data);
       return data['status']?.toString() ?? 'pending';
     } catch (e) {
-      debugPrint("âš ï¸ Erro ao verificar status: $e");
+      debugPrint("⚠️ Erro ao verificar status: $e");
       return 'unknown';
     }
   }
@@ -91,54 +88,56 @@ class MercadoPagoService {
     required String description,
   }) async {
     try {
-      debugPrint("â˜ï¸ [Service] Chamando Cloud Function: cobrarCartao");
+      debugPrint("⚡ [Service] Chamando Supabase Function: cobrar-cartao");
 
-      final result = await _functions.httpsCallable('cobrarCartao').call({
-        'accessToken': accessToken,
-        'cardNumber': cardNumber,
-        'cardHolder': cardHolder,
-        'expirationMonth': expirationMonth,
-        'expirationYear': expirationYear,
-        'securityCode': securityCode,
+      final response = await _supabase.functions.invoke('cobrar-cartao', body: {
+        'access_token': accessToken,
+        'card_number': cardNumber,
+        'card_holder': cardHolder,
+        'expiration_month': expirationMonth,
+        'expiration_year': expirationYear,
+        'security_code': securityCode,
         'amount': amount,
         'installments': installments,
-        'emailCliente': emailCliente,
+        'email_cliente': emailCliente,
         'description': description,
       });
 
-      return Map<String, dynamic>.from(result.data);
-    } on FirebaseFunctionsException catch (e) {
-      debugPrint("âŒ Erro Cartão: ${e.message}");
-      throw Exception(e.message);
+      if (response.status != 200) {
+        throw Exception(response.data['message'] ?? 'Erro ao processar cartão.');
+      }
+
+      return Map<String, dynamic>.from(response.data);
     } catch (e) {
+      debugPrint("❌ Erro Cartão: $e");
       rethrow;
     }
   }
 
-  // 8. BUSCAR PARCELAS
+  // 4. BUSCAR PARCELAS
   static Future<List<Map<String, dynamic>>> buscarParcelas({
     required String accessToken,
     required double amount,
     required String bin, // 6 primeiros dígitos
   }) async {
     try {
-      final result = await _functions.httpsCallable('getInstallments').call({
-        'accessToken': accessToken,
+      final response = await _supabase.functions.invoke('get-installments', body: {
+        'access_token': accessToken,
         'amount': amount,
         'bin': bin,
       });
 
-      if (result.data == null) return [];
+      if (response.data == null) return [];
 
-      return List<Map<String, dynamic>>.from(result.data);
+      return List<Map<String, dynamic>>.from(response.data);
     } catch (e) {
-      debugPrint("âš ï¸ Erro ao buscar parcelas: $e");
+      debugPrint("⚠️ Erro ao buscar parcelas: $e");
       return [];
     }
   }
 
   // ===========================================================================
-  // 4. COBRAR CARTÃO SALVO
+  // 5. COBRAR CARTÃO SALVO
   static Future<Map<String, dynamic>> cobrarCartaoSalvo({
     required String accessToken,
     required String customerId,
@@ -147,31 +146,80 @@ class MercadoPagoService {
     required int installments,
     required String emailCliente,
     required String description,
-    required String securityCode, // ðŸ”¥ ADICIONADO: Agora aceita o CVV
+    required String securityCode,
   }) async {
     try {
-      debugPrint("â˜ï¸ Chamando Cloud Function: cobrarCartaoSalvo");
+      debugPrint("⚡ Chamando Supabase Function: cobrar-cartao-salvo");
 
-      final result = await _functions.httpsCallable('cobrarCartaoSalvo').call({
-        'accessToken': accessToken,
-        'customerId': customerId,
-        'cardId': cardId,
+      final response = await _supabase.functions.invoke('cobrar-cartao-salvo', body: {
+        'access_token': accessToken,
+        'customer_id': customerId,
+        'card_id': cardId,
         'amount': amount,
         'installments': installments,
-        'email': emailCliente,
+        'email_cliente': emailCliente,
         'description': description,
-        'securityCode': securityCode, // ðŸ”¥ ENVIA O CVV PRO BACKEND
+        'security_code': securityCode,
       });
 
-      return Map<String, dynamic>.from(result.data);
+      if (response.status != 200) {
+        throw Exception(response.data['message'] ?? 'Erro ao processar cartão salvo.');
+      }
+
+      return Map<String, dynamic>.from(response.data);
     } catch (e) {
-      debugPrint("âŒ Erro Cartão Salvo: $e");
+      debugPrint("❌ Erro Cartão Salvo: $e");
       rethrow;
     }
   }
 
   // ===========================================================================
-  // 5. NATIVO: GERAR CARD TOKEN (DIRETO API MP)
+  // 6. CRIAR PAGAMENTO COM CARTÃO (Via Supabase Functions)
+  // ===========================================================================
+  static Future<Map<String, dynamic>> criarPagamentoCartao({
+    required String shopId,
+    required String cardToken,
+    required double amount,
+    required int installments,
+    required String email,
+    required String description,
+    required String cpf,
+    String? paymentMethodId,
+    String? issuerId,
+  }) async {
+    try {
+      debugPrint("⚡ [Service] Chamando Supabase Function: criar-pagamento");
+
+      final response = await _supabase.functions.invoke('criar-pagamento', body: {
+        'shop_id': shopId,
+        'card_token': cardToken,
+        'amount': amount,
+        'installments': installments,
+        'email': email,
+        'payer_email': email,
+        'description': description,
+        'cpf': cpf,
+        'payer_cpf': cpf,
+        'payment_method_id': paymentMethodId,
+        'issuer_id': issuerId,
+      });
+
+      if (response.status != 200) {
+        throw Exception(response.data['message'] ?? 'Erro ao processar pagamento com cartão.');
+      }
+
+      return Map<String, dynamic>.from(response.data);
+    } on FunctionException catch (e) {
+      debugPrint("❌ Erro na Supabase Function: ${e.status} - ${e.details}");
+      throw Exception(e.details?.toString() ?? "Erro ao processar pagamento no servidor.");
+    } catch (e) {
+      debugPrint("❌ Erro Pagamento Cartão: $e");
+      rethrow;
+    }
+  }
+
+  // ===========================================================================
+  // 7. NATIVO: GERAR CARD TOKEN (DIRETO API MP)
   // ===========================================================================
   static Future<Map<String, dynamic>> getCardToken({
     required String publicKey,
@@ -219,7 +267,7 @@ class MercadoPagoService {
   }
 
   // ===========================================================================
-  // 6. NATIVO: BUSCAR PARCELAS POR BIN (DIRETO API MP)
+  // 7. NATIVO: BUSCAR PARCELAS POR BIN (DIRETO API MP)
   // ===========================================================================
   static Future<List<dynamic>> getInstallmentsWithBin({
     required String publicKey,
@@ -246,7 +294,7 @@ class MercadoPagoService {
   }
 
   // ===========================================================================
-  // 7. NATIVO: IDENTIFICAR MÉTODO DE PAGAMENTO (BANDEIRA)
+  // 8. NATIVO: IDENTIFICAR MÉTODO DE PAGAMENTO (BANDEIRA)
   // ===========================================================================
   static Future<String?> getPaymentMethodId({
     required String publicKey,

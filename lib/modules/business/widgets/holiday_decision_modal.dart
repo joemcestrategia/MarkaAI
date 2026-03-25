@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_colors.dart';
 
@@ -31,7 +30,7 @@ class _HolidayDecisionModalState extends State<HolidayDecisionModal> {
   void initState() {
     super.initState();
     final iso = widget.date.toIso8601String().split('T')[0];
-    final configurados = widget.shopData['feriados_configurados'] ?? {};
+    final configurados = widget.shopData['configured_holidays'] ?? {};
     
     if (configurados.containsKey(iso)) {
       final config = configurados[iso];
@@ -44,9 +43,8 @@ class _HolidayDecisionModalState extends State<HolidayDecisionModal> {
         _selectedEmployeeIds = List<String>.from(config['escala']);
       }
     } else {
-      // NOVO: Sugerir 'fechado' se bloqueio automático estiver ativo e for feriado pendente
-      final pendentes = widget.shopData['feriados_pendentes'] ?? [];
-      final autoBlock = widget.shopData['config']?['bloquear_feriados_auto'] ?? false;
+      final pendentes = widget.shopData['pending_holidays'] ?? [];
+      final autoBlock = widget.shopData['config']?['auto_block_holidays'] ?? false;
       if (autoBlock && pendentes.contains(iso)) {
         _decision = 'fechado';
       }
@@ -57,7 +55,7 @@ class _HolidayDecisionModalState extends State<HolidayDecisionModal> {
     setState(() => _isLoading = true);
     try {
       final iso = widget.date.toIso8601String().split('T')[0];
-      final callable = FirebaseFunctions.instance.httpsCallable('salvarDecisaoFeriado');
+      final supabase = Supabase.instance.client;
       
       dynamic decisaoPayload;
       if (_decision == 'escala') {
@@ -66,11 +64,12 @@ class _HolidayDecisionModalState extends State<HolidayDecisionModal> {
         decisaoPayload = _decision;
       }
 
-      await callable.call({
-        'shopId': widget.shopId,
-        'data': iso,
-        'decisao': decisaoPayload,
-      });
+      // No Supabase, atualizamos o json b configured_holidays na tabela shops
+      final res = await supabase.from('shops').select('configured_holidays').eq('id', widget.shopId).single();
+      Map<String, dynamic> currentConfig = Map<String, dynamic>.from(res['configured_holidays'] ?? {});
+      currentConfig[iso] = decisaoPayload;
+
+      await supabase.from('shops').update({'configured_holidays': currentConfig}).eq('id', widget.shopId);
 
       if (mounted) {
         Navigator.pop(context);
@@ -113,9 +112,7 @@ class _HolidayDecisionModalState extends State<HolidayDecisionModal> {
             ),
             const SizedBox(height: 20),
             Text(
-              widget.holidayName != null
-                  ? "O que faremos no feriado:"
-                  : "O que faremos em:",
+              widget.holidayName != null ? "O que faremos no feriado:" : "O que faremos em:",
               style: TextStyle(fontSize: 14, color: Colors.grey[600]),
             ),
             if (widget.holidayName != null)
@@ -132,7 +129,6 @@ class _HolidayDecisionModalState extends State<HolidayDecisionModal> {
               ),
             ),
             const SizedBox(height: 24),
-            
             _buildOption(
               value: 'fechado',
               title: "Fechado",
@@ -147,9 +143,7 @@ class _HolidayDecisionModalState extends State<HolidayDecisionModal> {
               icon: Icons.people_outline,
               color: Colors.orange,
             ),
-            
             if (_decision == 'escala') _buildEmployeeSelector(),
-            
             _buildOption(
               value: 'sem_impacto',
               title: "Funcionamento Normal",
@@ -157,7 +151,6 @@ class _HolidayDecisionModalState extends State<HolidayDecisionModal> {
               icon: Icons.check_circle_outline,
               color: Colors.green,
             ),
-            
             const SizedBox(height: 32),
             SizedBox(
               width: double.infinity,
@@ -225,33 +218,24 @@ class _HolidayDecisionModalState extends State<HolidayDecisionModal> {
     return Container(
       margin: const EdgeInsets.only(bottom: 12, left: 16, right: 16),
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.grey[50],
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('employees')
-            .where('shopId', isEqualTo: widget.shopId)
-            .snapshots(),
+      decoration: BoxDecoration(color: Colors.grey[50], borderRadius: BorderRadius.circular(8)),
+      child: StreamBuilder<List<Map<String, dynamic>>>(
+        stream: Supabase.instance.client.from('employees').stream(primaryKey: ['id']).eq('shop_id', widget.shopId),
         builder: (context, snapshot) {
           if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-          
-          final employees = snapshot.data!.docs;
+          final employees = snapshot.data!;
           if (employees.isEmpty) return const Text("Nenhum profissional cadastrado.");
-          
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text("Quem trabalhará?", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
               const SizedBox(height: 8),
               ...employees.map((emp) {
-                final data = emp.data() as Map<String, dynamic>;
-                final id = emp.id;
+                final id = emp['id'].toString();
+                final name = emp['name'] ?? emp['nome'] ?? "Sem nome";
                 final isSelected = _selectedEmployeeIds.contains(id);
-                
                 return CheckboxListTile(
-                  title: Text(data['nome'] ?? "Sem nome", style: const TextStyle(fontSize: 14)),
+                  title: Text(name, style: const TextStyle(fontSize: 14)),
                   value: isSelected,
                   activeColor: AppColors.primaryPurple,
                   dense: true,

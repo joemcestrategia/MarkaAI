@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 import '../../core/theme/app_colors.dart';
+import '../../core/services/shop_data_cache_service.dart';
 
 class CategoryManagementPage extends StatefulWidget {
   final String shopId;
@@ -21,12 +22,13 @@ class _CategoryManagementPageState extends State<CategoryManagementPage> {
     setState(() => _isSaving = true);
 
     try {
-      await FirebaseFirestore.instance.collection('categories').add({
-        'nome': _nameController.text.trim(),
-        'shopId': widget.shopId,
+      await sb.Supabase.instance.client.from('categories').insert({
+        'name': _nameController.text.trim(),
+        'shop_id': widget.shopId,
         'ordem': 0, // Poderia ser incrementado futuramente
-        'criado_em': FieldValue.serverTimestamp(),
+        'created_at': DateTime.now().toIso8601String(),
       });
+      ShopDataCacheService().invalidate(widget.shopId, 'services');
       _nameController.clear();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -44,8 +46,8 @@ class _CategoryManagementPageState extends State<CategoryManagementPage> {
     }
   }
 
-  Future<void> _editCategory(DocumentSnapshot doc) async {
-    _nameController.text = doc['nome'];
+  Future<void> _editCategory(Map<String, dynamic> data) async {
+    _nameController.text = data['name'] ?? data['nome'] ?? '';
     
     showDialog(
       context: context,
@@ -61,7 +63,11 @@ class _CategoryManagementPageState extends State<CategoryManagementPage> {
           ElevatedButton(
             onPressed: () async {
               if (_nameController.text.trim().isEmpty) return;
-              await doc.reference.update({'nome': _nameController.text.trim()});
+              await sb.Supabase.instance.client
+                  .from('categories')
+                  .update({'name': _nameController.text.trim()})
+                  .eq('id', data['id']);
+              ShopDataCacheService().invalidate(widget.shopId, 'services');
               if (mounted) Navigator.pop(context);
               _nameController.clear();
             },
@@ -73,7 +79,7 @@ class _CategoryManagementPageState extends State<CategoryManagementPage> {
     ).then((_) => _nameController.clear());
   }
 
-  Future<void> _deleteCategory(DocumentSnapshot doc) async {
+  Future<void> _deleteCategory(Map<String, dynamic> data) async {
     final bool? confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -91,7 +97,11 @@ class _CategoryManagementPageState extends State<CategoryManagementPage> {
     );
 
     if (confirm == true) {
-      await doc.reference.delete();
+      await sb.Supabase.instance.client
+          .from('categories')
+          .delete()
+          .eq('id', data['id']);
+      ShopDataCacheService().invalidate(widget.shopId, 'services');
     }
   }
 
@@ -145,27 +155,19 @@ class _CategoryManagementPageState extends State<CategoryManagementPage> {
 
           // Lista de categorias
           Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('categories')
-                  .where('shopId', isEqualTo: widget.shopId)
-                  .snapshots(),
+            child: StreamBuilder<List<Map<String, dynamic>>>(
+              stream: sb.Supabase.instance.client
+                  .from('categories')
+                  .stream(primaryKey: ['id'])
+                  .eq('shop_id', widget.shopId)
+                  .order('created_at', ascending: false),
               builder: (context, snapshot) {
                 if (snapshot.hasError) {
                   return Center(child: Text("Erro: ${snapshot.error}"));
                 }
                 if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
                 
-                final docs = snapshot.data!.docs.toList();
-                
-                // Ordenação em memória para evitar necessidade de índices compostos iniciais
-                docs.sort((a, b) {
-                  final aTime = (a.data() as Map<String, dynamic>)['criado_em'] as Timestamp?;
-                  final bTime = (b.data() as Map<String, dynamic>)['criado_em'] as Timestamp?;
-                  if (aTime == null) return -1;
-                  if (bTime == null) return 1;
-                  return bTime.compareTo(aTime);
-                });
+                final docs = snapshot.data!;
 
                 if (docs.isEmpty) {
                   return const Center(child: Text("Nenhuma categoria cadastrada.", style: TextStyle(color: Colors.grey)));
@@ -176,7 +178,7 @@ class _CategoryManagementPageState extends State<CategoryManagementPage> {
                   itemCount: docs.length,
                   separatorBuilder: (_, __) => const SizedBox(height: 10),
                   itemBuilder: (context, index) {
-                    final doc = docs[index];
+                    final data = docs[index];
                     return Container(
                       decoration: BoxDecoration(
                         color: Colors.white,
@@ -184,12 +186,12 @@ class _CategoryManagementPageState extends State<CategoryManagementPage> {
                         border: Border.all(color: Colors.grey.shade100),
                       ),
                       child: ListTile(
-                        title: Text(doc['nome'], style: const TextStyle(fontWeight: FontWeight.bold)),
+                        title: Text(data['name'] ?? data['nome'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold)),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            IconButton(icon: const Icon(Icons.edit, size: 20, color: Colors.blue), onPressed: () => _editCategory(doc)),
-                            IconButton(icon: const Icon(Icons.delete_outline, size: 20, color: Colors.red), onPressed: () => _deleteCategory(doc)),
+                            IconButton(icon: const Icon(Icons.edit, size: 20, color: Colors.blue), onPressed: () => _editCategory(data)),
+                            IconButton(icon: const Icon(Icons.delete_outline, size: 20, color: Colors.red), onPressed: () => _deleteCategory(data)),
                           ],
                         ),
                       ),

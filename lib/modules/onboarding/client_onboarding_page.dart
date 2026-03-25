@@ -1,16 +1,17 @@
-﻿import 'dart:io';
+import 'package:flutter/foundation.dart';
+import 'dart:io' if (dart.library.html) 'package:flutter_application_1/core/utils/io_stub.dart' as io;
 // ignore_for_file: use_build_context_synchronously
 import 'package:flutter/material.dart';
 import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
 import 'package:pinput/pinput.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
-import 'package:firebase_auth/firebase_auth.dart'; // <--- O Mágico do SMS
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/viacep_service.dart';
 import '../../core/services/session_service.dart';
+import '../../core/models/user_model.dart';
 import '../clients/client_home_page.dart';
+import '../../core/services/image_service.dart';
 
 class ClientOnboardingPage extends StatefulWidget {
   const ClientOnboardingPage({super.key});
@@ -25,11 +26,11 @@ class _ClientOnboardingPageState extends State<ClientOnboardingPage> {
 
   bool _isSaving = false;
   bool _isSendingSMS = false; // Loading do SMS
-  File? _selectedImage;
+  double _uploadProgress = 0.0;
+  io.File? _selectedImage;
 
-  // Variáveis do Firebase Auth
-  String? _verificationId;
-  final FirebaseAuth _auth = FirebaseAuth.instance;
+  // Supabase Auth
+  final _supabase = Supabase.instance.client;
 
   final _phoneController = TextEditingController();
   final _phoneMask = MaskTextInputFormatter(
@@ -46,22 +47,10 @@ class _ClientOnboardingPageState extends State<ClientOnboardingPage> {
   Future<void> _pickImage() async {
     final ImagePicker picker = ImagePicker();
     final XFile? image = await picker.pickImage(source: ImageSource.gallery);
-    if (image != null) setState(() => _selectedImage = File(image.path));
+    if (image != null) setState(() => _selectedImage = io.File(image.path));
   }
 
-  Future<String> _uploadImage(String userId) async {
-    if (_selectedImage == null) return "";
-    try {
-      final ref = FirebaseStorage.instance
-          .ref()
-          .child('user_photos')
-          .child('$userId.jpg');
-      await ref.putFile(_selectedImage!);
-      return await ref.getDownloadURL();
-    } catch (e) {
-      return "";
-    }
-  }
+  // Removida a função antiga _uploadImage e substituída pelo uso direto do ImageService no _finishRegistration
 
   void _nextPage() {
     _pageController.nextPage(
@@ -83,13 +72,13 @@ class _ClientOnboardingPageState extends State<ClientOnboardingPage> {
 
     try {
       // 2. VERIFICA SE O NÚMERO JÁ EXISTE NO BANCO (Anti-Duplicidade)
-      // Nota: Estamos comparando o formato exato salvo: "(xx) xxxxx-xxxx"
-      final querySnapshot = await FirebaseFirestore.instance
-          .collection('users')
-          .where('telefone', isEqualTo: _phoneController.text)
-          .get();
+      final existingUser = await _supabase
+          .from('users')
+          .select()
+          .eq('phone', _phoneController.text)
+          .maybeSingle();
 
-      if (querySnapshot.docs.isNotEmpty) {
+      if (existingUser != null) {
         // JÁ EXISTE! PARA TUDO.
         setState(() => _isSendingSMS = false);
         if (mounted) {
@@ -102,43 +91,23 @@ class _ClientOnboardingPageState extends State<ClientOnboardingPage> {
         return;
       }
 
-      // 3. SE NÃO EXISTE, MANDA O SMS
+      // 3. SE NÃO EXISTE, MANDA O SMS via Supabase
       // Formata para padrão internacional (+55319...)
       String rawPhone = _phoneController.text.replaceAll(RegExp(r'[^\d]'), '');
       String formattedPhone = "+55$rawPhone";
 
-      await _auth.verifyPhoneNumber(
-        phoneNumber: formattedPhone,
-        timeout: const Duration(seconds: 60),
-        verificationCompleted: (PhoneAuthCredential credential) async {
-          // Android pode verificar automático (raro em emulador, comum em físico)
-          await _auth.signInWithCredential(credential);
-          _nextPage();
-        },
-        verificationFailed: (FirebaseAuthException e) {
-          setState(() => _isSendingSMS = false);
-          String msg = "Erro no envio do SMS.";
-          if (e.code == 'invalid-phone-number') msg = "Número inválido.";
-          // Se der erro de SHA-1, vai aparecer aqui como 'app-not-authorized' ou similar
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text("$msg (${e.code})"), backgroundColor: Colors.red));
-        },
-        codeSent: (String verificationId, int? resendToken) {
-          // SUCESSO! O SMS FOI
-          setState(() {
-            _verificationId = verificationId;
-            _isSendingSMS = false;
-          });
-          _nextPage(); // Vai para a tela de digitar o código
-        },
-        codeAutoRetrievalTimeout: (String verificationId) {
-          _verificationId = verificationId;
-        },
+      await _supabase.auth.signInWithOtp(
+        phone: formattedPhone,
+        shouldCreateUser: true,
       );
+
+      // SUCESSO! O SMS FOI
+      setState(() => _isSendingSMS = false);
+      _nextPage(); // Vai para a tela de digitar o código
     } catch (e) {
       setState(() => _isSendingSMS = false);
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text("Erro: $e")));
+          .showSnackBar(SnackBar(content: Text("Erro ao enviar SMS: $e")));
     }
   }
 
@@ -153,19 +122,27 @@ class _ClientOnboardingPageState extends State<ClientOnboardingPage> {
     setState(() => _isSendingSMS = true);
 
     try {
-      PhoneAuthCredential credential = PhoneAuthProvider.credential(
-          verificationId: _verificationId!, smsCode: _pinController.text);
+      String rawPhone = _phoneController.text.replaceAll(RegExp(r'[^\d]'), '');
+      String formattedPhone = "+55$rawPhone";
 
-      // Tenta autenticar com o código
-      await _auth.signInWithCredential(credential);
+      final response = await _supabase.auth.verifyOTP(
+        phone: formattedPhone,
+        token: _pinController.text,
+        type: OtpType.sms,
+      );
+
+      if (response.session == null) {
+        throw Exception("Sessão não iniciada após verificação");
+      }
 
       // Se passou, deu certo!
       setState(() => _isSendingSMS = false);
       _nextPage();
     } catch (e) {
       setState(() => _isSendingSMS = false);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text("Código incorreto!"), backgroundColor: Colors.red));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text("Código incorreto ou expirado! $e"),
+          backgroundColor: Colors.red));
     }
   }
 
@@ -184,33 +161,36 @@ class _ClientOnboardingPageState extends State<ClientOnboardingPage> {
     setState(() => _isSaving = true);
 
     try {
-      final docRef = FirebaseFirestore.instance.collection('users').doc();
-      String photoUrl = await _uploadImage(docRef.id);
+      final user = _supabase.auth.currentUser;
+      if (user == null) return;
 
-      // Pega o usuário logado no Auth para garantir segurança (opcional, mas bom)
-      // final userAuth = FirebaseAuth.instance.currentUser;
+      String photoUrl = "";
+      if (_selectedImage != null) {
+        setState(() => _uploadProgress = 0.1);
+        photoUrl = await ImageService.uploadProfilePhoto(
+          _selectedImage!, 
+          user.id,
+          onProgress: (p) => setState(() => _uploadProgress = p),
+        );
+      }
 
-      final dadosCliente = {
-        'id': docRef.id,
-        'auth_uid':
-            _auth.currentUser?.uid, // Vincula com a autenticação do SMS
-        'nome': _nameController.text,
-        'telefone':
-            _phoneController.text, // Salva formatado visualmente (31) 9...
-        'endereco': _addressController.text,
-        'numero': _numberController.text,
-        'cep': _cepController.text,
-        'foto_perfil': photoUrl,
-        'tipo': 'cliente',
-        'criado_em': FieldValue.serverTimestamp(),
-      };
+      final userModel = UserModel(
+        id: user.id,
+        name: _nameController.text.trim(),
+        email: user.email ?? "",
+        phone: _phoneController.text.trim(),
+        role: 'cliente',
+        photoUrl: photoUrl,
+        street: _addressController.text.trim(),
+        number: _numberController.text.trim(),
+        zipCode: _cepController.text.trim(),
+      );
 
-      await docRef.set(dadosCliente);
+      await _supabase.from('users').upsert(userModel.toMap());
 
-      // Salva Sessão
       await SessionService.saveLogin(
         userType: 'client',
-        userId: docRef.id,
+        userId: user.id,
       );
 
       if (mounted) {
@@ -250,9 +230,16 @@ class _ClientOnboardingPageState extends State<ClientOnboardingPage> {
                   style: const TextStyle(
                       fontSize: 24, fontWeight: FontWeight.bold),
                   decoration: const InputDecoration(
-                      hintText: "(00) 00000-0000", border: InputBorder.none)),
+                      hintText: "(00) 00000-0000", border: InputBorder.none),
+                  validator: (v) {
+                    if (v == null || v.isEmpty) return "Obrigatório";
+                    if (v.replaceAll(RegExp(r'\D'), '').length < 10) {
+                      return "Número inválido";
+                    }
+                    return null;
+                  }),
               onNext: _submitPhone,
-              btnText: "ENVIAR CÃ“DIGO",
+              btnText: "ENVIAR CÓDIGO",
               isLoading: _isSendingSMS),
 
           // Passo 2: Código
@@ -278,11 +265,23 @@ class _ClientOnboardingPageState extends State<ClientOnboardingPage> {
                       radius: 60,
                       backgroundColor: Colors.grey[200],
                       backgroundImage: _selectedImage != null
-                          ? FileImage(_selectedImage!)
+                          ? (kIsWeb
+                              ? NetworkImage(_selectedImage!.path) as ImageProvider
+                              : FileImage(io.File(_selectedImage!.path) as dynamic) as ImageProvider)
                           : null,
                       child: _selectedImage == null
                           ? const Icon(Icons.camera_alt)
                           : null)),
+              if (_uploadProgress > 0 && _uploadProgress < 1.0) ...[
+                const SizedBox(height: 16),
+                LinearProgressIndicator(
+                  value: _uploadProgress,
+                  backgroundColor: Colors.grey[200],
+                  valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primaryPurple),
+                ),
+                const SizedBox(height: 8),
+                Text("${(_uploadProgress * 100).toInt()}% enviando foto..."),
+              ],
               const SizedBox(height: 20),
               TextFormField(
                   controller: _nameController,
@@ -312,7 +311,14 @@ class _ClientOnboardingPageState extends State<ClientOnboardingPage> {
                     onChanged: (v) {
                       if (v.length == 9) _buscarCep(v);
                     },
-                    decoration: const InputDecoration(labelText: "CEP")),
+                    decoration: const InputDecoration(labelText: "CEP"),
+                    validator: (v) {
+                      if (v == null || v.isEmpty) return "Obrigatório";
+                      if (v.replaceAll(RegExp(r'\D'), '').length < 8) {
+                        return "CEP incompleto";
+                      }
+                      return null;
+                    }),
                 if (_isLoadingCep) const LinearProgressIndicator(),
                 TextFormField(controller: _addressController),
                 TextFormField(

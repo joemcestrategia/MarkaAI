@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:fl_chart/fl_chart.dart';
 
@@ -19,25 +19,27 @@ class AdminOverviewWidget extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Stats Row
-          StreamBuilder<List<QuerySnapshot>>(
-            stream: _getStatsStream(),
+          FutureBuilder<List<List<Map<String, dynamic>>>>(
+            future: _getStats(),
             builder: (context, snapshot) {
-              if (!snapshot.hasData) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
               }
+              if (snapshot.hasError) {
+                return Center(child: Text('Erro ao carregar estatísticas: ${snapshot.error}'));
+              }
 
-              final usersSnap = snapshot.data![0];
-              final shopsSnap = snapshot.data![1];
-              final appointmentsSnap = snapshot.data![2];
+              final usersList = snapshot.data![0];
+              final shopsList = snapshot.data![1];
+              final appointmentsList = snapshot.data![2];
 
-              final totalUsers = usersSnap.size;
-              final totalShops = shopsSnap.size;
-              final totalAppointments = appointmentsSnap.size;
+              final totalUsers = usersList.length;
+              final totalShops = shopsList.length;
+              final totalAppointments = appointmentsList.length;
 
               double appointmentRevenue = 0;
-              for (var doc in appointmentsSnap.docs) {
-                final data = doc.data() as Map<String, dynamic>;
-                final valor = data['valor_pago'];
+              for (var row in appointmentsList) {
+                final valor = row['paid_value'] ?? row['valor_pago'];
                 if (valor != null) {
                   appointmentRevenue += double.tryParse(valor.toString()) ?? 0;
                 }
@@ -45,11 +47,10 @@ class AdminOverviewWidget extends StatelessWidget {
 
               // Developer Revenue Calculation (Active Subscriptions)
               double devMonthlyRevenue = 0;
-              for (var doc in shopsSnap.docs) {
-                final data = doc.data() as Map<String, dynamic>;
-                final plan = (data['plan'] ?? 'free').toString().toLowerCase();
-                final sub = data['subscription'] as Map<String, dynamic>?;
-                final trialActive = data['trial_active'] == true;
+              for (var row in shopsList) {
+                final plan = (row['plan_id'] ?? row['plan'] ?? 'free').toString().toLowerCase();
+                final sub = row['subscription'] as Map<String, dynamic>?;
+                final trialActive = row['trial_active'] == true;
 
                 if (plan != 'free' && sub != null && sub['status'] == 'active' && !trialActive) {
                   switch (plan) {
@@ -104,7 +105,7 @@ class AdminOverviewWidget extends StatelessWidget {
                         ),
                         _buildPremiumStatCard(
                           'Movimentação',
-                          'R\$ ${NumberFormat.compactCurrency(symbol: '', decimalDigits: 0).format(appointmentRevenue)}',
+                          'R\$${NumberFormat.compactCurrency(symbol: '', decimalDigits: 0).format(appointmentRevenue)}',
                           Icons.payments_rounded,
                           const Color(0xFFF59E0B),
                           '+15%',
@@ -114,7 +115,7 @@ class AdminOverviewWidget extends StatelessWidget {
                         ),
                         _buildPremiumStatCard(
                           'Recorrência Dev',
-                          'R\$ ${devMonthlyRevenue.toStringAsFixed(0)}',
+                          'R\$${devMonthlyRevenue.toStringAsFixed(0)}',
                           Icons.insights_rounded,
                           const Color(0xFFEE4444),
                           'Recorrência',
@@ -140,13 +141,13 @@ class AdminOverviewWidget extends StatelessWidget {
                         if (!isDesktop) const SizedBox(height: 16),
                         Expanded(
                           flex: isDesktop ? 2 : 0,
-                          child: _buildPlanDonut(shopsSnap.docs, cardColor, textColor, subTextColor),
+                          child: _buildPlanDonut(shopsList, cardColor, textColor, subTextColor),
                         ),
                       ],
                     );
                   }),
                   const SizedBox(height: 24),
-                  _buildSubscriptionAnalytics(shopsSnap.docs, cardColor, textColor, subTextColor, devMonthlyRevenue),
+                  _buildSubscriptionAnalytics(shopsList, cardColor, textColor, subTextColor, devMonthlyRevenue),
                 ],
               );
             },
@@ -309,11 +310,10 @@ class AdminOverviewWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildPlanDonut(List<QueryDocumentSnapshot> shops, Color cardColor, Color textColor, Color subTextColor) {
+  Widget _buildPlanDonut(List<Map<String, dynamic>> shops, Color cardColor, Color textColor, Color subTextColor) {
     Map<String, int> planCounts = {'free': 0, 'start': 0, 'plus': 0, 'pro': 0};
-    for (var doc in shops) {
-      final data = doc.data() as Map<String, dynamic>;
-      final plan = (data['plan'] ?? 'free').toString().toLowerCase();
+    for (var row in shops) {
+      final plan = (row['plan_id'] ?? row['plan'] ?? 'free').toString().toLowerCase();
       if (planCounts.containsKey(plan)) {
         planCounts[plan] = planCounts[plan]! + 1;
       }
@@ -393,16 +393,19 @@ class AdminOverviewWidget extends StatelessWidget {
   }
 
   Widget _buildRecentActivityList(Color cardColor, Color textColor, Color subTextColor) {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance.collection('appointments').orderBy('criado_em', descending: true).limit(6).snapshots(),
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: Supabase.instance.client
+          .from('appointments')
+          .select()
+          .order('created_at', ascending: false)
+          .limit(6),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const SizedBox();
-        final docs = snapshot.data!.docs;
+        final docs = snapshot.data!;
         return Column(
-          children: docs.map((doc) {
-            final data = doc.data() as Map<String, dynamic>;
-            final servico = data['servico_nome'] ?? 'Serviço';
-            final cliente = data['client_nome'] ?? 'Cliente';
+          children: docs.map((data) {
+            final servico = data['service_name'] ?? data['servico_nome'] ?? 'Serviço';
+            final cliente = data['client_name'] ?? data['client_nome'] ?? 'Cliente';
             final status = (data['status'] ?? 'pendente').toString().toLowerCase();
             return Container(
               margin: const EdgeInsets.only(bottom: 8),
@@ -440,7 +443,7 @@ class AdminOverviewWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildSubscriptionAnalytics(List<QueryDocumentSnapshot> shops, Color cardColor, Color textColor, Color subTextColor, double devRevenue) {
+  Widget _buildSubscriptionAnalytics(List<Map<String, dynamic>> shops, Color cardColor, Color textColor, Color subTextColor, double devRevenue) {
     Map<String, Map<String, dynamic>> stats = {
       'free': {'name': 'Free', 'paidCount': 0, 'manualCount': 0, 'price': 0.0},
       'start': {'name': 'Start', 'paidCount': 0, 'manualCount': 0, 'price': 29.90},
@@ -448,11 +451,10 @@ class AdminOverviewWidget extends StatelessWidget {
       'pro': {'name': 'Pro', 'paidCount': 0, 'manualCount': 0, 'price': 99.90},
     };
 
-    for (var doc in shops) {
-      final data = doc.data() as Map<String, dynamic>;
-      final plan = (data['plan'] ?? 'free').toString().toLowerCase();
-      final sub = data['subscription'] as Map<String, dynamic>?;
-      final trialActive = data['trial_active'] == true;
+    for (var row in shops) {
+      final plan = (row['plan_id'] ?? row['plan'] ?? 'free').toString().toLowerCase();
+      final sub = row['subscription'] as Map<String, dynamic>?;
+      final trialActive = row['trial_active'] == true;
 
       if (!stats.containsKey(plan)) continue;
       bool isPaid = sub != null && sub['status'] == 'active' && !trialActive;
@@ -474,7 +476,7 @@ class AdminOverviewWidget extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text('Receita de Assinaturas (DEV)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: textColor)),
-            Text('Estimativa: R\$ ${devRevenue.toStringAsFixed(2)}',
+            Text('Estimativa: R\$${devRevenue.toStringAsFixed(2)}',
                 style: const TextStyle(color: Color(0xFF22C55E), fontWeight: FontWeight.bold)),
           ],
         ),
@@ -530,13 +532,18 @@ class AdminOverviewWidget extends StatelessWidget {
     );
   }
 
-  Stream<List<QuerySnapshot>> _getStatsStream() async* {
+  Future<List<List<Map<String, dynamic>>>> _getStats() async {
+    final supabase = Supabase.instance.client;
     final results = await Future.wait([
-      FirebaseFirestore.instance.collection('users').get(),
-      FirebaseFirestore.instance.collection('shops').get(),
-      FirebaseFirestore.instance.collection('appointments').get(),
+      supabase.from('users').select(),
+      supabase.from('shops').select(),
+      supabase.from('appointments').select(),
     ]);
-    yield results;
+    return [
+      List<Map<String, dynamic>>.from(results[0]),
+      List<Map<String, dynamic>>.from(results[1]),
+      List<Map<String, dynamic>>.from(results[2]),
+    ];
   }
 
   Color _getStatusColor(String status) {

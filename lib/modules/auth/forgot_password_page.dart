@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../core/services/auth_service.dart';
 import '../../core/theme/app_colors.dart';
 
 class ForgotPasswordPage extends StatefulWidget {
@@ -43,15 +44,13 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
 
     setState(() => _isLoading = true);
     try {
-      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+      await AuthService().sendPasswordReset(email);
       if (mounted) setState(() => _emailSent = true);
-    } on FirebaseAuthException catch (e) {
-      if (e.code == 'user-not-found') {
+    } on AuthException catch (e) {
+      if (e.message.contains('User not found')) {
         _showError("E-mail não encontrado no sistema.");
-      } else if (e.code == 'invalid-email') {
+      } else if (e.message.contains('invalid email')) {
         _showError("Formato de e-mail inválido.");
-      } else if (e.code == 'too-many-requests') {
-        _showError("Muitas tentativas. Aguarde e tente novamente.");
       } else {
         _showError("Erro: ${e.message}");
       }

@@ -1,7 +1,7 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
-import 'package:cloud_functions/cloud_functions.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 
 class MobileSubscriptionManager {
   static InAppPurchase? _iapInstance;
@@ -158,27 +158,30 @@ class MobileSubscriptionManager {
         return true;
       }
 
-      final HttpsCallable callable =
-          FirebaseFunctions.instance.httpsCallable('verifySubscription');
+      final response = await sb.Supabase.instance.client.functions.invoke(
+        'verify-subscription',
+        body: {
+          'source': defaultTargetPlatform == TargetPlatform.iOS
+              ? 'app_store'
+              : 'google_play',
+          'productId': purchaseDetails.productID,
+          'verificationData':
+              purchaseDetails.verificationData.serverVerificationData,
+          'transactionId': purchaseDetails.purchaseID,
+        },
+      );
 
-      final result = await callable.call({
-        'source': defaultTargetPlatform == TargetPlatform.iOS
-            ? 'app_store'
-            : 'google_play',
-        'productId': purchaseDetails.productID,
-        'verificationData':
-            purchaseDetails.verificationData.serverVerificationData,
-        'transactionId': purchaseDetails.purchaseID,
-      });
+      if (response.status != 200) {
+        debugPrint('Erro na função de validação: ${response.status}');
+        return false;
+      }
 
-      final bool isValid = result.data['valid'] ?? false;
+      final data = response.data as Map<String, dynamic>;
+      final bool isValid = data['valid'] ?? false;
       debugPrint('Server validation result: $isValid');
       return isValid;
     } catch (e) {
       debugPrint("Error calling server validation: $e");
-      // In case of error (network, etc), what to do?
-      // Ideally prevent access until validated, or allow temporary access.
-      // Returning false to be safe.
       return false;
     }
   }

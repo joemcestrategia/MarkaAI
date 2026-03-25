@@ -1,5 +1,5 @@
-﻿import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../../core/theme/app_colors.dart';
@@ -29,15 +29,16 @@ class _LinkGoogleBusinessPageState extends State<LinkGoogleBusinessPage> {
 
   Future<void> _loadLinkedBusiness() async {
     try {
-      final shopDoc = await FirebaseFirestore.instance
-          .collection('shops')
-          .doc(widget.shopId)
-          .get();
+      final shopDoc = await Supabase.instance.client
+          .from('shops')
+          .select()
+          .eq('id', widget.shopId)
+          .maybeSingle();
 
-      if (shopDoc.exists) {
-        final data = shopDoc.data();
+      if (shopDoc != null) {
+        final data = shopDoc;
         final googleBusiness =
-            data?['google_business'] as Map<String, dynamic>?;
+            data['google_business'] as Map<String, dynamic>?;
 
         if (googleBusiness != null && googleBusiness['place_id'] != null) {
           setState(() {
@@ -147,9 +148,8 @@ class _LinkGoogleBusinessPageState extends State<LinkGoogleBusinessPage> {
     if (confirm != true) return;
 
     try {
-      await FirebaseFirestore.instance
-          .collection('shops')
-          .doc(widget.shopId)
+      await Supabase.instance.client
+          .from('shops')
           .update({
         'google_business': {
           'place_id': place['place_id'],
@@ -157,9 +157,9 @@ class _LinkGoogleBusinessPageState extends State<LinkGoogleBusinessPage> {
           'address': place['address'],
           'rating': place['rating'],
           'user_ratings_total': place['user_ratings_total'],
-          'linked_at': FieldValue.serverTimestamp(),
+          'linked_at': DateTime.now().toIso8601String(),
         }
-      });
+      }).eq('id', widget.shopId);
 
       setState(() {
         _linkedPlaceId = place['place_id'];
@@ -205,12 +205,11 @@ class _LinkGoogleBusinessPageState extends State<LinkGoogleBusinessPage> {
     if (confirm != true) return;
 
     try {
-      await FirebaseFirestore.instance
-          .collection('shops')
-          .doc(widget.shopId)
+      await Supabase.instance.client
+          .from('shops')
           .update({
-        'google_business': FieldValue.delete(),
-      });
+        'google_business': null,
+      }).eq('id', widget.shopId);
 
       setState(() {
         _linkedPlaceId = null;

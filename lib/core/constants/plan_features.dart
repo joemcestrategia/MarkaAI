@@ -2,6 +2,7 @@
 
 enum PlanKey { free, starter, plus, pro }
 
+
 class PlanFeatures {
   // Agendamento
   final bool onlineBooking;

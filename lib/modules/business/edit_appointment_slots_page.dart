@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+// No Firestore import needed
 import 'package:intl/intl.dart';
 import '../../core/theme/app_colors.dart';
 import '../schedule/booking_page.dart';
@@ -11,10 +11,10 @@ import 'edit_appointment_confirm_page.dart';
 /// - Destaca o horário original com badge "atual".
 /// - Permite selecionar slots ocupados (privilégio do dono).
 class EditAppointmentSlotsPage extends StatefulWidget {
-  final DocumentSnapshot appointmentDoc;
-  final DocumentSnapshot shop;
-  final DocumentSnapshot serviceDoc;
-  final DocumentSnapshot professionalDoc;
+  final Map<String, dynamic> appointmentDoc;
+  final Map<String, dynamic> shop;
+  final Map<String, dynamic> serviceDoc;
+  final Map<String, dynamic> professionalDoc;
   final Map<String, dynamic> shopConfig;
   final int intervalMinutes;
   final DateTime selectedDate;
@@ -45,8 +45,7 @@ class _EditAppointmentSlotsPageState extends State<EditAppointmentSlotsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final svcName =
-        (widget.serviceDoc.data() as Map<String, dynamic>)['nome'] ?? 'Serviço';
+    final svcName = widget.serviceDoc['nome'] ?? 'Serviço';
     final dateStr =
         DateFormat('dd/MM/yyyy', 'pt_BR').format(widget.selectedDate);
 
@@ -92,7 +91,7 @@ class _EditAppointmentSlotsPageState extends State<EditAppointmentSlotsPage> {
               minAdvanceHours: 0, // dono não tem restrição de antecedência
               selectedDate: widget.selectedDate,
               // Props do modo dono
-              ownerExcludeAppointmentId: widget.appointmentDoc.id,
+              ownerExcludeAppointmentId: widget.appointmentDoc['id'],
               ownerHighlightedSlotTime: widget.originalSlotTime,
               allowOccupiedSelection: true,
               onOccupiedSlotSelected: (slot, conflictData) {

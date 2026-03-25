@@ -1,6 +1,5 @@
-﻿import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/theme/app_colors.dart';
 
 class PlansPage extends StatefulWidget {
@@ -11,7 +10,7 @@ class PlansPage extends StatefulWidget {
 }
 
 class _PlansPageState extends State<PlansPage> {
-  final uid = FirebaseAuth.instance.currentUser?.uid;
+  final uid = Supabase.instance.client.auth.currentUser?.id;
   bool _isAdmin = false;
 
   @override
@@ -22,17 +21,22 @@ class _PlansPageState extends State<PlansPage> {
 
   Future<void> _checkAdmin() async {
     if (uid == null) return;
-    final doc =
-        await FirebaseFirestore.instance.collection('users').doc(uid).get();
-    final data = doc.exists ? doc.data() : null;
-    final roles =
-        (data?['roles'] as List<dynamic>?)?.map((e) => e.toString()).toList() ??
-            [];
-    setState(() {
-      _isAdmin = roles.contains('admin') ||
-          roles.contains('admin_dev') ||
-          (data?['is_admin_dev'] == true);
-    });
+    try {
+      final doc = await Supabase.instance.client
+          .from('users')
+          .select('role')
+          .eq('id', uid!)
+          .maybeSingle();
+
+      if (doc != null) {
+        final role = doc['role']?.toString();
+        setState(() {
+          _isAdmin = role == 'admin' || role == 'master' || role == 'admin_dev';
+        });
+      }
+    } catch (e) {
+      debugPrint("Error checking admin status: $e");
+    }
   }
 
   @override
@@ -48,28 +52,26 @@ class _PlansPageState extends State<PlansPage> {
       appBar: AppBar(title: const Text('Gerenciar Planos')),
       body: Padding(
         padding: const EdgeInsets.all(12.0),
-        child: StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('plans')
-              .orderBy('price_month')
-              .snapshots(),
+        child: StreamBuilder<List<Map<String, dynamic>>>(
+          stream: Supabase.instance.client
+              .from('plans')
+              .stream(primaryKey: ['id']).order('price_month'),
           builder: (context, snap) {
             if (!snap.hasData) {
               return const Center(child: CircularProgressIndicator());
             }
-            final docs = snap.data!.docs;
+            final docs = snap.data!;
             // collect feature universe
             final Set<String> allFeatures = {};
             for (final d in docs) {
-              final f = List<String>.from(
-                  (d.data() as Map<String, dynamic>)['features'] ?? []);
+              final f = List<String>.from(d['features'] ?? []);
               allFeatures.addAll(f);
             }
             final featuresList = allFeatures.toList()..sort();
+            
             return ListView(
-              children: docs.map((d) {
-                final data = d.data() as Map<String, dynamic>;
-                final planId = d.id;
+              children: docs.map((data) {
+                final planId = data['id']?.toString() ?? '';
                 final planName = data['name'] ?? planId;
                 final price = data['price_month']?.toString() ?? '0';
                 final features = List<String>.from(data['features'] ?? []);
@@ -104,19 +106,13 @@ class _PlansPageState extends State<PlansPage> {
                                 selected: available,
                                 onSelected: (sel) async {
                                   // toggle feature in plan doc
-                                  final ref = FirebaseFirestore.instance
-                                      .collection('plans')
-                                      .doc(planId);
+                                  final sup = Supabase.instance.client.from('plans');
                                   if (sel) {
-                                    await ref.update({
-                                      'features':
-                                          FieldValue.arrayUnion([feature])
-                                    });
+                                    final newF = List<String>.from(features)..add(feature);
+                                    await sup.update({'features': newF}).eq('id', planId);
                                   } else {
-                                    await ref.update({
-                                      'features':
-                                          FieldValue.arrayRemove([feature])
-                                    });
+                                    final newF = List<String>.from(features)..remove(feature);
+                                    await sup.update({'features': newF}).eq('id', planId);
                                   }
                                 },
                                 selectedColor: AppColors.primaryPurple
@@ -140,8 +136,7 @@ class _PlansPageState extends State<PlansPage> {
                                     context: context,
                                     builder: (_) {
                                       return AlertDialog(
-                                        title:
-                                            const Text('Editar preço mensal'),
+                                        title: const Text('Editar preço mensal'),
                                         content: TextField(
                                             controller: ctrl,
                                             keyboardType: TextInputType.number),
@@ -161,10 +156,10 @@ class _PlansPageState extends State<PlansPage> {
                                   final newPrice = double.tryParse(
                                           ctrl.text.replaceAll(',', '.')) ??
                                       0;
-                                  await FirebaseFirestore.instance
-                                      .collection('plans')
-                                      .doc(planId)
-                                      .update({'price_month': newPrice});
+                                  await Supabase.instance.client
+                                      .from('plans')
+                                      .update({'price_month': newPrice})
+                                      .eq('id', planId);
                                 }
                               },
                               icon: const Icon(Icons.edit),
@@ -192,10 +187,10 @@ class _PlansPageState extends State<PlansPage> {
                                       );
                                     });
                                 if (confirm == true) {
-                                  await FirebaseFirestore.instance
-                                      .collection('plans')
-                                      .doc(planId)
-                                      .delete();
+                                  await Supabase.instance.client
+                                      .from('plans')
+                                      .delete()
+                                      .eq('id', planId);
                                 }
                               },
                               icon: const Icon(Icons.delete),

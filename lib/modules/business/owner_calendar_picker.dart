@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/availability_utils.dart';
 
@@ -81,21 +81,21 @@ class _OwnerCalendarPickerState extends State<OwnerCalendarPicker> {
     final lastDay = DateTime(month.year, month.month + 1, 0, 23, 59);
 
     try {
-      final snap = await FirebaseFirestore.instance
-          .collection('appointments')
-          .where('shopId', isEqualTo: widget.shopId)
-          .where('profissionalId', isEqualTo: widget.professionalId)
-          .where('data_agendamento', isGreaterThanOrEqualTo: firstDay)
-          .where('data_agendamento', isLessThanOrEqualTo: lastDay)
-          .get();
+      final snap = await Supabase.instance.client
+          .from('appointments')
+          .select()
+          .eq('shop_id', widget.shopId)
+          .eq('professional_id', widget.professionalId)
+          .gte('scheduled_at', firstDay.toIso8601String())
+          .lte('scheduled_at', lastDay.toIso8601String());
 
       final Map<String, List<Map<String, int>>> busyByDay = {};
 
-      for (final doc in snap.docs) {
+      for (final doc in snap) {
         if (widget.excludeAppointmentId != null &&
-            doc.id == widget.excludeAppointmentId) continue;
+            doc['id'] == widget.excludeAppointmentId) continue;
 
-        final data = doc.data();
+        final data = doc;
         final status = (data['status'] ?? '').toString().toLowerCase();
         if (status == 'cancelado' ||
             status == 'recusado' ||
@@ -103,7 +103,7 @@ class _OwnerCalendarPickerState extends State<OwnerCalendarPicker> {
           continue;
         }
 
-        final dt = (data['data_agendamento'] as Timestamp).toDate();
+        final dt = DateTime.parse(data['scheduled_at'].toString());
         final key = _dayKey(dt);
         final dur = int.tryParse(data['duracao_min']?.toString() ?? '') ??
             widget.serviceDurationMinutes;

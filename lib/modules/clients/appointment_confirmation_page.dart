@@ -1,7 +1,6 @@
 ﻿import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import '../../core/theme/app_colors.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../../core/theme/app_colors.dart';
 
 /// Página para cliente confirmar ou cancelar presença em agendamento (aberta via deep link de notificação).
 class AppointmentConfirmationPage extends StatefulWidget {
@@ -27,21 +26,23 @@ class _AppointmentConfirmationPageState
 
   Future<void> _loadAppointment() async {
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('appointments')
-          .doc(widget.appointmentId)
-          .get();
-      if (doc.exists && mounted) {
-        setState(() => _appointmentData = doc.data());
+      final data = await Supabase.instance.client
+          .from('appointments')
+          .select()
+          .eq('id', widget.appointmentId)
+          .maybeSingle();
+          
+      if (data != null && mounted) {
+        setState(() => _appointmentData = data);
       }
     } catch (_) {}
   }
 
   Future<void> _confirmPresence(bool confirmed) async {
-    final user = FirebaseAuth.instance.currentUser;
+    final user = Supabase.instance.client.auth.currentUser;
     if (user == null || _appointmentData == null) return;
 
-    if (_appointmentData!['clientId'] != user.uid) {
+    if (_appointmentData!['clientId'] != user.id) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
             content: Text('Este agendamento não pertence a você.'),
@@ -52,13 +53,12 @@ class _AppointmentConfirmationPageState
 
     setState(() => _isLoading = true);
     try {
-      await FirebaseFirestore.instance
-          .collection('appointments')
-          .doc(widget.appointmentId)
+      await Supabase.instance.client
+          .from('appointments')
           .update({
         'client_confirmed': confirmed,
-        'client_confirmed_at': FieldValue.serverTimestamp(),
-      });
+        'client_confirmed_at': DateTime.now().toIso8601String(),
+      }).eq('id', widget.appointmentId);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -95,11 +95,11 @@ class _AppointmentConfirmationPageState
     }
 
     final data = _appointmentData!;
-    final date =
-        (data['data_agendamento'] as Timestamp?)?.toDate() ?? DateTime.now();
+    final dateStr = data['scheduled_at'] ?? '';
+    final date = DateTime.tryParse(dateStr) ?? DateTime.now();
     final servico = data['servico_nome'] ?? 'Serviço';
     final horario = data['horario'] ?? '';
-    final valor = data['valor_total'] ?? 0.0;
+    final valor = (data['valor_total'] ?? 0.0).toDouble();
     final metodoPagamento = data['metodo_pagamento'] ?? '';
     final precisaPagar =
         (metodoPagamento.toLowerCase().contains('pessoalmente') ||

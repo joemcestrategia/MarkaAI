@@ -1,4 +1,5 @@
-import 'dart:io';
+import 'package:flutter/foundation.dart';
+import 'dart:io' if (dart.library.html) 'package:flutter_application_1/core/utils/io_stub.dart' as io;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -28,8 +29,17 @@ class CouponShareService {
 
       final bytes = byteData.buffer.asUint8List();
 
+      if (kIsWeb) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Compartilhamento de cupom não disponível na Web.')),
+          );
+        }
+        return;
+      }
+
       final tempDir = await getTemporaryDirectory();
-      final file = await File('${tempDir.path}/coupon_$code.png').create();
+      final file = await io.File('${tempDir.path}/coupon_$code.png').create();
       await file.writeAsBytes(bytes);
 
       await Share.shareXFiles(

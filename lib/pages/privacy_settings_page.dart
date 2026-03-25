@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:convert';
-import 'dart:io' as io;
+import 'dart:io' if (dart.library.html) 'package:flutter_application_1/core/utils/io_stub.dart' as io;
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -24,17 +22,19 @@ class _PrivacySettingsPageState extends State<PrivacySettingsPage> {
   bool _isLoading = false;
 
   Future<void> _exportData() async {
-    final user = FirebaseAuth.instance.currentUser;
+    final user = Supabase.instance.client.auth.currentUser;
     if (user == null) return;
 
     setState(() => _isLoading = true);
 
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
-      Map<String, dynamic> data = Map<String, dynamic>.from(doc.data() ?? {});
+      final data = await Supabase.instance.client
+          .from('users')
+          .select()
+          .eq('id', user.id)
+          .maybeSingle();
+      
+      if (data == null) return;
 
       // Sanitizar dados
       data['exportado_em'] = DateTime.now().toIso8601String();
@@ -97,26 +97,72 @@ class _PrivacySettingsPageState extends State<PrivacySettingsPage> {
 
     setState(() => _isLoading = true);
 
-    try {
-      final callable =
-          FirebaseFunctions.instance.httpsCallable('deleteUserAccount');
-      await callable();
+    final currentUser = Supabase.instance.client.auth.currentUser;
+    if (currentUser == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Sessão expirada. Faça login novamente para excluir a conta.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      if (mounted) setState(() => _isLoading = false);
+      return;
+    }
 
-      await FirebaseAuth.instance.signOut();
+    try {
+      // Timeout de 60s para evitar loading infinito caso a função trave
+      final response = await Supabase.instance.client.functions
+          .invoke(
+            'deleteUserAccount',
+            body: {'userId': currentUser.id},
+          )
+          .timeout(
+            const Duration(seconds: 60),
+            onTimeout: () => throw Exception('A operação demorou muito. Tente novamente.'),
+          );
+
+      // O Flutter SDK NÃO lança exceção em status 4xx/5xx — verificamos manualmente
+      final responseData = response.data;
+      if (responseData is Map && responseData.containsKey('error')) {
+        throw Exception(responseData['error']);
+      }
+
+      await Supabase.instance.client.auth.signOut();
 
       if (mounted) {
-        Navigator.pushAndRemoveUntil(
-          context,
-          MaterialPageRoute(builder: (_) => const LoginPage()),
-          (route) => false,
+        // Exibir mensagem de sucesso após deletar e sair da sessão
+        await showDialog(
+          context: context,
+          barrierDismissible: false, // Força clicar em OK
+          builder: (ctx) => AlertDialog(
+            title: const Text('Conta Excluída', style: TextStyle(color: Colors.green)),
+            content: const Text('Sua conta e todos os dados vinculados foram removidos com sucesso.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
         );
+
+        if (mounted) {
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (_) => const LoginPage()),
+            (route) => false,
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text(
-                  'Ocorreu um erro ao excluir a conta. Tente relogar e tentar novamente.')),
+            content: Text('Erro ao excluir conta: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {

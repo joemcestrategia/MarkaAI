@@ -1,31 +1,26 @@
 // ignore_for_file: unused_element, unused_field, unused_local_variable
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:intl/intl.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:geocoding/geocoding.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 import '../../core/services/profile_check_service.dart';
 import '../login/login_page.dart';
 import '../schedule/booking_page.dart';
-import 'client_register_page.dart';
-import 'appointment_confirmation_page.dart';
 import 'shop_profile_page.dart';
 import 'my_appointments_page.dart';
 import 'client_service_detail_page.dart';
 import 'address_selector_page.dart';
 import 'client_search_page.dart';
+import 'client_register_page.dart';
 import '../../core/widgets/seletor_de_cidade.dart';
 import '../../core/utils/string_utils.dart';
 
@@ -206,6 +201,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
   void _setupNotifications() {
     // Notificações quando app está em foreground
+    /*
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       final appointmentId = message.data['appointmentId'];
       final type = message.data['type'];
@@ -232,22 +228,24 @@ class _ClientHomePageState extends State<ClientHomePage> {
         );
       }
     });
+    */
   }
 
   Future<void> _loadUserData() async {
-    final user = FirebaseAuth.instance.currentUser;
+    final user = Supabase.instance.client.auth.currentUser;
     if (user != null) {
-      final doc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
+      final doc = await Supabase.instance.client
+          .from('users')
+          .select()
+          .eq('id', user.id)
+          .maybeSingle();
       if (mounted) {
-        final data = doc.data();
+        final data = doc;
         setState(() {
-          _userId = user.uid;
-          _userName = data?['nome'] ?? user.displayName ?? "Cliente";
+          _userId = user.id;
+          _userName = data?['nome'] ?? "Cliente";
           _userEmail = user.email ?? "";
-          _userPhotoUrl = user.photoURL;
+          _userPhotoUrl = null;
           _userTipo = data?['tipo'] ?? data?['role'] ?? 'cliente';
           // Restaurar última localização salva
           final lastLoc = data?['last_location'] as Map<String, dynamic>?;
@@ -282,17 +280,18 @@ class _ClientHomePageState extends State<ClientHomePage> {
             result['lng'] != null ? (result['lng'] as num).toDouble() : null;
       });
       // Persistir última localização no Firestore
-      final uid = FirebaseAuth.instance.currentUser?.uid;
+      final uid = Supabase.instance.client.auth.currentUser?.id;
       if (uid != null) {
-        FirebaseFirestore.instance.collection('users').doc(uid).set({
+        await Supabase.instance.client.from('users').upsert({
+          'id': uid,
           'last_location': {
             'label': _selectedLocation,
-            'address': result['address'],
-            'city': result['city'],
+            'address': result['address'] ?? '',
+            'city': result['city'] ?? '',
             'lat': result['lat'],
             'lng': result['lng'],
           },
-        }, SetOptions(merge: true));
+        });
       }
     }
   }
@@ -304,7 +303,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
       backgroundColor: Colors.transparent,
       builder: (ctx) => Container(
         padding: EdgeInsets.fromLTRB(
-            24, 16, 24, MediaQuery.of(ctx).viewInsets.bottom + MediaQuery.of(ctx).padding.bottom + 24),
+            24, 16, 24, MediaQuery.of(ctx).viewInsets.bottom + 24),
         decoration: const BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -403,7 +402,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
   void _handleProfileMenu(String value) {
     switch (value) {
       case 'edit':
-        final user = FirebaseAuth.instance.currentUser;
+        final user = Supabase.instance.client.auth.currentUser;
         Navigator.push(
           context,
           MaterialPageRoute(
@@ -593,7 +592,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
   // Top menu helper removed (menu handled via PopupMenuButton on the AppBar)
 
   Future<void> _deleteAccount() async {
-    final user = FirebaseAuth.instance.currentUser;
+    final user = Supabase.instance.client.auth.currentUser;
     if (user == null) return;
     final confirmed = await showDialog<bool>(
         context: context,
@@ -630,43 +629,66 @@ class _ClientHomePageState extends State<ClientHomePage> {
         });
     if (confirmed != true) return;
 
-    if (!mounted) return;
     showDialog(
         context: context,
         barrierDismissible: false,
         builder: (ctx) => const Center(child: CircularProgressIndicator()));
-        
     try {
-      final callable = FirebaseFunctions.instance.httpsCallable('deleteUserAccount');
-      final result = await callable.call({'confirm': true});
-      
-      if (mounted) Navigator.pop(context);
-      
-      if (result.data['success'] == true) {
-        // success
-        try {
-          await GoogleSignIn().signOut();
-          await GoogleSignIn().disconnect();
-        } catch (_) {}
-        await SessionService.logout();
-        await FirebaseAuth.instance.signOut();
-        
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text(
-                'Conta excluída com sucesso. Limpe o cache do app/telefone manualmente.')));
-        Navigator.pushAndRemoveUntil(context,
-            MaterialPageRoute(builder: (_) => const LoginPage()), (r) => false);
-      } else {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('Falha ao excluir conta: ${result.data['message']}')));
+      final response = await Supabase.instance.client.functions
+          .invoke(
+            'deleteUserAccount',
+            body: {'userId': user.id},
+          )
+          .timeout(
+            const Duration(seconds: 60),
+            onTimeout: () => throw Exception('A operação demorou muito. Tente novamente.'),
+          );
+
+      if (mounted) Navigator.pop(context); // Fecha diálogo de progresso
+
+      final responseData = response.data;
+      if (responseData is Map && responseData.containsKey('error')) {
+        throw Exception(responseData['error']);
+      }
+
+      try {
+        // Importes podem ser necessários se der erro, mas já estavam no arquivo
+        await GoogleSignIn().signOut();
+        await GoogleSignIn().disconnect();
+      } catch (_) {}
+      await SessionService.logout();
+      await Supabase.instance.client.auth.signOut();
+
+      if (mounted) {
+        await showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Conta Excluída', style: TextStyle(color: Colors.green)),
+            content: const Text('Sua conta e todos os dados vinculados foram removidos com sucesso.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+
+        if (mounted) {
+          Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(builder: (_) => const LoginPage()),
+              (r) => false);
+        }
       }
     } catch (e) {
       if (mounted) Navigator.pop(context);
       if (!mounted) return;
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Erro ao excluir conta: $e')));
+          .showSnackBar(SnackBar(
+              content: Text('Erro ao excluir conta: $e'),
+              backgroundColor: Colors.red));
     }
   }
 
@@ -676,7 +698,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
       await GoogleSignIn().disconnect();
     } catch (_) {}
     await SessionService.logout();
-    await FirebaseAuth.instance.signOut();
+    await Supabase.instance.client.auth.signOut();
     if (mounted) {
       Navigator.pushAndRemoveUntil(
           context,
@@ -685,7 +707,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
     }
   }
 
-  void _openShopProfile(DocumentSnapshot shop) {
+  void _openShopProfile(Map<String, dynamic> shop) {
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -700,7 +722,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
     );
   }
 
-  void _openServiceDetails({required DocumentSnapshot serviceDoc}) {
+  void _openServiceDetails({required Map<String, dynamic> serviceDoc}) {
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -712,10 +734,10 @@ class _ClientHomePageState extends State<ClientHomePage> {
   }
 
   Future<void> _openBookingPage({
-    required DocumentSnapshot shop,
-    required DocumentSnapshot serviceDoc,
+    required Map<String, dynamic> shop,
+    required Map<String, dynamic> serviceDoc,
   }) async {
-    final uid = _userId ?? FirebaseAuth.instance.currentUser?.uid;
+    final uid = _userId ?? Supabase.instance.client.auth.currentUser?.id;
     if (uid == null) return;
     final complete = await ProfileCheckService.isClientProfileComplete(uid);
     if (!complete && mounted) {
@@ -737,7 +759,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
         ),
       );
       if (go == true && mounted) {
-        final user = FirebaseAuth.instance.currentUser;
+        final user = Supabase.instance.client.auth.currentUser;
         Navigator.push(
             context,
             MaterialPageRoute(
@@ -784,7 +806,9 @@ class _ClientHomePageState extends State<ClientHomePage> {
                       Expanded(
                         child: _selectedIndex == 0
                             ? _buildExploreView(isDesktop: true)
-                            : _buildScheduleView(isDesktop: true),
+                            : _selectedIndex == 1
+                                ? _buildFavoritesView(isDesktop: true)
+                                : _buildScheduleView(isDesktop: true),
                       ),
                     ],
                   ),
@@ -808,7 +832,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
             backgroundColor: Colors.white,
             elevation: 10,
             shadowColor: Colors.black12,
-            indicatorColor: AppColors.primaryPurple.withValues(alpha: 0.2),
+            indicatorColor: AppColors.primaryPurple.withOpacity(0.2),
             destinations: const [
               NavigationDestination(
                   icon: Icon(Icons.explore_outlined),
@@ -831,22 +855,21 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
   // ============ VIEW: FAVORITOS ============
   Widget _buildFavoritesView({required bool isDesktop}) {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final uid = Supabase.instance.client.auth.currentUser?.id;
     if (uid == null) {
       return const Center(child: Text('Faa login para ver seus favoritos'));
     }
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .collection('favorites')
-          .orderBy('added_at', descending: true)
-          .snapshots(),
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: Supabase.instance.client
+          .from('favorites')
+          .stream(primaryKey: ['id'])
+          .eq('user_id', uid)
+          .order('added_at', ascending: false),
       builder: (context, favSnap) {
         if (favSnap.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
         }
-        final favDocs = favSnap.data?.docs ?? [];
+        final favDocs = favSnap.data ?? [];
         if (favDocs.isEmpty) {
           return Center(
             child: Column(
@@ -866,21 +889,15 @@ class _ClientHomePageState extends State<ClientHomePage> {
             ),
           );
         }
-        final shopIds = favDocs.map((d) => d.id).toList();
-        // Firestore 'whereIn' supports max 30 items per query
-        final chunks = <List<String>>[];
-        for (var i = 0; i < shopIds.length; i += 10) {
-          chunks.add(shopIds.sublist(
-              i, i + 10 > shopIds.length ? shopIds.length : i + 10));
-        }
-        return FutureBuilder<List<DocumentSnapshot>>(
-          future: Future.wait(
-            chunks.map((chunk) => FirebaseFirestore.instance
-                .collection('shops')
-                .where(FieldPath.documentId, whereIn: chunk)
-                .get()
-                .then((s) => s.docs)),
-          ).then((lists) => lists.expand((l) => l).toList()),
+        final shopIds = favDocs.map((d) => d['shop_id'] as String).toList();
+        return FutureBuilder<List<Map<String, dynamic>>>(
+          future: shopIds.isEmpty 
+              ? Future.value([]) 
+              : Supabase.instance.client
+                  .from('shops')
+                  .select()
+                  .inFilter('id', shopIds)
+                  .then((res) => List<Map<String, dynamic>>.from(res)),
           builder: (context, shopsSnap) {
             if (shopsSnap.connectionState == ConnectionState.waiting) {
               return const Center(child: CircularProgressIndicator());
@@ -914,7 +931,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 2),
                       decoration: BoxDecoration(
-                        color: Colors.red.withValues(alpha: 0.1),
+                        color: Colors.red.withOpacity(0.1),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Text('${shops.length}',
@@ -1052,7 +1069,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
                 borderRadius: BorderRadius.circular(30),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.05),
+                    color: Colors.black.withOpacity(0.05),
                     blurRadius: 10,
                     offset: const Offset(0, 4),
                   )
@@ -1151,14 +1168,13 @@ class _ClientHomePageState extends State<ClientHomePage> {
         const SliverToBoxAdapter(child: SizedBox(height: 15)),
 
         // GRID DE LOJAS
-        StreamBuilder<QuerySnapshot>(
+        StreamBuilder<List<Map<String, dynamic>>>(
           stream: _cidadeSelecionada == null
               ? const Stream.empty()
-              : FirebaseFirestore.instance
-                  .collection('shops')
-                  .where('cidade', isEqualTo: _cidadeSelecionada!.cidade)
-                  // Nota: se quisermos filtrar por estado também, precisamos de índice composto
-                  .snapshots(),
+              : Supabase.instance.client
+                  .from('shops')
+                  .stream(primaryKey: ['id'])
+                  .eq('city', _cidadeSelecionada!.cidade),
           builder: (context, snapshot) {
             if (_cidadeSelecionada == null) {
               return SliverFillRemaining(
@@ -1189,7 +1205,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
               );
             }
 
-            if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+            if (!snapshot.hasData || snapshot.data!.isEmpty) {
               return SliverToBoxAdapter(
                 child: Padding(
                   padding:
@@ -1213,16 +1229,14 @@ class _ClientHomePageState extends State<ClientHomePage> {
               );
             }
 
-            final filtered = snapshot.data!.docs.where((doc) {
-              final d = doc.data() as Map<String, dynamic>;
+            final filtered = snapshot.data!.where((doc) {
+              final d = doc as Map<String, dynamic>;
               final bool isActive = d['ativo'] ?? true;
 
               // Filtro adicional por estado se houver ambiguidade (opcional)
               if (_cidadeSelecionada!.estado.isNotEmpty) {
-                final String shopEstado = (d['estado'] ??
-                        d['endereco']?['estado'] ??
+                final String shopEstado = (d['state'] ??
                         d['uf'] ??
-                        d['endereco']?['uf'] ??
                         '')
                     .toString()
                     .toUpperCase();
@@ -1236,12 +1250,11 @@ class _ClientHomePageState extends State<ClientHomePage> {
                 }
               }
 
-              // Filtro por texto (busca por nome da loja)
               final String searchLower = _searchText.isEmpty
                   ? ""
                   : StringUtils.removeDiacritics(_searchText).toLowerCase();
               final matchesText = searchLower.isEmpty ||
-                  StringUtils.removeDiacritics(d['nome'] ?? '')
+                  StringUtils.removeDiacritics(d['name'] ?? '')
                       .toLowerCase()
                       .contains(searchLower);
 
@@ -1249,7 +1262,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
               final matchesCat = _selectedCategory == "Todos" ||
                   (() {
-                    final cats = (d['categoria'] ?? '')
+                    final cats = (d['category'] ?? '')
                         .toString()
                         .split(';')
                         .map((c) => c.trim());
@@ -1261,14 +1274,13 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
             // 🏆 Ordenação por Qualidade do Perfil (Media)
             filtered.sort((a, b) {
-              final da = a.data() as Map<String, dynamic>;
-              final db = b.data() as Map<String, dynamic>;
+              final da = a as Map<String, dynamic>;
+              final db = b as Map<String, dynamic>;
 
               int getScore(Map<String, dynamic> d) {
                 int s = 0;
-                if ((d['logoUrl'] ?? '').toString().isNotEmpty) s += 10;
-                if ((d['coverUrl'] ?? '').toString().isNotEmpty ||
-                    (d['imageUrl'] ?? '').toString().isNotEmpty) {
+                if ((d['logo_url'] ?? '').toString().isNotEmpty) s += 10;
+                if ((d['image_url'] ?? '').toString().isNotEmpty) {
                   s += 10;
                 }
                 if (d['is_boosted'] == true) s += 100;
@@ -1346,8 +1358,8 @@ class _ClientHomePageState extends State<ClientHomePage> {
           ),
           const SizedBox(height: 40),
           _menuItemDesktop(0, Icons.explore, "Explorar"),
-          _menuItemDesktop(1, Icons.calendar_month, "Minha Agenda"),
-          _menuItemDesktop(2, Icons.favorite_border, "Favoritos"),
+          _menuItemDesktop(1, Icons.favorite_border, "Favoritos"),
+          _menuItemDesktop(2, Icons.calendar_month, "Minha Agenda"),
           const Spacer(),
           const Divider(),
         ],
@@ -1361,7 +1373,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
       margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
       decoration: BoxDecoration(
         color: isSelected
-            ? AppColors.primaryPurple.withValues(alpha: 0.1)
+            ? AppColors.primaryPurple.withOpacity(0.1)
             : Colors.transparent,
         borderRadius: BorderRadius.circular(10),
       ),
@@ -1389,7 +1401,12 @@ class _ClientHomePageState extends State<ClientHomePage> {
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(_selectedIndex == 0 ? "Explorar" : "Minha Agenda",
+                Text(
+                    _selectedIndex == 0
+                        ? "Explorar"
+                        : _selectedIndex == 1
+                            ? "Meus Favoritos"
+                            : "Minha Agenda",
                     style: const TextStyle(
                         fontSize: 28, fontWeight: FontWeight.bold)),
                 if (_selectedIndex == 0)
@@ -1451,7 +1468,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
 // =============================================================================
 
 class _ShopCard extends StatefulWidget {
-  final DocumentSnapshot shop;
+  final Map<String, dynamic> shop;
   final VoidCallback onTap;
 
   const _ShopCard({required this.shop, required this.onTap});
@@ -1471,69 +1488,56 @@ class _ShopCardState extends State<_ShopCard> {
   }
 
   Future<void> _checkFavorite() async {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final uid = Supabase.instance.client.auth.currentUser?.id;
     if (uid == null) {
       if (mounted) setState(() => _loadingFav = false);
       return;
     }
-    final doc = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(uid)
-        .collection('favorites')
-        .doc(widget.shop.id)
-        .get();
+    final doc = await Supabase.instance.client
+        .from('favorites')
+        .select()
+        .eq('user_id', uid)
+        .eq('shop_id', widget.shop['id'])
+        .maybeSingle();
     if (mounted) {
       setState(() {
-        _isFavorite = doc.exists;
+        _isFavorite = doc != null;
         _loadingFav = false;
       });
     }
   }
 
   Future<void> _toggleFavorite() async {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Faça login para salvar favoritos")),
-      );
-      return;
-    }
-    
-    final bool wasFavorite = _isFavorite;
+    final uid = Supabase.instance.client.auth.currentUser?.id;
+    if (uid == null) return;
     setState(() => _isFavorite = !_isFavorite);
-    
     try {
-      final callable = FirebaseFunctions.instanceFor(region: 'us-central1').httpsCallable('toggleFavorite');
-      final result = await callable.call({
-        'shopId': widget.shop.id,
-        'shopName': (widget.shop.data() as Map<String, dynamic>?)?['nome'] ?? '',
-        'isFavorite': !wasFavorite,
-      });
-
-      // Se result.data['success'] não for true, voltamos ao estado anterior
-      final data = result.data;
-      if (mounted && (data == null || data['success'] != true)) {
-        setState(() => _isFavorite = wasFavorite);
+      if (_isFavorite) {
+        await Supabase.instance.client.from('favorites').insert({
+          'user_id': uid,
+          'shop_id': widget.shop['id'],
+          'added_at': DateTime.now().toIso8601String(),
+        });
+      } else {
+        await Supabase.instance.client
+            .from('favorites')
+            .delete()
+            .eq('user_id', uid)
+            .eq('shop_id', widget.shop['id']);
       }
-    } catch (e) {
-      debugPrint("❌ Erro toggleFavorite: $e");
-      if (mounted) {
-        setState(() => _isFavorite = wasFavorite);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Erro ao salvar favorito: $e")),
-        );
-      }
+    } catch (_) {
+      if (mounted) setState(() => _isFavorite = !_isFavorite);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final data = widget.shop.data() as Map<String, dynamic>;
-    final imgUrl = data['coverUrl'] ?? data['imageUrl'] ?? "";
-    final logoUrl = data['logoUrl'] ?? "";
-    final categoria = data['categoria']?.toString() ?? 'Outros';
+    final data = widget.shop as Map<String, dynamic>;
+    final imgUrl = data['cover_url'] ?? data['image_url'] ?? data['imageUrl'] ?? "";
+    final logoUrl = data['logo_url'] ?? data['logoUrl'] ?? "";
+    final category = data['category'] ?? data['categoria'] ?? data['nicho'] ?? 'Outros';
 
-    final bool isDestaque = data['destaque'] == true ||
+    final bool isDestaque = data['is_boosted'] == true ||
         (data['rating'] != null && data['rating'] >= 4.5);
 
     Color getCatColor(String c) {
@@ -1568,8 +1572,8 @@ class _ShopCardState extends State<_ShopCard> {
       }
     }
 
-    final Color fallbackColor = getCatColor(categoria);
-    final IconData fallbackIcon = getCatIcon(categoria);
+    final Color fallbackColor = getCatColor(category);
+    final IconData fallbackIcon = getCatIcon(category);
 
     return GestureDetector(
       onTap: widget.onTap,
@@ -1579,7 +1583,7 @@ class _ShopCardState extends State<_ShopCard> {
           borderRadius: BorderRadius.circular(12),
           boxShadow: [
             BoxShadow(
-                color: Colors.black.withValues(alpha: 0.04),
+                color: Colors.black.withOpacity(0.04),
                 blurRadius: 10,
                 offset: const Offset(0, 4))
           ],
@@ -1617,6 +1621,25 @@ class _ShopCardState extends State<_ShopCard> {
                             ),
                     ),
                   ),
+
+                  // LOGO OVERLAY (Bottom Left of the cover)
+                  if (logoUrl.isNotEmpty)
+                    Positioned(
+                      bottom: 8,
+                      left: 8,
+                      child: Container(
+                        padding: const EdgeInsets.all(2),
+                        decoration: const BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                        ),
+                        child: CircleAvatar(
+                          radius: 18,
+                          backgroundColor: Colors.grey[100],
+                          backgroundImage: CachedNetworkImageProvider(logoUrl),
+                        ),
+                      ),
+                    ),
 
                   // BADGE DESTAQUE (Top Right)
                   if (isDestaque)
@@ -1686,11 +1709,11 @@ class _ShopCardState extends State<_ShopCard> {
                       child: Container(
                         padding: const EdgeInsets.all(4),
                         decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.9),
+                          color: Colors.white.withOpacity(0.9),
                           shape: BoxShape.circle,
                           boxShadow: [
                             BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.1),
+                                color: Colors.black.withOpacity(0.1),
                                 blurRadius: 4),
                           ],
                         ),
@@ -1703,28 +1726,7 @@ class _ShopCardState extends State<_ShopCard> {
                     ),
                   ),
 
-                  // LOGO (Bottom Left - Sobrepondo)
-                  if (logoUrl.isNotEmpty)
-                    Positioned(
-                      bottom: 6,
-                      left: 6,
-                      child: Container(
-                        width: 30,
-                        height: 30,
-                        decoration: BoxDecoration(
-                            color: Colors.white,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 2),
-                            boxShadow: [
-                              BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.1),
-                                  blurRadius: 4)
-                            ]),
-                        child: ClipOval(
-                            child: CachedNetworkImage(
-                                imageUrl: logoUrl, fit: BoxFit.cover)),
-                      ),
-                    ),
+                  // O LOGO FOI REMOVIDO DAQUI POIS ESTAVA DUPLICADO (J EXISTE NA LINHA 1619)
                 ],
               ),
             ),
@@ -1741,13 +1743,13 @@ class _ShopCardState extends State<_ShopCard> {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(data['nome'] ?? "Loja",
+                        Text(data['name'] ?? data['nome'] ?? "Loja",
                             style: const TextStyle(
                                 fontWeight: FontWeight.bold, fontSize: 11),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis),
                         const SizedBox(height: 2),
-                        Text(data['categoria'] ?? "Serviços",
+                        Text(data['category'] ?? data['categoria'] ?? "Serviços",
                             style: TextStyle(
                                 color: Colors.grey[600], fontSize: 9)),
                       ],
@@ -1784,7 +1786,7 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
   final currencyFormat = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
   int _currentImageIndex = 0;
 
-  DocumentSnapshot? _shopDoc;
+  Map<String, dynamic>? _shopDoc;
   bool _isLoadingShop = true;
   bool _isOnlineBookingActive = true;
 
@@ -1798,13 +1800,14 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
     try {
       final shopId = widget.serviceData['shopId'];
       if (shopId != null) {
-        final doc = await FirebaseFirestore.instance
-            .collection('shops')
-            .doc(shopId)
-            .get();
-        if (doc.exists) {
+        final doc = await Supabase.instance.client
+            .from('shops')
+            .select()
+            .eq('id', shopId)
+            .maybeSingle();
+        if (doc != null) {
           _shopDoc = doc;
-          final config = doc.data()?['config'] as Map<String, dynamic>?;
+          final config = doc['config'] as Map<String, dynamic>?;
           _isOnlineBookingActive = config?['agendamento_online_ativo'] ?? true;
         }
       }
@@ -1818,8 +1821,8 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
   void _agendarViaWhatsApp() async {
     if (_shopDoc == null) return;
 
-    final shopData = _shopDoc!.data() as Map<String, dynamic>;
-    final phone = shopData['telefone'] ?? shopData['whatsapp'];
+    final shopData = _shopDoc! as Map<String, dynamic>;
+    final phone = shopData['phone'] ?? shopData['whatsapp'] ?? shopData['telefone'];
     if (phone == null || phone.toString().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -1833,8 +1836,8 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
       cleanPhone = '55$cleanPhone';
     }
 
-    final String serviceName = widget.serviceData['nome'] ?? 'Servio';
-    final String shopName = shopData['nome'] ?? 'loja';
+    final String serviceName = widget.serviceData['name'] ?? widget.serviceData['nome'] ?? 'Serviço';
+    final String shopName = shopData['name'] ?? shopData['nome'] ?? 'loja';
     final String message =
         "Ol, vim pelo App MarkaAI e gostaria de agendar o servio $serviceName na $shopName.";
 
@@ -1930,8 +1933,8 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
                                     const EdgeInsets.symmetric(horizontal: 4.0),
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
-                                  color: Colors.white.withValues(
-                                      alpha: _currentImageIndex == entry.key
+                                  color: Colors.white.withOpacity(
+                                      _currentImageIndex == entry.key
                                           ? 0.9
                                           : 0.4),
                                 ),
@@ -2012,7 +2015,7 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
                 color: Colors.white,
                 boxShadow: [
                   BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.1),
+                      color: Colors.black.withOpacity(0.1),
                       blurRadius: 10,
                       offset: const Offset(0, -5))
                 ],
@@ -2079,7 +2082,7 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
 // -----------------------------------------------------------------------------
 class _BoostBannerCarousel extends StatefulWidget {
   final CidadeSelecionada? cidadeSelecionada;
-  final void Function(DocumentSnapshot) onShopTap;
+  final void Function(Map<String, dynamic>) onShopTap;
 
   const _BoostBannerCarousel({
     required this.cidadeSelecionada,
@@ -2117,12 +2120,11 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('shops')
-          .where('is_boosted', isEqualTo: true)
-          .limit(20)
-          .snapshots(),
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: Supabase.instance.client
+          .from('shops')
+          .stream(primaryKey: ['id'])
+          .eq('is_boosted', true),
       builder: (context, snap) {
         if (widget.cidadeSelecionada == null) return const SizedBox.shrink();
 
@@ -2131,8 +2133,8 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
             StringUtils.removeDiacritics(widget.cidadeSelecionada!.cidade)
                 .toLowerCase();
 
-        final docs = (snap.data?.docs ?? []).where((doc) {
-          final d = doc.data() as Map<String, dynamic>;
+        final docs = (snap.data ?? []).where((doc) {
+          final d = doc as Map<String, dynamic>;
 
           // Identificar cidade da loja com fallbacks
           String shopCityRaw = '';
@@ -2152,8 +2154,8 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
           final bool matchesCity = shopCityNormalized == selectedCityNormalized;
 
           // Filtro de boost expirado
-          final expires = d['boost_expires_at'] as Timestamp?;
-          final isNotExpired = expires != null && expires.toDate().isAfter(now);
+          final expires = d['boost_expires_at'] as DateTime?;
+          final isNotExpired = expires != null && expires.isAfter(now);
 
           return isNotExpired && matchesCity;
         }).toList();
@@ -2202,7 +2204,7 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFFD700).withValues(alpha: 0.2),
+                    color: const Color(0xFFFFD700).withOpacity(0.2),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Text('${docs.length}',
@@ -2222,7 +2224,7 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
                 itemCount: docs.length,
                 onPageChanged: (p) => setState(() => _currentPage = p),
                 itemBuilder: (ctx, i) {
-                  final d = docs[i].data() as Map<String, dynamic>;
+                  final d = docs[i] as Map<String, dynamic>;
                   final img = d['coverUrl'] ?? d['imageUrl'] ?? '';
                   final nome = d['nome'] ?? '';
                   final cat = d['categoria'] ?? d['nicho'] ?? '';

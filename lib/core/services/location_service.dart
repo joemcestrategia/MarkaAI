@@ -1,4 +1,4 @@
-﻿import 'package:cloud_functions/cloud_functions.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/foundation.dart';
 
 /// Resultado da consulta de CEP via Cloud Function proxy (fetchCep).
@@ -47,7 +47,7 @@ class CidadeDisponivel {
 }
 
 class LocationService {
-  static final _functions = FirebaseFunctions.instance;
+  static final _functions = Supabase.instance.client.functions;
 
   // -------------------------------------------------------------------------
   // Busca dados de um CEP via Cloud Function proxy (para o formulário da loja).
@@ -59,12 +59,12 @@ class LocationService {
 
     try {
       final result =
-          await _functions.httpsCallable('fetchCep').call({'cep': cepDigitos});
+          await _functions.invoke('fetchCep', body: {'cep': cepDigitos});
       final data = Map<String, dynamic>.from(result.data as Map);
       return CepResult.fromMap(data);
-    } on FirebaseFunctionsException catch (e) {
+    } on FunctionException catch (e) {
       debugPrint(
-          '[LocationService] fetchCep error: ${e.code} — ${e.message}');
+          '[LocationService] fetchCep error: ${e.reasonPhrase} — ${e.details}');
       return null;
     } catch (e) {
       debugPrint('[LocationService] fetchCep unexpected error: $e');
@@ -81,7 +81,7 @@ class LocationService {
     String? estado,
   }) async {
     try {
-      final result = await _functions.httpsCallable('getAvailableCities').call({
+      final result = await _functions.invoke('getAvailableCities', body: {
         if (query != null && query.isNotEmpty) 'query': query,
         if (estado != null && estado.isNotEmpty) 'estado': estado,
       });

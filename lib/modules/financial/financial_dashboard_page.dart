@@ -1,8 +1,6 @@
-import 'dart:async';
-import 'dart:math' as math;
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as sb;
+import 'dart:math' as math;
 import 'package:intl/intl.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../../core/services/session_service.dart';
@@ -10,6 +8,8 @@ import '../../core/theme/app_colors.dart';
 import '../../core/services/plan_features_service.dart';
 import '../../core/constants/plan_features.dart';
 import '../../widgets/upgrade_modal.dart';
+import '../../core/services/auth_service.dart';
+import '../../core/services/shop_data_cache_service.dart';
 
 // ─────────────────────────────────────────────
 // MODELO DE DADOS DO PERÍODO (auxilia comparação)
@@ -176,14 +176,16 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
     try {
       _shopId = await SessionService.getShopId();
       if (_shopId == null || _shopId!.isEmpty) {
-        final user = FirebaseAuth.instance.currentUser;
+        final user = AuthService().currentUser;
         if (user != null) {
-          final doc = await FirebaseFirestore.instance
-              .collection('users')
-              .doc(user.uid)
-              .get();
-          if (doc.exists) {
-            _shopId = doc.data()?['shopId'] as String?;
+          final supabase = sb.Supabase.instance.client;
+            final doc = await supabase
+              .from('users')
+              .select('shop_id')
+              .eq('id', user.id)
+              .maybeSingle();
+          if (doc != null) {
+            _shopId = doc['shop_id'] as String?;
             if (_shopId != null) await SessionService.saveShopId(_shopId!);
           }
         }
@@ -249,15 +251,16 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
 
     final goalId = "${_selectedYear}_$_selectedMonth";
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('shops')
-          .doc(_shopId)
-          .collection('financial_goals')
-          .doc(goalId)
-          .get();
+      final supabase = sb.Supabase.instance.client;
+      final doc = await supabase
+          .from('financial_goals')
+          .select()
+          .eq('shop_id', _shopId!)
+          .eq('goal_id', goalId)
+          .maybeSingle();
 
-      if (doc.exists) {
-        final val = _toDouble(doc.data()?['value']);
+      if (doc != null) {
+        final val = _toDouble(doc['value']);
         if (mounted) {
           setState(() {
             _metaMensal = val;
@@ -281,18 +284,17 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
     if (_shopId == null) return;
     
     try {
-      final batch = FirebaseFirestore.instance.batch();
-      final collection = FirebaseFirestore.instance
-          .collection('shops')
-          .doc(_shopId)
-          .collection('financial_goals');
+      final supabase = sb.Supabase.instance.client;
+      final List<Map<String, dynamic>> goalsToUpsert = [];
 
       if (applyToYear) {
         for (int m = 1; m <= 12; m++) {
           final goalId = "${_selectedYear}_$m";
-          batch.set(collection.doc(goalId), {
+          goalsToUpsert.add({
+            'shopId': _shopId,
+            'goal_id': goalId,
             'value': value,
-            'updatedAt': FieldValue.serverTimestamp(),
+            'updatedAt': DateTime.now().toIso8601String(),
             'year': _selectedYear,
             'month': m,
           });
@@ -300,15 +302,17 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
       } else {
         if (_selectedMonth == null) return;
         final goalId = "${_selectedYear}_$_selectedMonth";
-        batch.set(collection.doc(goalId), {
+        goalsToUpsert.add({
+          'shopId': _shopId,
+          'goal_id': goalId,
           'value': value,
-          'updatedAt': FieldValue.serverTimestamp(),
+          'updatedAt': DateTime.now().toIso8601String(),
           'year': _selectedYear,
           'month': _selectedMonth,
         });
       }
 
-      await batch.commit();
+      await supabase.from('financial_goals').upsert(goalsToUpsert);
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -371,64 +375,61 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
     }
   }
 
-  Future<List<QueryDocumentSnapshot>> _fetchAppointments(
+  Future<List<Map<String, dynamic>>> _fetchAppointments(
       DateTime start, DateTime end) async {
-    final snap = await FirebaseFirestore.instance
-        .collection('appointments')
-        .where('shopId', isEqualTo: _shopId)
-        .where('data_agendamento',
-            isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-        .where('data_agendamento', isLessThanOrEqualTo: Timestamp.fromDate(end))
-        .get();
-    return snap.docs;
+    final supabase = sb.Supabase.instance.client;
+    final res = await supabase
+        .from('appointments')
+        .select()
+        .eq('shop_id', _shopId!)
+        .gte('scheduled_at', start.toIso8601String())
+        .lte('scheduled_at', end.toIso8601String());
+    return List<Map<String, dynamic>>.from(res);
   }
 
-  Future<List<QueryDocumentSnapshot>> _fetchTransactions(
+  Future<List<Map<String, dynamic>>> _fetchTransactions(
       DateTime start, DateTime end) async {
-    final snap = await FirebaseFirestore.instance
-        .collection('financial_transactions')
-        .where('shopId', isEqualTo: _shopId)
-        .where('data', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-        .where('data', isLessThanOrEqualTo: Timestamp.fromDate(end))
-        .get();
-    return snap.docs;
+    final supabase = sb.Supabase.instance.client;
+    final res = await supabase
+        .from('financial_transactions')
+        .select()
+        .eq('shop_id', _shopId!)
+        .gte('data', start.toIso8601String())
+        .lte('data', end.toIso8601String());
+    return List<Map<String, dynamic>>.from(res);
   }
 
-  Future<List<QueryDocumentSnapshot>> _fetchEmployees() async {
-    final snap = await FirebaseFirestore.instance
-        .collection('employees')
-        .where('shopId', isEqualTo: _shopId)
-        .get();
-    return snap.docs;
+  Future<List<Map<String, dynamic>>> _fetchEmployees() async {
+    final supabase = sb.Supabase.instance.client;
+    final res = await supabase
+        .from('employees')
+        .select()
+        .eq('shop_id', _shopId!);
+    return List<Map<String, dynamic>>.from(res);
   }
 
   // ─────────────────────────────────────────────
   // CÁLCULO DO PERÍODO ANTERIOR (para delta %)
   // ─────────────────────────────────────────────
   void _calculatePreviousPeriod(
-      List<QueryDocumentSnapshot> appts, List<QueryDocumentSnapshot> trans) {
+      List<Map<String, dynamic>> appts, List<Map<String, dynamic>> trans) {
     double rev = 0, exp = 0, com = 0;
     int completed = 0, cancelled = 0;
 
-    for (var doc in appts) {
-      final d = doc.data() as Map<String, dynamic>;
+    for (var d in appts) {
       final status = (d['status'] ?? '').toString().toLowerCase();
-      final value = _toDouble(d['valor_total']);
+      final value = _getAppointmentValue(d);
       if (_isCompleted(status)) {
         completed++;
         rev += value;
-        // Comissão simples — não temos o mapa de funcionários aqui,
-        // então usamos o campo salvo no agendamento se disponível
-        final comPct = _toDouble(d['comissao_percent']);
+        final comPct = _toDouble(d['commission_percent']);
         if (comPct > 0) com += value * comPct / 100;
       } else if (status == 'cancelado') {
         cancelled++;
       }
     }
-    for (var doc in trans) {
-      final d = doc.data() as Map<String, dynamic>;
+    for (var d in trans) {
       final val = (d['valor'] as num?)?.toDouble() ?? 0;
-      // FIX: só conta como despesa se for negativo E não for do tipo 'comissao'
       if (val < 0 && (d['tipo'] ?? '') != 'comissao') exp += val.abs();
     }
 
@@ -446,9 +447,9 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
   // CÁLCULO PRINCIPAL
   // ─────────────────────────────────────────────
   void _calculateMetrics(
-    List<QueryDocumentSnapshot> appts,
-    List<QueryDocumentSnapshot> trans,
-    List<QueryDocumentSnapshot> emps,
+    List<Map<String, dynamic>> appts,
+    List<Map<String, dynamic>> trans,
+    List<Map<String, dynamic>> emps,
   ) {
     double totalRevenue = 0;
     double totalExpense = 0;
@@ -462,42 +463,30 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
     Map<String, double> profissionaisMap = {};
     Map<int, double> dailyRevenue = {};
     Map<int, int> dailyAppts = {};
-    // Produtividade granular: chave = mês (visão anual) ou semana (visão mensal)
     Map<int, _HourlySlot> hourlySlots = {};
 
-    // ── Mapa de comissões por employeeId ──────────
     Map<String, double> empCommissions = {};
     Map<String, String> empNames = {};
     Map<String, _ProfessionalEfficiency> profEffMap = {};
-    for (var doc in emps) {
-      final d = doc.data() as Map<String, dynamic>;
-      final name = (d['nome'] ?? d['name'] ?? 'Profissional').toString();
-      empCommissions[doc.id] = _toDouble(d['comissao_percent']);
-      empNames[doc.id] = name;
-      profEffMap[doc.id] = _ProfessionalEfficiency(id: doc.id, nome: name);
+    for (var d in emps) {
+      final id = d['id'].toString();
+      final name = (d['name'] ?? d['nome'] ?? 'Profissional').toString();
+      empCommissions[id] = _toDouble(d['commission_percent']);
+      empNames[id] = name;
+      profEffMap[id] = _ProfessionalEfficiency(id: id, nome: name);
     }
 
-    for (var doc in appts) {
-      final data = doc.data() as Map<String, dynamic>;
+    for (var data in appts) {
       final status = (data['status'] ?? '').toString().toLowerCase();
 
-      // FIX: pula documento sem data para evitar crash
-      if (data['data_agendamento'] == null) continue;
+      if (data['scheduled_at'] == null) continue;
 
-      final value = _toDouble(data['valor_total'] ?? data['valor']);
-      final service = (data['servico_nome'] ?? 'Outros').toString();
-      final date = (data['data_agendamento'] as Timestamp).toDate();
-      final empId = (data['profissionalId'] ??
-              data['professionalId'] ??
-              data['employeeId'] ??
-              data['funcionarioId'] ??
-              data['dono_id'])
-          ?.toString();
-      final duration = int.tryParse((data['duracao_min'] ??
-                  data['tempo_min'] ??
-                  data['duration_min'] ??
-                  '30')
-              .toString()) ??
+      final value = _getAppointmentValue(data);
+      final service = (data['service_name'] ?? 'Outros').toString();
+      final date = DateTime.parse(data['scheduled_at'].toString());
+      final empId = data['professional_id']?.toString();
+      final duration = int.tryParse(
+              (data['duration_min'] ?? '30').toString()) ??
           30;
 
       if (_isCompleted(status)) {
@@ -506,20 +495,17 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
         workedMinutes += duration;
         servicesMap[service] = (servicesMap[service] ?? 0) + value;
 
-        // ── Eficiência Individual ────────────────
         if (empId != null) {
           if (!profEffMap.containsKey(empId)) {
-            final nome = data['profissional_nome'] ?? data['professionalName'] ?? 'Profissional';
+            final nome = data['professional_name'] ?? 'Profissional';
             profEffMap[empId] = _ProfessionalEfficiency(id: empId, nome: nome);
           }
           profEffMap[empId]!..receita += value..minutosTrabalhados += duration;
         }
 
-        // ── Comissão ──────────────────────────────
         if (empId != null && empCommissions.containsKey(empId)) {
           final com = value * empCommissions[empId]! / 100;
           totalCommission += com;
-          // FIX: usamos o nome do profissional, não o ID
           final nome = empNames[empId] ?? 'Profissional';
           profissionaisMap[nome] = (profissionaisMap[nome] ?? 0) + value;
         } else if (empId != null) {
@@ -527,9 +513,8 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
           profissionaisMap[nome] = (profissionaisMap[nome] ?? 0) + value;
         }
 
-        // ── Forma de pagamento ────────────────────
         final method =
-            (data['forma_pagamento'] ?? 'Dinheiro').toString().toLowerCase();
+            (data['payment_method'] ?? 'Dinheiro').toString().toLowerCase();
         if (method.contains('pix')) {
           payments['PIX'] = (payments['PIX'] ?? 0) + value;
         } else if (method.contains('cart') ||
@@ -544,12 +529,9 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
         dailyRevenue[key] = (dailyRevenue[key] ?? 0) + value;
         dailyAppts[key] = (dailyAppts[key] ?? 0) + 1;
 
-        // ── Produtividade por período ─────────────
-        // Visão anual → agrupa por mês (1–12)
-        // Visão mensal → agrupa por semana do mês (1–5)
         final slotKey = _selectedMonth == null
             ? date.month
-            : ((date.day - 1) ~/ 7) + 1; // semana: 1,2,3,4,5
+            : ((date.day - 1) ~/ 7) + 1; 
         hourlySlots.putIfAbsent(slotKey, _HourlySlot.new)
           ..receita += value
           ..minutos += duration;
@@ -560,22 +542,19 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
 
     // ── Transações extras (despesas) ──────────────
     // FIX: exclui registros do tipo 'comissao' para evitar dupla contagem
-    for (var doc in trans) {
-      final d = doc.data() as Map<String, dynamic>;
+    for (var d in trans) {
       final val = (d['valor'] as num?)?.toDouble() ?? 0;
       final tipo = (d['tipo'] ?? '').toString().toLowerCase();
       if (val < 0 && tipo != 'comissao') totalExpense += val.abs();
     }
 
-    // ── Horas Potenciais ──────────────────────────
     int potentialMinutes = 0;
-    for (var doc in emps) {
-      final d = doc.data() as Map<String, dynamic>;
-      final startStr = d['horario_inicio']?.toString() ?? '08:00';
-      final endStr = d['horario_fim']?.toString() ?? '18:00';
-      // FIX: diasTrabList com fallback padrão (seg–sáb = weekdays 1–6)
+    for (var d in emps) {
+      final id = d['id'].toString();
+      final startStr = d['start_time']?.toString() ?? '08:00';
+      final endStr = d['end_time']?.toString() ?? '18:00';
       final List diasTrabList =
-          (d['dias_trabalho'] as List?) ?? [1, 2, 3, 4, 5, 6];
+          (d['work_days'] as List?) ?? [1, 2, 3, 4, 5, 6];
 
       try {
         final sParts = startStr.split(':');
@@ -585,17 +564,14 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
         final jornadaDiaria = eMin - sMin;
         if (jornadaDiaria <= 0) continue;
 
-        // ── Eficiência Individual (Potencial) ─────
         int profPotentialMin = 0;
-        final profId = doc.id;
+        final profId = id;
 
         if (_selectedMonth != null) {
-          // FIX: iteração dia-a-dia com weekday correto (Flutter: 1=Seg, 7=Dom)
           final firstDay = DateTime(_selectedYear, _selectedMonth!, 1);
           final lastDay = DateTime(_selectedYear, _selectedMonth! + 1, 0);
           for (int i = 0; i < lastDay.day; i++) {
             final day = firstDay.add(Duration(days: i));
-            // Normaliza: se a lista usa 0 para domingo, converte day.weekday (7) para 0
             final wday = day.weekday == 7 ? 0 : day.weekday;
             if (diasTrabList.contains(day.weekday) ||
                 diasTrabList.contains(wday)) {
@@ -604,7 +580,6 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
             }
           }
         } else {
-          // Cálculo anual: conta dias trabalhados no ano inteiro
           final firstDay = DateTime(_selectedYear, 1, 1);
           final lastDay = DateTime(_selectedYear, 12, 31);
           for (int i = 0; i <= lastDay.difference(firstDay).inDays; i++) {
@@ -702,11 +677,22 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
   // ─────────────────────────────────────────────
   double _toDouble(dynamic v) => double.tryParse(v?.toString() ?? '0') ?? 0.0;
 
+  double _getAppointmentValue(Map<String, dynamic> data) {
+    return double.tryParse(data['total_value']?.toString() ??
+            data['total_price']?.toString() ??
+            data['valor_total']?.toString() ??
+            data['price']?.toString() ??
+            data['valor']?.toString() ??
+            "0") ??
+        0.0;
+  }
+
   bool _isCompleted(String status) =>
       status == 'concluido' ||
       status == 'finalizado' ||
       status == 'pago' ||
-      status == 'completed';
+      status == 'completed' ||
+      status == 'efetuado';
 
   /// Retorna delta percentual entre [current] e [prev].
   /// Positivo = crescimento, negativo = queda.
@@ -825,6 +811,13 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
                 ),
               ],
             ),
+          ),
+          floatingActionButton: FloatingActionButton.extended(
+            onPressed: _showTransactionDialog,
+            backgroundColor: AppColors.primaryPurple,
+            foregroundColor: Colors.white,
+            icon: const Icon(Icons.add_chart_rounded),
+            label: const Text('Novo Lançamento', style: TextStyle(fontWeight: FontWeight.bold)),
           ),
         );
       },
@@ -2081,6 +2074,150 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
               ),
               child: const Text('SALVAR META',
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────
+  // DIALOG DE NOVO LANÇAMENTO (DESPESA/RECEITA)
+  // ─────────────────────────────────────────────
+  void _showTransactionDialog() {
+    final descController = TextEditingController();
+    final valueController = TextEditingController();
+    String tipo = 'despesa'; // padrão
+    DateTime data = DateTime.now();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: Colors.white,
+          surfaceTintColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: (tipo == 'despesa' ? Colors.red : Colors.green).withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  tipo == 'despesa' ? Icons.remove_circle_outline : Icons.add_circle_outline,
+                  color: tipo == 'despesa' ? Colors.red : Colors.green,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Text('Novo Lançamento', style: TextStyle(fontWeight: FontWeight.bold)),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Seletor de Tipo
+                SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: 'despesa', label: Text('Despesa'), icon: Icon(Icons.trending_down, size: 16)),
+                    ButtonSegment(value: 'receita', label: Text('Receita Extra'), icon: Icon(Icons.trending_up, size: 16)),
+                  ],
+                  selected: {tipo},
+                  onSelectionChanged: (val) => setDialogState(() => tipo = val.first),
+                  style: SegmentedButton.styleFrom(
+                    selectedBackgroundColor: tipo == 'despesa' ? Colors.red[50] : Colors.green[50],
+                    selectedForegroundColor: tipo == 'despesa' ? Colors.red : Colors.green,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                TextField(
+                  controller: descController,
+                  decoration: InputDecoration(
+                    labelText: 'Descrição',
+                    hintText: 'Ex: Aluguel, Produtos, etc.',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    prefixIcon: const Icon(Icons.description_outlined),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: valueController,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(
+                    labelText: 'Valor',
+                    prefixText: 'R\$ ',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    prefixIcon: const Icon(Icons.payments_outlined),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                // Seletor de Data
+                InkWell(
+                  onTap: () async {
+                    final picked = await showDatePicker(
+                      context: context,
+                      initialDate: data,
+                      firstDate: DateTime(2023),
+                      lastDate: DateTime(2100),
+                    );
+                    if (picked != null) setDialogState(() => data = picked);
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 15),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.grey[400]!),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.calendar_today_outlined, size: 20, color: Colors.grey),
+                        const SizedBox(width: 12),
+                        Text(DateFormat('dd/MM/yyyy').format(data)),
+                        const Spacer(),
+                        const Icon(Icons.arrow_drop_down),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('CANCELAR')),
+            ElevatedButton(
+              onPressed: () async {
+                final double v = double.tryParse(valueController.text.replaceAll(',', '.')) ?? 0.0;
+                if (v <= 0 || descController.text.isEmpty) return;
+
+                final finalValue = tipo == 'despesa' ? -v : v;
+
+                try {
+                  await sb.Supabase.instance.client.from('financial_transactions').insert({
+                    'shop_id': _shopId,
+                    'descricao': descController.text.trim(),
+                    'valor': finalValue,
+                    'tipo': tipo,
+                    'data': data.toIso8601String(),
+                    'created_at': DateTime.now().toIso8601String(),
+                  });
+                  if (_shopId != null) {
+                    ShopDataCacheService().invalidate(_shopId!, 'financial');
+                  }
+                  if (mounted) {
+                    Navigator.pop(ctx);
+                    _refresh();
+                  }
+                } catch (e) {
+                  debugPrint('Erro ao salvar lançamento: $e');
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: tipo == 'despesa' ? Colors.red : Colors.green,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('SALVAR LANÇAMENTO'),
             ),
           ],
         ),

@@ -55,7 +55,7 @@ A MarkaAI é uma plataforma de gestão e agendamento que conecta clientes a prof
 
 ## 2. PLANOS E ASSINATURAS
 O aplicativo oferece planos gratuitos e pagos. Os recursos específicos, limites e valores de cada plano estão descritos na plataforma.
-- **Teste Gratuito (Trial):** Oferecemos um período de teste gratuito de 90 dias para os planos pagos. O trial é válido para **uso único por conta**. Ao término dos 90 dias, o acesso aos recursos premium será bloqueado automaticamente caso não haja contratação de um plano pago. Nenhuma cobrança automática será realizada sem o seu consentimento explícito prévio.
+- **Teste Gratuito (Trial):** Oferecemos um período de teste gratuito de 30 dias para os planos pagos. O trial é válido para **uso único por conta**. Ao término dos 30 dias, o acesso aos recursos premium será bloqueado automaticamente caso não haja contratação de um plano pago. Nenhuma cobrança automática será realizada sem o seu consentimento explícito prévio.
 
 ## 3. RESPONSABILIDADES DO USUÁRIO
 Ao utilizar a plataforma, você concorda em:

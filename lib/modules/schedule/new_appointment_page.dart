@@ -1,9 +1,9 @@
-﻿import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 import 'package:table_calendar/table_calendar.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
+import '../../core/models/appointment_model.dart';
 
 class NewAppointmentPage extends StatefulWidget {
   final Map<String, dynamic>? preSelectedClient;
@@ -22,8 +22,8 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
   String? shopId;
 
   // Seleções
-  DocumentSnapshot? _selectedService;
-  DocumentSnapshot? _selectedProfessional;
+  Map<String, dynamic>? _selectedService;
+  Map<String, dynamic>? _selectedProfessional;
   DateTime? _selectedDate;
   TimeOfDay? _selectedTime;
 
@@ -31,7 +31,7 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
   DateTime _focusedDay = DateTime.now();
   final Map<DateTime, bool> _fullDays = {};
   bool _isLoadingAvailability = false;
-  List<DocumentSnapshot> _monthAppointments = [];
+  List<Map<String, dynamic>> _monthAppointments = [];
 
   @override
   void initState() {
@@ -48,13 +48,16 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
   Widget _buildServiceStep() {
     if (shopId == null) return const Center(child: CircularProgressIndicator());
 
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('services')
-          .where('shopId', isEqualTo: shopId)
-          .where('ativo', isEqualTo: true)
-          .orderBy('nome')
-          .snapshots(),
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: sb.Supabase.instance.client
+          .from('services')
+          .stream(primaryKey: ['id'])
+          .eq('shop_id', shopId!)
+          .map((list) {
+            final filtered = list.where((d) => d['is_active'] == null || d['is_active'] == true).toList();
+            filtered.sort((a, b) => (a['name'] ?? '').toString().toLowerCase().compareTo((b['name'] ?? '').toString().toLowerCase()));
+            return filtered;
+          }),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return Center(
@@ -62,7 +65,7 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
                   style: const TextStyle(color: Colors.red)));
         }
         if (!snapshot.hasData) return const CircularProgressIndicator();
-        final docs = snapshot.data!.docs;
+        final docs = snapshot.data!;
 
         if (docs.isEmpty) {
           return const Center(child: Text("Nenhum serviço ativo encontrado."));
@@ -74,12 +77,11 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
           itemCount: docs.length,
           itemBuilder: (context, index) {
             final serviceDoc = docs[index];
-            final data = serviceDoc.data() as Map<String, dynamic>;
-            final isSelected = _selectedService?.id == serviceDoc.id;
+            final data = serviceDoc;
+            final isSelected = _selectedService?['id'] == serviceDoc['id'];
 
-            String precoDisplay = data['preco']?.toString() ?? "0.00";
-            // âœ… CORREÇÃO: Agora busca 'tempo_min' do Firestore
-            String duracao = data['tempo_min']?.toString() ?? "30";
+            String precoDisplay = data['price']?.toString() ?? "0.00";
+            String duracao = data['duration_min']?.toString() ?? "30";
 
             return Card(
               color: isSelected
@@ -87,7 +89,7 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
                   : Colors.white,
               elevation: 1,
               child: ListTile(
-                title: Text(data['nome'] ?? "Serviço",
+                title: Text(data['name'] ?? "Serviço",
                     style: TextStyle(
                         fontWeight: FontWeight.bold,
                         color: isSelected
@@ -101,7 +103,6 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
                 onTap: () {
                   setState(() {
                     _selectedService = serviceDoc;
-                    // ✅ IMPORTANTE: Reseta profissional e horário quando muda o serviço
                     _selectedProfessional = null;
                     _selectedTime = null;
                     _selectedDate = null;
@@ -122,7 +123,6 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
       return const CircularProgressIndicator();
     }
 
-    // âœ… VALIDAÇÃO: Precisa ter um serviço selecionado primeiro
     if (_selectedService == null) {
       return const Center(
         child: Padding(
@@ -135,11 +135,11 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
       );
     }
 
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('employees')
-          .where('shopId', isEqualTo: shopId)
-          .snapshots(),
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: sb.Supabase.instance.client
+          .from('employees')
+          .stream(primaryKey: ['id'])
+          .eq('shop_id', shopId!),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return const Center(
@@ -149,13 +149,11 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
         if (!snapshot.hasData) {
           return const CircularProgressIndicator();
         }
-        final allDocs = snapshot.data!.docs;
+        final allDocs = snapshot.data!;
 
-        // âœ… FILTRO: Mostra apenas profissionais que fazem este serviço
-        final filteredDocs = allDocs.where((doc) {
-          final data = doc.data() as Map<String, dynamic>;
-          List<dynamic> servicosHabilitados = data['servicos_habilidade'] ?? [];
-          return servicosHabilitados.contains(_selectedService!.id);
+        final filteredDocs = allDocs.where((data) {
+          List<dynamic> servicosHabilitados = data['services_ids'] ?? [];
+          return servicosHabilitados.contains(_selectedService!['id']);
         }).toList();
 
         if (filteredDocs.isEmpty) {
@@ -176,12 +174,12 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
           physics: const NeverScrollableScrollPhysics(),
           itemCount: filteredDocs.length,
           itemBuilder: (context, index) {
-            final data = filteredDocs[index].data() as Map<String, dynamic>;
+            final data = filteredDocs[index];
             final isSelected =
-                _selectedProfessional?.id == filteredDocs[index].id;
+                _selectedProfessional?['id'] == filteredDocs[index]['id'];
 
-            String nome = data['nome'] ?? "Profissional";
-            String tipo = data['tipo'] ?? "funcionario";
+            String name = data['name'] ?? "Profissional";
+            String role = data['role'] ?? "funcionario";
 
             return Card(
               color: isSelected
@@ -192,16 +190,16 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
                   backgroundColor:
                       AppColors.primaryPurple.withValues(alpha: 0.2),
                   child: Text(
-                      nome.isNotEmpty
-                          ? nome.substring(0, 1).toUpperCase()
+                      name.isNotEmpty
+                          ? name.substring(0, 1).toUpperCase()
                           : "?",
                       style: const TextStyle(
                           color: AppColors.primaryPurple,
                           fontWeight: FontWeight.bold)),
                 ),
-                title: Text(nome,
+                title: Text(name,
                     style: const TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: Text(tipo.toUpperCase(),
+                subtitle: Text(role.toUpperCase(),
                     style: const TextStyle(fontSize: 10, color: Colors.grey)),
                 trailing: isSelected
                     ? const Icon(Icons.check_circle,
@@ -292,12 +290,12 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
       return const Text("Selecione serviço e profissional.");
     }
 
-    final profData = _selectedProfessional!.data() as Map<String, dynamic>;
-    final servData = _selectedService!.data() as Map<String, dynamic>;
+    final profData = _selectedProfessional!;
+    final servData = _selectedService!;
 
     int duracaoServico =
-        int.tryParse(servData['tempo_min']?.toString() ?? "30") ?? 30;
-    List<dynamic> workDays = profData['dias_trabalho'] ?? [1, 2, 3, 4, 5, 6];
+        int.tryParse(servData['duration_min']?.toString() ?? "30") ?? 30;
+    List<dynamic> workDays = profData['work_days'] ?? [1, 2, 3, 4, 5, 6];
 
     if (!workDays.contains(_selectedDate!.weekday)) {
       return Container(
@@ -316,22 +314,20 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
       );
     }
 
-    String startStr = profData['horario_inicio'] ?? "08:00";
-    String endStr = profData['horario_fim'] ?? "19:00";
+    String startStr = profData['work_start'] ?? "08:00";
+    String endStr = profData['work_end'] ?? "19:00";
 
     DateTime startOfDay = DateTime(
         _selectedDate!.year, _selectedDate!.month, _selectedDate!.day, 0, 0);
     DateTime endOfDay = DateTime(
         _selectedDate!.year, _selectedDate!.month, _selectedDate!.day, 23, 59);
 
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('appointments')
-          .where('shopId', isEqualTo: shopId)
-          .where('profissionalId', isEqualTo: _selectedProfessional!.id)
-          .where('data_agendamento', isGreaterThanOrEqualTo: startOfDay)
-          .where('data_agendamento', isLessThanOrEqualTo: endOfDay)
-          .snapshots(),
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: sb.Supabase.instance.client
+          .from('appointments')
+          .stream(primaryKey: ['id'])
+          .eq('shop_id', shopId!)
+          .map((list) => list.where((d) => d['professional_id'] == _selectedProfessional!['id']).toList()),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return const Padding(
@@ -346,15 +342,21 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
         }
 
         List<String> busyTimes = [];
-        for (var doc in snapshot.data!.docs) {
-          final data = doc.data() as Map<String, dynamic>;
+        final appointmentsInRange = snapshot.data!.where((data) {
+          if (data['scheduled_at'] == null) return false;
+          final dt = DateTime.parse(data['scheduled_at']);
+          return dt.isAfter(startOfDay.subtract(const Duration(seconds: 1))) && 
+                 dt.isBefore(endOfDay.add(const Duration(seconds: 1)));
+        });
+
+        for (var data in appointmentsInRange) {
           final status = (data['status'] ?? '').toString().toLowerCase();
           if (status == 'cancelado' || status == 'recusado') {
             continue;
           }
 
-          if (data['data_agendamento'] != null) {
-            DateTime dt = (data['data_agendamento'] as Timestamp).toDate();
+          if (data['scheduled_at'] != null) {
+            DateTime dt = DateTime.parse(data['scheduled_at']);
             String timeStr = _formatTime(dt.hour, dt.minute);
             busyTimes.add(timeStr);
           }
@@ -453,17 +455,15 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
         DateTime(focusedMonth.year, focusedMonth.month + 1, 0, 23, 59, 59);
 
     try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('appointments')
-          .where('shopId', isEqualTo: shopId)
-          .where('profissionalId', isEqualTo: _selectedProfessional!.id)
-          .where('data_agendamento',
-              isGreaterThanOrEqualTo: Timestamp.fromDate(startOfMonth))
-          .where('data_agendamento',
-              isLessThanOrEqualTo: Timestamp.fromDate(endOfMonth))
-          .get();
+      final results = await sb.Supabase.instance.client
+          .from('appointments')
+          .select()
+          .eq('shop_id', shopId!)
+          .eq('professional_id', _selectedProfessional!['id'])
+          .gte('scheduled_at', startOfMonth.toIso8601String())
+          .lte('scheduled_at', endOfMonth.toIso8601String());
 
-      _monthAppointments = snapshot.docs;
+      _monthAppointments = List<Map<String, dynamic>>.from(results);
       _calculateFullDays(focusedMonth);
     } catch (e) {
       debugPrint("Erro ao carregar disponibilidade: $e");
@@ -476,36 +476,32 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
     if (_selectedService == null || _selectedProfessional == null) return;
 
     _fullDays.clear();
-    final profData = _selectedProfessional!.data() as Map<String, dynamic>;
-    final servData = _selectedService!.data() as Map<String, dynamic>;
+    final profData = _selectedProfessional!;
+    final servData = _selectedService!;
 
     int duration =
-        int.tryParse(servData['tempo_min']?.toString() ?? "30") ?? 30;
-    List<dynamic> workDays = profData['dias_trabalho'] ?? [1, 2, 3, 4, 5, 6];
-    String startStr = profData['horario_inicio'] ?? "08:00";
-    String endStr = profData['horario_fim'] ?? "19:00";
+        int.tryParse(servData['duration_min']?.toString() ?? "30") ?? 30;
+    List<dynamic> workDays = profData['work_days'] ?? [1, 2, 3, 4, 5, 6];
+    String startStr = profData['work_start'] ?? "08:00";
+    String endStr = profData['work_end'] ?? "19:00";
 
-    // Dias do mês
     final daysInMonth = DateTime(month.year, month.month + 1, 0).day;
 
     for (int i = 1; i <= daysInMonth; i++) {
       final date = DateTime(month.year, month.month, i);
       final dayOfWeek = date.weekday;
 
-      // 1. Se não trabalha no dia, marca como cheio/riscado
       if (!workDays.contains(dayOfWeek)) {
         _fullDays[date] = true;
         continue;
       }
 
-      // 2. Verifica se há pelo menos um slot livre
       List<String> busyTimes = [];
-      for (var doc in _monthAppointments) {
-        final data = doc.data() as Map<String, dynamic>;
+      for (var data in _monthAppointments) {
         final status = (data['status'] ?? '').toString().toLowerCase();
         if (status == 'cancelado' || status == 'recusado') continue;
 
-        DateTime dt = (data['data_agendamento'] as Timestamp).toDate();
+        DateTime dt = DateTime.parse(data['scheduled_at']);
         if (dt.year == date.year &&
             dt.month == date.month &&
             dt.day == date.day) {
@@ -531,7 +527,6 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
     if (mounted) setState(() {});
   }
 
-  // --- CÁLCULO DE SLOTS COM DURAÇÃO ---
   List<String> _generateProfessionalSlotsWithDuration(
       String start, String end, int durationMin) {
     List<String> slots = [];
@@ -543,12 +538,11 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
     int totalEndMinutes = (endH * 60) + endM;
     int currentMinutes = (startH * 60) + startM;
 
-    // âœ… CORREÇÃO: Agora incrementa com a duração real do serviço
     while (currentMinutes + durationMin <= totalEndMinutes) {
       int h = currentMinutes ~/ 60;
       int m = currentMinutes % 60;
       slots.add(_formatTime(h, m));
-      currentMinutes += durationMin; // âš¡ Usa a duração real em vez de 30 fixo
+      currentMinutes += durationMin;
     }
     return slots;
   }
@@ -557,11 +551,11 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
       "${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}";
   String _formatTimeOfDay(TimeOfDay t) => _formatTime(t.hour, t.minute);
 
-  // --- CONFIRMAR E SALVAR ---
   Future<void> _confirmAppointment() async {
     setState(() => _isLoading = true);
     try {
-      final user = FirebaseAuth.instance.currentUser;
+      final supabase = sb.Supabase.instance.client;
+      final user = supabase.auth.currentUser;
       String finalClientId;
       String finalClientName;
       String finalClientPhone;
@@ -569,14 +563,14 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
       if (widget.preSelectedClientId != null &&
           widget.preSelectedClient != null) {
         finalClientId = widget.preSelectedClientId!;
-        finalClientName = widget.preSelectedClient!['nome'];
-        finalClientPhone = widget.preSelectedClient!['telefone'] ?? "";
+        finalClientName = widget.preSelectedClient!['name'];
+        finalClientPhone = widget.preSelectedClient!['phone'] ?? "";
       } else {
         if (user == null) {
           return;
         }
-        finalClientId = user.uid;
-        finalClientName = user.displayName ?? "Cliente App";
+        finalClientId = user.id;
+        finalClientName = user.userMetadata?['name'] ?? user.userMetadata?['nome'] ?? "Cliente App";
         finalClientPhone = "";
       }
 
@@ -587,29 +581,32 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
           _selectedTime!.hour,
           _selectedTime!.minute);
 
-      final servicoData = _selectedService!.data() as Map<String, dynamic>;
-      double valor = double.tryParse(servicoData['preco'].toString()) ?? 0.0;
-      final profData = _selectedProfessional!.data() as Map<String, dynamic>;
+      final servicoData = _selectedService!;
+      double valor = double.tryParse(servicoData['price'].toString()) ?? 0.0;
+      final profData = _selectedProfessional!;
 
-      await FirebaseFirestore.instance.collection('appointments').add({
-        'shopId': shopId,
-        'clientId': finalClientId,
-        'client_nome': finalClientName,
-        'client_telefone': finalClientPhone,
-        'profissionalId': _selectedProfessional!.id,
-        'profissional_nome': profData['nome'] ?? "Profissional",
-        'servicoId': _selectedService!.id,
-        'servico_nome': servicoData['nome'],
-        // ✔️ Salva a duração real do serviço no agendamento para evitar sobreposição na agenda
-        'duracao_min':
-            int.tryParse(servicoData['tempo_min']?.toString() ?? "30") ?? 30,
-        'valor': valor,
-        'data_agendamento': Timestamp.fromDate(fullDate),
-        'status': 'agendado',
-        'metodo_pagamento': 'No Local',
-        'criado_em': FieldValue.serverTimestamp(),
-        'criado_por': widget.preSelectedClientId != null ? 'dono' : 'cliente',
-      });
+      final appointment = AppointmentModel(
+        shopId: shopId ?? '',
+        clientId: finalClientId,
+        clientName: finalClientName,
+        clientPhone: finalClientPhone,
+        clientEmail: (widget.preSelectedClient != null)
+            ? (widget.preSelectedClient!['email'] ?? "")
+            : (user?.email ?? ""),
+        professionalId: _selectedProfessional!['id'],
+        professionalName: profData['name'] ?? "Profissional",
+        serviceId: _selectedService!['id'],
+        serviceName: servicoData['name'],
+        scheduledAt: fullDate,
+        totalValue: valor,
+        durationMin:
+            int.tryParse(servicoData['duration_min']?.toString() ?? "30") ?? 30,
+        createdBy: widget.preSelectedClientId != null ? 'dono' : 'cliente',
+      );
+
+      await sb.Supabase.instance.client
+          .from('appointments')
+          .insert(appointment.toMap());
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -688,7 +685,7 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
                             height: 20,
                             child:
                                 CircularProgressIndicator(color: Colors.white))
-                        : Text(_currentStep == 2 ? "CONFIRMAR" : "PRÃ“XIMO",
+                        : Text(_currentStep == 2 ? "CONFIRMAR" : "PRÓXIMO",
                             style: const TextStyle(color: Colors.white)),
                   ),
                 ),
@@ -741,7 +738,6 @@ class StrikeThroughPainter extends CustomPainter {
       ..strokeWidth = 1.5
       ..strokeCap = StrokeCap.round;
 
-    // Linha diagonal para indicar indisponibilidade
     canvas.drawLine(
       Offset(size.width * 0.2, size.height * 0.8),
       Offset(size.width * 0.8, size.height * 0.2),

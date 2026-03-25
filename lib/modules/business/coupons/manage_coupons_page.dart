@@ -1,5 +1,6 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../../core/theme/app_colors.dart';
@@ -7,6 +8,44 @@ import '../../../core/services/coupon_share_service.dart';
 import '../../../core/services/plan_features_service.dart';
 import '../../../core/constants/plan_features.dart';
 import '../../../widgets/upgrade_modal.dart';
+import '../../../core/services/shop_data_cache_service.dart';
+
+class CouponTicketClipper extends CustomClipper<Path> {
+  const CouponTicketClipper();
+
+  @override
+  Path getClip(Size size) {
+    final Path path = Path();
+    const double cutoutRadius = 12.0;
+    const double leftSectionWidth = 100.0;
+
+    path.lineTo(leftSectionWidth - cutoutRadius, 0);
+    path.arcToPoint(
+      const Offset(leftSectionWidth + cutoutRadius, 0),
+      radius: const Radius.circular(cutoutRadius),
+      clockwise: false,
+    );
+    path.lineTo(size.width - 16, 0);
+    path.quadraticBezierTo(size.width, 0, size.width, 16);
+    path.lineTo(size.width, size.height - 16);
+    path.quadraticBezierTo(size.width, size.height, size.width - 16, size.height);
+    path.lineTo(leftSectionWidth + cutoutRadius, size.height);
+    path.arcToPoint(
+      Offset(leftSectionWidth - cutoutRadius, size.height),
+      radius: const Radius.circular(cutoutRadius),
+      clockwise: false,
+    );
+    path.lineTo(16, size.height);
+    path.quadraticBezierTo(0, size.height, 0, size.height - 16);
+    path.lineTo(0, 16);
+    path.quadraticBezierTo(0, 0, 16, 0);
+    path.close();
+    return path;
+  }
+
+  @override
+  bool shouldReclip(CustomClipper<Path> oldClipper) => false;
+}
 
 class ManageCouponsPage extends StatefulWidget {
   final String shopId;
@@ -34,18 +73,19 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
   }
 
   Future<void> _loadShopData() async {
-    final doc = await FirebaseFirestore.instance
-        .collection('shops')
-        .doc(widget.shopId)
-        .get();
-    if (doc.exists) {
+    final data = await Supabase.instance.client
+        .from('shops')
+        .select()
+        .eq('id', widget.shopId)
+        .maybeSingle();
+
+    if (data != null) {
       setState(() {
-        final data = doc.data();
-        _shopName = data?['nome'] ?? "Minha Loja";
-        final String? logo = data?['logoUrl'];
-        final String? foto = data?['foto'];
+        _shopName = data['nome'] ?? "Minha Loja";
+        final String? logo = data['logoUrl'];
+        final String? foto = data['foto'];
         _logoUrl = (logo != null && logo.isNotEmpty) ? logo : foto;
-        _slug = data?['slug'];
+        _slug = data['slug'];
       });
     }
   }
@@ -56,13 +96,10 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
       _isGeneratingImage = true;
     });
 
-    // Precache o logo para garantir que ele esteja pronto para a captura
     if (_logoUrl != null && _logoUrl!.isNotEmpty && mounted) {
       precacheImage(CachedNetworkImageProvider(_logoUrl!), context);
     }
 
-    // Pequeno delay para o RepaintBoundary atualizar com os novos dados
-    // Aumentado para 500ms para dar mais tempo ao motor de renderização
     await Future.delayed(const Duration(milliseconds: 500));
 
     if (mounted) {
@@ -99,23 +136,47 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
           ),
           body: Stack(
             children: [
-              StreamBuilder<QuerySnapshot>(
-                stream: FirebaseFirestore.instance
-                    .collection('shops')
-                    .doc(widget.shopId)
-                    .collection('coupons')
-                    .orderBy('createdAt', descending: true)
-                    .snapshots(),
+              StreamBuilder<List<Map<String, dynamic>>>(
+                stream: Supabase.instance.client
+                    .from('coupons')
+                    .stream(primaryKey: ['id'])
+                    .eq('shop_id', widget.shopId),
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
                     return const Center(child: CircularProgressIndicator());
                   }
 
                   if (snapshot.hasError) {
-                    return const Center(child: Text('Erro ao carregar cupons.'));
+                    debugPrint('Erro no stream de cupons: ${snapshot.error}');
+                    return Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24.0),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.error_outline, color: Colors.orange, size: 48),
+                            const SizedBox(height: 16),
+                            Text('Erro ao carregar cupons: ${snapshot.error}',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(color: Colors.grey)),
+                            const SizedBox(height: 16),
+                            ElevatedButton(
+                              onPressed: () => setState(() {}),
+                              child: const Text('TENTAR NOVAMENTE'),
+                            )
+                          ],
+                        ),
+                      ),
+                    );
                   }
 
-                  final coupons = snapshot.data?.docs ?? [];
+                  final coupons = List<Map<String, dynamic>>.from(snapshot.data ?? []);
+                  
+                  coupons.sort((a, b) {
+                    final aTime = DateTime.tryParse(a['created_at']?.toString() ?? '') ?? DateTime(2000);
+                    final bTime = DateTime.tryParse(b['created_at']?.toString() ?? '') ?? DateTime(2000);
+                    return bTime.compareTo(aTime);
+                  });
 
                   if (coupons.isEmpty) {
                     return Center(
@@ -123,10 +184,10 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(Icons.confirmation_number_outlined,
-                              size: 80, color: Colors.grey[300]),
+                               size: 80, color: Colors.grey[300]),
                           const SizedBox(height: 16),
                           const Text('Nenhum cupom criado ainda.',
-                              style: TextStyle(color: Colors.grey)),
+                               style: TextStyle(color: Colors.grey)),
                           const SizedBox(height: 24),
                           ElevatedButton.icon(
                             onPressed: () {
@@ -152,18 +213,16 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
                     padding: const EdgeInsets.all(16),
                     itemCount: coupons.length,
                     itemBuilder: (context, index) {
-                      final coupon = coupons[index];
-                      final data = coupon.data() as Map<String, dynamic>;
-                      return _buildCouponCard(coupon.id, data);
+                      final data = coupons[index];
+                      return _buildCouponCard(data['id'], data);
                     },
                   );
                 },
               ),
 
-              // Widget "Invisível" para captura de imagem
               if (_couponToShare != null)
                 Positioned(
-                  left: -1000, // Fora da tela
+                  left: -1000,
                   child: RepaintBoundary(
                     key: _shareKey,
                     child: CouponShareService.buildShareableCoupon(
@@ -171,12 +230,11 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
                       code: _couponToShare!['code'] ?? '',
                       discount: _couponToShare!['discountPercent'] ?? 0,
                       logoUrl: _logoUrl,
-                      description: _couponToShare!['descricao'],
+                      description: _couponToShare!['description'],
                       subdomain: _slug,
-                      validUntil: _couponToShare!['validUntil'] != null
+                      validUntil: _couponToShare!['valid_until'] != null
                           ? DateFormat('dd/MM/yyyy').format(
-                              (_couponToShare!['validUntil'] as Timestamp)
-                                  .toDate())
+                              DateTime.parse(_couponToShare!['valid_until'].toString()))
                           : null,
                     ),
                   ),
@@ -221,103 +279,209 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
   }
 
   Widget _buildCouponCard(String id, Map<String, dynamic> data) {
-    final bool isActive = data['isActive'] ?? true;
-    final DateTime? validUntil = (data['validUntil'] as Timestamp?)?.toDate();
-    final bool isExpired =
-        validUntil != null && validUntil.isBefore(DateTime.now());
+    final bool isActive = data['is_active'] ?? true;
+    final DateTime? validUntil =
+        data['valid_until'] != null ? DateTime.parse(data['valid_until'].toString()) : null;
+    final bool isExpired = validUntil != null && validUntil.isBefore(DateTime.now());
+    final bool isCouponEnabled = isActive && !isExpired;
 
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.grey[200]!),
-      ),
-      margin: const EdgeInsets.only(bottom: 12),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        leading: Container(
-          padding: _logoUrl != null ? EdgeInsets.zero : const EdgeInsets.all(10),
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            color: (isActive && !isExpired)
-                ? AppColors.primaryPurple.withValues(alpha: 0.1)
-                : Colors.grey[100],
-            shape: BoxShape.circle,
-            image: _logoUrl != null
-                ? DecorationImage(
-                    image: CachedNetworkImageProvider(_logoUrl!),
-                    fit: BoxFit.cover,
-                  )
-                : null,
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
           ),
-          child: _logoUrl == null
-              ? Icon(
-                  Icons.local_offer,
-                  color: (isActive && !isExpired)
-                      ? AppColors.primaryPurple
-                      : Colors.grey,
-                )
-              : null,
-        ),
-        title: Row(
-          children: [
-            Text(
-              data['code'] ?? '',
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: Colors.green[50],
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                '${data['discountPercent']}% OFF',
-                style: TextStyle(
-                    color: Colors.green[700],
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold),
-              ),
-            ),
-          ],
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 4),
-            Builder(builder: (context) {
-              final int usageCount = data['usageCount'] ?? 0;
-              final int maxUsages = int.tryParse(data['maxUsage']?.toString() ?? '0') ?? 
-                                   int.tryParse(data['uso_limite']?.toString() ?? '0') ?? 0;
-              return Text(
-                'Usos: $usageCount${maxUsages > 0 ? " / $maxUsages" : ""}',
-                style: const TextStyle(fontSize: 12),
-              );
-            }),
-            if (validUntil != null)
-              Text(
-                'Válido até: ${DateFormat('dd/MM/yyyy').format(validUntil)}',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: isExpired ? Colors.red : Colors.grey[600],
-                  fontWeight: isExpired ? FontWeight.bold : FontWeight.normal,
+        ],
+      ),
+      child: ClipPath(
+        clipper: const CouponTicketClipper(),
+        child: Container(
+          height: 120,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 100,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: isCouponEnabled
+                        ? [AppColors.primaryPurple, AppColors.primaryPurple.withValues(alpha: 0.8)]
+                        : [Colors.grey[400]!, Colors.grey[500]!],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      '${data['discount_percent']}%',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const Text(
+                      'OFF',
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-          ],
+
+              Container(
+                width: 1,
+                color: Colors.grey[200],
+                margin: const EdgeInsets.symmetric(vertical: 20),
+              ),
+
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  data['code'] ?? '',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 18,
+                                    color: isCouponEnabled ? Colors.black87 : Colors.grey,
+                                    letterSpacing: 1.1,
+                                  ),
+                                ),
+                                if (data['description'] != null && data['description'].toString().isNotEmpty)
+                                  Text(
+                                    data['description'] ?? '',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          _buildStatusBadge(isActive, isExpired),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Icon(Icons.history, size: 14, color: Colors.grey[400]),
+                          const SizedBox(width: 4),
+                          Builder(builder: (context) {
+                            final int usageCount = data['usage_count'] ?? 0;
+                            final int maxUsages = int.tryParse(data['max_usage']?.toString() ?? '0') ?? 0;
+                            return Text(
+                              'Usos: $usageCount${maxUsages > 0 ? " / $maxUsages" : ""}',
+                              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                            );
+                          }),
+                          const Spacer(),
+                          if (validUntil != null) ...[
+                            Icon(Icons.event_available,
+                                size: 14, color: isExpired ? Colors.red[300] : Colors.grey[400]),
+                            const SizedBox(width: 4),
+                            Text(
+                              DateFormat('dd/MM/yy').format(validUntil),
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: isExpired ? Colors.red[300] : Colors.grey[600],
+                                fontWeight: isExpired ? FontWeight.bold : FontWeight.normal,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.grey[50],
+                  border: Border(left: BorderSide(color: Colors.grey[100]!)),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.copy_rounded, size: 20),
+                      color: isCouponEnabled ? AppColors.primaryPurple : Colors.grey,
+                      tooltip: 'Copiar Código',
+                      onPressed: () {
+                        Clipboard.setData(ClipboardData(text: data['code'] ?? ''));
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Código ${data['code']} copiado!'),
+                            backgroundColor: AppColors.primaryPurple,
+                            behavior: SnackBarBehavior.floating,
+                            width: 250,
+                          ),
+                        );
+                      },
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.share_outlined, size: 20),
+                      color: Colors.blue[400],
+                      onPressed: () => _shareCoupon(data),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.edit_outlined, size: 20),
+                      color: Colors.grey[600],
+                      onPressed: () => _showCouponDialog(id: id, initialData: data),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
-        onTap: () => _showCouponDialog(id: id, initialData: data),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.share_outlined,
-                  color: AppColors.primaryPurple),
-              onPressed: () => _shareCoupon(data),
-            ),
-          ],
-        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusBadge(bool isActive, bool isExpired) {
+    String text = "Ativo";
+    Color color = Colors.green;
+    if (!isActive) {
+      text = "Inativo";
+      color = Colors.grey;
+    } else if (isExpired) {
+      text = "Expirado";
+      color = Colors.red;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold),
       ),
     );
   }
@@ -325,16 +489,14 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
   void _showCouponDialog({String? id, Map<String, dynamic>? initialData}) {
     final codeCtrl = TextEditingController(text: initialData?['code'] ?? '');
     final descCtrl =
-        TextEditingController(text: initialData?['descricao'] ?? '');
+        TextEditingController(text: initialData?['description'] ?? '');
     DateTime? selectedDate =
-        (initialData?['validUntil'] as Timestamp?)?.toDate();
-    int? selectedMonth = initialData?['validMonth'];
+        initialData?['valid_until'] != null ? DateTime.parse(initialData!['valid_until'].toString()) : null;
+    int? selectedMonth = initialData?['valid_month'];
     final limitCtrl = TextEditingController(
-        text: initialData?['maxUsage']?.toString() ??
-            initialData?['uso_limite']?.toString() ??
-            '');
-    double discountValue = (initialData?['discountPercent'] as num?)?.toDouble() ?? 10.0;
-    bool isActive = initialData?['isActive'] ?? true;
+        text: initialData?['max_usage']?.toString() ?? '');
+    double discountValue = (initialData?['discount_percent'] as num?)?.toDouble() ?? 10.0;
+    bool isActive = initialData?['is_active'] ?? true;
 
     showModalBottomSheet(
       context: context,
@@ -407,7 +569,6 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
                 ),
                 const SizedBox(height: 25),
 
-                // CÓDIGO DO CUPOM
                 const Text(
                   "CÓDIGO DO CUPOM",
                   style: TextStyle(
@@ -442,7 +603,7 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     const Text(
-                      "CENTUAL DE DESCONTO (%)",
+                      "PERCENTUAL DE DESCONTO (%)",
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
@@ -491,7 +652,6 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
                 ),
                 const SizedBox(height: 20),
 
-                // LIMITE DE USO
                 const Text(
                   "LIMITE POR QUANTIDADE (USOS)",
                   style: TextStyle(
@@ -520,7 +680,6 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
                 ),
                 const SizedBox(height: 20),
 
-                // DESCRIÇÃO
                 const Text(
                   "DESCRIÇÃO DO CUPOM",
                   style: TextStyle(
@@ -550,7 +709,6 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
 
                 const SizedBox(height: 20),
 
-                // VALIDADE
                 const Text(
                   "VALIDADE",
                   style: TextStyle(
@@ -626,7 +784,6 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
 
                 const SizedBox(height: 20),
 
-                // VALIDADE POR MÊS
                 const Text(
                   "VALIDADE POR MÊS (OPCIONAL)",
                   style: TextStyle(
@@ -680,35 +837,38 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
                         debugPrint('Tentando salvar cupom - shopId: ${widget.shopId}, id: $id');
                         final data = {
                           'code': codeCtrl.text.trim().toUpperCase(),
-                          'descricao': descCtrl.text.trim(),
-                          'discountPercent': discountValue, // Mantenho como double
-                          'isActive': isActive,
-                          'validUntil': selectedDate != null
-                              ? Timestamp.fromDate(selectedDate!)
+                          'description': descCtrl.text.trim(),
+                          'discount_percent': discountValue,
+                          'is_active': isActive,
+                          'valid_until': selectedDate != null
+                              ? selectedDate!.toIso8601String()
                               : null,
-                          'validMonth': selectedMonth,
-                          'maxUsage': int.tryParse(limitCtrl.text) ?? 0,
-                          'uso_limite': int.tryParse(limitCtrl.text) ?? 0,
-                          'updatedAt': FieldValue.serverTimestamp(),
+                          'valid_month': selectedMonth,
+                          'max_usage': int.tryParse(limitCtrl.text) ?? 0,
+                          'updated_at': DateTime.now().toIso8601String(),
                         };
                         debugPrint('Dados do cupom: $data');
-
+ 
                         if (id == null) {
-                          data['createdAt'] = FieldValue.serverTimestamp();
-                          data['usageCount'] = 0;
-                          final ref = await FirebaseFirestore.instance
-                              .collection('shops')
-                              .doc(widget.shopId)
-                              .collection('coupons')
-                              .add(data);
-                          debugPrint('Cupom criado com ID: ${ref.id}');
+                          data['shop_id'] = widget.shopId;
+                          data['created_at'] = DateTime.now().toIso8601String();
+                          data['usage_count'] = 0;
+                          
+                          final response = await Supabase.instance.client
+                              .from('coupons')
+                              .insert(data)
+                              .select();
+                          
+                          if (response.isNotEmpty) {
+                            debugPrint('Cupom criado com ID: ${response.first["id"]}');
+                          } else {
+                            debugPrint('Cupom inserido (sem retorno - verifique RLS)');
+                          }
                         } else {
-                          await FirebaseFirestore.instance
-                              .collection('shops')
-                              .doc(widget.shopId)
-                              .collection('coupons')
-                              .doc(id)
-                              .update(data);
+                          await Supabase.instance.client
+                              .from('coupons')
+                              .update(data)
+                              .eq('id', id);
                           debugPrint('Cupom $id atualizado');
                         }
 
@@ -722,7 +882,7 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
                               duration: const Duration(seconds: 2),
                             ),
                           );
-                          // Pequeno delay para garantir que a snackbar seja registrada antes do pop
+                          ShopDataCacheService().invalidate(widget.shopId, 'coupons');
                           Future.delayed(const Duration(milliseconds: 300), () {
                             if (context.mounted) Navigator.pop(context);
                           });
@@ -782,7 +942,6 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
                   ),
                 ],
                 const SizedBox(height: 12),
-                // Padding extra para garantir que não fique atrás da barra do Android
                 SizedBox(height: MediaQuery.of(context).padding.bottom + 20),
               ],
             ),
@@ -790,8 +949,8 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
         ),
       ),
     ),
-  );
-}
+    );
+  }
 
   void _confirmDelete(String id) {
     showDialog(
@@ -806,12 +965,11 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
           ),
           ElevatedButton(
             onPressed: () async {
-              await FirebaseFirestore.instance
-                  .collection('shops')
-                  .doc(widget.shopId)
-                  .collection('coupons')
-                  .doc(id)
-                  .delete();
+              await Supabase.instance.client
+                  .from('coupons')
+                  .delete()
+                  .eq('id', id);
+              ShopDataCacheService().invalidate(widget.shopId, 'coupons');
               if (context.mounted) Navigator.pop(context);
             },
             style: ElevatedButton.styleFrom(

@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/theme/app_colors.dart';
@@ -39,10 +37,18 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
     super.dispose();
   }
 
-  bool _isUpcoming(DocumentSnapshot appointment) {
-    final data = appointment.data() as Map<String, dynamic>;
+  bool _isUpcoming(Map<String, dynamic> data) {
     final status = data['status']?.toString().toLowerCase() ?? '';
-    final appointmentDate = (data['data_agendamento'] as Timestamp).toDate();
+    final ts = data['scheduled_at'];
+    DateTime? appointmentDate;
+    if (ts is String) {
+      appointmentDate = DateTime.parse(ts);
+    } else if (ts is DateTime) {
+      appointmentDate = ts;
+    }
+    
+    if (appointmentDate == null) return false;
+    
     final now = DateTime.now();
 
     // Próximos: futuros e não cancelados/concluídos
@@ -51,8 +57,8 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
         status != 'concluido';
   }
 
-  List<DocumentSnapshot> _filterAppointments(
-      List<DocumentSnapshot> appointments, bool upcoming) {
+  List<Map<String, dynamic>> _filterAppointments(
+      List<Map<String, dynamic>> appointments, bool upcoming) {
     return appointments
         .where((apt) => upcoming ? _isUpcoming(apt) : !_isUpcoming(apt))
         .toList();
@@ -60,15 +66,16 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
 
   Future<Map<String, dynamic>> _getShopData(String shopId) async {
     try {
-      final shopDoc = await FirebaseFirestore.instance
-          .collection('shops')
-          .doc(shopId)
-          .get();
-      if (shopDoc.exists) {
-        final data = shopDoc.data()!;
+      final data = await Supabase.instance.client
+          .from('shops')
+          .select('nome, logo_url')
+          .eq('id', shopId)
+          .maybeSingle();
+
+      if (data != null) {
         return {
           'nome': data['nome'] ?? 'Estabelecimento',
-          'logo': data['logoUrl'] ?? data['imageUrl'] ?? '',
+          'logo': data['logo_url'] ?? '',
         };
       }
     } catch (e) {
@@ -109,10 +116,9 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
     }
   }
 
-  Future<void> _showPaymentOptions(DocumentSnapshot appointment) async {
-    final data = appointment.data() as Map<String, dynamic>;
-    final valorTotal = (data['valor_total'] ?? data['valor'] ?? 0).toDouble();
-    final valorPago = (data['valor_pago'] ?? 0).toDouble();
+  Future<void> _showPaymentOptions(Map<String, dynamic> appointment) async {
+    final valorTotal = (appointment['valor_total'] ?? appointment['valor'] ?? 0).toDouble();
+    final valorPago = (appointment['valor_pago'] ?? 0).toDouble();
     final valorRestante = valorTotal - valorPago;
 
     if (valorRestante <= 0) {
@@ -225,9 +231,8 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
   }
 
   Future<void> _processPixPayment(
-      DocumentSnapshot appointment, double amount) async {
-    final data = appointment.data() as Map<String, dynamic>;
-    final shopId = data['shopId'];
+      Map<String, dynamic> appointment, double amount) async {
+    final shopId = appointment['shop_id'];
 
     try {
       if (shopId == null) {
@@ -235,13 +240,13 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
         return;
       }
 
-      final user = FirebaseAuth.instance.currentUser!;
+      final user = Supabase.instance.client.auth.currentUser!;
       final result = await MercadoPagoService.gerarPix(
         shopId: shopId,
         amount: amount,
         emailCliente: user.email ?? "cliente@app.com",
         description:
-            "Pagamento restante - ${data['servico_nome'] ?? 'Serviço'}",
+            "Pagamento restante - ${appointment['service_name'] ?? 'Serviço'}",
       );
 
       final qrCode64 =
@@ -251,6 +256,17 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
       final paymentId = result['id'].toString();
 
       if (!mounted) return;
+
+      // Atualiza imediatamente o paymentId no agendamento para evitar perda caso o usuário feche o app
+      try {
+        final currentMeta = (appointment['metadata'] as Map<String, dynamic>?) ?? {};
+        await Supabase.instance.client
+            .from('appointments')
+            .update({'metadata': {...currentMeta, 'payment_id': paymentId}})
+            .eq('id', appointment['id']);
+      } catch (e) {
+        debugPrint('Erro ao salvar paymentId no restante: $e');
+      }
 
       // Inicia polling de status
       _startPixMonitoring(appointment, paymentId, amount);
@@ -295,9 +311,8 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
   }
 
   void _startPixMonitoring(
-      DocumentSnapshot appointment, String paymentId, double amount) {
-    final data = appointment.data() as Map<String, dynamic>;
-    final shopId = data['shopId'];
+      Map<String, dynamic> appointment, String paymentId, double amount) {
+    final shopId = appointment['shop_id'];
 
     _timerPolling?.cancel();
     _timerPolling = Timer.periodic(const Duration(seconds: 3), (timer) async {
@@ -327,29 +342,39 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
     });
   }
 
-  // _showPixModal removido — agora usa PixPaymentPage diretamente em _processPixPayment
-
   Future<void> _processCardPayment(
-      DocumentSnapshot appointment, double amount) async {
-    final data = appointment.data() as Map<String, dynamic>;
-    final shopId = data['shopId'];
-    final serviceDoc = await FirebaseFirestore.instance
-        .collection('services')
-        .doc(data['servicoId'])
-        .get();
+      Map<String, dynamic> appointment, double amount) async {
+    final shopId = appointment['shop_id'] as String;
+    
+    final serviceData = await Supabase.instance.client
+        .from('services')
+        .select()
+        .eq('id', appointment['service_id'])
+        .maybeSingle();
 
-    final shopDoc =
-        await FirebaseFirestore.instance.collection('shops').doc(shopId).get();
-    final professionalDoc = data['profissionalId'] != null
-        ? await FirebaseFirestore.instance
-            .collection('professionals')
-            .doc(data['profissionalId'])
-            .get()
+    final shopData = await Supabase.instance.client
+        .from('shops')
+        .select()
+        .eq('id', shopId)
+        .maybeSingle();
+        
+    final professionalData = appointment['professional_id'] != null
+        ? await Supabase.instance.client
+            .from('employees')
+            .select()
+            .eq('id', appointment['professional_id'])
+            .maybeSingle()
         : null;
 
-    final appointmentDate = (data['data_agendamento'] as Timestamp).toDate();
+    final ts = appointment['scheduled_at'];
+    DateTime appointmentDate = ts is String ? DateTime.parse(ts) : ts;
 
     if (!mounted) return;
+    if (serviceData == null || shopData == null) {
+      _showError('Dados do serviço ou loja não encontrados.');
+      return;
+    }
+
     final result = await Navigator.push<Map<String, dynamic>>(
       context,
       MaterialPageRoute(
@@ -357,14 +382,13 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
           shopId: shopId,
           valor: amount,
           orderId:
-              "ORD-REMAINING-${appointment.id}-${DateTime.now().millisecondsSinceEpoch}",
-          serviceDoc: serviceDoc,
-          professionalDoc: professionalDoc ?? shopDoc,
+              "ORD-REMAINING-${appointment['id']}-${DateTime.now().millisecondsSinceEpoch}",
+          serviceDoc: serviceData,
+          professionalDoc: professionalData ?? shopData,
           date: appointmentDate,
           time: TimeOfDay.fromDateTime(appointmentDate),
           collectOnly: false,
-          skipPlanCheck:
-              true, // o plano já foi validado antes de oferecer o opção
+          skipPlanCheck: true,
         ),
       ),
     );
@@ -380,37 +404,46 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
   }
 
   Future<void> _updateAppointmentPayment(
-    DocumentSnapshot appointment,
+    Map<String, dynamic> appointment,
     double paidAmount,
     String method,
     String paymentId,
   ) async {
-    final data = appointment.data() as Map<String, dynamic>;
-    final currentPaid = (data['valor_pago'] ?? 0).toDouble();
+    final currentMeta = (appointment['metadata'] as Map<String, dynamic>?) ?? {};
+    final currentPaid = ((currentMeta['valor_pago'] ?? 0) as num).toDouble();
     final newPaid = currentPaid + paidAmount;
-    final valorTotal = (data['valor_total'] ?? data['valor'] ?? 0).toDouble();
+    final valorTotal = ((appointment['total_value'] ?? 0) as num).toDouble();
 
-    await FirebaseFirestore.instance
-        .collection('appointments')
-        .doc(appointment.id)
+    await Supabase.instance.client
+        .from('appointments')
         .update({
-      'valor_pago': newPaid,
-      'restante_a_pagar': valorTotal - newPaid,
-      'metodo_pagamento': method,
-      'payment_id': paymentId,
+      'payment_method': method,
       'status': 'confirmado',
-      'pago_em': FieldValue.serverTimestamp(),
-    });
+      'metadata': {
+        ...currentMeta,
+        'payment_id': paymentId,
+        'valor_pago': newPaid,
+        'restante_a_pagar': valorTotal - newPaid,
+      },
+    })
+    .eq('id', appointment['id']);
 
     if (mounted) {
       setState(() {});
     }
   }
 
-  bool _shouldShowActions(DocumentSnapshot appointment) {
-    final data = appointment.data() as Map<String, dynamic>;
-    final status = data['status']?.toString().toLowerCase() ?? '';
-    final appointmentDate = (data['data_agendamento'] as Timestamp).toDate();
+  bool _shouldShowActions(Map<String, dynamic> appointment) {
+    final status = appointment['status']?.toString().toLowerCase() ?? '';
+    final ts = appointment['scheduled_at'];
+    DateTime? appointmentDate;
+    if (ts is String) {
+      appointmentDate = DateTime.parse(ts);
+    } else if (ts is DateTime) {
+      appointmentDate = ts;
+    }
+    
+    if (appointmentDate == null) return false;
     final now = DateTime.now();
 
     // Não mostrar ações se já passou, foi cancelado ou concluído
@@ -420,9 +453,16 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
   }
 
   // Determina se o cliente pode cancelar (se for gratuito)
-  bool _canCancelAppointment(DocumentSnapshot appointment) {
-    final data = appointment.data() as Map<String, dynamic>;
-    final appointmentDate = (data['data_agendamento'] as Timestamp).toDate();
+  bool _canCancelAppointment(Map<String, dynamic> appointment) {
+    final ts = appointment['scheduled_at'];
+    DateTime? appointmentDate;
+    if (ts is String) {
+      appointmentDate = DateTime.parse(ts);
+    } else if (ts is DateTime) {
+      appointmentDate = ts;
+    }
+    
+    if (appointmentDate == null) return false;
     final now = DateTime.now();
 
     // Verifica se o agendamento é futuro
@@ -431,7 +471,7 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
     return true;
   }
 
-  Future<void> _cancelAppointment(DocumentSnapshot appointment) async {
+  Future<void> _cancelAppointment(Map<String, dynamic> appointment) async {
     if (!mounted) return;
     final confirm = await showModalBottomSheet<bool>(
       context: context,
@@ -503,7 +543,7 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
                     ),
                   ),
                   const SizedBox(width: 12),
-                  Expanded(
+                  _isLoadingCancel ? const CircularProgressIndicator() : Expanded(
                     child: ElevatedButton(
                       onPressed: () => Navigator.pop(ctx, true),
                       style: ElevatedButton.styleFrom(
@@ -545,11 +585,9 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
     );
 
     try {
-      final functions = FirebaseFunctions.instance;
-      await functions.httpsCallable('cancelAppointment').call({
-        'appointmentId': appointment.id,
-        'requestRefund':
-            false, // Aqui é só cancelamento sem devolução financeira
+      await Supabase.instance.client.functions.invoke('cancelAppointment', body: {
+        'appointmentId': appointment['id'],
+        'requestRefund': false,
       });
 
       if (mounted) Navigator.pop(context); // close loading
@@ -560,25 +598,24 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
           backgroundColor: Colors.green,
         ),
       );
+      setState(() {}); // Refresh
     } catch (e) {
       if (!mounted) return;
       if (Navigator.canPop(context)) Navigator.pop(context);
-      final errMsg = e is FirebaseFunctionsException
-          ? (e.message ?? e.toString())
-          : e.toString();
-      _showError('Não foi possível cancelar: $errMsg');
+      _showError('Não foi possível cancelar: $e');
     }
   }
 
-  // [FASE 7] Solicitação de Reembolso
+  bool _isLoadingCancel = false;
+
   // Exibe o modal com os detalhes e as ações do agendamento
-  void _showAppointmentDetails(DocumentSnapshot appointment, bool isUpcoming,
+  void _showAppointmentDetails(Map<String, dynamic> appointment, bool isUpcoming,
       String shopName, String shopLogo) {
-    final data = appointment.data() as Map<String, dynamic>;
-    final valorTotal = (data['valor_total'] ?? data['valor'] ?? 0).toDouble();
-    final valorPago = (data['valor_pago'] ?? 0).toDouble();
+    final valorTotal = (appointment['valor_total'] ?? appointment['valor'] ?? 0).toDouble();
+    final valorPago = (appointment['valor_pago'] ?? 0).toDouble();
     final valorRestante = valorTotal - valorPago;
-    final appointmentDate = (data['data_agendamento'] as Timestamp).toDate();
+    final ts = appointment['scheduled_at'];
+    DateTime appointmentDate = ts is String ? DateTime.parse(ts) : ts;
 
     showModalBottomSheet(
       context: context,
@@ -635,7 +672,7 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
                                   color: AppColors.primaryPurple),
                             )
                           : const Icon(Icons.store,
-                              color: AppColors.primaryPurple),
+                                  color: AppColors.primaryPurple),
                     ),
                   ),
                   const SizedBox(width: 16),
@@ -650,10 +687,16 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
                               color: Colors.grey,
                               fontWeight: FontWeight.w600),
                         ),
-                        Text(
-                          data['servico_nome'] ?? 'Serviço',
-                          style: const TextStyle(
-                              fontSize: 18, fontWeight: FontWeight.bold),
+                        Builder(
+                          builder: (context) {
+                            final rawServiceName = (appointment['service_name'] ?? appointment['servico_nome'] ?? '').toString().trim();
+                            final serviceName = (rawServiceName.toLowerCase() == 'null' || rawServiceName.isEmpty) ? 'Serviço' : rawServiceName;
+                            return Text(
+                              serviceName,
+                              style: const TextStyle(
+                                  fontSize: 18, fontWeight: FontWeight.bold),
+                            );
+                          }
                         ),
                       ],
                     ),
@@ -800,9 +843,8 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
   }
 
   Future<void> _promptRescheduleType(
-      DocumentSnapshot appointment, String shopName) async {
-    final data = appointment.data() as Map<String, dynamic>;
-    final shopId = data['shopId'] as String;
+      Map<String, dynamic> appointment, String shopName) async {
+    final shopId = (appointment['shop_id'] ?? appointment['shopId']) as String;
 
     showModalBottomSheet(
       context: context,
@@ -883,15 +925,17 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
                     );
 
                     try {
-                      final db = FirebaseFirestore.instance;
-                      final shopDoc =
-                          await db.collection('shops').doc(shopId).get();
+                      final shopDoc = await Supabase.instance.client
+                          .from('shops')
+                          .select('slug')
+                          .eq('id', shopId)
+                          .maybeSingle();
 
                       if (!mounted) return;
                       Navigator.pop(context); // close loading
 
-                      if (shopDoc.exists) {
-                        final slug = shopDoc.data()?['slug'];
+                      if (shopDoc != null) {
+                        final slug = shopDoc['slug'];
                         if (slug != null && slug.toString().isNotEmpty) {
                           Navigator.push(
                             context,
@@ -899,7 +943,7 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
                               builder: (_) => PublicShopPage(
                                 slug: slug,
                                 isReschedule: true,
-                                rescheduleAppointmentId: appointment.id,
+                                rescheduleAppointmentId: appointment['id'],
                               ),
                             ),
                           );
@@ -927,11 +971,10 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
     );
   }
 
-  Future<void> _rescheduleViaBookingPage(DocumentSnapshot appointment) async {
-    final data = appointment.data() as Map<String, dynamic>;
-    final shopId = data['shopId'] as String;
-    final professionalId = data['profissionalId'] as String;
-    final serviceId = data['servicoId'] as String;
+  Future<void> _rescheduleViaBookingPage(Map<String, dynamic> appointment) async {
+    final shopId = (appointment['shop_id'] ?? appointment['shopId']) as String;
+    final professionalId = appointment['profissionalId'] as String;
+    final serviceId = appointment['servicoId'] as String;
 
     showDialog(
       context: context,
@@ -940,27 +983,25 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
     );
 
     try {
-      final db = FirebaseFirestore.instance;
-      // Fetch shop details needed by BookingTimePage
-      final shopDoc = await db.collection('shops').doc(shopId).get();
-      final profDoc =
-          await db.collection('employees').doc(professionalId).get();
-      final serviceDoc = await db.collection('services').doc(serviceId).get();
+      final supabase = Supabase.instance.client;
+      // Fetch shop, employee and service
+      final shopData = await supabase.from('shops').select().eq('id', shopId).maybeSingle();
+      final profData = await supabase.from('employees').select().eq('id', professionalId).maybeSingle();
+      final serviceData = await supabase.from('services').select().eq('id', serviceId).maybeSingle();
 
       if (!mounted) return;
       Navigator.pop(context); // close loading
 
-      if (!shopDoc.exists || !profDoc.exists || !serviceDoc.exists) {
+      if (shopData == null || profData == null || serviceData == null) {
         String missing = '';
-        if (!shopDoc.exists) missing += 'Loja ';
-        if (!profDoc.exists) missing += 'Profissional ';
-        if (!serviceDoc.exists) missing += 'Serviço ';
+        if (shopData == null) missing += 'Loja ';
+        if (profData == null) missing += 'Profissional ';
+        if (serviceData == null) missing += 'Serviço ';
         _showError(
             'Não foi possível carregar os detalhes ($missing) para reagendar.');
         return;
       }
 
-      final shopData = shopDoc.data()!;
       final shopConfig = shopData['config'] as Map<String, dynamic>? ?? {};
       final intervalMinutes = shopConfig['intervalo_agenda_min'] ?? 60;
       final minAdvanceHours =
@@ -970,25 +1011,22 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
         context,
         MaterialPageRoute(
           builder: (_) => BookingTimePage(
-            shop: shopDoc,
-            serviceDoc: serviceDoc,
-            professionalDoc: profDoc,
+            shop: shopData,
+            serviceDoc: serviceData,
+            professionalDoc: profData,
             shopConfig: shopConfig,
             intervalMinutes: intervalMinutes,
             minAdvanceHours: minAdvanceHours,
             isReschedule: true,
-            appointmentId: appointment.id,
+            appointmentId: appointment['id'],
           ),
         ),
       );
     } catch (e) {
-      if (mounted && Navigator.canPop(context)) {
-        Navigator.pop(context);
+      if (mounted) {
+        Navigator.pop(context); // fechar loading
+        _showError('Erro ao carregar dados para reagendar: $e');
       }
-      final errMsg = e is FirebaseFunctionsException
-          ? (e.message ?? e.toString())
-          : e.toString();
-      _showError('Erro ao preparar reagendamento: $errMsg');
     }
   }
 
@@ -1002,7 +1040,7 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
 
   @override
   Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
+    final user = Supabase.instance.client.auth.currentUser;
 
     if (user == null) {
       return Scaffold(
@@ -1036,18 +1074,23 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
         ),
       ),
       backgroundColor: const Color(0xFFF5F7FA),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('appointments')
-            .where('clientId', isEqualTo: user.uid)
-            .orderBy('data_agendamento', descending: true)
-            .snapshots(),
+      body: StreamBuilder<List<Map<String, dynamic>>>(
+        stream: Supabase.instance.client
+            .from('appointments')
+            .stream(primaryKey: ['id'])
+            .eq('client_id', user.id)
+            .order('scheduled_at', ascending: false),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
 
-          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+          if (snapshot.hasError) {
+             return Center(child: Text('Erro: ${snapshot.error}'));
+          }
+
+          final allAppointments = snapshot.data ?? [];
+          if (allAppointments.isEmpty) {
             return const Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -1061,7 +1104,6 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
             );
           }
 
-          final allAppointments = snapshot.data!.docs;
           final upcomingAppointments =
               _filterAppointments(allAppointments, true);
           final historyAppointments =
@@ -1080,7 +1122,7 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
   }
 
   Widget _buildAppointmentsList(
-      List<DocumentSnapshot> appointments, bool isUpcoming) {
+      List<Map<String, dynamic>> appointments, bool isUpcoming) {
     if (appointments.isEmpty) {
       return Center(
         child: Column(
@@ -1113,13 +1155,13 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
     );
   }
 
-  Widget _buildAppointmentCard(DocumentSnapshot appointment, bool isUpcoming) {
-    final data = appointment.data() as Map<String, dynamic>;
-    final shopId = data['shopId'];
-    final valorTotal = (data['valor_total'] ?? data['valor'] ?? 0).toDouble();
-    final valorPago = (data['valor_pago'] ?? 0).toDouble();
+  Widget _buildAppointmentCard(Map<String, dynamic> appointment, bool isUpcoming) {
+    final shopId = appointment['shop_id'];
+    final valorTotal = (appointment['valor_total'] ?? appointment['valor'] ?? 0).toDouble();
+    final valorPago = (appointment['valor_pago'] ?? 0).toDouble();
     final valorRestante = valorTotal - valorPago;
-    final appointmentDate = (data['data_agendamento'] as Timestamp).toDate();
+    final ts = appointment['scheduled_at'];
+    DateTime appointmentDate = ts is String ? DateTime.parse(ts) : ts;
 
     return FutureBuilder<Map<String, dynamic>>(
       future: _getShopData(shopId),
@@ -1198,14 +1240,20 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
                               overflow: TextOverflow.ellipsis,
                             ),
                             const SizedBox(height: 4),
-                            Text(
-                              data['servico_nome'] ?? 'Serviço',
-                              style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                            Builder(
+                              builder: (context) {
+                                final rawServiceName = (appointment['service_name'] ?? appointment['servico_nome'] ?? '').toString().trim();
+                                final serviceName = (rawServiceName.toLowerCase() == 'null' || rawServiceName.isEmpty) ? 'Serviço' : rawServiceName;
+                                return Text(
+                                  serviceName,
+                                  style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                );
+                              }
                             ),
                           ],
                         ),
@@ -1215,14 +1263,14 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
                         padding: const EdgeInsets.symmetric(
                             horizontal: 12, vertical: 6),
                         decoration: BoxDecoration(
-                          color: _getStatusColor(data['status'])
+                          color: _getStatusColor(appointment['status'])
                               .withValues(alpha: 0.2),
                           borderRadius: BorderRadius.circular(20),
                         ),
                         child: Text(
-                          _getStatusText(data['status']),
+                          _getStatusText(appointment['status']),
                           style: TextStyle(
-                            color: _getStatusColor(data['status']),
+                            color: _getStatusColor(appointment['status']),
                             fontWeight: FontWeight.bold,
                             fontSize: 12,
                           ),
@@ -1303,7 +1351,7 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
                       ),
                     ],
                   ),
-                  if (isUpcoming && valorRestante > 0) ...[
+                  if (isUpcoming && valorRestante > 0 && _shouldShowActions(appointment)) ...[
                     const SizedBox(height: 12),
                     SizedBox(
                       width: double.infinity,

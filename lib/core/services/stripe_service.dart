@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_stripe/flutter_stripe.dart';
-import 'package:cloud_functions/cloud_functions.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/session_service.dart';
 
 class StripeService {
   static final StripeService instance = StripeService._();
   StripeService._();
+
+  static final _supabase = Supabase.instance.client;
 
   /// Aparência do PaymentSheet no estilo MarkaAI (roxo)
   static PaymentSheetAppearance get _appAppearance =>
@@ -39,30 +40,33 @@ class StripeService {
         ),
       );
 
-  /// Atualiza o plano no Firestore imediatamente após pagamento aprovado
-  static Future<void> _updatePlanInFirestore(String planId) async {
+  /// Atualiza o plano no Supabase imediatamente após pagamento aprovado
+  static Future<void> _updatePlanInSupabase(String planId) async {
     try {
       String? shopId = await SessionService.getShopId();
       if (shopId == null) {
-        final user = FirebaseAuth.instance.currentUser;
+        final user = _supabase.auth.currentUser;
         if (user != null) {
-          final userDoc = await FirebaseFirestore.instance
-              .collection('users')
-              .doc(user.uid)
-              .get();
-          shopId = userDoc.data()?['shopId'];
+          final userDoc = await _supabase
+              .from('users')
+              .select('shop_id')
+              .eq('id', user.id)
+              .maybeSingle();
+          shopId = userDoc?['shop_id']?.toString();
         }
       }
       if (shopId == null) return;
 
-      await FirebaseFirestore.instance.collection('shops').doc(shopId).set({
+      await _supabase.from('shops').update({
+        'plan_id': planId,
+        'trial_active': false,
         'subscription': {
           'plan_id': planId,
           'status': 'active',
-          'updated_at': FieldValue.serverTimestamp(),
-          'payment_method': 'stripe',
-        }
-      }, SetOptions(merge: true));
+          'payment_provider': 'stripe',
+          'updated_at': DateTime.now().toIso8601String(),
+        },
+      }).eq('id', shopId);
 
       debugPrint('[StripeService] Plano atualizado para: $planId');
     } catch (e) {
@@ -75,17 +79,24 @@ class StripeService {
     required String planId,
     required String shopId,
     required String customerEmail,
+    String? affiliateId,
+    String? affiliateCouponCode,
+    String? commissionType,
   }) async {
     try {
-      // 1. Chamar Cloud Function para criar o cliente/assinatura
-      final HttpsCallable callable =
-          FirebaseFunctions.instance.httpsCallable('createStripeSubscription');
-
-      final response = await callable.call({
-        'planId': planId,
-        'shopId': shopId,
+      // 1. Chamar Supabase Function para criar o cliente/assinatura
+      final response = await _supabase.functions.invoke('create-stripe-subscription', body: {
+        'plan_id': planId,
+        'shop_id': shopId,
         'email': customerEmail,
+        'affiliate_id': affiliateId,
+        'affiliate_coupon_code': affiliateCouponCode,
+        'commission_type': commissionType,
       });
+
+      if (response.status != 200) {
+        throw Exception(response.data['message'] ?? 'Erro ao criar assinatura no Stripe.');
+      }
 
       final data = response.data;
       final String? paymentIntentClientSecret =
@@ -111,11 +122,14 @@ class StripeService {
       );
 
       // 3. Exibir o Payment Sheet
+      if (kIsWeb) {
+        debugPrint('[StripeService] PaymentSheet not supported on Web.');
+        throw Exception('Pagamento via Modal não disponível na Web. Por favor, use o app ou entre em contato.');
+      }
       await Stripe.instance.presentPaymentSheet();
 
-      // 4. Pagamento aprovado — atualizar plano no Firestore imediatamente
-      // (não dependemos do webhook que requer configuração extra no Stripe Dashboard)
-      await _updatePlanInFirestore(planId);
+      // 4. Pagamento aprovado — atualizar plano no Supabase imediatamente
+      await _updatePlanInSupabase(planId);
 
       return true;
     } on StripeException catch (e) {
@@ -137,17 +151,20 @@ class StripeService {
     required double amount,
     required String currency,
     required String description,
+    String? shopId,
   }) async {
     try {
-      // 1. Chamar Cloud Function para criar o PaymentIntent
-      final HttpsCallable callable =
-          FirebaseFunctions.instance.httpsCallable('createStripePaymentIntent');
-
-      final response = await callable.call({
+      // 1. Chamar Supabase Function para criar o PaymentIntent
+      final response = await _supabase.functions.invoke('create-stripe-payment-intent', body: {
         'amount': (amount * 100).toInt(), // Stripe usa centavos
         'currency': currency,
         'description': description,
+        if (shopId != null) 'shop_id': shopId,
       });
+
+      if (response.status != 200) {
+        throw Exception(response.data['message'] ?? 'Erro ao criar intenção de pagamento no Stripe.');
+      }
 
       final clientSecret = response.data['clientSecret'];
 
@@ -162,6 +179,10 @@ class StripeService {
       );
 
       // 3. Exibir o Payment Sheet
+      if (kIsWeb) {
+        debugPrint('[StripeService] PaymentSheet (OneTime) not supported on Web.');
+        throw Exception('Pagamento via Modal não disponível na Web.');
+      }
       await Stripe.instance.presentPaymentSheet();
 
       return true;

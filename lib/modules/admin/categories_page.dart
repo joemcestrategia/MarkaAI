@@ -1,7 +1,6 @@
-﻿// ignore_for_file: use_build_context_synchronously
+// ignore_for_file: use_build_context_synchronously
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/theme/app_colors.dart';
 
 class CategoriesPage extends StatefulWidget {
@@ -14,29 +13,6 @@ class CategoriesPage extends StatefulWidget {
 class _CategoriesPageState extends State<CategoriesPage> {
   final _ctrl = TextEditingController();
 
-  String _normalize(String s) {
-    final map = {
-      'á': 'a',
-      'à': 'a',
-      'ã': 'a',
-      'â': 'a',
-      'ä': 'a',
-      'é': 'e',
-      'ê': 'e',
-      'í': 'i',
-      'ó': 'o',
-      'ô': 'o',
-      'ú': 'u',
-      'ç': 'c'
-    };
-    var out = s.trim();
-    map.forEach((k, v) {
-      out = out.replaceAll(k, v);
-      out = out.replaceAll(k.toUpperCase(), v.toUpperCase());
-    });
-    out = out.replaceAll(RegExp(r'\s+'), ' ');
-    return out.toLowerCase();
-  }
 
   int _levenshtein(String a, String b) {
     final la = a.length, lb = b.length;
@@ -60,46 +36,45 @@ class _CategoriesPageState extends State<CategoriesPage> {
   Future<void> _createCategory() async {
     final name = _ctrl.text.trim();
     if (name.isEmpty) return;
-    final nl = _normalize(name);
-    final q = await FirebaseFirestore.instance
-        .collection('service_categories')
-        .where('name_lower', isEqualTo: nl)
-        .limit(1)
-        .get();
-    if (q.docs.isNotEmpty) {
+    final q = await Supabase.instance.client
+        .from('categories')
+        .select()
+        .eq('name', name)
+        .limit(1);
+    if ((q as List).isNotEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Categoria já existe')));
       }
       return;
     }
-    await FirebaseFirestore.instance.collection('service_categories').add({
+    await Supabase.instance.client.from('categories').insert({
       'name': name,
-      'name_lower': nl,
-      'createdAt': FieldValue.serverTimestamp()
+      'created_at': DateTime.now().toIso8601String()
     });
     _ctrl.clear();
   }
 
   Future<void> _findDuplicates() async {
     final snap =
-        await FirebaseFirestore.instance.collection('service_categories').get();
-    final docs = snap.docs;
+        await Supabase.instance.client.from('categories').select();
+    final docs = snap as List<dynamic>;
     // first, exact-normalized duplicates
-    final Map<String, List<QueryDocumentSnapshot>> groups = {};
+    final Map<String, List<Map<String, dynamic>>> groups = {};
     for (final d in docs) {
-      final m = d.data() as Map<String, dynamic>?;
-      final nl = m?['name_lower'] ?? '';
-      groups.putIfAbsent(nl, () => []).add(d);
+      final m = d as Map<String, dynamic>;
+      final nl = (m['name'] ?? '').toString().toLowerCase();
+      groups.putIfAbsent(nl, () => []).add(m);
     }
     final exactDup = groups.values.where((g) => g.length > 1).toList();
 
     // then fuzzy suggestions via Levenshtein on normalized names
     final items = docs.map((d) {
-      final m = d.data() as Map<String, dynamic>?;
-      return {'doc': d, 'name': m?['name'] ?? '', 'nl': m?['name_lower'] ?? ''};
+      final m = d as Map<String, dynamic>;
+      final nameStr = (m['name'] ?? '').toString();
+      return {'doc': d, 'name': nameStr, 'nl': nameStr.toLowerCase()};
     }).toList();
-    final fuzzyPairs = <List<QueryDocumentSnapshot>>[];
+    final fuzzyPairs = <List<Map<String, dynamic>>>[];
     for (var i = 0; i < items.length; i++) {
       for (var j = i + 1; j < items.length; j++) {
         final a = items[i]['nl'] as String;
@@ -110,8 +85,8 @@ class _CategoriesPageState extends State<CategoriesPage> {
         final rel = maxL == 0 ? 0.0 : dist / maxL;
         if (dist <= 2 || rel <= 0.25) {
           fuzzyPairs.add([
-            items[i]['doc'] as QueryDocumentSnapshot,
-            items[j]['doc'] as QueryDocumentSnapshot
+            items[i]['doc'] as Map<String, dynamic>,
+            items[j]['doc'] as Map<String, dynamic>
           ]);
         }
       }
@@ -142,9 +117,8 @@ class _CategoriesPageState extends State<CategoriesPage> {
                       const SizedBox(height: 8),
                       ...exactDup.asMap().entries.map((e) {
                         final group = e.value;
-                        final names = group.map((d) {
-                          final m = d.data() as Map<String, dynamic>?;
-                          return m?['name'] ?? d.id;
+                        final names = group.map((m) {
+                          return m['name'] ?? m['id'];
                         }).join(' • ');
                         return ListTile(
                             title: Text('Grupo ${e.key + 1}'),
@@ -163,12 +137,10 @@ class _CategoriesPageState extends State<CategoriesPage> {
                       ...fuzzyPairs.map((pair) {
                         final a = pair[0];
                         final b = pair[1];
-                        final na =
-                            (a.data() as Map<String, dynamic>?)?['name'] ?? '';
-                        final nb =
-                            (b.data() as Map<String, dynamic>?)?['name'] ?? '';
+                        final na = a['name'] ?? '';
+                        final nb = b['name'] ?? '';
                         return ListTile(
-                            title: Text('$na  ↔  $nb'),
+                            title: Text('$na  ?  $nb'),
                             subtitle: Text('Toque para mesclar ambos'),
                             onTap: () {
                               Navigator.pop(context);
@@ -182,9 +154,9 @@ class _CategoriesPageState extends State<CategoriesPage> {
         });
   }
 
-  Future<void> _showMergeDialog(List<QueryDocumentSnapshot> group) async {
+  Future<void> _showMergeDialog(List<Map<String, dynamic>> group) async {
     final names = group
-        .map((d) => (d.data() as Map<String, dynamic>?)?['name'] ?? '')
+        .map((d) => d['name']?.toString() ?? '')
         .toList();
     final ctrl = TextEditingController(text: names.first);
     await showDialog(
@@ -207,57 +179,56 @@ class _CategoriesPageState extends State<CategoriesPage> {
                   onPressed: () async {
                     final finalName = ctrl.text.trim();
                     if (finalName.isEmpty) return;
-                    final normalized = _normalize(finalName);
                     // find or create final
-                    final q = await FirebaseFirestore.instance
-                        .collection('service_categories')
-                        .where('name_lower', isEqualTo: normalized)
-                        .limit(1)
-                        .get();
+                    final q = await Supabase.instance.client
+                        .from('categories')
+                        .select()
+                        .eq('name', finalName)
+                        .limit(1);
                     String finalId;
-                    if (q.docs.isNotEmpty) {
-                      finalId = q.docs.first.id;
+                    if ((q as List).isNotEmpty) {
+                      finalId = q.first['id'].toString();
                     } else {
-                      final doc = await FirebaseFirestore.instance
-                          .collection('service_categories')
-                          .add({
+                      final doc = await Supabase.instance.client
+                          .from('categories')
+                          .insert({
                         'name': finalName,
-                        'name_lower': normalized,
-                        'createdAt': FieldValue.serverTimestamp()
-                      });
-                      finalId = doc.id;
+                        'created_at': DateTime.now().toIso8601String()
+                      }).select().single();
+                      finalId = doc['id'].toString();
                     }
                     for (final s in group) {
-                      final sName =
-                          (s.data() as Map<String, dynamic>?)?['name'] ?? '';
-                      if (s.id == finalId) continue;
+                      final sName = s['name'] ?? '';
+                      final sId = s['id'].toString();
+                      if (sId == finalId) continue;
                       // update shops
-                      final shopsSnap = await FirebaseFirestore.instance
-                          .collection('shops')
-                          .where('category', isEqualTo: sName)
-                          .get();
-                      for (final shop in shopsSnap.docs) {
-                        final before = shop.data();
-                        await FirebaseFirestore.instance
-                            .collection('shops')
-                            .doc(shop.id)
-                            .update({'category': finalName});
-                        await FirebaseFirestore.instance
-                            .collection('admin_audit')
-                            .add({
-                          'adminUid': FirebaseAuth.instance.currentUser?.uid,
+                      final shopsSnap = await Supabase.instance.client
+                          .from('shops')
+                          .select()
+                          .eq('category', sName);
+                      for (final shop in shopsSnap as List<dynamic>) {
+                        final before = shop;
+                        final shopId = shop['id'].toString();
+                        await Supabase.instance.client
+                            .from('shops')
+                            .update({'category': finalName})
+                            .eq('id', shopId);
+                        await Supabase.instance.client
+                            .from('admin_audit')
+                            .insert({
+                          'adminUid': Supabase.instance.client.auth.currentUser?.id,
                           'action': 'merge_category_update_shop',
-                          'targetId': shop.id,
+                          'targetId': shopId,
                           'before': before,
                           'after': {'category': finalName},
-                          'createdAt': FieldValue.serverTimestamp()
+                          'createdAt': DateTime.now().toIso8601String()
                         });
                       }
                       // delete source
-                      await FirebaseFirestore.instance
-                          .collection('service_categories')
-                          .doc(s.id)
-                          .delete();
+                      await Supabase.instance.client
+                          .from('categories')
+                          .delete()
+                          .eq('id', sId);
                     }
                     if (mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -324,24 +295,24 @@ class CategoriesListPage extends StatelessWidget {
         backgroundColor: AppColors.primaryPurple,
         foregroundColor: Colors.white,
       ),
-      body: StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('service_categories')
-              .orderBy('name_lower')
-              .snapshots(),
+      body: StreamBuilder<List<Map<String, dynamic>>>(
+          stream: Supabase.instance.client
+              .from('categories')
+              .stream(primaryKey: ['id'])
+              .order('name'),
           builder: (c, snap) {
             if (!snap.hasData) {
               return const Center(child: CircularProgressIndicator());
             }
-            final docs = snap.data!.docs;
+            final docs = snap.data!;
             return ListView.builder(
                 itemCount: docs.length,
                 itemBuilder: (ctx, i) {
-                  final d = docs[i];
-                  final data = d.data() as Map<String, dynamic>? ?? {};
+                  final data = docs[i];
+                  final dId = data['id'].toString();
                   return ListTile(
                       title: Text(data['name'] ?? ''),
-                      subtitle: Text('id: ${d.id}'),
+                      subtitle: Text('id: ${dId}'),
                       trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                         IconButton(
                             icon: const Icon(Icons.edit),
@@ -363,16 +334,13 @@ class CategoriesListPage extends StatelessWidget {
                                               onPressed: () async {
                                                 final name = ctrl.text.trim();
                                                 if (name.isEmpty) return;
-                                                final nl = name.toLowerCase();
-                                                await FirebaseFirestore.instance
-                                                    .collection(
-                                                        'service_categories')
-                                                    .doc(d.id)
-                                                    .set({
-                                                  'name': name,
-                                                  'name_lower': nl
-                                                }, SetOptions(merge: true));
-                                                Navigator.pop(context);
+                                                await Supabase.instance.client
+                                                    .from('categories')
+                                                    .update({'name': name}).eq(
+                                                        'id', dId);
+                                                if (context.mounted) {
+                                                  Navigator.pop(context);
+                                                }
                                               },
                                               child: const Text('Salvar'))
                                         ]);
@@ -398,10 +366,10 @@ class CategoriesListPage extends StatelessWidget {
                                                 child: const Text('Excluir'))
                                           ]));
                               if (ok == true) {
-                                await FirebaseFirestore.instance
-                                    .collection('service_categories')
-                                    .doc(d.id)
-                                    .delete();
+                                await Supabase.instance.client
+                                    .from('categories')
+                                    .delete()
+                                    .eq('id', dId);
                               }
                             })
                       ]));

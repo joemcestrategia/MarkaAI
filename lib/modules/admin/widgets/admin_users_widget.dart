@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:convert';
 
 class AdminUsersWidget extends StatefulWidget {
@@ -52,19 +52,23 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
 
         // Users List
         Expanded(
-          child: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance.collection('users').orderBy('nome').snapshots(),
+          child: StreamBuilder<List<Map<String, dynamic>>>(
+            stream: Supabase.instance.client.from('users').stream(primaryKey: ['id']).order('name'),
             builder: (context, snapshot) {
-              if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (snapshot.hasError) {
+                return Center(child: Text('Erro: ${snapshot.error}'));
+              }
 
-              var users = snapshot.data!.docs;
+              var users = snapshot.data ?? [];
               if (_searchQuery.isNotEmpty) {
-                users = users.where((doc) {
-                  final data = doc.data() as Map<String, dynamic>;
-                  final nome = (data['nome'] ?? '').toString().toLowerCase();
+                final query = _searchQuery.toLowerCase();
+                users = users.where((data) {
+                  final nome = (data['name'] ?? data['nome'] ?? '').toString().toLowerCase();
                   final email = (data['email'] ?? '').toString().toLowerCase();
                   final docId = (data['documento'] ?? '').toString().toLowerCase();
-                  final query = _searchQuery.toLowerCase();
                   return nome.contains(query) || email.contains(query) || docId.contains(query);
                 }).toList();
               }
@@ -80,17 +84,17 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
                   itemCount: users.length,
                   separatorBuilder: (context, index) => Divider(color: borderColor, height: 1),
                   itemBuilder: (context, index) {
-                    final doc = users[index];
-                    final data = doc.data() as Map<String, dynamic>;
-                    final nome = data['nome'] ?? 'Sem nome';
+                    final data = users[index];
+                    final id = data['id'];
+                    final nome = data['name'] ?? 'Sem nome';
                     final email = data['email'] ?? '';
-                    final tipo = data['tipo'] ?? 'cliente';
+                    final tipo = data['role'] ?? 'cliente';
 
                     return ListTile(
-                      onTap: () => _showUserDetails(doc),
+                      onTap: () => _showUserDetails(data),
                       contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
                       leading: Hero(
-                        tag: 'avatar-${doc.id}',
+                        tag: 'avatar-$id',
                         child: CircleAvatar(
                           radius: 18,
                           backgroundColor: const Color(0xFF4F8EF7).withValues(alpha: 0.1),
@@ -135,18 +139,18 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
     );
   }
 
-  Future<void> _showUserDetails(QueryDocumentSnapshot doc) async {
-    final data = doc.data() as Map<String, dynamic>;
+  Future<void> _showUserDetails(Map<String, dynamic> data) async {
     final theme = Theme.of(context);
     final cardColor = theme.cardColor;
     final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
     final borderColor = textColor.withValues(alpha: 0.06);
 
-    final nomeController = TextEditingController(text: data['nome'] ?? '');
+    final id = data['id'];
+    final nomeController = TextEditingController(text: data['name'] ?? '');
     final emailController = TextEditingController(text: data['email'] ?? '');
-    final telefoneController = TextEditingController(text: data['telefone'] ?? '');
+    final telefoneController = TextEditingController(text: data['phone'] ?? '');
     final documentoController = TextEditingController(text: data['documento'] ?? '');
-    String? currentTipo = data['tipo'] ?? 'cliente';
+    String? currentTipo = data['role'] ?? 'cliente';
     bool isEditing = false;
 
     await showDialog(
@@ -170,12 +174,12 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
                 Row(
                   children: [
                     Hero(
-                      tag: 'avatar-${doc.id}',
+                      tag: 'avatar-$id',
                       child: CircleAvatar(
                         radius: 24,
                         backgroundColor: const Color(0xFF4F8EF7).withValues(alpha: 0.1),
                         child: Text(
-                          (data['nome'] as String? ?? '?').isNotEmpty ? data['nome'][0].toUpperCase() : '?',
+                          (data['name'] as String? ?? '?').isNotEmpty ? data['name'][0].toUpperCase() : '?',
                           style: const TextStyle(color: Color(0xFF4F8EF7), fontSize: 20, fontWeight: FontWeight.bold),
                         ),
                       ),
@@ -186,7 +190,7 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            data['nome'] ?? 'Sem nome',
+                            data['name'] ?? 'Sem nome',
                             style: TextStyle(color: textColor, fontSize: 18, fontWeight: FontWeight.bold),
                           ),
                           Text(
@@ -207,11 +211,11 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
                 const SizedBox(height: 16),
                 
                 if (!isEditing) ...[
-                  _buildDetailRow('UID', doc.id, Icons.vpn_key_outlined, textColor),
-                  _buildDetailRow('Telefone', data['telefone'] ?? 'Não informado', Icons.phone_outlined, textColor),
+                  _buildDetailRow('UID', id.toString(), Icons.vpn_key_outlined, textColor),
+                  _buildDetailRow('Telefone', data['phone'] ?? 'Não informado', Icons.phone_outlined, textColor),
                   _buildDetailRow('CPF/CNPJ', data['documento'] ?? 'Não informado', Icons.badge_outlined, textColor),
-                  _buildDetailRow('Tipo', (data['tipo'] ?? 'cliente').toUpperCase(), Icons.person_outline, textColor),
-                  _buildDetailRow('Criado em', (data['criado_em'] as Timestamp?)?.toDate().toString().split('.')[0] ?? 'N/A', Icons.calendar_today_outlined, textColor),
+                  _buildDetailRow('Tipo', (data['role'] ?? 'cliente').toUpperCase(), Icons.person_outline, textColor),
+                  _buildDetailRow('Criado em', data['created_at']?.toString().split('.')[0] ?? 'N/A', Icons.calendar_today_outlined, textColor),
                   const SizedBox(height: 24),
                   Row(
                     children: [
@@ -230,12 +234,12 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
                       ),
                       const SizedBox(width: 12),
                       IconButton(
-                        onPressed: () => _showRawData(doc),
+                        onPressed: () => _showRawData(data),
                         icon: Icon(Icons.code, color: textColor.withValues(alpha: 0.4), size: 18),
                         tooltip: 'Ver JSON',
                       ),
                       IconButton(
-                        onPressed: () => _deleteUser(doc),
+                        onPressed: () => _deleteUser(data),
                         icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
                         tooltip: 'Excluir Usuário',
                       ),
@@ -249,7 +253,7 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
                   const SizedBox(height: 8),
                   DropdownButtonFormField<String>(
                     dropdownColor: cardColor,
-                    initialValue: currentTipo,
+                    value: currentTipo,
                     style: TextStyle(color: textColor, fontSize: 13),
                     decoration: InputDecoration(
                       labelText: 'Tipo de Conta',
@@ -275,18 +279,31 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
                       Expanded(
                         child: ElevatedButton(
                           onPressed: () async {
-                            await FirebaseFirestore.instance.collection('users').doc(doc.id).update({
-                              'nome': nomeController.text,
-                              'email': emailController.text,
-                              'telefone': telefoneController.text,
-                              'documento': documentoController.text,
-                              'tipo': currentTipo,
-                            });
-                            setModalState(() => isEditing = false);
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('Usuário atualizado com sucesso!')),
-                              );
+                            try {
+                              await Supabase.instance.client
+                                  .from('users')
+                                  .update({
+                                'name': nomeController.text,
+                                'email': emailController.text,
+                                'phone': telefoneController.text,
+                                'documento': documentoController.text,
+                                'role': currentTipo,
+                              }).eq('id', id);
+                              
+                              setModalState(() => isEditing = false);
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                      content: Text(
+                                          'Usuário atualizado com sucesso!')),
+                                );
+                              }
+                            } catch (e) {
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('Erro ao atualizar: $e')),
+                                );
+                              }
                             }
                           },
                           style: ElevatedButton.styleFrom(
@@ -346,8 +363,7 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
     );
   }
 
-  Future<void> _showRawData(QueryDocumentSnapshot doc) async {
-    final data = doc.data() as Map<String, dynamic>;
+  Future<void> _showRawData(Map<String, dynamic> data) async {
     final theme = Theme.of(context);
     showDialog(
       context: context,
@@ -374,9 +390,9 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
     );
   }
 
-  Future<void> _deleteUser(QueryDocumentSnapshot doc) async {
-    final data = doc.data() as Map<String, dynamic>;
-    final nome = data['nome'] ?? 'este usuário';
+  Future<void> _deleteUser(Map<String, dynamic> data) async {
+    final id = data['id'];
+    final nome = data['name'] ?? 'este usuário';
     final theme = Theme.of(context);
     
     final confirm = await showDialog<bool>(
@@ -401,7 +417,7 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
     );
 
     if (confirm == true) {
-      await FirebaseFirestore.instance.collection('users').doc(doc.id).delete();
+      await Supabase.instance.client.from('users').delete().eq('id', id);
       if (mounted) {
         Navigator.pop(context); // Close details modal
         ScaffoldMessenger.of(context).showSnackBar(

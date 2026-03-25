@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'dart:io';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter/foundation.dart';
+import 'dart:io' if (dart.library.html) 'package:flutter_application_1/core/utils/io_stub.dart' as io;
 import 'package:path_provider/path_provider.dart';
 
 class AdminSupportWidget extends StatelessWidget {
@@ -160,106 +161,115 @@ class AdminSupportWidget extends StatelessWidget {
 
     await showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Override de Assinatura'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: emailController,
-              decoration: const InputDecoration(
-                labelText: 'Email do usuário',
-                hintText: 'usuario@example.com',
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) => AlertDialog(
+          title: const Text('Override de Assinatura'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: emailController,
+                decoration: const InputDecoration(
+                  labelText: 'Email do usuário',
+                  hintText: 'usuario@example.com',
+                ),
               ),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                value: selectedPlan,
+                decoration: const InputDecoration(labelText: 'Novo Plano'),
+                items: const [
+                  DropdownMenuItem(value: 'free', child: Text('Free')),
+                  DropdownMenuItem(value: 'start', child: Text('Start')),
+                  DropdownMenuItem(value: 'plus', child: Text('Plus')),
+                  DropdownMenuItem(value: 'pro', child: Text('Pro')),
+                ],
+                onChanged: (value) {
+                  if (value != null) setModalState(() => selectedPlan = value);
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancelar'),
             ),
-            const SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              initialValue: selectedPlan,
-              decoration: const InputDecoration(labelText: 'Novo Plano'),
-              items: const [
-                DropdownMenuItem(value: 'free', child: Text('Free')),
-                DropdownMenuItem(value: 'start', child: Text('Start')),
-                DropdownMenuItem(value: 'plus', child: Text('Plus')),
-                DropdownMenuItem(value: 'pro', child: Text('Pro')),
-              ],
-              onChanged: (value) => selectedPlan = value,
+            ElevatedButton(
+              onPressed: () async {
+                final email = emailController.text.trim();
+                if (email.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Digite um email válido')),
+                  );
+                  return;
+                }
+
+                try {
+                  final supabase = Supabase.instance.client;
+                  final res = await supabase
+                      .from('users')
+                      .select()
+                      .eq('email', email)
+                      .maybeSingle();
+
+                  if (res == null) {
+                    if (ctx.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Usuário não encontrado')),
+                      );
+                    }
+                    return;
+                  }
+
+                  await supabase.from('users').update({
+                    'plan': selectedPlan,
+                    'role': 'business', // Ensuring they are business if they have a plan
+                    'plano_expira': DateTime.now().add(const Duration(days: 365)).toIso8601String(),
+                  }).eq('id', res['id']);
+
+                  if (ctx.mounted) Navigator.pop(ctx);
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Plano alterado para $selectedPlan!')),
+                    );
+                  }
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Erro ao alterar plano: $e')),
+                    );
+                  }
+                }
+              },
+              child: const Text('Aplicar'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final email = emailController.text.trim();
-              if (email.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Digite um email válido')),
-                );
-                return;
-              }
-
-              // Find user by email
-              final usersSnap = await FirebaseFirestore.instance
-                  .collection('users')
-                  .where('email', isEqualTo: email)
-                  .get();
-
-              if (usersSnap.docs.isEmpty) {
-                if (ctx.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Usuário não encontrado')),
-                  );
-                }
-                return;
-              }
-
-              final userDoc = usersSnap.docs.first;
-              await userDoc.reference.update({
-                'plano': selectedPlan,
-                'plano_expira': Timestamp.fromDate(
-                  DateTime.now().add(const Duration(days: 365)),
-                ),
-              });
-
-              if (ctx.mounted) Navigator.pop(ctx);
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Plano alterado para $selectedPlan!')),
-                );
-              }
-            },
-            child: const Text('Aplicar'),
-          ),
-        ],
       ),
     );
   }
 
   void _exportUsers(BuildContext context) async {
     try {
-      final usersSnap =
-          await FirebaseFirestore.instance.collection('users').get();
+      final supabase = Supabase.instance.client;
+      final users = await supabase.from('users').select();
 
       List<List<dynamic>> rows = [
         ['Nome', 'Email', 'Telefone', 'Tipo', 'Plano', 'Data Cadastro']
       ];
 
-      for (var doc in usersSnap.docs) {
-        final data = doc.data();
+      for (var data in users) {
         rows.add([
-          data['nome'] ?? '',
+          data['name'] ?? data['nome'] ?? '',
           data['email'] ?? '',
-          data['telefone'] ?? '',
-          data['tipo'] ?? '',
-          data['plano'] ?? 'free',
-          data['criado_em']?.toString() ?? '',
+          data['phone'] ?? data['telefone'] ?? '',
+          data['role'] ?? data['tipo'] ?? '',
+          data['plan'] ?? data['plano'] ?? 'free',
+          (data['created_at'] ?? data['criado_em'])?.toString() ?? '',
         ]);
       }
 
-      // Implementing manual CSV generation
       final buffer = StringBuffer();
       for (var row in rows) {
         buffer.writeln(row.map((e) {
@@ -268,8 +278,17 @@ class AdminSupportWidget extends StatelessWidget {
         }).join(','));
       }
 
+      if (kIsWeb) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Exportação não disponível na Web por este método.')),
+          );
+        }
+        return;
+      }
+
       final directory = await getApplicationDocumentsDirectory();
-      final file = File(
+      final file = io.File(
           '${directory.path}/usuarios_${DateTime.now().millisecondsSinceEpoch}.csv');
       await file.writeAsString(buffer.toString());
 
@@ -289,29 +308,30 @@ class AdminSupportWidget extends StatelessWidget {
 
   void _exportShops(BuildContext context) async {
     try {
-      final shopsSnap =
-          await FirebaseFirestore.instance.collection('shops').get();
+      final supabase = Supabase.instance.client;
+      final shops = await supabase.from('shops').select();
 
       List<List<dynamic>> rows = [
         ['Nome', 'Categoria', 'Telefone', 'Plano', 'Boost Ativo']
       ];
 
-      for (var doc in shopsSnap.docs) {
-        final data = doc.data();
-        final boostExpires = data['boost_expires_at'] as Timestamp?;
-        final isBoosted = boostExpires != null &&
-            boostExpires.toDate().isAfter(DateTime.now());
+      for (var data in shops) {
+        final boostExpiresStr = data['boost_expires_at'] as String?;
+        bool isBoosted = false;
+        if (boostExpiresStr != null) {
+          final expiresAt = DateTime.tryParse(boostExpiresStr);
+          isBoosted = expiresAt != null && expiresAt.isAfter(DateTime.now());
+        }
 
         rows.add([
-          data['nome'] ?? '',
+          data['name'] ?? data['nome'] ?? '',
           data['categoria'] ?? '',
-          data['telefone'] ?? '',
-          data['plan'] ?? 'free',
+          data['phone'] ?? data['telefone'] ?? '',
+          data['plan_id'] ?? data['plan'] ?? 'free',
           isBoosted ? 'Sim' : 'Não',
         ]);
       }
 
-      // Manual CSV generation
       final buffer = StringBuffer();
       for (var row in rows) {
         buffer.writeln(row.map((e) {
@@ -320,8 +340,17 @@ class AdminSupportWidget extends StatelessWidget {
         }).join(','));
       }
 
+      if (kIsWeb) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Exportação não disponível na Web por este método.')),
+          );
+        }
+        return;
+      }
+
       final directory = await getApplicationDocumentsDirectory();
-      final file = File(
+      final file = io.File(
           '${directory.path}/negocios_${DateTime.now().millisecondsSinceEpoch}.csv');
       await file.writeAsString(buffer.toString());
 
@@ -340,12 +369,16 @@ class AdminSupportWidget extends StatelessWidget {
   }
 
   void _showGeneralStats(BuildContext context) async {
-    final usersSnap =
-        await FirebaseFirestore.instance.collection('users').get();
-    final shopsSnap =
-        await FirebaseFirestore.instance.collection('shops').get();
-    final appointmentsSnap =
-        await FirebaseFirestore.instance.collection('appointments').get();
+    final supabase = Supabase.instance.client;
+    final results = await Future.wait([
+      supabase.from('users').count(CountOption.exact),
+      supabase.from('shops').count(CountOption.exact),
+      supabase.from('appointments').count(CountOption.exact),
+    ]);
+
+    final totalUsers = results[0];
+    final totalShops = results[1];
+    final totalAppts = results[2];
 
     if (context.mounted) {
       showDialog(
@@ -356,9 +389,9 @@ class AdminSupportWidget extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Total de usuários: ${usersSnap.size}'),
-              Text('Total de negócios: ${shopsSnap.size}'),
-              Text('Total de agendamentos: ${appointmentsSnap.size}'),
+              Text('Total de usuários: $totalUsers'),
+              Text('Total de negócios: $totalShops'),
+              Text('Total de agendamentos: $totalAppts'),
             ],
           ),
           actions: [
@@ -394,25 +427,23 @@ class AdminSupportWidget extends StatelessWidget {
           ElevatedButton(
             onPressed: () async {
               final email = emailController.text.trim();
-              if (email.isEmpty) {
-                return;
-              }
+              if (email.isEmpty) return;
 
-              final usersSnap = await FirebaseFirestore.instance
-                  .collection('users')
-                  .where('email', isEqualTo: email)
-                  .get();
+              final res = await Supabase.instance.client
+                  .from('users')
+                  .select()
+                  .eq('email', email)
+                  .maybeSingle();
 
               if (ctx.mounted) Navigator.pop(ctx);
 
-              if (usersSnap.docs.isEmpty) {
+              if (res == null) {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('Usuário não encontrado')),
                   );
                 }
               } else {
-                final data = usersSnap.docs.first.data();
                 if (context.mounted) {
                   showDialog(
                     context: context,
@@ -422,10 +453,10 @@ class AdminSupportWidget extends StatelessWidget {
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('Nome: ${data['nome'] ?? 'N/A'}'),
-                          Text('Email: ${data['email'] ?? 'N/A'}'),
-                          Text('Tipo: ${data['tipo'] ?? 'cliente'}'),
-                          Text('Plano: ${data['plano'] ?? 'free'}'),
+                          Text('Nome: ${res['name'] ?? res['nome'] ?? 'N/A'}'),
+                          Text('Email: ${res['email'] ?? 'N/A'}'),
+                          Text('Tipo: ${res['role'] ?? res['tipo'] ?? 'cliente'}'),
+                          Text('Plano: ${res['plan'] ?? res['plano'] ?? 'free'}'),
                         ],
                       ),
                       actions: [
@@ -448,9 +479,7 @@ class AdminSupportWidget extends StatelessWidget {
 
   void _sendManualNotification(BuildContext context) {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Funcionalidade de notificação em desenvolvimento'),
-      ),
+      const SnackBar(content: Text('Funcionalidade de notificação em desenvolvimento')),
     );
   }
 }

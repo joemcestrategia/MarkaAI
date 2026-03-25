@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 import '../../core/services/plan_features_service.dart';
@@ -35,15 +35,17 @@ class _PriceAdjustmentPageState extends State<PriceAdjustmentPage> {
     try {
       shopId = await SessionService.getShopId();
       if (shopId != null) {
-        final historyDoc = await FirebaseFirestore.instance
-            .collection('shops')
-            .doc(shopId)
-            .collection('price_adjustment_history')
-            .orderBy('appliedAt', descending: true)
+        final supabase = Supabase.instance.client;
+        final res = await supabase
+            .from('price_adjustment_history')
+            .select()
+            .eq('shop_id', shopId!)
+            .order('applied_at', ascending: false)
             .limit(1)
-            .get();
-        if (historyDoc.docs.isNotEmpty) {
-          _lastAdjustment = historyDoc.docs.first.data();
+            .maybeSingle();
+
+        if (res != null) {
+          _lastAdjustment = res;
         }
       }
     } catch (e) {
@@ -67,12 +69,13 @@ class _PriceAdjustmentPageState extends State<PriceAdjustmentPage> {
     setState(() => _isLoading = true);
 
     try {
-      final servicesSnap = await FirebaseFirestore.instance
-          .collection('services')
-          .where('shopId', isEqualTo: shopId)
-          .get();
+      final supabase = Supabase.instance.client;
+      final servicesRes = await supabase
+          .from('services')
+          .select()
+          .eq('shop_id', shopId!);
 
-      if (servicesSnap.docs.isEmpty) {
+      if (servicesRes.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -82,8 +85,7 @@ class _PriceAdjustmentPageState extends State<PriceAdjustmentPage> {
         return;
       }
 
-      final simulationData = servicesSnap.docs.map((doc) {
-        final data = doc.data();
+      final simulationData = servicesRes.map((data) {
         double oldPrice =
             double.tryParse(data['preco']?.toString() ?? "0") ?? 0.0;
         double newPrice = _calculateNewPrice(oldPrice);
@@ -196,44 +198,35 @@ class _PriceAdjustmentPageState extends State<PriceAdjustmentPage> {
     setState(() => _isLoading = true);
 
     try {
-      final servicesSnap = await FirebaseFirestore.instance
-          .collection('services')
-          .where('shopId', isEqualTo: shopId)
-          .get();
+      final supabase = Supabase.instance.client;
+      final servicesRes = await supabase
+          .from('services')
+          .select()
+          .eq('shop_id', shopId!);
 
-      final batch = FirebaseFirestore.instance.batch();
       final Map<String, double> oldPrices = {};
       final Map<String, double> newPrices = {};
 
-      for (var doc in servicesSnap.docs) {
-        double oldPrice =
-            double.tryParse(doc.data()['preco']?.toString() ?? "0") ?? 0.0;
+      for (var data in servicesRes) {
+        final id = data['id'];
+        double oldPrice = double.tryParse(data['preco']?.toString() ?? "0") ?? 0.0;
         double newPrice = _calculateNewPrice(oldPrice);
 
-        oldPrices[doc.id] = oldPrice;
-        newPrices[doc.id] = newPrice;
+        oldPrices[id.toString()] = oldPrice;
+        newPrices[id.toString()] = newPrice;
 
-        batch.update(doc.reference, {'preco': newPrice});
+        await supabase.from('services').update({'preco': newPrice}).eq('id', id);
       }
 
       // Save History
-      final historyRef = FirebaseFirestore.instance
-          .collection('shops')
-          .doc(shopId)
-          .collection('price_adjustment_history')
-          .doc();
-
-      batch.set(historyRef, {
-        'id': historyRef.id,
+      await supabase.from('price_adjustment_history').insert({
+        'shopId': shopId,
         'percentage': _percentage,
         'rounding': _roundingStep,
-        'effectiveDate': Timestamp.fromDate(_effectiveDate),
-        'appliedAt': FieldValue.serverTimestamp(),
-        'oldPrices': oldPrices,
-        'newPrices': newPrices,
+        'effective_date': _effectiveDate.toIso8601String(),
+        'old_prices': oldPrices,
+        'new_prices': newPrices,
       });
-
-      await batch.commit();
 
       // Update future appointments (unpaid and "No Local")
       await _updateFutureAppointments(newPrices);
@@ -264,36 +257,27 @@ class _PriceAdjustmentPageState extends State<PriceAdjustmentPage> {
     final startOfEffectiveMonth =
         DateTime(_effectiveDate.year, _effectiveDate.month, 1);
 
-    final appointmentsSnap = await FirebaseFirestore.instance
-        .collection('appointments')
-        .where('shopId', isEqualTo: shopId)
-        .where('data_agendamento',
-            isGreaterThanOrEqualTo: Timestamp.fromDate(startOfEffectiveMonth))
-        .where('metodo_pagamento', isEqualTo: 'No Local')
-        .get();
+    final supabase = Supabase.instance.client;
+    final appointmentsRes = await supabase
+        .from('appointments')
+        .select()
+        .eq('shop_id', shopId!)
+        .gte('scheduled_at', startOfEffectiveMonth.toIso8601String())
+        .eq('metodo_pagamento', 'No Local');
 
-    final batch = FirebaseFirestore.instance.batch();
-    int count = 0;
-
-    for (var doc in appointmentsSnap.docs) {
-      final data = doc.data();
+    for (var data in appointmentsRes) {
       final status = (data['status'] ?? '').toString().toLowerCase();
       // Only update if not already paid/concluded
       if (status != 'concluido' && data['pagamento_confirmado'] != true) {
-        final serviceId = data['servicoId'];
+        final serviceId = data['servicoId']?.toString();
         if (serviceId != null && serviceNewPrices.containsKey(serviceId)) {
-          batch.update(doc.reference, {
+          await supabase.from('appointments').update({
             'valor': serviceNewPrices[serviceId],
             'valor_total': serviceNewPrices[serviceId],
             'reajustado': true,
-          });
-          count++;
+          }).eq('id', data['id']);
         }
       }
-    }
-
-    if (count > 0) {
-      await batch.commit();
     }
   }
 
@@ -325,27 +309,20 @@ class _PriceAdjustmentPageState extends State<PriceAdjustmentPage> {
     setState(() => _isLoading = true);
 
     try {
-      final oldPrices =
-          Map<String, dynamic>.from(_lastAdjustment!['oldPrices']);
-      final batch = FirebaseFirestore.instance.batch();
+      final supabase = Supabase.instance.client;
+      final oldPrices = Map<String, dynamic>.from(_lastAdjustment!['old_prices']);
 
       for (var entry in oldPrices.entries) {
-        final serviceRef =
-            FirebaseFirestore.instance.collection('services').doc(entry.key);
-        batch.update(serviceRef, {'preco': entry.value});
+        await supabase
+            .from('services')
+            .update({'preco': entry.value})
+            .eq('id', entry.key);
       }
 
-      // We should also revert appointments if possible, but it's complex since we don't know if they were already reajusted by another logic.
-      // For now, let's focus on services and remove the history entry.
-      final historyRef = FirebaseFirestore.instance
-          .collection('shops')
-          .doc(shopId)
-          .collection('price_adjustment_history')
-          .doc(_lastAdjustment!['id']);
-
-      batch.delete(historyRef);
-
-      await batch.commit();
+      await supabase
+          .from('price_adjustment_history')
+          .delete()
+          .eq('id', _lastAdjustment!['id']);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -436,7 +413,7 @@ class _PriceAdjustmentPageState extends State<PriceAdjustmentPage> {
           style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
-        Text(
+        const Text(
           "Ajuste todos os preços da sua loja de forma rápida. O sistema calculará os novos valores e aplicará aos serviços e agendamentos futuros.",
           style: TextStyle(color: Colors.grey, fontSize: 14),
         ),

@@ -1,5 +1,5 @@
-﻿import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/foundation.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:intl/intl.dart';
@@ -10,12 +10,6 @@ import '../backup/calendar_backup_page.dart';
 import '../business/appointment_details_page.dart';
 
 /// Página Home para Funcionários (Modo Dual: Cliente + Funcionário)
-///
-/// Funcionalidades:
-/// - Ver agendamentos de trabalho (como funcionário)
-/// - Agendar serviços em outras lojas (como cliente)
-/// - Gerenciar backup do Google Calendar
-/// - Configurar folgas e indisponibilidades
 class EmployeeHomePage extends StatefulWidget {
   final String employeeId;
 
@@ -33,7 +27,6 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
   late TabController _tabController;
   String _employeeName = '';
   String? _employeePhotoUrl;
-  // removed unused _shopId field
   int _todayAppointmentsCount = 0;
   int _upcomingAppointmentsCount = 0;
 
@@ -53,16 +46,17 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
 
   Future<void> _loadEmployeeData() async {
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('employees')
-          .doc(widget.employeeId)
-          .get();
+      final supabase = Supabase.instance.client;
+      final doc = await supabase
+          .from('employees')
+          .select()
+          .eq('id', widget.employeeId)
+          .maybeSingle();
 
-      if (doc.exists && mounted) {
-        final data = doc.data()!;
+      if (doc != null && mounted) {
         setState(() {
-          _employeeName = data['nome'] ?? 'Profissional';
-          _employeePhotoUrl = data['foto_url'];
+          _employeeName = doc['nome'] ?? 'Profissional';
+          _employeePhotoUrl = doc['foto_url'];
         });
       }
     } catch (e) {
@@ -75,30 +69,29 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
       final now = DateTime.now();
       final todayStart = DateTime(now.year, now.month, now.day);
       final todayEnd = todayStart.add(const Duration(days: 1));
+      final supabase = Supabase.instance.client;
 
       // Agendamentos de hoje
-      final todaySnapshot = await FirebaseFirestore.instance
-          .collection('appointments')
-          .where('profissionalId', isEqualTo: widget.employeeId)
-          .where('data_agendamento',
-              isGreaterThanOrEqualTo: Timestamp.fromDate(todayStart))
-          .where('data_agendamento', isLessThan: Timestamp.fromDate(todayEnd))
-          .where('status',
-              whereIn: ['confirmado', 'aguardando_confirmacao']).get();
+      final todayRes = await supabase
+          .from('appointments')
+          .select('id')
+          .eq('professional_id', widget.employeeId)
+          .gte('scheduled_at', todayStart.toIso8601String())
+          .lt('scheduled_at', todayEnd.toIso8601String())
+          .filter('status', 'in', '("confirmado", "aguardando_confirmacao")');
 
       // Agendamentos futuros
-      final upcomingSnapshot = await FirebaseFirestore.instance
-          .collection('appointments')
-          .where('profissionalId', isEqualTo: widget.employeeId)
-          .where('data_agendamento',
-              isGreaterThan: Timestamp.fromDate(todayEnd))
-          .where('status',
-              whereIn: ['confirmado', 'aguardando_confirmacao']).get();
+      final upcomingRes = await supabase
+          .from('appointments')
+          .select('id')
+          .eq('professional_id', widget.employeeId)
+          .gt('scheduled_at', todayEnd.toIso8601String())
+          .filter('status', 'in', '("confirmado", "aguardando_confirmacao")');
 
       if (mounted) {
         setState(() {
-          _todayAppointmentsCount = todaySnapshot.size;
-          _upcomingAppointmentsCount = upcomingSnapshot.size;
+          _todayAppointmentsCount = todayRes.length;
+          _upcomingAppointmentsCount = upcomingRes.length;
         });
       }
     } catch (e) {
@@ -120,9 +113,7 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
           labelColor: Colors.white,
           unselectedLabelColor: Colors.white70,
           tabs: const [
-            Tab(
-                text: 'Meus Trabalhos',
-                icon: Icon(Icons.work_outline, size: 20)),
+            Tab(text: 'Meus Trabalhos', icon: Icon(Icons.work_outline, size: 20)),
             Tab(text: 'Explorar', icon: Icon(Icons.search, size: 20)),
             Tab(text: 'Configurações', icon: Icon(Icons.settings, size: 20)),
           ],
@@ -139,7 +130,6 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
     );
   }
 
-  // ============ ABA 1: MEUS TRABALHOS ============
   Widget _buildWorkTab() {
     return RefreshIndicator(
       onRefresh: () async {
@@ -151,12 +141,8 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header com foto
             _buildProfileHeader(),
-
             const SizedBox(height: 24),
-
-            // Cards de estatísticas
             Row(
               children: [
                 Expanded(
@@ -178,29 +164,18 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
                 ),
               ],
             ),
-
             const SizedBox(height: 24),
-
-            // Lista de agendamentos de hoje
             const Text(
               'Agendamentos de Hoje',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
-
             _buildTodayAppointmentsList(),
-
             const SizedBox(height: 24),
-
-            // Botão para ver todos os agendamentos
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
                 onPressed: () {
-                  // Navega para lista completa de agendamentos
                   Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -248,8 +223,7 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
                 : null,
             backgroundColor: AppColors.primaryPurple.withValues(alpha: 0.2),
             child: _employeePhotoUrl == null
-                ? const Icon(Icons.person,
-                    color: AppColors.primaryPurple, size: 30)
+                ? const Icon(Icons.person, color: AppColors.primaryPurple, size: 30)
                 : null,
           ),
           const SizedBox(width: 16),
@@ -259,18 +233,12 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
               children: [
                 Text(
                   _employeeName,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 4),
                 const Text(
                   'Profissional',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: Colors.grey,
-                  ),
+                  style: TextStyle(fontSize: 13, color: Colors.grey),
                 ),
               ],
             ),
@@ -280,8 +248,7 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
     );
   }
 
-  Widget _buildStatCard(
-      String label, String value, IconData icon, Color color) {
+  Widget _buildStatCard(String label, String value, IconData icon, Color color) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -296,18 +263,11 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
           const SizedBox(height: 8),
           Text(
             value,
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
+            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: color),
           ),
           Text(
             label,
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey[600],
-            ),
+            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
           ),
         ],
       ),
@@ -319,52 +279,49 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
     final todayStart = DateTime(now.year, now.month, now.day);
     final todayEnd = todayStart.add(const Duration(days: 1));
 
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('appointments')
-          .where('profissionalId', isEqualTo: widget.employeeId)
-          .where('data_agendamento',
-              isGreaterThanOrEqualTo: Timestamp.fromDate(todayStart))
-          .where('data_agendamento', isLessThan: Timestamp.fromDate(todayEnd))
-          .orderBy('data_agendamento')
-          .snapshots(),
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: Supabase.instance.client
+          .from('appointments')
+          .stream(primaryKey: ['id'])
+          .eq('professional_id', widget.employeeId)
+          .map((list) {
+            final filtered = list.where((d) {
+              final date = DateTime.tryParse(d['scheduled_at'] ?? '') ?? DateTime.now();
+              return date.isAfter(todayStart.subtract(const Duration(seconds: 1))) && 
+                     date.isBefore(todayEnd);
+            }).toList();
+            filtered.sort((a, b) => (a['scheduled_at'] as String).compareTo(b['scheduled_at'] as String));
+            return filtered;
+          }),
       builder: (context, snapshot) {
         if (!snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
 
-        final appointments = snapshot.data!.docs;
+        final appointments = snapshot.data!;
 
         if (appointments.isEmpty) {
           return Container(
             padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-            ),
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
             child: const Center(
-              child: Text(
-                'Nenhum agendamento para hoje',
-                style: TextStyle(color: Colors.grey),
-              ),
+              child: Text('Nenhum agendamento para hoje', style: TextStyle(color: Colors.grey)),
             ),
           );
         }
 
         return Column(
-          children: appointments.map((doc) {
-            final data = doc.data() as Map<String, dynamic>;
-            return _buildAppointmentCard(doc.id, data);
+          children: appointments.map((data) {
+            return _buildAppointmentCard(data['id'].toString(), data);
           }).toList(),
         );
       },
     );
   }
 
-  Widget _buildAppointmentCard(
-      String appointmentId, Map<String, dynamic> data) {
-    final dataAgendamento = (data['data_agendamento'] as Timestamp?)?.toDate();
-    if (dataAgendamento == null) return const SizedBox();
+  Widget _buildAppointmentCard(String appointmentId, Map<String, dynamic> data) {
+    final dateStr = data['scheduled_at'] as String?;
+    final date = DateTime.tryParse(dateStr ?? '') ?? DateTime.now();
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -387,48 +344,29 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
             color: AppColors.primaryPurple.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(8),
           ),
-          child: const Icon(
-            Icons.event,
-            color: AppColors.primaryPurple,
-          ),
+          child: const Icon(Icons.event, color: AppColors.primaryPurple),
         ),
-        title: FutureBuilder<DocumentSnapshot>(
+        title: FutureBuilder<Map<String, dynamic>?>(
           future: data['servicoId'] != null
-              ? FirebaseFirestore.instance
-                  .collection('services')
-                  .doc(data['servicoId'])
-                  .get()
+              ? Supabase.instance.client.from('services').select('nome').eq('id', data['servicoId']).maybeSingle()
               : null,
           builder: (context, serviceSnap) {
-            final serviceName = serviceSnap.hasData && serviceSnap.data!.exists
-                ? (serviceSnap.data!.data() as Map)['nome']
-                : 'Serviço';
-            return Text(
-              serviceName,
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            );
+            final serviceName = serviceSnap.data?['nome'] ?? 'Serviço';
+            return Text(serviceName, style: const TextStyle(fontWeight: FontWeight.bold));
           },
         ),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SizedBox(height: 4),
-            Text(DateFormat('HH:mm').format(dataAgendamento)),
-            FutureBuilder<DocumentSnapshot>(
+            Text(DateFormat('HH:mm').format(date)),
+            FutureBuilder<Map<String, dynamic>?>(
               future: data['clientId'] != null
-                  ? FirebaseFirestore.instance
-                      .collection('clients')
-                      .doc(data['clientId'])
-                      .get()
+                  ? Supabase.instance.client.from('clients').select('nome').eq('id', data['clientId']).maybeSingle()
                   : null,
               builder: (context, clientSnap) {
-                final clientName = clientSnap.hasData && clientSnap.data!.exists
-                    ? (clientSnap.data!.data() as Map)['nome']
-                    : 'Cliente';
-                return Text(
-                  'Cliente: $clientName',
-                  style: const TextStyle(fontSize: 12),
-                );
+                final clientName = clientSnap.data?['nome'] ?? 'Cliente';
+                return Text('Cliente: $clientName', style: const TextStyle(fontSize: 12));
               },
             ),
           ],
@@ -448,23 +386,16 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
             ),
           ),
         ),
-        onTap: () async {
-          final doc = await FirebaseFirestore.instance
-              .collection('appointments')
-              .doc(appointmentId)
-              .get();
-
-          if (mounted) {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => AppointmentDetailsPage(
-                  appointmentDoc: doc,
-                  startInEditMode: false,
-                ),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => AppointmentDetailsPage(
+                appointmentDoc: data,
+                startInEditMode: false,
               ),
-            );
-          }
+            ),
+          );
         },
       ),
     );
@@ -472,87 +403,47 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
 
   Color _getStatusColor(String? status) {
     switch (status) {
-      case 'confirmado':
-        return Colors.green;
-      case 'cancelado':
-        return Colors.red;
-      default:
-        return Colors.orange;
+      case 'confirmado': return Colors.green;
+      case 'cancelado': return Colors.red;
+      default: return Colors.orange;
     }
   }
 
   String _getStatusText(String? status) {
     switch (status) {
-      case 'confirmado':
-        return 'Confirmado';
-      case 'cancelado':
-        return 'Cancelado';
-      case 'aguardando_confirmacao':
-        return 'Aguardando';
-      default:
-        return 'Pendente';
+      case 'confirmado': return 'Confirmado';
+      case 'cancelado': return 'Cancelado';
+      case 'aguardando_confirmacao': return 'Aguardando';
+      default: return 'Pendente';
     }
   }
 
-  // ============ ABA 2: EXPLORAR (COMO CLIENTE) ============
   Widget _buildExploreTab() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Agende Serviços',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
+          const Text('Agende Serviços', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-          const Text(
-            'Você também pode agendar serviços em outras lojas!',
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.grey,
-            ),
-          ),
+          const Text('Você também pode agendar serviços em outras lojas!', style: TextStyle(fontSize: 14, color: Colors.grey)),
           const SizedBox(height: 20),
-
-          // Lista de lojas disponíveis
-          StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance
-                .collection('shops')
-                .where('ativo', isEqualTo: true)
-                .snapshots(),
+          StreamBuilder<List<Map<String, dynamic>>>(
+            stream: Supabase.instance.client.from('shops').stream(primaryKey: ['id']).eq('ativo', true),
             builder: (context, snapshot) {
-              if (!snapshot.hasData) {
-                return const Center(child: CircularProgressIndicator());
-              }
-
-              final shops = snapshot.data!.docs;
-
+              if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+              final shops = snapshot.data!;
               return Column(
-                children: shops.map((doc) {
-                  final data = doc.data() as Map<String, dynamic>;
-                  return _buildShopCard(doc, data);
-                }).toList(),
+                children: shops.map((data) => _buildShopCard(data)).toList(),
               );
             },
           ),
-
           const SizedBox(height: 20),
-
-          // Botão para ver meus agendamentos como cliente
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
               onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const MyAppointmentsPage(),
-                  ),
-                );
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const MyAppointmentsPage()));
               },
               icon: const Icon(Icons.calendar_today),
               label: const Text('MEUS AGENDAMENTOS'),
@@ -568,89 +459,53 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
     );
   }
 
-  Widget _buildShopCard(DocumentSnapshot shop, Map<String, dynamic> data) {
+  Widget _buildShopCard(Map<String, dynamic> data) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
+          BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 10, offset: const Offset(0, 2)),
         ],
       ),
       child: ListTile(
         contentPadding: const EdgeInsets.all(16),
         leading: CircleAvatar(
           radius: 30,
-          backgroundImage: data['logoUrl'] != null
-              ? CachedNetworkImageProvider(data['logoUrl'])
-              : null,
+          backgroundImage: data['logoUrl'] != null ? CachedNetworkImageProvider(data['logoUrl']) : null,
           backgroundColor: AppColors.primaryPurple.withValues(alpha: 0.2),
-          child: data['logoUrl'] == null
-              ? const Icon(Icons.store, color: AppColors.primaryPurple)
-              : null,
+          child: data['logoUrl'] == null ? const Icon(Icons.store, color: AppColors.primaryPurple) : null,
         ),
-        title: Text(
-          data['nome'] ?? 'Loja',
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
+        title: Text(data['nome'] ?? 'Loja', style: const TextStyle(fontWeight: FontWeight.bold)),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SizedBox(height: 4),
-            Text(
-              data['endereco'] ?? '',
-              style: const TextStyle(fontSize: 12),
-            ),
+            Text(data['endereco'] ?? '', style: const TextStyle(fontSize: 12)),
             if (data['categoria'] != null)
-              Text(
-                data['categoria'],
-                style: TextStyle(
-                  fontSize: 11,
-                  color: AppColors.primaryPurple,
-                ),
-              ),
+              Text(data['categoria'], style: const TextStyle(fontSize: 11, color: AppColors.primaryPurple)),
           ],
         ),
         trailing: const Icon(Icons.arrow_forward_ios, size: 16),
         onTap: () {
           Navigator.push(
             context,
-            MaterialPageRoute(
-              builder: (context) => ShopProfilePage(
-                shopDoc: shop,
-                onBookService: (sDoc) {
-                  // O fluxo de agendamento já está implementado na ShopProfilePage
-                },
-              ),
-            ),
+            MaterialPageRoute(builder: (context) => ShopProfilePage(shopDoc: data, onBookService: (sDoc) {})),
           );
         },
       ),
     );
   }
 
-  // ============ ABA 3: CONFIGURAÇÕES ============
   Widget _buildSettingsTab() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Configurações',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
+          const Text('Configurações', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
           const SizedBox(height: 20),
-
-          // Backup do Google Calendar
           _buildSettingCard(
             icon: Icons.cloud_upload,
             iconColor: Colors.green,
@@ -660,52 +515,33 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => CalendarBackupPage(
-                    isOwner: false,
-                    employeeId: widget.employeeId,
-                  ),
+                  builder: (context) => CalendarBackupPage(isOwner: false, employeeId: widget.employeeId),
                 ),
               );
             },
           ),
-
           const SizedBox(height: 12),
-
-          // Folgas e Disponibilidade
           _buildSettingCard(
             icon: Icons.event_busy,
             iconColor: Colors.orange,
             title: 'Folgas e Disponibilidade',
             subtitle: 'Gerencie suas ausências e horários',
             onTap: () {
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                        'Entre em contato com seu gerente para alterar folgas'),
-                  ),
-                );
-              }
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Entre em contato com seu gerente para alterar folgas')),
+              );
             },
           ),
-
           const SizedBox(height: 12),
-
-          // Perfil
           _buildSettingCard(
             icon: Icons.person_outline,
             iconColor: Colors.blue,
             title: 'Meu Perfil',
             subtitle: 'Dados pessoais e informações',
             onTap: () {
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                        'Entre em contato com seu gerente para atualizar seu perfil'),
-                  ),
-                );
-              }
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Entre em contato com seu gerente para atualizar seu perfil')),
+              );
             },
           ),
         ],
@@ -725,31 +561,18 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
+          BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 10, offset: const Offset(0, 2)),
         ],
       ),
       child: ListTile(
         contentPadding: const EdgeInsets.all(16),
         leading: Container(
           padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: iconColor.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(8),
-          ),
+          decoration: BoxDecoration(color: iconColor.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
           child: Icon(icon, color: iconColor),
         ),
-        title: Text(
-          title,
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
-        subtitle: Text(
-          subtitle,
-          style: const TextStyle(fontSize: 12),
-        ),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+        subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
         trailing: const Icon(Icons.arrow_forward_ios, size: 16),
         onTap: onTap,
       ),
@@ -757,16 +580,9 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
   }
 }
 
-// ============================================================================
-// PÁGINA DE LISTA COMPLETA DE AGENDAMENTOS DO FUNCIONÁRIO
-// ============================================================================
-
 class _EmployeeAppointmentsListPage extends StatelessWidget {
   final String employeeId;
-
-  const _EmployeeAppointmentsListPage({
-    required this.employeeId,
-  });
+  const _EmployeeAppointmentsListPage({required this.employeeId});
 
   @override
   Widget build(BuildContext context) {
@@ -777,125 +593,46 @@ class _EmployeeAppointmentsListPage extends StatelessWidget {
         backgroundColor: AppColors.primaryPurple,
         foregroundColor: Colors.white,
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('appointments')
-            .where('profissionalId', isEqualTo: employeeId)
-            .orderBy('data_agendamento', descending: true)
-            .snapshots(),
+      body: StreamBuilder<List<Map<String, dynamic>>>(
+        stream: Supabase.instance.client
+            .from('appointments')
+            .stream(primaryKey: ['id'])
+            .eq('professional_id', employeeId)
+            .map((list) {
+              list.sort((a, b) => (b['scheduled_at'] as String).compareTo(a['scheduled_at'] as String));
+              return list;
+            }),
         builder: (context, snapshot) {
-          if (!snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          final appointments = snapshot.data!.docs;
-
+          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+          final appointments = snapshot.data!;
           if (appointments.isEmpty) {
-            return const Center(
-              child: Text(
-                'Nenhum agendamento encontrado',
-                style: TextStyle(color: Colors.grey),
-              ),
-            );
+            return const Center(child: Text('Nenhum agendamento encontrado', style: TextStyle(color: Colors.grey)));
           }
-
           return ListView.builder(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.all(16),
             itemCount: appointments.length,
-            itemBuilder: (context, index) {
-              final doc = appointments[index];
-              final data = doc.data() as Map<String, dynamic>;
-              final dataAgendamento =
-                  (data['data_agendamento'] as Timestamp?)?.toDate();
-
-              if (dataAgendamento == null) return const SizedBox();
-
-              return Container(
+            itemBuilder: (context, i) {
+              final data = appointments[i];
+              final dateStr = data['scheduled_at'] as String?;
+              final date = DateTime.tryParse(dateStr ?? '') ?? DateTime.now();
+              return Card(
                 margin: const EdgeInsets.only(bottom: 12),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.05),
-                      blurRadius: 10,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
                 child: ListTile(
-                  contentPadding: const EdgeInsets.all(16),
-                  title: FutureBuilder<DocumentSnapshot>(
+                  title: FutureBuilder<Map<String, dynamic>?>(
                     future: data['servicoId'] != null
-                        ? FirebaseFirestore.instance
-                            .collection('services')
-                            .doc(data['servicoId'])
-                            .get()
-                        : null,
+                      ? Supabase.instance.client.from('services').select('nome').eq('id', data['servicoId']).maybeSingle()
+                      : null,
                     builder: (context, serviceSnap) {
-                      final serviceName =
-                          serviceSnap.hasData && serviceSnap.data!.exists
-                              ? (serviceSnap.data!.data() as Map)['nome']
-                              : 'Serviço';
-                      return Text(
-                        serviceName,
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      );
+                      return Text(serviceSnap.data?['nome'] ?? 'Serviço', style: const TextStyle(fontWeight: FontWeight.bold));
                     },
                   ),
-                  subtitle: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const SizedBox(height: 4),
-                      Text(
-                        DateFormat('dd/MM/yyyy - HH:mm')
-                            .format(dataAgendamento),
-                      ),
-                      FutureBuilder<DocumentSnapshot>(
-                        future: data['clientId'] != null
-                            ? FirebaseFirestore.instance
-                                .collection('clients')
-                                .doc(data['clientId'])
-                                .get()
-                            : null,
-                        builder: (context, clientSnap) {
-                          final clientName =
-                              clientSnap.hasData && clientSnap.data!.exists
-                                  ? (clientSnap.data!.data() as Map)['nome']
-                                  : 'Cliente';
-                          return Text(
-                            'Cliente: $clientName',
-                            style: const TextStyle(fontSize: 12),
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-                  trailing: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: _getStatusColor(data['status'])
-                          .withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      _getStatusText(data['status']),
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: _getStatusColor(data['status']),
-                      ),
-                    ),
-                  ),
-                  onTap: () async {
+                  subtitle: Text(DateFormat('dd/MM/yyyy HH:mm').format(date)),
+                  trailing: Text(data['status'] ?? 'pendente'),
+                  onTap: () {
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (context) => AppointmentDetailsPage(
-                          appointmentDoc: doc,
-                          startInEditMode: false,
-                        ),
+                        builder: (context) => AppointmentDetailsPage(appointmentDoc: data, startInEditMode: false),
                       ),
                     );
                   },
@@ -906,29 +643,5 @@ class _EmployeeAppointmentsListPage extends StatelessWidget {
         },
       ),
     );
-  }
-
-  Color _getStatusColor(String? status) {
-    switch (status) {
-      case 'confirmado':
-        return Colors.green;
-      case 'cancelado':
-        return Colors.red;
-      default:
-        return Colors.orange;
-    }
-  }
-
-  String _getStatusText(String? status) {
-    switch (status) {
-      case 'confirmado':
-        return 'Confirmado';
-      case 'cancelado':
-        return 'Cancelado';
-      case 'aguardando_confirmacao':
-        return 'Aguardando';
-      default:
-        return 'Pendente';
-    }
   }
 }

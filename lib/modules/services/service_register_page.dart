@@ -1,21 +1,24 @@
-import 'dart:io';
+import 'dart:io' if (dart.library.html) 'package:flutter_application_1/core/utils/io_stub.dart' as io;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 import 'package:image_picker/image_picker.dart';
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:image_cropper/image_cropper.dart';
+import 'package:uuid/uuid.dart';
+import '../../core/services/auth_service.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 import '../../core/constants/plan_features.dart';
 import '../../core/services/plan_features_service.dart';
+import '../../core/models/service_model.dart';
+import '../../core/services/shop_data_cache_service.dart';
+import '../../core/services/image_service.dart';
 
 class ServiceRegisterPage extends StatefulWidget {
-  final DocumentSnapshot? serviceToEdit;
+  final Map<String, dynamic>? serviceToEdit;
   final VoidCallback onClose;
 
   const ServiceRegisterPage(
@@ -58,25 +61,25 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
     WidgetsBinding.instance.addObserver(this);
 
     if (widget.serviceToEdit != null) {
-      final data = widget.serviceToEdit!.data() as Map<String, dynamic>;
-      _nameController.text = data['nome'] ?? "";
-      _priceController.text = data['preco']?.toString() ?? "";
-      _custoController.text = data['custo']?.toString() ?? "0";
-      _timeController.text = data['tempo_min']?.toString() ?? "";
-      _descriptionController.text = data['descricao'] ?? "";
-      _existingUrls = List<String>.from(data['fotos_urls'] ?? []);
-      _ativo = data['ativo'] ?? true;
+      final data = widget.serviceToEdit!;
+      _nameController.text = data['name'] ?? "";
+      _priceController.text = data['price']?.toString() ?? "";
+      _custoController.text = data['cost']?.toString() ?? "0";
+      _timeController.text = data['duration_min']?.toString() ?? "";
+      _descriptionController.text = data['description'] ?? "";
+      _existingUrls = List<String>.from(data['photos_urls'] ?? []);
+      _ativo = data['is_active'] ?? true;
 
       if (data['variations'] != null) {
         _variations = List<Map<String, dynamic>>.from(data['variations']);
       }
 
-      _requerAviso = data['requer_aviso'] ?? false;
-      _avisoController.text = data['mensagem_aviso'] ?? "";
+      _requerAviso = data['requires_warning'] ?? false;
+      _avisoController.text = data['warning_message'] ?? "";
       
       // Suporte para migração ou carga do novo campo
-      if (data['categoryIds'] != null) {
-        _categoryIds = List<String>.from(data['categoryIds']);
+      if (data['category_ids'] != null) {
+        _categoryIds = List<String>.from(data['category_ids']);
       } else if (data['categoryId'] != null) {
         _categoryIds = [data['categoryId']];
       }
@@ -376,13 +379,14 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
     try {
       String? shopId = await SessionService.getShopId();
       if (shopId == null || shopId.isEmpty) {
-        final user = FirebaseAuth.instance.currentUser;
+        final user = AuthService().currentUser;
         if (user != null) {
-          final userDoc = await FirebaseFirestore.instance
-              .collection('users')
-              .doc(user.uid)
-              .get();
-          shopId = userDoc.data()?['shopId'] as String?;
+          final userDoc = await sb.Supabase.instance.client
+              .from('users')
+              .select()
+              .eq('id', user.id)
+              .maybeSingle();
+          shopId = userDoc?['shop_id'] as String?;
           if (shopId != null && shopId.isNotEmpty) {
             await SessionService.saveShopId(shopId);
           }
@@ -396,75 +400,53 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
         return;
       }
 
-      final docId = widget.serviceToEdit?.id ??
-          FirebaseFirestore.instance.collection('services').doc().id;
+      final docId = widget.serviceToEdit?['id'] ??
+          Uuid().v4();
       List<String> uploadedUrls = List.from(_existingUrls);
 
-      for (int i = 0; i < _newImages.length; i++) {
-        try {
-          final XFile imageXFile = _newImages[i];
-          final String fileName =
-              "${DateTime.now().millisecondsSinceEpoch}_$i.jpg";
-          final Reference ref =
-              FirebaseStorage.instance.ref().child('services/$docId/$fileName');
-
-          UploadTask uploadTask;
-          if (kIsWeb) {
-            final Uint8List bytes = await imageXFile.readAsBytes();
-            final metadata = SettableMetadata(contentType: 'image/jpeg');
-            uploadTask = ref.putData(bytes, metadata);
-          } else {
-            final File file = File(imageXFile.path);
-            uploadTask = ref.putFile(file);
-          }
-
-          uploadTask.snapshotEvents.listen((TaskSnapshot snapshot) {
-            if (snapshot.totalBytes > 0) {
-              final double progress =
-                  snapshot.bytesTransferred / snapshot.totalBytes;
-              final double overallProgress =
-                  ((i + progress) / _newImages.length);
-
-              if (mounted) {
-                setState(() {
-                  _uploadProgress = overallProgress;
-                });
-              }
+      // Upload das novas imagens com compressão inteligente e progresso unificado
+      if (_newImages.isNotEmpty) {
+        final List<String> newUrls = await ImageService.uploadServicePhotos(
+          _newImages, 
+          docId,
+          onProgress: (p) {
+            if (mounted) {
+              setState(() => _uploadProgress = p);
             }
-          });
-
-          await uploadTask;
-          final String url = await ref.getDownloadURL();
-          uploadedUrls.add(url);
-        } catch (e) {
-          continue;
-        }
+          },
+        );
+        uploadedUrls.addAll(newUrls);
       }
 
-      await FirebaseFirestore.instance.collection('services').doc(docId).set({
-        'nome': _nameController.text.trim(),
-        'preco':
-            double.tryParse(_priceController.text.replaceAll(',', '.')) ?? 0,
-        'custo':
-            double.tryParse(_custoController.text.replaceAll(',', '.')) ?? 0,
-        'tempo_min': int.tryParse(_timeController.text) ?? 30,
-        'descricao': _descriptionController.text.trim(),
-        'fotos_urls': uploadedUrls,
-        'shopId': shopId,
-        'categoryIds': _categoryIds,
-        'ativo': _ativo,
-        'variations': _variations,
-        'requer_aviso': _requerAviso,
-        'mensagem_aviso': _requerAviso ? _avisoController.text.trim() : "",
-        'atualizado_em': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      final service = ServiceModel(
+        id: docId,
+        shopId: shopId,
+        name: _nameController.text.trim(),
+        description: _descriptionController.text.trim(),
+        price: double.tryParse(_priceController.text.replaceAll(',', '.')) ?? 0,
+        cost: double.tryParse(_custoController.text.replaceAll(',', '.')) ?? 0,
+        durationMin: int.tryParse(_timeController.text) ?? 30,
+        photosUrls: uploadedUrls,
+        categoryIds: _categoryIds,
+        isActive: _ativo,
+        variations: _variations,
+        requiresWarning: _requerAviso,
+        warningMessage: _requerAviso ? _avisoController.text.trim() : "",
+      );
+
+      await sb.Supabase.instance.client
+          .from('services')
+          .upsert(service.toMap(), onConflict: 'id');
 
       if (mounted) {
+        ShopDataCacheService().invalidate(shopId, 'services');
         widget.onClose();
-        _showSnackBar("Serviço salvo com sucesso!");
+        _showSnackBar("✅ Serviço e imagens salvos com sucesso!");
       }
+    } on sb.PostgrestException catch (e) {
+      _showSnackBar("Erro de banco (Supabase): ${e.message}", isError: true);
     } catch (e) {
-      _showSnackBar("Erro ao salvar serviço: ${e.toString()}", isError: true);
+      _showSnackBar("Erro inesperado: ${e.toString()}", isError: true);
     } finally {
       if (mounted) {
         setState(() {
@@ -755,15 +737,15 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                             const SizedBox(height: 16),
 
                             // CATEGORIAS (Múltipla Seleção)
-                            StreamBuilder<QuerySnapshot>(
-                              stream: FirebaseFirestore.instance
-                                  .collection('categories')
-                                  .where('shopId', isEqualTo: _shopId)
-                                  .snapshots(),
+                            StreamBuilder<List<Map<String, dynamic>>>(
+                              stream: sb.Supabase.instance.client
+                                  .from('categories')
+                                  .stream(primaryKey: ['id'])
+                                  .eq('shop_id', _shopId!),
                               builder: (context, snapshot) {
                                 if (!snapshot.hasData) return const SizedBox();
                                 
-                                final categories = snapshot.data!.docs;
+                                final categories = snapshot.data!;
                                 if (categories.isEmpty) return const SizedBox();
 
                                 return Column(
@@ -775,8 +757,8 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                                       spacing: 8,
                                       runSpacing: 8,
                                       children: categories.map((cat) {
-                                        final catId = cat.id;
-                                        final catName = cat['nome'];
+                                        final catId = cat['id'];
+                                        final catName = cat['name'];
                                         final isSelected = _categoryIds.contains(catId);
 
                                         return FilterChip(

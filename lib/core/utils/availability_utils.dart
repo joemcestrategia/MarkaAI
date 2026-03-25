@@ -1,4 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/foundation.dart';
 
 class AvailabilityUtils {
@@ -10,21 +10,21 @@ class AvailabilityUtils {
     final startOfDay = DateTime(date.year, date.month, date.day);
     final endOfDay = startOfDay.add(const Duration(days: 1));
 
-    final snapshot = await FirebaseFirestore.instance
-        .collection('appointments')
-        .where('profissionalId', isEqualTo: professionalId)
-        .where('data_agendamento',
-            isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay))
-        .where('data_agendamento', isLessThan: Timestamp.fromDate(endOfDay))
-        .get();
+    final response = await Supabase.instance.client
+        .from('appointments')
+        .select()
+        .eq('professional_id', professionalId)
+        .gte('scheduled_at', startOfDay.toIso8601String())
+        .lt('scheduled_at', endOfDay.toIso8601String());
 
+    final List<dynamic> dataList = response;
     List<Map<String, int>> busy = [];
 
-    for (var doc in snapshot.docs) {
-      if (excludeDocId != null && doc.id == excludeDocId) {
+    for (var data in dataList) {
+      if (excludeDocId != null && data['id']?.toString() == excludeDocId) {
         continue;
       }
-      final data = doc.data();
+      
       final status = data['status']?.toString().toLowerCase() ?? '';
 
       // Ignorar agendamentos cancelados ou rejeitados
@@ -34,39 +34,33 @@ class AvailabilityUtils {
         continue;
       }
 
-      final Timestamp startTs = data['data_agendamento'];
-      final DateTime startTime = startTs.toDate();
-
+      final DateTime startTime = DateTime.parse(data['scheduled_at']);
       int startMin = startTime.hour * 60 + startTime.minute;
 
-      // Tenta pegar a duração garantida no próprio appointment (novo padrão)
-      int? duration = int.tryParse(data['duracao_min']?.toString() ?? '') ??
-          int.tryParse(data['duracao']?.toString() ?? '');
+      int? duration = int.tryParse(data['duration_min']?.toString() ?? '') ??
+          int.tryParse(data['duracao_min']?.toString() ?? '');
 
       // Fallback para compromissos legados
       if (duration == null) {
-        String? servicoId = data['servicoId'] ?? data['servico_id'];
+        String? servicoId = data['service_id']?.toString() ?? data['servicoId']?.toString();
         if (servicoId != null && servicoId.isNotEmpty) {
           try {
-            final svcDoc = await FirebaseFirestore.instance
-                .collection('services')
-                .doc(servicoId)
-                .get();
-            if (svcDoc.exists) {
-              final svcData = svcDoc.data();
-              if (svcData != null) {
-                duration = int.tryParse(svcData['tempo_min']?.toString() ?? '');
-              }
+            final svcDoc = await Supabase.instance.client
+                .from('services')
+                .select()
+                .eq('id', servicoId)
+                .maybeSingle();
+            if (svcDoc != null) {
+              duration = int.tryParse(svcDoc['duration_min']?.toString() ?? '');
             }
           } catch (e) {
             debugPrint("Erro ao buscar duração original do serviço antigo: $e");
           }
         }
-        duration ??= 30; // 30minutos_fallback_seguro_final
+        duration ??= 30;
       }
 
       int endMin = startMin + duration;
-
       busy.add({'start': startMin, 'end': endMin});
     }
 
@@ -79,7 +73,7 @@ class AvailabilityUtils {
     int endMin = startMin + duration;
     for (var interval in busyIntervals) {
       if (startMin < interval['end']! && endMin > interval['start']!) {
-        return false; // Conflito encontrado
+        return false;
       }
     }
     return true;
@@ -103,6 +97,12 @@ class AvailabilityUtils {
       int endDayMin = int.parse(endStr.split(':')[0]) * 60 +
           int.parse(endStr.split(':')[1]);
 
+      // Proteção contra loop infinito se o intervalo for inválido
+      if (interval <= 0) {
+        debugPrint('⚠️ AvailabilityUtils: intervalo inválido ($interval). Abortando geração.');
+        return [];
+      }
+
       busyIntervals.sort((a, b) => a['start']!.compareTo(b['start']!));
 
       if (preventGaps) {
@@ -115,13 +115,8 @@ class AvailabilityUtils {
 
         List<int> sortedAnchors = anchorPoints.toList()..sort();
 
-        // Para as âncoras (que são limites rígidos), nós testamos se o horário exato da âncora acomoda o serviço.
         for (int anchor in sortedAnchors) {
           int current = anchor;
-
-          // Se preventGaps estiver ativo, a ideia era testar só e somente a âncora.
-          // Mas se um serviço é agendado em cima de uma âncora e acaba depois (e não tem agendamento colado),
-          // precisamos tentar achar vaga após ele tbm.
           while (current + serviceDuration <= endDayMin) {
             int slotEnd = current + serviceDuration;
             bool hasCollision = false;
@@ -136,7 +131,6 @@ class AvailabilityUtils {
             }
 
             if (hasCollision) {
-              // Se colidiu, não desiste do dia, avança para o fim da colisão
               current = jumpTo;
               continue;
             }
@@ -153,8 +147,6 @@ class AvailabilityUtils {
                   "${(current ~/ 60).toString().padLeft(2, '0')}:${(current % 60).toString().padLeft(2, '0')}";
               if (!validSlots.contains(timeString)) validSlots.add(timeString);
             }
-
-            // Só testa o primeiro slot livre de cada âncora para manter o modo prevent Gaps real
             break;
           }
         }
@@ -163,15 +155,11 @@ class AvailabilityUtils {
         while (current + serviceDuration <= endDayMin) {
           int slotEnd = current + serviceDuration;
           bool hasCollision = false;
-          int jumpTo = current + interval; // Pulo padrão
+          int jumpTo = current + interval;
 
           for (var busy in busyIntervals) {
             if (current < busy['end']! && slotEnd > busy['start']!) {
               hasCollision = true;
-              // OTIMIZAÇÃO CRUCIAL: Se colidir, pula DIRETAMENTE para o fim do compromisso
-              // arredondado para o próximo múltiplo de 'interval' (opcional) ou exato.
-              // Para garantir alinhamento limpo (ex: 9:00, 9:30), forçamos o pulo exato do 'end',
-              // que geralmente já é redondo.
               jumpTo = busy['end']!;
               break;
             }

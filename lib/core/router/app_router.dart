@@ -1,7 +1,8 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
+import '../utils/html_stub.dart' if (dart.library.html) 'dart:html' as html;
+import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 import '../../modules/login/login_page.dart';
 import '../../modules/public/public_shop_page.dart';
 import '../../modules/business/business_home_page.dart';
@@ -14,7 +15,10 @@ import '../../modules/clients/rescheduling_success_page.dart';
 import '../../modules/business/price_adjustment_page.dart';
 import '../../modules/admin/admin_dashboard_page.dart';
 import '../../modules/admin/admin_setup_page.dart';
+import '../../modules/clients/client_affiliate_page.dart';
 import '../../core/services/session_service.dart';
+import '../../core/services/auth_service.dart';
+import '../../modules/public/affiliate_landing_page.dart';
 
 class AppRouter {
   static Route<dynamic> generateRoute(RouteSettings settings) {
@@ -138,6 +142,15 @@ class AppRouter {
       return MaterialPageRoute(
           builder: (_) => const AdminSetupPage(), settings: settings);
     }
+    if (cleanPath == 'afiliados') {
+      return MaterialPageRoute(
+          builder: (_) => const AffiliateLandingPage(), settings: settings);
+    }
+    if (cleanPath == 'afiliados/painel') {
+      return MaterialPageRoute(
+          builder: (_) => const ClientAffiliatePage(), settings: settings);
+    }
+
     if (baseRoute == 'subscription_plans') {
       return MaterialPageRoute(
           builder: (_) => const SubscriptionPlansPage(), settings: settings);
@@ -201,41 +214,118 @@ class AppRouter {
       'reschedule_success',
       'business/price_adjustment',
       'setup-admin-secret',
+      'afiliados',
+      'afiliados/painel',
     ];
     return knownRoutes.contains(route.toLowerCase());
   }
 }
 
 // Auth Gate - gerencia autenticação e redirecionamento
-class AuthGate extends StatelessWidget {
+class AuthGate extends StatefulWidget {
   const AuthGate({super.key});
 
   @override
+  State<AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends State<AuthGate> {
+  Timer? _fallbackTimer;
+  bool _timeoutReached = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Se estivermos na Web, iniciamos um timer de fallback para evitar 
+    // congelamento eterno na tela de _SplashLoading() caso o SDK trave.
+    if (kIsWeb) {
+      _fallbackTimer = Timer(const Duration(seconds: 4), () {
+        if (mounted) {
+          setState(() {
+            _timeoutReached = true;
+          });
+          debugPrint('AuthGate: Timeout atingido ao aguardar processamento da sessão inicial.');
+          // Remove código da URL que possa estar travando o estado no navegador
+          if (Uri.base.queryParameters.containsKey('code')) {
+            html.window.history.replaceState(null, '', '/');
+          }
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _fallbackTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.authStateChanges(),
+    final supabase = sb.Supabase.instance.client;
+
+    return StreamBuilder<sb.AuthState>(
+      stream: supabase.auth.onAuthStateChange,
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(
-            body: Center(
-              child: CircularProgressIndicator(color: AppColors.primaryPurple),
-            ),
-          );
+        // Ainda carregando — aguarda o SDK processar
+        if (!snapshot.hasData) {
+          return const _SplashLoading();
         }
 
-        if (snapshot.hasData) {
-          return AuthRedirect(user: snapshot.data!);
+        final event = snapshot.data!.event;
+        final session = snapshot.data!.session;
+
+        // Limpa o ?code= da URL após o login (SIGNED_IN) no Web
+        if (event == sb.AuthChangeEvent.signedIn && kIsWeb) {
+          html.window.history.replaceState(null, '', '/');
         }
 
-        return const LoginPage();
+        // Detecta se há um código PKCE na URL (apenas no Web para evitar loop infinito na tela roxa)
+        final bool hasCodeInUrl = kIsWeb && Uri.base.queryParameters.containsKey('code');
+
+        // INITIAL_SESSION sem sessão = SDK ainda trocando o ?code= (SE hover code na URL)
+        // NÃO redireciona para /login aqui para evitar flicker
+        if (event == sb.AuthChangeEvent.initialSession && session == null && hasCodeInUrl) {
+          // Mas caso o timeout do fallback já tenha estourado, seguimos em frente
+          if (!_timeoutReached) {
+            debugPrint('AuthGate: Aguardando processamento da sessão inicial (event=AuthChangeEvent.initialSession)...');
+            return const _SplashLoading();
+          }
+        }
+        
+        // Se conseguirmos uma sessão válida (com ou sem código), limpamos o timer
+        if (session != null) {
+          _fallbackTimer?.cancel();
+        }
+
+        // Sem sessão e já passou do initial ou não tem code na URL, ou superou Timeout = deslogado
+        if (session == null) {
+          return const LoginPage();
+        }
+
+        // Sessão válida = vai para home
+        return AuthRedirect(user: session.user);
       },
+    );
+  }
+}
+
+class _SplashLoading extends StatelessWidget {
+  const _SplashLoading();
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      backgroundColor: Color(0xFF0A0A0F),
+      body: Center(
+        child: CircularProgressIndicator(color: Color(0xFF7C3AED)),
+      ),
     );
   }
 }
 
 // Auth Redirect - gerencia redirecionamento baseado no tipo de usuário sem causar loops
 class AuthRedirect extends StatefulWidget {
-  final User user;
+  final sb.User user;
 
   const AuthRedirect({super.key, required this.user});
 
@@ -246,80 +336,127 @@ class AuthRedirect extends StatefulWidget {
 class _AuthRedirectState extends State<AuthRedirect> {
   Widget? _targetPage;
   bool _error = false;
+  String _errorMessage = '';
+
+  bool _resolved = false;
 
   @override
   void initState() {
     super.initState();
-    _resolve();
+    if (!_resolved) {
+      _resolved = true;
+      _resolve();
+    }
+    Future.delayed(const Duration(seconds: 10), () {
+      if (mounted && _targetPage == null && !_error) {
+        _setError('Timeout: operação demorou mais de 10s. Verifique o console.');
+      }
+    });
   }
 
   Future<void> _resolve() async {
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.user.uid)
-          .get();
+      final supabase = sb.Supabase.instance.client;
+      debugPrint('AuthRedirect: Buscando perfil para userId=${widget.user.id}');
+
+      debugPrint('AuthRedirect: Executando SELECT...');
+      final doc = await supabase
+          .from('users')
+          .select()
+          .eq('id', widget.user.id)
+          .maybeSingle();
+      
+      debugPrint('AuthRedirect: Resultado: $doc');
 
       if (!mounted) return;
 
-      if (!doc.exists) {
-        setState(() => _error = true);
+      if (doc == null) {
+        debugPrint('AuthRedirect: Perfil não encontrado ou incompleto para ${widget.user.email} — redirecionando temporariamente para login.');
+        
+        if (mounted) {
+          setState(() {
+            _targetPage = const LoginPage(
+              contextMessage: 'Por favor, complete seu cadastro para continuar.',
+            );
+          });
+        }
         return;
       }
 
-      final data = doc.data();
-      final tipo = data?['tipo']?.toString();
-      final telefone = data?['telefone']?.toString();
+      final tipo = doc['role']?.toString();
+      debugPrint('AuthRedirect: Perfil encontrado. role="$tipo", shop_id="${doc['shop_id']}"');
 
-      if (tipo == null ||
-          tipo.isEmpty ||
-          telefone == null ||
-          telefone.isEmpty) {
-        setState(() => _error = true);
+      // O campo 'role' é obrigatório para saber para onde redirecionar
+      if (tipo == null || tipo.isEmpty) {
+        debugPrint(
+            'AuthRedirect: ERRO - Campo "role" ausente para userId=${widget.user.id}. '
+            'Doc completo: $doc');
+        _setError('Tipo de usuário não definido. Entre em contato com o suporte.');
         return;
       }
 
       // Salva na sessão local
       await SessionService.saveLogin(
-        userId: widget.user.uid,
+        userId: widget.user.id,
         userType: tipo,
-        shopId: tipo == 'dono' || tipo == 'business' ? widget.user.uid : null,
+        // Usar shop_id do banco (snake_case)
+        shopId: (tipo == 'dono' || tipo == 'business' || tipo == 'admin')
+            ? (doc['shop_id']?.toString() ?? widget.user.id)
+            : null,
       );
 
-      // Registrar token FCM do dispositivo para notificações (se disponível)
-      try {
-        final token = await FirebaseMessaging.instance.getToken();
-        if (token != null) {
-          await FirebaseFirestore.instance
-              .collection('users')
-              .doc(widget.user.uid)
-              .update({
-            'fcmTokens': FieldValue.arrayUnion([token])
-          });
-        }
-      } catch (_) {}
-
       if (!mounted) return;
+
+      debugPrint('AuthRedirect: Redirecionando userId=${widget.user.id} com tipo="$tipo"');
 
       // Define visualmente para onde ir
       if (tipo == 'dono' || tipo == 'business') {
         setState(() => _targetPage = const BusinessHomePage());
+      } else if (tipo == 'admin') {
+        setState(() => _targetPage = const BusinessHomePage());
       } else {
         setState(() => _targetPage = const ClientHomePage());
       }
-    } catch (_) {
+    } catch (e, stack) {
+      debugPrint('AuthRedirect ERRO TIPO: ${e.runtimeType}');
+      debugPrint('AuthRedirect ERRO: $e');
+      debugPrint('AuthRedirect STACK: $stack');
       if (mounted) {
-        setState(() => _error = true);
+        _setError('Erro: $e');
       }
     }
+  }
+
+  void _setError(String message) {
+    setState(() {
+      _error = true;
+      _errorMessage = message;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     if (_targetPage != null) return _targetPage!;
-    if (_error) return const LoginPage();
 
+    if (_error) {
+      // ✅ FIX: Mostra LoginPage mas exibe snackbar informativo ao invés de tela cinza
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _errorMessage.isNotEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(_errorMessage),
+              backgroundColor: Colors.red.shade700,
+              duration: const Duration(seconds: 5),
+            ),
+          );
+        }
+      });
+      return const LoginPage();
+    }
+
+    // ✅ FIX: Fundo branco (não cinza) durante o carregamento
     return const Scaffold(
+      backgroundColor: Colors.white,
       body: Center(
         child: CircularProgressIndicator(color: AppColors.primaryPurple),
       ),
@@ -334,8 +471,8 @@ class AdminAuthGate extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.authStateChanges(),
+    return StreamBuilder<sb.AuthState>(
+      stream: AuthService().authStateChanges,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
@@ -345,7 +482,8 @@ class AdminAuthGate extends StatelessWidget {
           );
         }
 
-        if (snapshot.hasData) {
+        final session = snapshot.data?.session;
+        if (session != null) {
           return const AdminDashboardPage();
         }
 

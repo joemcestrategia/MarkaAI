@@ -1,13 +1,14 @@
-// ignore_for_file: use_build_context_synchronously
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 import 'package:intl/intl.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'dart:async';
 import '../../core/theme/app_colors.dart';
 import 'appointment_details_page.dart';
+import '../../core/services/brasilapi_service.dart';
 import '../clients/client_details_page.dart';
 import '../../core/utils/availability_utils.dart';
+import '../../core/services/shop_data_cache_service.dart';
 import '../../core/services/transaction_autocomplete_service.dart';
 
 class BusinessSchedulePage extends StatefulWidget {
@@ -29,11 +30,15 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
   // Keys para cada cabeçalho de dia (permitir scroll até o header)
   final Map<DateTime, GlobalKey> _dayKeys = {};
 
+  // Holidays state
+  List<dynamic> _nationalHolidays = [];
+  List<Map<String, dynamic>> _globalHolidays = [];
+
   // --- CONTROLE DE LISTA ---
   final ScrollController _scrollController = ScrollController();
-  List<DocumentSnapshot> _appointments = [];
+  List<Map<String, dynamic>> _appointments = [];
   // Cache simples por id para acesso rápido e evitar duplicatas
-  final Map<String, DocumentSnapshot> _docCache = {};
+  final Map<String, Map<String, dynamic>> _docCache = {};
   final Map<String, DateTime> _cacheAccess = {};
   final int _cacheMaxEntries = 300; // limite de entradas no cache
   final Duration _cacheTTL =
@@ -43,14 +48,14 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
   bool _hasMore = true;
   bool _hasMorePast =
       true; // indica se há mais documentos no passado para carregar
-  DocumentSnapshot? _lastDocument;
-  DocumentSnapshot? _firstDocument;
+  Map<String, dynamic>? _lastDocument;
+  Map<String, dynamic>? _firstDocument;
   final int _perPage = 20;
   Map<String, dynamic> _shopConfig = {};
 
   // --- LÃ“GICA DE VISUALIZAÇÃO ---
   bool _showOnlySelectedDay = true;
-  DocumentSnapshot? _selectedAppointment;
+  Map<String, dynamic>? _selectedAppointment;
   // Quando true, a lista abaixo do calendário começa a partir de _startFromDate (inclusive)
   bool _startFromSelectedDay = false;
   DateTime? _startFromDate;
@@ -67,6 +72,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     _loadShopConfig();
     _loadMonthEvents();
     _loadAppointments();
+    _fetchHolidays(); // Added by user
     _scrollController.addListener(() {
       // Start loading earlier for smoother experience (preload next page)
       if (_scrollController.position.pixels >=
@@ -86,12 +92,13 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
   }
 
   Future<void> _loadShopConfig() async {
-    final doc = await FirebaseFirestore.instance
-        .collection('shops')
-        .doc(widget.shopId)
-        .get();
-    if (doc.exists && mounted) {
-      final data = doc.data() as Map<String, dynamic>;
+    final doc = await sb.Supabase.instance.client
+        .from('shops')
+        .select('config')
+        .eq('id', widget.shopId)
+        .maybeSingle();
+    if (doc != null && mounted) {
+      final data = doc;
       setState(() {
         _shopConfig = data['config'] as Map<String, dynamic>? ?? {};
       });
@@ -108,37 +115,28 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
             .add(const Duration(days: 35));
 
     try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('appointments')
-          .where('shopId', isEqualTo: widget.shopId)
-          .where('data_agendamento',
-              isGreaterThanOrEqualTo: Timestamp.fromDate(startOfMonth))
-          .where('data_agendamento',
-              isLessThanOrEqualTo: Timestamp.fromDate(endOfMonth))
-          .get();
+      final snapshot = await sb.Supabase.instance.client
+          .from('appointments')
+          .select()
+          .eq('shop_id', widget.shopId)
+          .gte('scheduled_at', startOfMonth.toIso8601String())
+          .lte('scheduled_at', endOfMonth.toIso8601String());
 
       final Map<DateTime, List<String>> events = {};
-      for (var doc in snapshot.docs) {
-        final data = doc.data();
-        final timestamp = data['data_agendamento'] as Timestamp?;
-        if (timestamp == null) continue;
+      for (var data in snapshot) {
+        final dateStr = data['scheduled_at'] as String?;
+        if (dateStr == null) continue;
         final status = (data['status'] ?? '').toString().toLowerCase();
         if (status == 'cancelado') continue;
 
-        final bool isManual =
-            (data['tipo'] ?? '').toString().toLowerCase() == 'manual';
-        final bool hasClient = (data['clientId'] ?? data['clienteId']) != null;
-        if (!isManual && !hasClient) continue;
-
-        final date = timestamp.toDate();
+        final date = DateTime.parse(dateStr);
         final dateKey = DateTime(date.year, date.month, date.day);
-        events[dateKey] = (events[dateKey] ?? [])..add(doc.id);
+        events[dateKey] = (events[dateKey] ?? [])..add(data['id'].toString());
       }
 
       if (mounted) {
         setState(() {
           // Limpamos apenas os eventos que estão dentro do período que acabamos de carregar
-          // para garantir que os marcadores reflitam fielmente o banco (sem bolinhas fantasmas)
           _events.removeWhere((date, _) =>
               date.isAfter(startOfMonth.subtract(const Duration(days: 1))) &&
               date.isBefore(endOfMonth.add(const Duration(days: 1))));
@@ -157,7 +155,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     return _events[dateKey] ?? [];
   }
 
-  // ðŸ”„ CARREGAMENTO PRINCIPAL
+  // 🔄 CARREGAMENTO PRINCIPAL
   Future<void> _loadAppointments() async {
     if (_isLoading) return;
     setState(() {
@@ -170,29 +168,40 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     });
 
     try {
-      Query query = _buildQuery();
-      // If query is week-based, load the whole week; otherwise limit to _perPage
-      final snapshot = await ((_startFromSelectedDay &&
-              _startFromDate != null &&
-              _weekEndDate != null)
-          ? query.get()
-          : query.limit(_perPage).get());
+      final client = sb.Supabase.instance.client;
+      var query = client.from('appointments').select().eq('shop_id', widget.shopId);
+
+      // Simple implementation: load first page
+      if (_startFromSelectedDay && _startFromDate != null && _weekEndDate != null) {
+        query = query
+          .gte('scheduled_at', _startFromDate!.toIso8601String())
+          .lte('scheduled_at', _weekEndDate!.toIso8601String());
+      } else if (_showOnlySelectedDay) {
+        final start = DateTime(_selectedDay.year, _selectedDay.month, _selectedDay.day).subtract(const Duration(days: 7));
+        final end = DateTime(_selectedDay.year, _selectedDay.month, _selectedDay.day).add(const Duration(days: 14, hours: 23, minutes: 59, seconds: 59));
+        query = query
+          .gte('scheduled_at', start.toIso8601String())
+          .lte('scheduled_at', end.toIso8601String());
+      } else {
+        final start = DateTime(2020, 1, 1);
+        query = query.gte('scheduled_at', start.toIso8601String());
+      }
+
+      final snapshot = await query.order('scheduled_at').limit(_perPage);
 
       if (mounted) {
         setState(() {
-          if (snapshot.docs.isNotEmpty) {
-            _firstDocument = snapshot.docs.first;
-            _lastDocument = snapshot.docs.last;
-            // update cache and list avoiding duplicates
+          if (snapshot.isNotEmpty) {
+            _firstDocument = snapshot.first;
+            _lastDocument = snapshot.last;
             _appointments = [];
-            for (var d in snapshot.docs) {
+            for (var d in snapshot) {
               _addToCache(d);
               _appointments.add(d);
             }
           }
-          if (snapshot.docs.length < _perPage) _hasMore = false;
-          // if we received less than perPage and the first doc is the earliest known, stop past loading
-          if (snapshot.docs.length < _perPage) _hasMorePast = false;
+          if (snapshot.length < _perPage) _hasMore = false;
+          if (snapshot.length < _perPage) _hasMorePast = false;
           _isLoading = false;
         });
       }
@@ -207,29 +216,36 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     setState(() => _isLoading = true);
 
     try {
-      Query query = _buildQuery();
       if (_lastDocument == null) {
         setState(() => _isLoading = false);
         return;
       }
-      final snapshot =
-          await query.startAfterDocument(_lastDocument!).limit(_perPage).get();
+      
+      final lastDate = _lastDocument!['scheduled_at'] as String;
+      
+      final snapshot = await sb.Supabase.instance.client
+          .from('appointments')
+          .select()
+          .eq('shop_id', widget.shopId)
+          .gt('scheduled_at', lastDate)
+          .order('scheduled_at')
+          .limit(_perPage);
 
       if (mounted) {
         setState(() {
-          if (snapshot.docs.isNotEmpty) {
-            _lastDocument = snapshot.docs.last;
-            for (var d in snapshot.docs) {
-              if (!_docCache.containsKey(d.id)) {
+          if (snapshot.isNotEmpty) {
+            _lastDocument = snapshot.last;
+            for (var d in snapshot) {
+              final id = d['id'].toString();
+              if (!_docCache.containsKey(id)) {
                 _addToCache(d);
                 _appointments.add(d);
               } else {
-                // update access time
-                _cacheAccess[d.id] = DateTime.now();
+                _cacheAccess[id] = DateTime.now();
               }
             }
           }
-          if (snapshot.docs.length < _perPage) _hasMore = false;
+          if (snapshot.length < _perPage) _hasMore = false;
           _isLoading = false;
         });
       }
@@ -244,39 +260,42 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     setState(() => _isLoading = true);
 
     try {
-      Query base = _buildQuery();
       if (_firstDocument == null) {
         setState(() => _isLoading = false);
         return;
       }
 
-      // buscamos documentos anteriores ao primeiro carregado, ordenados desc para pegar os mais próximos
-      final snapshot = await base
-          .orderBy('data_agendamento', descending: true)
-          .endBeforeDocument(_firstDocument!)
-          .limit(_perPage)
-          .get();
+      final firstDate = _firstDocument!['scheduled_at'] as String;
+
+      final snapshot = await sb.Supabase.instance.client
+          .from('appointments')
+          .select()
+          .eq('shop_id', widget.shopId)
+          .lt('scheduled_at', firstDate)
+          .order('scheduled_at', ascending: false)
+          .limit(_perPage);
 
       if (mounted) {
         setState(() {
-          if (snapshot.docs.isNotEmpty) {
+          if (snapshot.isNotEmpty) {
             // inserir na frente (reverter para ordem asc)
-            final newDocs = snapshot.docs.reversed.toList();
-            // add to cache and to list avoiding duplicates
+            final newDocs = snapshot.reversed.toList();
             for (var d in newDocs) {
-              if (!_docCache.containsKey(d.id)) {
+              final id = d['id'].toString();
+              if (!_docCache.containsKey(id)) {
                 _addToCache(d);
               }
             }
             // build merged list preserving order
-            final merged = <DocumentSnapshot>[];
+            final merged = <Map<String, dynamic>>[];
             for (var d in newDocs) {
-              if (!_appointments.any((a) => a.id == d.id)) merged.add(d);
+              final id = d['id'].toString();
+              if (!_appointments.any((a) => a['id'].toString() == id)) merged.add(d);
             }
             _appointments = [...merged, ..._appointments];
             _firstDocument = _appointments.first;
           }
-          if (snapshot.docs.length < _perPage) _hasMorePast = false;
+          if (snapshot.length < _perPage) _hasMorePast = false;
           _isLoading = false;
         });
       }
@@ -286,56 +305,8 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     }
   }
 
-  Query _buildQuery() {
-    Query query = FirebaseFirestore.instance
-        .collection('appointments')
-        .where('shopId', isEqualTo: widget.shopId);
-
-    // If user selected a week start, load only that week (inclusive)
-    if (_startFromSelectedDay &&
-        _startFromDate != null &&
-        _weekEndDate != null) {
-      final start = DateTime(_startFromDate!.year, _startFromDate!.month,
-          _startFromDate!.day, 0, 0, 0);
-      final end = DateTime(_weekEndDate!.year, _weekEndDate!.month,
-          _weekEndDate!.day, 23, 59, 59);
-      return query
-          .where('data_agendamento',
-              isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-          .where('data_agendamento',
-              isLessThanOrEqualTo: Timestamp.fromDate(end))
-          .orderBy('data_agendamento');
-    }
-
-    if (_showOnlySelectedDay) {
-      // Expand window around selected day to allow scrolling multiple days while keeping "day-focused" behavior.
-      final start =
-          DateTime(_selectedDay.year, _selectedDay.month, _selectedDay.day)
-              .subtract(const Duration(days: 7));
-      final end = DateTime(
-              _selectedDay.year, _selectedDay.month, _selectedDay.day)
-          .add(const Duration(days: 14, hours: 23, minutes: 59, seconds: 59));
-      return query
-          .where('data_agendamento',
-              isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-          .where('data_agendamento',
-              isLessThanOrEqualTo: Timestamp.fromDate(end))
-          .orderBy('data_agendamento');
-    } else {
-      // For the "month" / full view, don't restrict to the first day of current month.
-      // Use a broad start date so older months load when paginating.
-      final start = DateTime(2020, 1, 1);
-      return query
-          .where('data_agendamento',
-              isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-          .orderBy('data_agendamento');
-    }
-  }
-
   // Filtra apenas agendamentos ativos (exclui cancelados)
-  bool _shouldShowAppointment(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>?;
-    if (data == null) return false;
+  bool _shouldShowAppointment(Map<String, dynamic> data) {
     final status = (data['status'] ?? '').toString().toLowerCase();
     return status != 'cancelado';
   }
@@ -352,23 +323,22 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
 
   // âœï¸ EDITAR AGENDAMENTO
   // ignore: unused_element
-  void _showEditDialog(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
-
+  void _showEditDialog(Map<String, dynamic> data) {
     final TextEditingController nameController =
-        TextEditingController(text: data['client_nome'] ?? '');
-    String? selectedServiceId = data['servicoId'];
-    String selectedServiceName = data['servico_nome'] ?? '';
-    String? selectedProfessionalId = data['profissionalId'];
-    String selectedProfessionalName = data['profissional_nome'] ?? 'Selecione';
-    double selectedServicePrice = _safeParseValue(doc);
+        TextEditingController(text: data['client_name'] ?? data['client_nome'] ?? '');
+    String? selectedServiceId = data['service_id']?.toString();
+    String selectedServiceName = data['service_name'] ?? data['servico_nome'] ?? '';
+    String? selectedProfessionalId = data['professional_id']?.toString();
+    String selectedProfessionalName = data['professional_name'] ?? data['profissional_nome'] ?? 'Selecione';
+    double selectedServicePrice = _safeParseValue(data);
 
     final TextEditingController valueController = TextEditingController(
         text: selectedServicePrice.toStringAsFixed(2).replaceAll('.', ','));
     final TextEditingController paidController = TextEditingController(
         text: (data['valor_pago']?.toString() ?? '0').replaceAll('.', ','));
 
-    DateTime appointmentDate = (data['data_agendamento'] as Timestamp).toDate();
+    final dateStr = data['scheduled_at'] as String;
+    DateTime appointmentDate = DateTime.parse(dateStr);
     TimeOfDay appointmentTime = TimeOfDay.fromDateTime(appointmentDate);
     String selectedStatus =
         data['status']?.toString().toLowerCase() ?? 'pendente';
@@ -498,18 +468,22 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                     const SizedBox(height: 10),
 
                     // Serviço (Dropdown com serviços cadastrados)
-                    StreamBuilder<QuerySnapshot>(
-                      stream: FirebaseFirestore.instance
-                          .collection('services')
-                          .where('shopId', isEqualTo: widget.shopId)
-                          .where('ativo', isEqualTo: true)
-                          .orderBy('nome')
-                          .snapshots(),
+                    StreamBuilder<List<Map<String, dynamic>>>(
+                      stream: sb.Supabase.instance.client
+                          .from('services')
+                          .stream(primaryKey: ['id'])
+                          .eq('shop_id', widget.shopId)
+                          .map((list) => list
+                              .where((s) => s['is_active'] == true)
+                              .toList()
+                            ..sort((a, b) => (a['name'] ?? '')
+                                .toString()
+                                .compareTo((b['name'] ?? '').toString()))),
                       builder: (context, snapshot) {
                         if (!snapshot.hasData) {
                           return const CircularProgressIndicator();
                         }
-                        final services = snapshot.data!.docs;
+                        final services = snapshot.data!;
 
                         return Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -532,25 +506,23 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                                     ? selectedServiceName
                                     : 'Selecione um serviço'),
                                 items: services.map((service) {
-                                  final sData =
-                                      service.data() as Map<String, dynamic>;
+                                  final sData = service;
                                   return DropdownMenuItem<String>(
-                                    value: service.id,
+                                    value: service['id'].toString(),
                                     child: Text(
-                                        '${sData['nome']} - R\$ ${sData['preco']}'),
+                                        '${sData['name']} - R\$ ${sData['price']}'),
                                   );
                                 }).toList(),
                                 onChanged: (value) {
                                   if (value != null) {
                                     final service = services
-                                        .firstWhere((s) => s.id == value);
-                                    final sData =
-                                        service.data() as Map<String, dynamic>;
+                                        .firstWhere((s) => s['id'].toString() == value);
+                                    final sData = service;
                                     setModalState(() {
                                       selectedServiceId = value;
-                                      selectedServiceName = sData['nome'] ?? '';
+                                      selectedServiceName = sData['name'] ?? '';
                                       selectedServicePrice =
-                                          (sData['preco'] ?? 0).toDouble();
+                                          (sData['price'] ?? 0).toDouble();
                                       valueController.text =
                                           selectedServicePrice
                                               .toStringAsFixed(2)
@@ -567,14 +539,14 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                     const SizedBox(height: 10),
 
                     // Profissional
-                    StreamBuilder<QuerySnapshot>(
-                      stream: FirebaseFirestore.instance
-                          .collection('employees')
-                          .where('shopId', isEqualTo: widget.shopId)
-                          .snapshots(),
+                    StreamBuilder<List<Map<String, dynamic>>>(
+                      stream: sb.Supabase.instance.client
+                          .from('employees')
+                          .stream(primaryKey: ['id'])
+                          .eq('shop_id', widget.shopId),
                       builder: (context, snapshot) {
                         if (!snapshot.hasData) return const SizedBox();
-                        final pros = snapshot.data!.docs;
+                        final pros = snapshot.data!;
                         return Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -592,28 +564,26 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                                 isExpanded: true,
                                 underline: const SizedBox(),
                                 value: pros.any(
-                                        (p) => p.id == selectedProfessionalId)
+                                        (p) => p['id'].toString() == selectedProfessionalId)
                                     ? selectedProfessionalId
                                     : null,
                                 hint: Text(selectedProfessionalName),
                                 items: pros.map((pro) {
-                                  final pData =
-                                      pro.data() as Map<String, dynamic>;
+                                  final pData = pro;
                                   return DropdownMenuItem<String>(
-                                    value: pro.id,
-                                    child: Text(pData['nome'] ?? 'Sem nome'),
+                                    value: pro['id'].toString(),
+                                    child: Text(pData['name'] ?? 'Sem nome'),
                                   );
                                 }).toList(),
                                 onChanged: (value) {
                                   if (value != null) {
                                     final pro =
-                                        pros.firstWhere((p) => p.id == value);
-                                    final pData =
-                                        pro.data() as Map<String, dynamic>;
+                                        pros.firstWhere((p) => p['id'].toString() == value);
+                                    final pData = pro;
                                     setModalState(() {
                                       selectedProfessionalId = value;
                                       selectedProfessionalName =
-                                          pData['nome'] ?? '';
+                                          pData['name'] ?? '';
                                     });
                                   }
                                 },
@@ -637,26 +607,25 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                         future: AvailabilityUtils.getBusyIntervals(
                           selectedProfessionalId!,
                           appointmentDate,
-                          excludeDocId: doc.id,
+                          excludeDocId: data['id']?.toString(),
                         ),
                         builder: (context, busySnapshot) {
                           if (!busySnapshot.hasData) return const SizedBox();
 
                           // Buscando dados do profissional selecionado para pegar horários
-                          return FutureBuilder<DocumentSnapshot>(
-                              future: FirebaseFirestore.instance
-                                  .collection('employees')
-                                  .doc(selectedProfessionalId)
-                                  .get(),
+                          return FutureBuilder<Map<String, dynamic>?>(
+                              future: sb.Supabase.instance.client
+                                  .from('employees')
+                                  .select()
+                                  .eq('id', selectedProfessionalId!)
+                                  .maybeSingle(),
                               builder: (context, empSnapshot) {
                                 if (!empSnapshot.hasData)
                                   return const SizedBox();
-                                final empData = empSnapshot.data!.data()
-                                        as Map<String, dynamic>? ??
-                                    {};
+                                final empData = empSnapshot.data ?? {};
 
                                 int duration = int.tryParse(
-                                        data['duracao_min']?.toString() ??
+                                        data['duration_min']?.toString() ??
                                             '30') ??
                                     30;
 
@@ -830,7 +799,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                       final busy = await AvailabilityUtils.getBusyIntervals(
                         selectedProfessionalId!,
                         appointmentDate,
-                        excludeDocId: doc.id,
+                        excludeDocId: data['id']?.toString(),
                       );
 
                       int duration = int.tryParse(
@@ -867,33 +836,26 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                             valueController.text.replaceAll(',', '.')) ??
                         0.0;
 
-                    double valorPago = double.tryParse(
-                            paidController.text.replaceAll(',', '.')) ??
-                        0.0;
-
                     try {
-                      await FirebaseFirestore.instance
-                          .collection('appointments')
-                          .doc(doc.id)
+                      await sb.Supabase.instance.client
+                          .from('appointments')
                           .update({
-                        'client_nome': nameController.text.trim(),
-                        'servico_nome': selectedServiceName.isEmpty
+                        'client_name': nameController.text.trim(),
+                        'service_name': selectedServiceName.isEmpty
                             ? 'Serviço'
                             : selectedServiceName,
                         if (selectedServiceId != null)
-                          'servicoId': selectedServiceId,
+                          'service_id': selectedServiceId,
                         if (selectedProfessionalId != null) ...{
-                          'profissionalId': selectedProfessionalId,
-                          'profissional_nome': selectedProfessionalName,
+                          'professional_id': selectedProfessionalId,
+                          'professional_name': selectedProfessionalName,
                         },
-                        'valor_total': valorTotal,
-                        'valor': valorTotal,
-                        'valor_pago': valorPago,
-                        'restante_a_pagar': valorTotal - valorPago,
+                        'labor_value': valorTotal,
+                        'total_value': valorTotal,
+                        // paid_amount & remaining_amount não existem no BD
                         'status': selectedStatus,
-                        'data_agendamento': Timestamp.fromDate(appointmentDate),
-                        'editado_em': FieldValue.serverTimestamp(),
-                      });
+                        'scheduled_at': appointmentDate.toIso8601String(),
+                      }).eq('id', data['id']);
 
                       if (mounted) {
                         Navigator.pop(context);
@@ -931,27 +893,29 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     );
   }
 
-  void _showQuickEntryModal({DateTime? initialDate, DocumentSnapshot? appointment}) async {
-    final Map<String, dynamic>? editData = appointment?.data() as Map<String, dynamic>?;
+  void _showQuickEntryModal({DateTime? initialDate, Map<String, dynamic>? appointment}) async {
+    final Map<String, dynamic>? editData = appointment;
 
 
     // Controladores básicos
-    final TextEditingController nameController = TextEditingController(text: editData?['client_nome'] ?? '');
-    final TextEditingController serviceController = TextEditingController(text: editData?['servico_nome'] ?? '');
+    final TextEditingController nameController = TextEditingController(text: editData?['client_name'] ?? editData?['client_nome'] ?? '');
+    final TextEditingController phoneController = TextEditingController(text: editData?['client_phone'] ?? editData?['telefone'] ?? '');
+    final TextEditingController serviceController = TextEditingController(text: editData?['service_name'] ?? editData?['servico_nome'] ?? '');
     final TextEditingController valueController = TextEditingController();
     
     // Estado do Modal
-    String? serviceId = editData?['servicoId'];
-    int durationMin = editData?['duracao_min'] ?? 30;
-    String? selectedProfessionalId = editData?['profissionalId'];
-    String selectedProfessionalName = editData?['profissional_nome'] ?? 'Selecione Profissional';
+    String? selectedClientId = editData?['client_id'] ?? editData?['clientId'];
+    String? serviceId = editData?['service_id'] ?? editData?['servicoId'];
+    int durationMin = editData?['duration_min'] ?? editData?['duracao_min'] ?? 30;
+    String? selectedProfessionalId = editData?['professional_id'] ?? editData?['profissionalId'];
+    String selectedProfessionalName = editData?['professional_name'] ?? editData?['profissional_nome'] ?? 'Selecione Profissional';
     DateTime manualDate = initialDate ?? _selectedDay;
     TimeOfDay manualTime = TimeOfDay.now();
 
     if (editData != null) {
-      final ts = editData['data_agendamento'] as Timestamp?;
-      if (ts != null) {
-        manualDate = ts.toDate();
+      final dateStr = editData['scheduled_at'] as String?;
+      if (dateStr != null) {
+        manualDate = DateTime.parse(dateStr);
         manualTime = TimeOfDay.fromDateTime(manualDate);
       }
       double val = _safeParseValue(appointment!);
@@ -959,8 +923,8 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     }
 
     // --- REVISÃO / INTELIGÊNCIA INICIAL ---
-    DocumentSnapshot? suggestedService;
-    DocumentSnapshot? suggestedProfessional;
+    Map<String, dynamic>? suggestedService;
+    Map<String, dynamic>? suggestedProfessional;
     bool isServiceConfirmed = false;
     bool isProfessionalConfirmed = false;
 
@@ -977,17 +941,17 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
       if (selectedProfessionalId == null) {
         final candidates = await TransactionAutocompleteService.getCandidates(
           shopId: widget.shopId,
-          serviceId: serviceId ?? suggestedService?.id,
+          serviceId: serviceId ?? suggestedService?['id']?.toString(),
         );
 
         // Verifica disponibilidade e rankeia
-        List<DocumentSnapshot> availableCands = [];
+        List<Map<String, dynamic>> availableCands = [];
         for (var cand in candidates) {
           bool ok = await TransactionAutocompleteService.isProfessionalAvailable(
-            employeeId: cand.id,
+            employeeId: cand['id'].toString(),
             targetDate: manualDate,
             durationMin: durationMin,
-            excludeDocId: appointment?.id,
+            excludeDocId: appointment?['id']?.toString(),
           );
           if (ok) availableCands.add(cand);
         }
@@ -1132,17 +1096,117 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                             const Text('Cliente',
                                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.grey)),
                             const SizedBox(height: 4),
+                            LayoutBuilder(builder: (context, constraints) {
+                              TextEditingController? capturedNameCtrl;
+                              return Autocomplete<Map<String, dynamic>>(
+                                initialValue: TextEditingValue(text: nameController.text),
+                                optionsBuilder: (TextEditingValue textEditingValue) async {
+                                  // Sync nameController so save reads the correct text
+                                  nameController.text = textEditingValue.text;
+                                  return await TransactionAutocompleteService.findRecentClients(
+                                    shopId: widget.shopId,
+                                    search: textEditingValue.text,
+                                  );
+                                },
+                                displayStringForOption: (option) => option['name'] ?? '',
+                                onSelected: (option) {
+                                  setModalState(() {
+                                    nameController.text = option['name'] ?? '';
+                                    phoneController.text = option['phone'] ?? '';
+                                    selectedClientId = option['id'];
+                                    if (capturedNameCtrl != null) {
+                                      capturedNameCtrl!.text = option['name'] ?? '';
+                                    }
+                                  });
+                                },
+                                fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+                                  capturedNameCtrl = controller;
+                                  // Sync the Autocomplete controller on first build
+                                  if (controller.text.isEmpty && nameController.text.isNotEmpty) {
+                                    controller.text = nameController.text;
+                                  }
+                                  // Make nameController always reflect what user typed
+                                  controller.addListener(() {
+                                    if (nameController.text != controller.text) {
+                                      nameController.text = controller.text;
+                                    }
+                                  });
+                                  return SizedBox(
+                                    height: 40,
+                                    child: TextField(
+                                      controller: controller,
+                                      focusNode: focusNode,
+                                      textCapitalization: TextCapitalization.words,
+                                      style: const TextStyle(fontSize: 14),
+                                      decoration: InputDecoration(
+                                        hintText: 'Nome do cliente',
+                                        filled: true,
+                                        fillColor: Colors.grey.shade50,
+                                        prefixIcon: const Icon(Icons.person_outline, size: 18),
+                                        contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                                        border: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(8),
+                                          borderSide: BorderSide(color: Colors.grey.shade200),
+                                        ),
+                                        enabledBorder: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(8),
+                                          borderSide: BorderSide(color: Colors.grey.shade200),
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                },
+                                optionsViewBuilder: (context, onSelected, options) {
+                                  return Align(
+                                    alignment: Alignment.topLeft,
+                                    child: Material(
+                                      elevation: 4,
+                                      borderRadius: BorderRadius.circular(8),
+                                      child: Container(
+                                        width: constraints.maxWidth,
+                                        constraints: const BoxConstraints(maxHeight: 200),
+                                        child: ListView.builder(
+                                          padding: EdgeInsets.zero,
+                                          shrinkWrap: true,
+                                          itemCount: options.length,
+                                          itemBuilder: (context, index) {
+                                            final option = options.elementAt(index);
+                                            final hasId = option['id'] != null;
+                                            return ListTile(
+                                              dense: true,
+                                              leading: Icon(
+                                                hasId ? Icons.verified_user : Icons.person_outline,
+                                                size: 16,
+                                                color: hasId ? Colors.blue : Colors.grey,
+                                              ),
+                                              title: Text(option['name'] ?? '', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                                              subtitle: Text(option['phone'] ?? 'Sem telefone', style: const TextStyle(fontSize: 11)),
+                                              onTap: () => onSelected(option),
+                                            );
+                                          },
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                },
+                              );
+                            }),
+                            const SizedBox(height: 10),
+                            // Telefone
+                            const Text('Telefone / WhatsApp',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.grey)),
+                            const SizedBox(height: 4),
                             SizedBox(
                               height: 40,
                               child: TextField(
-                                controller: nameController,
-                                textCapitalization: TextCapitalization.words,
+                                controller: phoneController,
+                                keyboardType: TextInputType.phone,
                                 style: const TextStyle(fontSize: 14),
                                 decoration: InputDecoration(
-                                  hintText: 'Nome do cliente',
+                                  hintText: 'Telefone do cliente',
                                   filled: true,
                                   fillColor: Colors.grey.shade50,
-                                  prefixIcon: const Icon(Icons.person_outline, size: 18),
+                                  prefixIcon: const Icon(Icons.phone_outlined, size: 18),
                                   contentPadding: const EdgeInsets.symmetric(horizontal: 12),
                                   border: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(8),
@@ -1165,10 +1229,10 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                                 if (suggestedProfessional != null && !isProfessionalConfirmed && selectedProfessionalId == null)
                                   GestureDetector(
                                     onTap: () {
-                                      final pData = suggestedProfessional!.data() as Map<String, dynamic>;
+                                      final pData = suggestedProfessional!;
                                       setModalState(() {
-                                        selectedProfessionalId = suggestedProfessional!.id;
-                                        selectedProfessionalName = pData['nome'] ?? '';
+                                        selectedProfessionalId = pData['id'].toString();
+                                        selectedProfessionalName = pData['name'] ?? '';
                                         isProfessionalConfirmed = true;
                                       });
                                     },
@@ -1184,7 +1248,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                                         children: [
                                           const Icon(Icons.auto_awesome, size: 10, color: Colors.blue),
                                           const SizedBox(width: 4),
-                                          Text("Sugerir: ${(suggestedProfessional!.data() as Map)['nome']}", 
+                                          Text("Sugerir: ${suggestedProfessional!['name']}", 
                                             style: const TextStyle(fontSize: 10, color: Colors.blue, fontWeight: FontWeight.bold)),
                                         ],
                                       ),
@@ -1193,50 +1257,113 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                               ],
                             ),
                             const SizedBox(height: 4),
-                            StreamBuilder<QuerySnapshot>(
-                              stream: FirebaseFirestore.instance
-                                  .collection('employees')
-                                  .where('shopId', isEqualTo: widget.shopId)
-                                  .snapshots(),
-                              builder: (context, snapshot) {
-                                if (!snapshot.hasData) return const SizedBox(height: 40);
-                                final pros = snapshot.data!.docs;
-                                return Container(
-                                  height: 40,
-                                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                                  decoration: BoxDecoration(
-                                    color: Colors.grey.shade50,
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: Border.all(color: Colors.grey.shade200),
-                                  ),
-                                  child: DropdownButtonHideUnderline(
-                                    child: DropdownButton<String>(
-                                      isExpanded: true,
-                                      value: pros.any((p) => p.id == selectedProfessionalId) ? selectedProfessionalId : null,
-                                      style: const TextStyle(fontSize: 14, color: Colors.black),
-                                      hint: Text(selectedProfessionalName, style: const TextStyle(fontSize: 14)),
-                                      items: pros.map((pro) {
-                                        final pData = pro.data() as Map<String, dynamic>;
-                                        return DropdownMenuItem<String>(
-                                          value: pro.id,
-                                          child: Text(pData['nome'] ?? 'Sem nome'),
-                                        );
-                                      }).toList(),
-                                      onChanged: (value) {
-                                        if (value != null) {
-                                          final pro = pros.firstWhere((p) => p.id == value);
-                                          final pData = pro.data() as Map<String, dynamic>;
-                                          setModalState(() {
-                                            selectedProfessionalId = value;
-                                            selectedProfessionalName = pData['nome'] ?? '';
-                                          });
-                                        }
-                                      },
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
+                              StreamBuilder<List<Map<String, dynamic>>>(
+                               stream: sb.Supabase.instance.client
+                                   .from('employees')
+                                   .stream(primaryKey: ['id'])
+                                   .eq('shop_id', widget.shopId),
+                               builder: (context, snapshot) {
+                                 if (!snapshot.hasData) return const SizedBox(height: 40);
+                                 final pros = snapshot.data!;
+                                 
+                                 return LayoutBuilder(builder: (context, constraints) {
+                                   return Autocomplete<Map<String, dynamic>>(
+                                     initialValue: TextEditingValue(
+                                         text: selectedProfessionalId != null ? selectedProfessionalName : ''),
+                                     optionsBuilder: (TextEditingValue textEditingValue) {
+                                       if (textEditingValue.text.isEmpty) return pros;
+                                       return pros.where((p) => (p['name'] ?? '')
+                                           .toString()
+                                           .toLowerCase()
+                                           .contains(textEditingValue.text.toLowerCase()));
+                                     },
+                                     displayStringForOption: (option) => option['name'] ?? '',
+                                     onSelected: (option) {
+                                       setModalState(() {
+                                         selectedProfessionalId = option['id'].toString();
+                                         selectedProfessionalName = option['name'] ?? '';
+                                         isProfessionalConfirmed = true;
+                                       });
+                                     },
+                                     fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+                                       if (selectedProfessionalId != null && 
+                                           controller.text != selectedProfessionalName && 
+                                           !focusNode.hasFocus) {
+                                         controller.text = selectedProfessionalName;
+                                       }
+                                       return SizedBox(
+                                         height: 40,
+                                         child: TextField(
+                                           controller: controller,
+                                           focusNode: focusNode,
+                                           style: const TextStyle(fontSize: 14),
+                                           decoration: InputDecoration(
+                                             hintText: 'Buscar profissional...',
+                                             filled: true,
+                                             fillColor: Colors.grey.shade50,
+                                             contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                                             border: OutlineInputBorder(
+                                               borderRadius: BorderRadius.circular(8),
+                                               borderSide: BorderSide(color: Colors.grey.shade200),
+                                             ),
+                                             enabledBorder: OutlineInputBorder(
+                                               borderRadius: BorderRadius.circular(8),
+                                               borderSide: BorderSide(color: Colors.grey.shade200),
+                                             ),
+                                             suffixIcon: controller.text.isNotEmpty
+                                                 ? IconButton(
+                                                     icon: const Icon(Icons.clear, size: 16),
+                                                     onPressed: () {
+                                                       controller.clear();
+                                                       setModalState(() {
+                                                         selectedProfessionalId = null;
+                                                         selectedProfessionalName = 'Selecione...';
+                                                       });
+                                                     },
+                                                   )
+                                                 : const Icon(Icons.arrow_drop_down),
+                                           ),
+                                           onChanged: (v) {
+                                             if (v.isEmpty) {
+                                                setModalState(() {
+                                                  selectedProfessionalId = null;
+                                                  selectedProfessionalName = 'Selecione...';
+                                                });
+                                             }
+                                           },
+                                         ),
+                                       );
+                                     },
+                                     optionsViewBuilder: (context, onSelected, options) {
+                                       return Align(
+                                         alignment: Alignment.topLeft,
+                                         child: Material(
+                                           elevation: 4,
+                                           borderRadius: BorderRadius.circular(8),
+                                           child: Container(
+                                             width: constraints.maxWidth,
+                                             constraints: const BoxConstraints(maxHeight: 200),
+                                             child: ListView.builder(
+                                               padding: EdgeInsets.zero,
+                                               shrinkWrap: true,
+                                               itemCount: options.length,
+                                               itemBuilder: (BuildContext context, int index) {
+                                                 final option = options.elementAt(index);
+                                                 return ListTile(
+                                                   dense: true,
+                                                   title: Text(option['name'] ?? '', style: const TextStyle(fontSize: 13)),
+                                                   onTap: () => onSelected(option),
+                                                 );
+                                               },
+                                             ),
+                                           ),
+                                         ),
+                                       );
+                                     },
+                                   );
+                                 });
+                               },
+                             ),
                             const SizedBox(height: 10),
                             // Serviço Autocomplete
                             Row(
@@ -1247,12 +1374,12 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                                 if (suggestedService != null && !isServiceConfirmed && serviceId == null)
                                   GestureDetector(
                                     onTap: () {
-                                      final sData = suggestedService!.data() as Map<String, dynamic>;
+                                      final sData = suggestedService!;
                                       setModalState(() {
-                                        serviceId = suggestedService!.id;
-                                        serviceController.text = sData['nome'] ?? '';
-                                        valueController.text = (sData['preco'] ?? 0).toString().replaceAll('.', ',');
-                                        durationMin = (sData['tempo_min'] ?? sData['duracao_min'] ?? 30);
+                                        serviceId = sData['id'].toString();
+                                        serviceController.text = sData['name'] ?? '';
+                                        valueController.text = (sData['price'] ?? 0).toString().replaceAll('.', ',');
+                                        durationMin = (sData['duration_min'] ?? 30);
                                         isServiceConfirmed = true;
                                       });
                                     },
@@ -1268,7 +1395,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                                         children: [
                                           const Icon(Icons.auto_awesome, size: 10, color: Colors.green),
                                           const SizedBox(width: 4),
-                                          Text("Completar: ${(suggestedService!.data() as Map)['nome']}", 
+                                          Text("Completar: ${suggestedService!['name']}", 
                                             style: const TextStyle(fontSize: 10, color: Colors.green, fontWeight: FontWeight.bold)),
                                         ],
                                       ),
@@ -1277,37 +1404,34 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                               ],
                             ),
                             const SizedBox(height: 4),
-                            StreamBuilder<QuerySnapshot>(
-                              stream: FirebaseFirestore.instance
-                                  .collection('services')
-                                  .where('shopId', isEqualTo: widget.shopId)
-                                  .where('ativo', isEqualTo: true)
-                                  .snapshots(),
-                              builder: (context, snapshot) {
-                                if (!snapshot.hasData) return const SizedBox(height: 40);
-                                final allServices = snapshot.data!.docs.map((doc) {
-                                  final data = doc.data() as Map<String, dynamic>;
-                                  data['id'] = doc.id;
-                                  return data;
-                                }).toList();
+                             StreamBuilder<List<Map<String, dynamic>>>(
+                               stream: sb.Supabase.instance.client
+                                   .from('services')
+                                   .stream(primaryKey: ['id'])
+                                   .eq('shop_id', widget.shopId),
+                               builder: (context, snapshot) {
+                                 if (!snapshot.hasData) return const SizedBox(height: 40);
+                                 final allServices = snapshot.data!
+                                     .where((s) => s['is_active'] == null || s['is_active'] == true)
+                                     .toList();
 
                                 return LayoutBuilder(builder: (context, constraints) {
                                   return Autocomplete<Map<String, dynamic>>(
                                     initialValue: TextEditingValue(text: serviceController.text),
                                     optionsBuilder: (TextEditingValue textEditingValue) {
                                       if (textEditingValue.text.isEmpty) return allServices;
-                                      return allServices.where((s) => s['nome']
+                                      return allServices.where((s) => s['name']
                                           .toString()
                                           .toLowerCase()
                                           .contains(textEditingValue.text.toLowerCase()));
                                     },
-                                    displayStringForOption: (option) => option['nome'] ?? '',
+                                    displayStringForOption: (option) => option['name'] ?? '',
                                     onSelected: (option) {
                                       setModalState(() {
-                                        serviceId = option['id'];
-                                        serviceController.text = option['nome'] ?? '';
-                                        valueController.text = (option['preco'] ?? 0).toString().replaceAll('.', ',');
-                                        durationMin = (option['tempo_min'] ?? option['duracao_min'] ?? 30);
+                                        serviceId = option['id'].toString();
+                                        serviceController.text = option['name'] ?? '';
+                                        valueController.text = (option['price'] ?? 0).toString().replaceAll('.', ',');
+                                        durationMin = (option['duration_min'] ?? 30);
                                       });
                                     },
                                     fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
@@ -1347,7 +1471,21 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                                             setModalState(() {
                                               serviceController.text = v;
                                               serviceId = null;
+                                              isServiceConfirmed = false;
+                                              suggestedService = null;
                                             });
+                                            if (v.length >= 2) {
+                                              TransactionAutocompleteService.findBestMatchingService(
+                                                rawName: v,
+                                                shopId: widget.shopId,
+                                              ).then((best) {
+                                                if (best != null) {
+                                                  setModalState(() {
+                                                    suggestedService = best;
+                                                  });
+                                                }
+                                              });
+                                            }
                                           },
                                         ),
                                       );
@@ -1369,8 +1507,8 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                                                 final option = options.elementAt(index);
                                                 return ListTile(
                                                   dense: true,
-                                                  title: Text(option['nome'] ?? '', style: const TextStyle(fontSize: 13)),
-                                                  subtitle: Text('R\$ ${option['preco']}', style: const TextStyle(fontSize: 11)),
+                                                  title: Text(option['name'] ?? option['nome'] ?? '', style: const TextStyle(fontSize: 13)),
+                                                  subtitle: Text('R\$ ${option['price'] ?? option['preco']}', style: const TextStyle(fontSize: 11)),
                                                   onTap: () => onSelected(option),
                                                 );
                                               },
@@ -1414,17 +1552,17 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                             // Horários
                             if (selectedProfessionalId != null) ...[
                               const Text("Sugestões:",
-                                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
+                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.grey)),
                               const SizedBox(height: 6),
                               FutureBuilder<List<Map<String, int>>>(
-                                future: AvailabilityUtils.getBusyIntervals(selectedProfessionalId!, manualDate, excludeDocId: appointment?.id),
+                                future: AvailabilityUtils.getBusyIntervals(selectedProfessionalId!, manualDate, excludeDocId: appointment?['id']),
                                 builder: (context, busySnapshot) {
                                   if (!busySnapshot.hasData) return const SizedBox(height: 38);
-                                  return FutureBuilder<DocumentSnapshot>(
-                                    future: FirebaseFirestore.instance.collection('employees').doc(selectedProfessionalId).get(),
+                                  return FutureBuilder<Map<String, dynamic>?>(
+                                    future: sb.Supabase.instance.client.from('employees').select().eq('id', selectedProfessionalId!).maybeSingle(),
                                     builder: (context, empSnapshot) {
                                       if (!empSnapshot.hasData) return const SizedBox();
-                                      final empData = empSnapshot.data!.data() as Map<String, dynamic>? ?? {};
+                                      final empData = empSnapshot.data ?? {};
                                       final slots = AvailabilityUtils.generateSmartSlots(
                                         startStr: empData['horario_inicio'] ?? "08:00",
                                         endStr: empData['horario_fim'] ?? "18:00",
@@ -1477,7 +1615,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                                     return;
                                   }
                                   if (selectedProfessionalId != null) {
-                                    final busy = await AvailabilityUtils.getBusyIntervals(selectedProfessionalId!, manualDate, excludeDocId: appointment?.id);
+                                    final busy = await AvailabilityUtils.getBusyIntervals(selectedProfessionalId!, manualDate, excludeDocId: appointment?['id']);
                                     int startMin = manualTime.hour * 60 + manualTime.minute;
                                     bool available = AvailabilityUtils.isSlotAvailable(startMin, durationMin, busy);
                                     if (!available) {
@@ -1499,31 +1637,33 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                                   final DateTime manualDateNormalized = DateTime(manualDate.year, manualDate.month, manualDate.day, manualTime.hour, manualTime.minute, 0);
                                   
                                   final Map<String, dynamic> appointmentData = {
-                                    'shopId': widget.shopId,
-                                    'client_nome': nameController.text.trim(),
-                                    'servico_nome': serviceController.text.isEmpty ? 'Avulso' : serviceController.text,
-                                    'servicoId': serviceId,
-                                    'duracao_min': durationMin,
-                                    'valor_total': valor,
-                                    'valor': valor,
-                                    'valor_pago': editData?['valor_pago'] ?? valor,
+                                    'shop_id': widget.shopId,
+                                    'client_id': selectedClientId,
+                                    'client_name': nameController.text.trim(),
+                                    'client_phone': phoneController.text.trim().isEmpty ? null : phoneController.text.trim(),
+                                    'service_name': serviceController.text.isEmpty ? 'Avulso' : serviceController.text,
+                                    'service_id': serviceId,
+                                    'duration_min': durationMin,
+                                    // Colunas de valor que realmente existem no banco
+                                    'labor_value': valor,
+                                    'total_value': valor,
                                     if (selectedProfessionalId != null) ...{
-                                      'profissionalId': selectedProfessionalId,
-                                      'profissional_nome': selectedProfessionalName,
+                                      'professional_id': selectedProfessionalId,
+                                      'professional_name': selectedProfessionalName,
                                     },
                                     'status': editData?['status'] ?? 'concluido',
-                                    'data_agendamento': Timestamp.fromDate(manualDateNormalized),
-                                    if (appointment == null) 'criado_em': FieldValue.serverTimestamp(),
-                                    'editado_em': FieldValue.serverTimestamp(),
-                                    'tipo': 'manual',
+                                    'scheduled_at': manualDateNormalized.toIso8601String(),
+                                    if (appointment == null) 'created_at': DateTime.now().toIso8601String(),
                                   };
 
                                   try {
                                     if (appointment == null) {
-                                      await FirebaseFirestore.instance.collection('appointments').add(appointmentData);
+                                      await sb.Supabase.instance.client.from('appointments').insert(appointmentData);
                                     } else {
-                                      await appointment.reference.update(appointmentData);
+                                      await sb.Supabase.instance.client.from('appointments').update(appointmentData).eq('id', appointment['id']);
                                     }
+
+                                    ShopDataCacheService().invalidate(widget.shopId, 'appointments');
 
                                     if (!mounted) return;
                                     Navigator.pop(context);
@@ -1721,13 +1861,13 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                 isEmbedded: true,
                 onEdit: () => _showQuickEntryModal(appointment: _selectedAppointment!),
                 onClose: () {
-                  final id = _selectedAppointment?.id;
+                  final id = _selectedAppointment?['id'];
                   setState(() => _selectedAppointment = null);
                   if (id != null) {
                     setState(() {
                       _docCache.remove(id);
                       _cacheAccess.remove(id);
-                      _appointments.removeWhere((d) => d.id == id);
+                      _appointments.removeWhere((d) => d['id'].toString() == id.toString());
                       _events.forEach((key, list) => list.remove(id));
                     });
                   }
@@ -1757,10 +1897,9 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
       final start = DateTime(
           _startFromDate!.year, _startFromDate!.month, _startFromDate!.day);
       filteredAppointments = filteredAppointments.where((doc) {
-        final ts = (doc.data() as Map<String, dynamic>)['data_agendamento']
-            as Timestamp?;
-        if (ts == null) return false;
-        final d = ts.toDate();
+        final dateStr = doc['scheduled_at'] as String?;
+        if (dateStr == null) return false;
+        final d = DateTime.parse(dateStr);
         final dd = DateTime(d.year, d.month, d.day);
         return !dd.isBefore(start); // keep date >= start
       }).toList();
@@ -1770,12 +1909,12 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
       return SliverFillRemaining(child: _buildEmptyState());
     }
     // Group by day and flatten into list of widgets (header + cards)
-    final Map<DateTime, List<DocumentSnapshot>> grouped = {};
+    final Map<DateTime, List<Map<String, dynamic>>> grouped = {};
     for (var doc in filteredAppointments) {
-      final data = doc.data() as Map<String, dynamic>;
-      final ts = data['data_agendamento'] as Timestamp?;
-      if (ts == null) continue;
-      final d = ts.toDate();
+      final data = doc;
+      final dateStr = data['scheduled_at'] as String?;
+      if (dateStr == null) continue;
+      final d = DateTime.parse(dateStr);
       final key = DateTime(d.year, d.month, d.day);
       grouped.putIfAbsent(key, () => []).add(doc);
     }
@@ -1906,15 +2045,39 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
             if (isMobile) setState(() => _calendarFormat = format);
           },
           onPageChanged: (focusedDay) {
+            final oldYear = _focusedDay.year;
             setState(() => _focusedDay = focusedDay);
+            if (focusedDay.year != oldYear) {
+              _fetchHolidays();
+            }
             _loadMonthEvents();
           },
           calendarBuilders: CalendarBuilders(
             markerBuilder: (context, day, events) {
+              final List<Widget> markers = [];
+              final isoDate = day.toIso8601String().split('T')[0];
+
+              // 1. National/Global Holiday Marker (Blue)
+              final isNational = _nationalHolidays.any((f) => f['date'] == isoDate);
+              final isGlobal = _globalHolidays.any((f) => f['date'] == isoDate);
+              
+              if (isNational || isGlobal) {
+                markers.add(
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: const BoxDecoration(
+                      color: Colors.blue,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                );
+              }
+
+              // 2. Appointment Marker (Orange)
               if (events.isNotEmpty) {
-                return Positioned(
-                  bottom: 1,
-                  child: Container(
+                markers.add(
+                  Container(
                     width: 6,
                     height: 6,
                     decoration: const BoxDecoration(
@@ -1924,7 +2087,19 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                   ),
                 );
               }
-              return null;
+
+              if (markers.isEmpty) return null;
+
+              return Positioned(
+                bottom: 1,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: markers.map((m) => Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 1),
+                    child: m,
+                  )).toList(),
+                ),
+              );
             },
           ),
           headerStyle: const HeaderStyle(
@@ -2013,22 +2188,23 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     final start = DateTime(dateInMonth.year, dateInMonth.month, 1, 0, 0, 0);
     final end = DateTime(dateInMonth.year, dateInMonth.month + 1, 1, 0, 0, 0)
         .subtract(const Duration(seconds: 1));
-    return FirebaseFirestore.instance
-        .collection('appointments')
-        .where('shopId', isEqualTo: widget.shopId)
-        .where('data_agendamento',
-            isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-        .where('data_agendamento', isLessThanOrEqualTo: Timestamp.fromDate(end))
-        .snapshots()
-        .map((snap) {
+    return sb.Supabase.instance.client
+        .from('appointments')
+        .stream(primaryKey: ['id'])
+        .eq('shop_id', widget.shopId)
+        .map((dataList) {
       double sum = 0.0;
-      for (var doc in snap.docs) {
-        final data = doc.data();
+      for (var data in dataList) {
+        final dateStr = data['scheduled_at'] as String?;
+        if (dateStr == null) continue;
+        final date = DateTime.parse(dateStr);
+        if (date.isBefore(start) || date.isAfter(end)) continue;
+
         final status = (data['status'] ?? '').toString().toLowerCase();
         if (status == 'cancelado') continue;
-        String vp = data['valor_pago']?.toString() ?? '';
-        String vt = data['valor_total']?.toString() ?? '';
-        String v = data['valor']?.toString() ?? '';
+        String vp = data['paid_amount']?.toString() ?? data['valor_pago']?.toString() ?? '';
+        String vt = data['total_price']?.toString() ?? data['valor_total']?.toString() ?? '';
+        String v = data['price']?.toString() ?? data['valor']?.toString() ?? '';
         String finalStr = vp.trim().isNotEmpty
             ? vp
             : (vt.trim().isNotEmpty ? vt : (v.trim().isNotEmpty ? v : '0'));
@@ -2044,22 +2220,23 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
         DateTime(startDate.year, startDate.month, startDate.day, 0, 0, 0);
     final end =
         start.add(const Duration(days: 7)).subtract(const Duration(seconds: 1));
-    return FirebaseFirestore.instance
-        .collection('appointments')
-        .where('shopId', isEqualTo: widget.shopId)
-        .where('data_agendamento',
-            isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-        .where('data_agendamento', isLessThanOrEqualTo: Timestamp.fromDate(end))
-        .snapshots()
-        .map((snap) {
+    return sb.Supabase.instance.client
+        .from('appointments')
+        .stream(primaryKey: ['id'])
+        .eq('shop_id', widget.shopId)
+        .map((dataList) {
       double sum = 0.0;
-      for (var doc in snap.docs) {
-        final data = doc.data();
+      for (var data in dataList) {
+        final dateStr = data['scheduled_at'] as String?;
+        if (dateStr == null) continue;
+        final date = DateTime.parse(dateStr);
+        if (date.isBefore(start) || date.isAfter(end)) continue;
+
         final status = (data['status'] ?? '').toString().toLowerCase();
         if (status == 'cancelado') continue;
-        String vp = data['valor_pago']?.toString() ?? '';
-        String vt = data['valor_total']?.toString() ?? '';
-        String v = data['valor']?.toString() ?? '';
+        String vp = data['paid_amount']?.toString() ?? data['valor_pago']?.toString() ?? '';
+        String vt = data['total_price']?.toString() ?? data['valor_total']?.toString() ?? '';
+        String v = data['price']?.toString() ?? data['valor']?.toString() ?? '';
         String finalStr = vp.trim().isNotEmpty
             ? vp
             : (vt.trim().isNotEmpty ? vt : (v.trim().isNotEmpty ? v : '0'));
@@ -2070,9 +2247,8 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
   }
 
   // --- CALCULADORAS ---
-  double _safeParseValue(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
-    dynamic val = data['valor_total'] ?? data['valor'];
+  double _safeParseValue(Map<String, dynamic> data) {
+    dynamic val = data['total_value'] ?? data['total_price'] ?? data['valor_total'] ?? data['price'] ?? data['valor'] ?? data['labor_value'] ?? data['preco'] ?? 0;
     if (val == null || val.toString().trim().isEmpty) return 0.0;
     if (val is num) return val.toDouble();
     if (val is String) return double.tryParse(val.replaceAll(',', '.')) ?? 0.0;
@@ -2082,10 +2258,35 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
   // -----------------------
   // Cache helpers
   // -----------------------
-  void _addToCache(DocumentSnapshot doc) {
-    _docCache[doc.id] = doc;
-    _cacheAccess[doc.id] = DateTime.now();
+  void _addToCache(Map<String, dynamic> doc) {
+    final id = doc['id'].toString();
+    _docCache[id] = doc;
+    _cacheAccess[id] = DateTime.now();
     _pruneCacheIfNeeded();
+  }
+
+  Future<void> _fetchHolidays() async {
+    try {
+      final year = _focusedDay.year;
+      // 1. National Holidays (BrasilAPI)
+      final national = await BrasilApiService.getHolidays(year);
+      
+      // 2. Global Holidays (Database)
+      final global = await sb.Supabase.instance.client // Changed Supabase to sb.Supabase
+          .from('global_holidays')
+          .select()
+          .gte('date', '$year-01-01')
+          .lte('date', '$year-12-31');
+
+      if (mounted) {
+        setState(() {
+          _nationalHolidays = national;
+          _globalHolidays = List<Map<String, dynamic>>.from(global);
+        });
+      }
+    } catch (e) {
+      debugPrint("Erro ao buscar feriados: $e");
+    }
   }
 
   void _pruneCacheIfNeeded() {
@@ -2097,7 +2298,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
       final oldest = entries.removeAt(0);
       _docCache.remove(oldest.key);
       _cacheAccess.remove(oldest.key);
-      _appointments.removeWhere((d) => d.id == oldest.key);
+      _appointments.removeWhere((d) => d['id'].toString() == oldest.key);
     }
   }
 
@@ -2113,17 +2314,19 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
       final batch = staleIds.take(20).toList();
       for (var id in batch) {
         try {
-          final docRef =
-              FirebaseFirestore.instance.collection('appointments').doc(id);
-          final snap = await docRef.get();
-          if (snap.exists) {
-            // update cache with fresh snapshot
-            _addToCache(snap);
+          final doc = await sb.Supabase.instance.client
+              .from('appointments')
+              .select()
+              .eq('id', id)
+              .maybeSingle();
+          if (doc != null) {
+            // update cache with fresh data
+            _addToCache(doc);
           } else {
             // remove missing doc from cache and from visible list
             _docCache.remove(id);
             _cacheAccess.remove(id);
-            _appointments.removeWhere((d) => d.id == id);
+            _appointments.removeWhere((d) => d['id'].toString() == id);
           }
         } catch (_) {
           // ignore single failures
@@ -2149,22 +2352,20 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
           DateTime(startDate.year, startDate.month, startDate.day, 0, 0, 0);
       final end =
           DateTime(endDate.year, endDate.month, endDate.day, 23, 59, 59);
-      final snap = await FirebaseFirestore.instance
-          .collection('appointments')
-          .where('shopId', isEqualTo: widget.shopId)
-          .where('data_agendamento',
-              isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-          .where('data_agendamento',
-              isLessThanOrEqualTo: Timestamp.fromDate(end))
-          .orderBy('data_agendamento')
-          .get();
+      final snap = await sb.Supabase.instance.client
+          .from('appointments')
+          .select()
+          .eq('shop_id', widget.shopId)
+          .gte('scheduled_at', start.toIso8601String())
+          .lte('scheduled_at', end.toIso8601String())
+          .order('scheduled_at');
 
       if (!mounted) return;
       setState(() {
         // replace visible appointments with fresh week data
-        _appointments = snap.docs;
+        _appointments = List<Map<String, dynamic>>.from(snap);
         // update cache and cursors
-        for (var d in snap.docs) {
+        for (var d in snap) {
           _addToCache(d);
         }
         if (_appointments.isNotEmpty) {
@@ -2172,22 +2373,23 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
           _lastDocument = _appointments.last;
         }
         // update events for this week
-        for (var d in snap.docs) {
-          final data = d.data();
-          final ts = data['data_agendamento'] as Timestamp?;
-          if (ts == null) continue;
+        for (var d in snap) {
+          final data = d;
+          final dateStr = data['scheduled_at'] as String?;
+          if (dateStr == null) continue;
           final status = (data['status'] ?? '').toString().toLowerCase();
           if (status == 'cancelado') continue;
           final bool isManual =
-              (data['tipo'] ?? '').toString().toLowerCase() == 'manual';
+              (data['type'] ?? data['tipo'] ?? '').toString().toLowerCase() == 'manual';
           final bool hasClient =
-              (data['clientId'] ?? data['clienteId']) != null;
+              data['client_id'] != null;
           if (!isManual && !hasClient) continue;
-          final date = ts.toDate();
+          final date = DateTime.parse(dateStr);
           final dateKey = DateTime(date.year, date.month, date.day);
           final existing = _events[dateKey] ?? [];
-          if (!existing.contains(d.id)) {
-            existing.add(d.id);
+          final id = d['id'].toString();
+          if (!existing.contains(id)) {
+            existing.add(id);
             _events[dateKey] = existing;
           }
         }
@@ -2207,24 +2409,20 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     final start = DateTime(
         _startFromDate!.year, _startFromDate!.month, _startFromDate!.day);
     final end =
-        DateTime(_weekEndDate!.year, _weekEndDate!.month, _weekEndDate!.day);
+        DateTime(_weekEndDate!.year, _weekEndDate!.month, _weekEndDate!.day, 23, 59, 59);
 
-    final filtered = _docCache.values.where((doc) {
-      final data = doc.data() as Map<String, dynamic>?;
-      if (data == null) return false;
-      final ts = data['data_agendamento'] as Timestamp?;
-      if (ts == null) return false;
-      final d = ts.toDate();
+    final filtered = _docCache.values.where((data) {
+      final dateStr = data['scheduled_at'] as String?;
+      if (dateStr == null) return false;
+      final d = DateTime.parse(dateStr);
       final dd = DateTime(d.year, d.month, d.day);
       return !dd.isBefore(start) && !dd.isAfter(end);
     }).toList();
 
     // sort by date asc
     filtered.sort((a, b) {
-      final da =
-          (a.data() as Map<String, dynamic>)['data_agendamento'] as Timestamp;
-      final db =
-          (b.data() as Map<String, dynamic>)['data_agendamento'] as Timestamp;
+      final da = DateTime.parse(a['scheduled_at'] as String);
+      final db = DateTime.parse(b['scheduled_at'] as String);
       return da.compareTo(db);
     });
 
@@ -2237,13 +2435,17 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     });
   }
 
-  Widget _buildAppointmentCard(DocumentSnapshot doc,
+  Widget _buildAppointmentCard(Map<String, dynamic> data,
       {required bool isDesktop}) {
-    Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
-    DateTime hora = (data['data_agendamento'] as Timestamp).toDate();
+    final dateStr = data['scheduled_at'] as String;
+    DateTime hora = DateTime.parse(dateStr);
 
-    double total = _safeParseValue(doc);
-    double pago = double.tryParse(data['valor_pago']?.toString() ?? "0") ?? 0;
+    double total = _safeParseValue(data);
+    double pago = double.tryParse(
+      data['paid_amount']?.toString() ??
+      data['paid_value']?.toString() ??
+      data['valor_pago']?.toString() ??
+      data['valorPago']?.toString() ?? "0") ?? 0;
     String status = data['status']?.toString().toLowerCase() ?? '';
 
     bool isCanceled = status == 'cancelado';
@@ -2254,13 +2456,20 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     String statusText =
         isCanceled ? "CANCELADO" : (quitado ? "PAGO" : "PENDENTE");
 
-    bool isSelected = isDesktop && _selectedAppointment?.id == doc.id;
+    bool isSelected = isDesktop && _selectedAppointment?['id']?.toString() == data['id']?.toString();
 
     // Dados para abrir perfil do cliente
-    final clientId = data['clientId'] ?? data['clienteId'] ?? doc.id;
-    final clientNome = data['client_nome'] ?? data['cliente_nome'] ?? 'Cliente';
+    final clientId = data['client_id'] ?? data['clientId'] ?? data['clienteId'] ?? data['userId'];
+    final rawClientNome = (data['client_name'] ?? data['name'] ?? '').toString().trim();
+    final clientNome = (rawClientNome.toLowerCase() == 'null') ? '' : rawClientNome;
+    final String clientDisplay = clientNome.isNotEmpty ? clientNome : 'Cliente';
     final String clientInitial =
-        clientNome.isNotEmpty ? clientNome[0].toUpperCase() : '?';
+        clientDisplay.isNotEmpty ? clientDisplay[0].toUpperCase() : '?';
+
+    final rawServiceNome = (data['service_name'] ?? data['servico_nome'] ?? data['servicoNome'] ?? data['serviceName'] ?? data['servico'] ?? '').toString().trim();
+    final serviceNome = (rawServiceNome.toLowerCase() == 'null') ? '' : rawServiceNome;
+    final String serviceDisplay = serviceNome.isNotEmpty ? serviceNome : 'Serviço';
+    final String professionalNome = data['professional_name'] ?? data['profissional_nome'] ?? data['professionalName'] ?? data['profissionalNome'] ?? 'Não definido';
 
     void openClientProfile() {
       showModalBottomSheet(
@@ -2300,29 +2509,30 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
       onTap: () async {
         if (isDesktop) {
           setState(() {
-            _selectedAppointment = doc;
+            _selectedAppointment = data;
           });
         } else {
           await Navigator.push(
             context,
             MaterialPageRoute(
               builder: (context) => AppointmentDetailsPage(
-                appointmentDoc: doc,
+                appointmentDoc: data,
                 onEdit: () {
                   Navigator.pop(context); // Fecha Detalhes para abrir Modal
-                  _showQuickEntryModal(appointment: doc);
+                  _showQuickEntryModal(appointment: data);
                 },
               ),
             ),
           );
           // Limpa cache específico do documento para evitar "flash" se foi deletado
+          final id = data['id'].toString();
           setState(() {
-            _docCache.remove(doc.id);
-            _cacheAccess.remove(doc.id);
-            _appointments.removeWhere((d) => d.id == doc.id);
+            _docCache.remove(id);
+            _cacheAccess.remove(id);
+            _appointments.removeWhere((d) => d['id'].toString() == id);
             // Remove também dos eventos
             for (var list in _events.values) {
-              list.remove(doc.id);
+              list.remove(id);
             }
           });
           _loadAppointments();
@@ -2403,7 +2613,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                                   child: GestureDetector(
                                     onTap: openClientProfile,
                                     child: Text(
-                                      clientNome,
+                                      clientDisplay,
                                       style: TextStyle(
                                         fontWeight: FontWeight.bold,
                                         fontSize: 15,
@@ -2421,21 +2631,19 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                             ),
                             const SizedBox(height: 2),
                             // Tags do cliente
-                            if (data['clientId'] != null)
-                              FutureBuilder<DocumentSnapshot>(
-                                future: FirebaseFirestore.instance
-                                    .collection('shops')
-                                    .doc(widget.shopId)
-                                    .collection('clients')
-                                    .doc(data['clientId'].toString())
-                                    .get(),
+                            if (clientId != null)
+                              FutureBuilder<Map<String, dynamic>?>(
+                                future: sb.Supabase.instance.client
+                                    .from('clients')
+                                    .select()
+                                    .eq('id', clientId.toString())
+                                    .maybeSingle(),
                                 builder: (context, snapshot) {
                                   if (!snapshot.hasData ||
-                                      !snapshot.data!.exists) {
+                                      snapshot.data == null) {
                                     return const SizedBox.shrink();
                                   }
-                                  final clientData = snapshot.data!.data()
-                                      as Map<String, dynamic>;
+                                  final clientData = snapshot.data!;
                                   final List<String> tags = List<String>.from(
                                       clientData['manualTags'] ?? []);
                                   if (tags.isEmpty) {
@@ -2471,15 +2679,31 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                                   );
                                 },
                               ),
-                            const SizedBox(height: 2),
-                            Text(
-                              data['servico_nome'] ?? "Serviço",
-                              style: TextStyle(
-                                  color: Colors.grey.shade600, fontSize: 13),
-                            ),
-                          ],
-                        ),
-                      ),
+                             const SizedBox(height: 2),
+                             Text(
+                               serviceDisplay,
+                               style: TextStyle(
+                                   color: Colors.grey.shade600, fontSize: 13, fontWeight: FontWeight.w500),
+                               overflow: TextOverflow.ellipsis,
+                             ),
+                             const SizedBox(height: 2),
+                             Row(
+                               children: [
+                                 Icon(Icons.person_outline, size: 10, color: Colors.grey.shade400),
+                                 const SizedBox(width: 4),
+                                 Expanded(
+                                   child: Text(
+                                     professionalNome,
+                                     style: TextStyle(
+                                         color: Colors.grey.shade500, fontSize: 11),
+                                     overflow: TextOverflow.ellipsis,
+                                   ),
+                                 ),
+                               ],
+                             ),
+                           ],
+                         ),
+                       ),
 
                       // Valor e Status
                       Column(

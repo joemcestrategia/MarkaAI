@@ -1,6 +1,5 @@
-﻿import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart' as geocg;
 import 'dart:async';
@@ -84,19 +83,22 @@ class _AddressSelectorPageState extends State<AddressSelectorPage> {
   }
 
   Future<void> _loadUser() async {
-    final user = FirebaseAuth.instance.currentUser;
+    final user = Supabase.instance.client.auth.currentUser;
     if (user == null) return;
-    setState(() => _userId = user.uid);
+    setState(() => _userId = user.id);
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
-      final arr = (doc.data()?['saved_locations'] as List<dynamic>?) ?? [];
-      if (mounted) {
-        setState(() {
-          _saved = arr.map((e) => Map<String, dynamic>.from(e as Map)).toList();
-        });
+      final doc = await Supabase.instance.client
+          .from('users')
+          .select()
+          .eq('id', user.id)
+          .maybeSingle();
+      if (doc != null) {
+        final arr = (doc['saved_locations'] as List<dynamic>?) ?? [];
+        if (mounted) {
+          setState(() {
+            _saved = arr.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+          });
+        }
       }
     } catch (e) {
       debugPrint("Error loading user locations: $e");
@@ -188,9 +190,10 @@ class _AddressSelectorPageState extends State<AddressSelectorPage> {
       final entry = Map<String, dynamic>.from(suggestion);
       entry['type'] = 'saved';
       try {
-        await FirebaseFirestore.instance.collection('users').doc(_userId).set({
-          'saved_locations': FieldValue.arrayUnion([entry])
-        }, SetOptions(merge: true));
+        final newLocations = [..._saved, entry];
+        await Supabase.instance.client.from('users').update({
+          'saved_locations': newLocations
+        }).eq('id', _userId!);
         if (mounted) {
           setState(() {
             if (!_saved.any((s) => s['address'] == entry['address'])) {
@@ -206,11 +209,11 @@ class _AddressSelectorPageState extends State<AddressSelectorPage> {
 
   Future<void> _deleteSaved(int idx) async {
     if (_userId == null) return;
-    final toRemove = _saved[idx];
     try {
-      await FirebaseFirestore.instance.collection('users').doc(_userId).update({
-        'saved_locations': FieldValue.arrayRemove([toRemove])
-      });
+      final newLocations = List<Map<String, dynamic>>.from(_saved)..removeAt(idx);
+      await Supabase.instance.client.from('users').update({
+        'saved_locations': newLocations
+      }).eq('id', _userId!);
       if (mounted) {
         setState(() => _saved.removeAt(idx));
       }

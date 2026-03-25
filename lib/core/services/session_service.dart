@@ -1,7 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class SessionService {
   static const String _keyUserId = 'userId';
@@ -130,30 +129,48 @@ class SessionService {
   // Check if current user is an admin
   static Future<bool> isAdmin() async {
     try {
-      final user = FirebaseAuth.instance.currentUser;
+      final user = Supabase.instance.client.auth.currentUser;
       if (user == null) return false;
-      final userId = user.uid;
 
-      final doc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(userId)
-          .get();
+      // 1. Check metadata first (cached and fast)
+      final metadata = user.userMetadata;
+      if (metadata != null) {
+        final role = metadata['role'] as String?;
+        final roles = metadata['roles'] as List?;
+        final isAdminDev = metadata['is_admin_dev'] == true;
 
-      if (!doc.exists) return false;
-      final data = doc.data();
-      final role = data?['role'] as String?;
-      final roles = data?['roles'] as List?;
-      final isAdminDev = data?['is_admin_dev'] == true;
+        if (role == 'admin' ||
+            (roles?.contains('admin') ?? false) ||
+            isAdminDev) {
+          return true;
+        }
+      }
 
-      final isAnyAdmin = role == 'admin' || 
-                         (roles?.contains('admin') ?? false) || 
-                         isAdminDev;
+      // 2. Fallback: Check public.users table for the most up-to-date role
+      final response = await Supabase.instance.client
+          .from('users')
+          .select()
+          .eq('id', user.id)
+          .maybeSingle();
+
+      if (response != null) {
+        final role = response['role'] as String?;
+        final roles = response['roles'] as List?;
+        final isAdminDev = response['is_admin_dev'] == true;
+
+        if (role == 'admin' || (roles?.contains('admin') ?? false) || isAdminDev) {
+          if (kDebugMode) {
+            debugPrint('DEBUG SessionService: isAdmin confirmed via DB table for ${user.id}');
+          }
+          return true;
+        }
+      }
 
       if (kDebugMode) {
         debugPrint(
-            'DEBUG SessionService: isAdmin checked for $userId - result: $isAnyAdmin');
+            'DEBUG SessionService: isAdmin check for ${user.id} - result: false');
       }
-      return isAnyAdmin;
+      return false;
     } catch (e) {
       if (kDebugMode) {
         debugPrint('ERROR SessionService: isAdmin check failed: $e');

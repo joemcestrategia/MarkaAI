@@ -1,6 +1,7 @@
-﻿import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/services/session_service.dart';
 
 class SalesPage extends StatefulWidget {
   const SalesPage({super.key});
@@ -10,399 +11,181 @@ class SalesPage extends StatefulWidget {
 }
 
 class _SalesPageState extends State<SalesPage> {
-  final CollectionReference productsRef =
-      FirebaseFirestore.instance.collection('products');
-  final CollectionReference salesRef =
-      FirebaseFirestore.instance.collection('sales');
-  final CollectionReference movementsRef =
-      FirebaseFirestore.instance.collection('stock_movements');
-
-  final List<Map<String, dynamic>> cart = [];
+  final productsRef = Supabase.instance.client.from('products');
   String search = '';
+  List<Map<String, dynamic>> cart = [];
+  bool _isSaving = false;
 
-  double _calculateTotal() =>
-      cart.fold(0.0, (t, e) => t + ((e['price'] ?? 0.0) * (e['qty'] ?? 1)));
+  void _addToCart(Map<String, dynamic> data) {
+    setState(() {
+      final index = cart.indexWhere((item) => item['id'] == data['id']);
+      if (index >= 0) {
+        cart[index]['qty']++;
+      } else {
+        cart.add({
+          'id': data['id'],
+          'name': data['name'],
+          'price': data['price'] ?? 0.0,
+          'qty': 1,
+        });
+      }
+    });
 
-  Future<void> _addToCart(DocumentSnapshot prod) async {
-    final data = (prod.data() as Map<String, dynamic>?) ?? {};
-    int qty = 1;
-
-    await showModalBottomSheet(
-      context: context,
-      useSafeArea: true,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => StatefulBuilder(
-        builder: (c, setStateLocal) {
-          return ClipRRect(
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-            child: Container(
-              color: Colors.white,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 24, vertical: 20),
-                    decoration: BoxDecoration(
-                      border: Border(
-                          bottom: BorderSide(color: Colors.grey.shade200)),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('${data['name']}',
-                            style: const TextStyle(
-                                fontSize: 18, fontWeight: FontWeight.w700)),
-                        IconButton(
-                          icon: const Icon(Icons.close),
-                          onPressed: () => Navigator.pop(ctx),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 24, vertical: 24),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: Colors.grey.shade50,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text('Preço Unitário',
-                                      style: TextStyle(
-                                          fontSize: 12,
-                                          color: Colors.grey[600])),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                      'R\$ ${((data['price'] ?? 0) as num).toStringAsFixed(2)}',
-                                      style: const TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w700)),
-                                ],
-                              ),
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.end,
-                                children: [
-                                  Text('Disponível',
-                                      style: TextStyle(
-                                          fontSize: 12,
-                                          color: Colors.grey[600])),
-                                  const SizedBox(height: 4),
-                                  Text('${data['qty'] ?? 0}',
-                                      style: const TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w700)),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 24),
-                        Text('Quantidade',
-                            style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.grey[700])),
-                        const SizedBox(height: 12),
-                        Container(
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey.shade300),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: IconButton(
-                                  icon: const Icon(Icons.remove),
-                                  onPressed: qty > 1
-                                      ? () => setStateLocal(() => qty--)
-                                      : null,
-                                ),
-                              ),
-                              Expanded(
-                                child: TextField(
-                                  textAlign: TextAlign.center,
-                                  keyboardType: TextInputType.number,
-                                  decoration: InputDecoration(
-                                    border: InputBorder.none,
-                                    hintText: qty.toString(),
-                                  ),
-                                  onChanged: (v) => setStateLocal(
-                                      () => qty = int.tryParse(v) ?? 1),
-                                ),
-                              ),
-                              Expanded(
-                                child: IconButton(
-                                  icon: const Icon(Icons.add),
-                                  onPressed: () => setStateLocal(() => qty++),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 24),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.primaryPurple,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10)),
-                            ),
-                            onPressed: () {
-                              if (qty > 0) {
-                                cart.add({
-                                  'productId': prod.id,
-                                  'name': data['name'],
-                                  'qty': qty,
-                                  'price': data['price'] ?? 0.0,
-                                });
-                                Navigator.pop(ctx);
-                                setState(() {});
-                              }
-                            },
-                            child: const Text('Adicionar ao Carrinho',
-                                style: TextStyle(
-                                    fontWeight: FontWeight.w600, fontSize: 15)),
-                          ),
-                        ),
-                        const SizedBox(height: 24),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('${data['name']} adicionado ao carrinho'),
+        duration: const Duration(seconds: 1),
       ),
     );
   }
 
-  Future<void> _checkout() async {
+  double _calculateTotal() {
+    return cart.fold(0.0, (sum, item) => sum + ((item['price'] ?? 0.0) * (item['qty'] ?? 1)));
+  }
+
+  Future<void> _finalizeSale() async {
     if (cart.isEmpty) return;
 
-    final saleDoc = salesRef.doc();
-    try {
-      for (final line in cart) {
-        final pid = line['productId'] as String;
-        final qty = line['qty'] as int;
-        final prodDoc = productsRef.doc(pid);
+    final shopId = await SessionService.getShopId();
+    if (shopId == null) return;
 
-        await FirebaseFirestore.instance.runTransaction((tx) async {
-          final snap = await tx.get(prodDoc);
-          if (!snap.exists) throw Exception('Produto não encontrado: $pid');
-          final map = (snap.data() as Map<String, dynamic>?) ?? {};
-          final cur = (map['qty'] ?? 0) as int;
-          final track = (map['track_stock'] ?? true) as bool;
-          if (track && cur < qty) {
-            throw Exception('Estoque insuficiente para ${map['name'] ?? pid}');
-          }
-          final newQty = track ? cur - qty : cur;
-          tx.update(prodDoc, {'qty': newQty});
-          final mv = movementsRef.doc();
-          tx.set(mv, {
-            'productId': pid,
-            'delta': -qty,
-            'type': 'sale',
-            'refId': saleDoc.id,
-            'created_at': FieldValue.serverTimestamp()
-          });
+    setState(() => _isSaving = true);
+
+    try {
+      final supabase = Supabase.instance.client;
+      
+      final saleData = {
+        'shopId': shopId,
+        'items': cart,
+        'total': _calculateTotal(),
+        'created_at': DateTime.now().toIso8601String(),
+      };
+
+      final saleResponse = await supabase.from('sales').insert(saleData).select().single();
+      final saleId = saleResponse['id'];
+
+      for (var item in cart) {
+        final pDoc = await productsRef.select().eq('id', item['id']).single();
+        final currentQty = (pDoc['qty'] ?? 0) as int;
+        
+        await productsRef.update({'qty': currentQty - item['qty']}).eq('id', item['id']);
+
+        await supabase.from('stock_movements').insert({
+          'shopId': shopId,
+          'productId': item['id'],
+          'type': 'sale',
+          'delta': -item['qty'],
+          'refId': saleId,
+          'created_at': DateTime.now().toIso8601String(),
         });
       }
 
-      await saleDoc.set({
-        'items': cart,
-        'total': _calculateTotal(),
-        'created_at': FieldValue.serverTimestamp(),
-      });
-
-      cart.clear();
-      setState(() {});
-
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Venda registrada com sucesso'),
-            backgroundColor: Colors.green.shade600,
-            behavior: SnackBarBehavior.floating,
-          ),
+          const SnackBar(content: Text('Venda finalizada com sucesso!')),
         );
+        setState(() {
+          cart.clear();
+          _isSaving = false;
+        });
       }
     } catch (e) {
+      debugPrint('Erro ao finalizar venda: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Erro: $e'),
-            backgroundColor: Colors.red.shade600,
-            behavior: SnackBarBehavior.floating,
-          ),
+          SnackBar(content: Text('Erro ao finalizar venda: $e')),
         );
+        setState(() => _isSaving = false);
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final isMobile = MediaQuery.of(context).size.width < 900;
-
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F9FD),
       appBar: AppBar(
-        title: const Text('Frente de Caixa (PDV)',
+        title: const Text('Vendas / PDV',
             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
         backgroundColor: AppColors.primaryPurple,
         foregroundColor: Colors.white,
         elevation: 0,
+        centerTitle: false,
       ),
-      body: isMobile ? _buildMobileLayout() : _buildDesktopLayout(),
-      floatingActionButton: cart.isNotEmpty
-          ? FloatingActionButton.extended(
-              backgroundColor: Colors.green.shade600,
-              onPressed: _checkout,
-              icon: const Icon(Icons.check_circle),
-              label: Text(
-                  'Finalizar: R\$ ${_calculateTotal().toStringAsFixed(2)}'),
-            )
-          : null,
-    );
-  }
-
-  Widget _buildMobileLayout() {
-    return Column(
-      children: [
-        _buildSearchBar(),
-        Expanded(
-          child: SingleChildScrollView(
+      body: Row(
+        children: [
+          Expanded(
+            flex: 2,
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                children: [
+                  _buildSearchField(),
+                  const SizedBox(height: 20),
+                  Expanded(child: _buildProductsList()),
+                ],
+              ),
+            ),
+          ),
+          Container(
+            width: 350,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8F9FA),
+              border: Border(left: BorderSide(color: Colors.grey.shade200)),
+            ),
             child: Column(
               children: [
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Produtos',
-                          style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.grey[800])),
-                      const SizedBox(height: 12),
-                      _buildProductsList(),
-                    ],
-                  ),
+                const Padding(
+                  padding: EdgeInsets.all(20),
+                  child: Text('Carrinho',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
                 ),
-                if (cart.isNotEmpty) ...[
-                  const Divider(height: 1),
-                  Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Carrinho',
-                            style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.grey[800])),
-                        const SizedBox(height: 12),
-                        _buildCart(),
-                      ],
+                Expanded(child: _buildCart()),
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: SizedBox(
+                    width: double.infinity,
+                    height: 55,
+                    child: ElevatedButton(
+                      onPressed: (_isSaving || cart.isEmpty) ? null : _finalizeSale,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16)),
+                      ),
+                      child: _isSaving
+                          ? const CircularProgressIndicator(color: Colors.white)
+                          : const Text('FINALIZAR VENDA',
+                              style: TextStyle(fontWeight: FontWeight.bold)),
                     ),
                   ),
-                ],
+                ),
               ],
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
-  Widget _buildDesktopLayout() {
-    return Column(
-      children: [
-        _buildSearchBar(),
-        Expanded(
-          child: Row(
-            children: [
-              Expanded(
-                flex: 2,
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Produtos',
-                          style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.grey[800])),
-                      const SizedBox(height: 12),
-                      Expanded(child: _buildProductsList()),
-                    ],
-                  ),
-                ),
-              ),
-              Container(width: 1, color: Colors.grey.shade200),
-              Expanded(
-                flex: 1,
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Carrinho',
-                          style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.grey[800])),
-                      const SizedBox(height: 12),
-                      cart.isEmpty
-                          ? Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(Icons.shopping_cart_outlined,
-                                      size: 48, color: Colors.grey[300]),
-                                  const SizedBox(height: 12),
-                                  Text('Vazio',
-                                      style:
-                                          TextStyle(color: Colors.grey[600])),
-                                ],
-                              ),
-                            )
-                          : Expanded(child: _buildCart()),
-                    ],
-                  ),
-                ),
-              ),
-            ],
+  Widget _buildSearchField() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
           ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSearchBar() {
-    return Padding(
-      padding: const EdgeInsets.all(16),
+        ],
+      ),
       child: TextField(
         decoration: InputDecoration(
           prefixIcon:
               const Icon(Icons.search_rounded, size: 20, color: Colors.grey),
-          hintText: 'Buscar produto por nome ou código...',
+          hintText: 'Buscar produto por nome...',
           border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(16),
               borderSide: BorderSide.none),
@@ -417,18 +200,20 @@ class _SalesPageState extends State<SalesPage> {
   }
 
   Widget _buildProductsList() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: (search.isEmpty)
-          ? productsRef.orderBy('name').limit(50).snapshots()
-          : productsRef
-              .where('name', isGreaterThanOrEqualTo: search)
-              .where('name', isLessThanOrEqualTo: '$search\uf8ff')
-              .snapshots(),
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: productsRef.stream(primaryKey: ['id']).map((list) {
+        var filtered = list;
+        if (search.isNotEmpty) {
+          filtered = list.where((p) => (p['name'] ?? '').toString().toLowerCase().contains(search.toLowerCase())).toList();
+        }
+        filtered.sort((a, b) => (a['name'] ?? '').toString().compareTo((b['name'] ?? '').toString()));
+        return filtered.take(50).toList();
+      }),
       builder: (context, snap) {
         if (!snap.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
-        final docs = snap.data!.docs;
+        final docs = snap.data!;
 
         if (docs.isEmpty) {
           return Center(
@@ -439,10 +224,9 @@ class _SalesPageState extends State<SalesPage> {
         return ListView.builder(
           itemCount: docs.length,
           itemBuilder: (context, i) {
-            final d = docs[i];
-            final data = (d.data() as Map<String, dynamic>?) ?? {};
+            final data = docs[i];
             final qty = data['qty'] ?? 0;
-            final price = ((data['price'] ?? 0) as num).toStringAsFixed(2);
+            final price = ((data['price'] ?? 0.0) as num).toStringAsFixed(2);
             final name = data['name'] ?? '-';
 
             return Container(
@@ -460,7 +244,7 @@ class _SalesPageState extends State<SalesPage> {
                 ],
               ),
               child: ListTile(
-                onTap: () => _addToCart(d),
+                onTap: () => _addToCart(data),
                 leading: Container(
                   width: 44,
                   height: 44,
@@ -542,7 +326,7 @@ class _SalesPageState extends State<SalesPage> {
                                     fontWeight: FontWeight.w600, fontSize: 13)),
                             const SizedBox(height: 4),
                             Text(
-                                '${item['qty']}x R\$ ${((item['price'] ?? 0) as num).toStringAsFixed(2)}',
+                                '${item['qty']}x R\$ ${((item['price'] ?? 0.0) as num).toStringAsFixed(2)}',
                                 style: TextStyle(
                                     fontSize: 12, color: Colors.grey[600])),
                           ],

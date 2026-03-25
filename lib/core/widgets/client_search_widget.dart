@@ -1,5 +1,5 @@
-﻿import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class ClientSearchWidget extends StatefulWidget {
   final Function(Map<String, dynamic> clientData) onClientSelected;
@@ -11,7 +11,7 @@ class ClientSearchWidget extends StatefulWidget {
 
 class _ClientSearchWidgetState extends State<ClientSearchWidget> {
   final TextEditingController _searchController = TextEditingController();
-  List<DocumentSnapshot> _clients = [];
+  List<Map<String, dynamic>> _clients = [];
   bool _isLoading = false;
   Map<String, dynamic>? _selectedClient;
 
@@ -21,17 +21,16 @@ class _ClientSearchWidgetState extends State<ClientSearchWidget> {
       return;
     }
     setState(() => _isLoading = true);
-    final snapshot = await FirebaseFirestore.instance
-        .collection('users')
-        .where('tipo', isEqualTo: 'cliente')
-        .orderBy('nome')
-        .startAt([query])
-        .endAt(['$query\uf8ff'])
-        .limit(5)
-        .get();
+    final snapshot = await Supabase.instance.client
+        .from('users')
+        .select()
+        .eq('role', 'cliente')
+        .ilike('name', '$query%')
+        .order('name')
+        .limit(5);
 
     setState(() {
-      _clients = snapshot.docs;
+      _clients = List<Map<String, dynamic>>.from(snapshot);
       _isLoading = false;
     });
   }
@@ -63,9 +62,9 @@ class _ClientSearchWidgetState extends State<ClientSearchWidget> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(_selectedClient!['nome'],
+                  Text(_selectedClient!['name'] ?? "",
                       style: const TextStyle(fontWeight: FontWeight.bold)),
-                  Text(_selectedClient!['telefone'] ?? "",
+                  Text(_selectedClient!['phone'] ?? "",
                       style: const TextStyle(fontSize: 12, color: Colors.grey)),
                 ],
               ),
@@ -103,16 +102,16 @@ class _ClientSearchWidgetState extends State<ClientSearchWidget> {
             child: ListView.builder(
               itemCount: _clients.length,
               itemBuilder: (context, index) {
-                final data = _clients[index].data() as Map<String, dynamic>;
+                final data = _clients[index];
                 return ListTile(
                   leading: const Icon(Icons.person),
-                  title: Text(data['nome'] ?? "Sem nome"),
-                  subtitle: Text(data['telefone'] ?? ""),
+                  title: Text(data['name'] ?? "Sem nome"),
+                  subtitle: Text(data['phone'] ?? ""),
                   onTap: () {
                     final selected = {
-                      'id': _clients[index].id,
-                      'nome': data['nome'],
-                      'telefone': data['telefone']
+                      'id': data['id'],
+                      'name': data['name'],
+                      'phone': data['phone']
                     };
                     setState(() {
                       _selectedClient = selected;

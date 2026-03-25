@@ -1,26 +1,31 @@
-﻿import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// Verifica se o perfil do cliente está completo para permitir agendamento.
 class ProfileCheckService {
   /// Campos obrigatórios para cliente: nome, email, telefone, tipo, endereço (cep, rua, numero, cidade).
   static Future<bool> isClientProfileComplete(String uid) async {
-    final doc =
-        await FirebaseFirestore.instance.collection('users').doc(uid).get();
-    if (!doc.exists) return false;
-    final d = doc.data();
-    if (d == null) return false;
+    try {
+      final doc = await Supabase.instance.client
+          .from('users')
+          .select()
+          .eq('id', uid)
+          .maybeSingle();
+          
+      if (doc == null) return false;
 
-    final tipo = d['tipo']?.toString() ?? '';
-    if (tipo != 'cliente') return true;
+      final tipo = doc['role']?.toString() ?? '';
+      if (tipo != 'cliente') return true;
 
-    if (_empty(d['nome']) || _empty(d['email']) || _empty(d['telefone'])) {
+      // Para clientes, apenas nome e email são obrigatórios agora.
+      // O telefone é coletado no cadastro mas não impedimos o agendamento se estiver ausente por algum motivo.
+      if (_empty(doc['name']) || _empty(doc['email'])) {
+        return false;
+      }
+
+      return true;
+    } catch (e) {
       return false;
     }
-
-    // O Endereço no App foi definido como (Opcional) visualmente.
-    // Ignorar validação de endereço para não gerar falso "Perfil Incompleto"
-    // contanto que Nome e Contato existam.
-    return true;
   }
 
   static bool _empty(dynamic v) => v == null || v.toString().trim().isEmpty;

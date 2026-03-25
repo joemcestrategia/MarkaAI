@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 import 'subscription_service.dart';
 import 'trial_service.dart';
@@ -31,7 +31,7 @@ class _TrialActivationPageState extends State<TrialActivationPage> {
       builder: (ctx) => AlertDialog(
         title: Text("Testar ${planDetails['name']}"),
         content: Text(
-            "Você tem certeza que deseja testar o plano ${planDetails['name']} grátis por 90 dias?\n\n"
+            "Você tem certeza que deseja testar o plano ${planDetails['name']} grátis por 30 dias?\n\n"
             "Esta escolha é única e não poderá ser alterada durante o teste."),
         actions: [
           TextButton(
@@ -61,7 +61,7 @@ class _TrialActivationPageState extends State<TrialActivationPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-                "🎉 Parabéns! Trial ativado com sucesso. Aproveite seus 90 dias!"),
+                "🎉 Parabéns! Trial ativado com sucesso. Aproveite seus 30 dias!"),
             backgroundColor: Colors.green,
           ),
         );
@@ -85,7 +85,7 @@ class _TrialActivationPageState extends State<TrialActivationPage> {
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FD),
       appBar: AppBar(
-        title: const Text("Teste Grátis por 90 Dias",
+        title: const Text("Teste Grátis por 30 Dias",
             style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
         centerTitle: true,
         backgroundColor: AppColors.primaryPurple,
@@ -110,7 +110,7 @@ class _TrialActivationPageState extends State<TrialActivationPage> {
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    "Escolha abaixo qual plano pago você gostaria de experimentar de graça durante 90 dias. Sem cartão de crédito.",
+                    "Escolha abaixo qual plano pago você gostaria de experimentar de graça durante 30 dias. Sem cartão de crédito.",
                     style: TextStyle(fontSize: 16, color: Colors.black87),
                     textAlign: TextAlign.center,
                   ),

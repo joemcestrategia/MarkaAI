@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import '../../core/theme/app_colors.dart';
 import '../schedule/booking_page.dart';
@@ -9,10 +8,10 @@ import 'owner_calendar_picker.dart';
 /// Tela de seleção de data no modo de edição do dono.
 /// Usa [OwnerCalendarPicker] que marca dias completamente ocupados com cinza + risco.
 class EditAppointmentDatePage extends StatefulWidget {
-  final DocumentSnapshot appointmentDoc;
-  final DocumentSnapshot shop;
-  final DocumentSnapshot serviceDoc;
-  final DocumentSnapshot professionalDoc;
+  final Map<String, dynamic> appointmentDoc;
+  final Map<String, dynamic> shop;
+  final Map<String, dynamic> serviceDoc;
+  final Map<String, dynamic> professionalDoc;
   final Map<String, dynamic> shopConfig;
   final int intervalMinutes;
   final Map<String, dynamic> pendingUpdates; // Pushed from DetailsPage
@@ -39,11 +38,14 @@ class _EditAppointmentDatePageState extends State<EditAppointmentDatePage> {
   DateTime? _selectedDate;
   int _bookingWindowDays = 365;
 
-  Map<String, dynamic> get _appointmentData =>
-      widget.appointmentDoc.data() as Map<String, dynamic>;
-
-  DateTime get _originalDateTime =>
-      (_appointmentData['data_agendamento'] as Timestamp).toDate();
+  Map<String, dynamic> get _appointmentData => widget.appointmentDoc;
+  
+  DateTime get _originalDateTime {
+    final raw = _appointmentData['scheduled_at'];
+    if (raw is DateTime) return raw;
+    if (raw is String) return DateTime.tryParse(raw) ?? DateTime.now();
+    return DateTime.now();
+  }
 
   String get _originalSlotTime =>
       '${_originalDateTime.hour.toString().padLeft(2, '0')}:'
@@ -60,14 +62,13 @@ class _EditAppointmentDatePageState extends State<EditAppointmentDatePage> {
 
   @override
   Widget build(BuildContext context) {
-    final svcName =
-        (widget.serviceDoc.data() as Map<String, dynamic>)['nome'] ?? 'Serviço';
-    final profData = widget.professionalDoc.data() as Map<String, dynamic>;
+    final svcName = widget.serviceDoc['nome'] ?? 'Serviço';
+    final profData = widget.professionalDoc;
     final List<dynamic> rawWorkDays =
         profData['dias_trabalho'] ?? [1, 2, 3, 4, 5, 6];
     final List<int> workDays =
         rawWorkDays.map((e) => int.parse(e.toString())).toList();
-    final svcData = widget.serviceDoc.data() as Map<String, dynamic>;
+    final svcData = widget.serviceDoc;
     final int serviceDuration =
         int.tryParse(svcData['tempo_min']?.toString() ?? '') ?? 30;
     final String profStart = profData['horario_inicio'] ?? '08:00';
@@ -169,13 +170,13 @@ class _EditAppointmentDatePageState extends State<EditAppointmentDatePage> {
                         firstDate: firstDate,
                         lastDate: lastDate,
                         workDays: workDays,
-                        shopId: widget.shop.id,
-                        professionalId: widget.professionalDoc.id,
+                        shopId: widget.shop['id'],
+                        professionalId: widget.professionalDoc['id'],
                         intervalMinutes: widget.intervalMinutes,
                         serviceDurationMinutes: serviceDuration,
                         profStartTime: profStart,
                         profEndTime: profEnd,
-                        excludeAppointmentId: widget.appointmentDoc.id,
+                        excludeAppointmentId: widget.appointmentDoc['id'],
                         onDateSelected: (d) =>
                             setState(() => _selectedDate = d),
                       ),
@@ -247,7 +248,7 @@ class _EditAppointmentDatePageState extends State<EditAppointmentDatePage> {
                                     selectedDate: _selectedDate!,
                                     // Props do modo dono
                                     ownerExcludeAppointmentId:
-                                        widget.appointmentDoc.id,
+                                        widget.appointmentDoc['id'],
                                     ownerHighlightedSlotTime: _originalSlotTime,
                                     allowOccupiedSelection: true,
                                     // Substitui checkout/cloud fn pelo fluxo de confirmação do dono

@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import '../../core/theme/app_colors.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../clients/client_details_page.dart';
 import 'edit_appointment_date_page.dart';
+import '../../core/services/mercado_pago_service.dart';
 
 class AppointmentDetailsPage extends StatefulWidget {
-  final DocumentSnapshot appointmentDoc;
+  final Map<String, dynamic> appointmentDoc;
 
   // ?? Parâmetros para o modo 3 Colunas (Desktop)
   final bool isEmbedded;
@@ -63,7 +64,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
   @override
   void didUpdateWidget(covariant AppointmentDetailsPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.appointmentDoc.id != widget.appointmentDoc.id) {
+    if (oldWidget.appointmentDoc['id'] != widget.appointmentDoc['id']) {
       setState(() {
         _isEditing = false;
         _loadData();
@@ -72,25 +73,36 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
   }
 
   void _loadData() {
-    final data = widget.appointmentDoc.data() as Map<String, dynamic>;
-    _selectedDate = (data['data_agendamento'] as Timestamp).toDate();
+    final data = widget.appointmentDoc;
+    final rawDate = data['scheduled_at'];
+    if (rawDate is DateTime) {
+      _selectedDate = rawDate;
+    } else if (rawDate is String) {
+      _selectedDate = DateTime.tryParse(rawDate);
+    } else {
+      _selectedDate = DateTime.now();
+    }
+    
     _selectedTime = TimeOfDay.fromDateTime(_selectedDate!);
-    _selectedServiceId = data['servicoId'];
-    _selectedServiceName = data['servico_nome'];
-    _selectedProfessionalId = data['profissionalId'];
-    _selectedProfessionalName = data['profissional_nome'];
-    _selectedProfessionalFoto = data['profissional_foto'];
-    _selectedProfessionalCargo = data['profissional_cargo'];
-    _selectedClientId = data['clientId'];
-    _selectedClientName = data['client_nome'] ?? data['cliente_nome'];
+    _selectedServiceId = data['service_id'] ?? data['servicoId'];
+    _selectedServiceName = data['service_name'] ?? data['servico_nome'];
+    _selectedProfessionalId = data['professional_id'] ?? data['profissionalId'];
+    _selectedProfessionalName = data['professional_name'] ?? data['profissional_nome'];
+    _selectedProfessionalFoto = data['professional_photo'] ?? data['profissional_foto'];
+    _selectedProfessionalCargo = data['professional_role'] ?? data['profissional_cargo'];
+    _selectedClientId = data['client_id']?? data['clientId'];
+    _selectedClientName = data['client_name'] ?? data['client_nome'] ?? data['cliente_nome'];
     _selectedClientPhone =
         data['client_phone'] ?? data['telefone'] ?? data['whatsapp'];
-    _selectedPrice = double.tryParse(data['valor_total']?.toString() ??
+    _selectedPrice = double.tryParse(data['total_value']?.toString() ??
+            data['total_price']?.toString() ??
+            data['valor_total']?.toString() ??
+            data['price']?.toString() ??
             data['valor']?.toString() ??
             "0") ??
         0.0;
     _selectedServiceDuration =
-        int.tryParse(data['duracao_min']?.toString() ?? '') ?? 30;
+        int.tryParse(data['duration_min']?.toString() ?? data['duracao_min']?.toString() ?? '') ?? 30;
     _priceController.text =
         _selectedPrice!.toStringAsFixed(2).replaceAll('.', ',');
 
@@ -102,67 +114,62 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
 
   Future<void> _syncClientData() async {
     try {
-      final shopId =
-          (widget.appointmentDoc.data() as Map<String, dynamic>)['shopId'];
+      final shopId = widget.appointmentDoc['shop_id'] ?? widget.appointmentDoc['shopId'];
 
       // 1. Tenta buscar no perfil global (users)
-      DocumentSnapshot userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(_selectedClientId)
-          .get();
+      final userDoc = await Supabase.instance.client
+          .from('users')
+          .select()
+          .eq('id', _selectedClientId!)
+          .maybeSingle();
 
-      Map<String, dynamic>? clientData;
-      if (userDoc.exists) {
-        clientData = userDoc.data() as Map<String, dynamic>?;
-      } else {
-        // 2. Fallback: Busca na subcoleção de clientes da loja
-        final clientDoc = await FirebaseFirestore.instance
-            .collection('shops')
-            .doc(shopId)
-            .collection('clients')
-            .doc(_selectedClientId)
-            .get();
-        if (clientDoc.exists) {
-          clientData = clientDoc.data();
-        }
-      }
+      Map<String, dynamic>? clientData = userDoc;
 
       if (clientData != null && mounted) {
-        setState(() {
-          // Se o nome atual for um e-mail ou estiver vazio, atualiza com o nome do perfil
-          final String profileName = clientData?['nome'] ?? '';
-          if (profileName.isNotEmpty &&
-              (_selectedClientName == null ||
-                  _selectedClientName!.contains('@') ||
-                  _selectedClientName!.isEmpty)) {
-            _selectedClientName = profileName;
-            // Opcional: Atualizar o agendamento no Firestore para persistir a correção
-            widget.appointmentDoc.reference
-                .update({'client_nome': profileName});
+        final String profileName = clientData['name'] ?? '';
+        if (profileName.isNotEmpty &&
+            (_selectedClientName == null ||
+                _selectedClientName!.contains('@') ||
+                _selectedClientName!.isEmpty)) {
+          await Supabase.instance.client
+              .from('appointments')
+              .update({'client_name': profileName})
+              .eq('id', widget.appointmentDoc['id']);
+          if (mounted) {
+            setState(() {
+              _selectedClientName = profileName;
+            });
           }
+        }
 
-          // Atualiza telefone se estiver vazio no agendamento mas existir no perfil
-          final String profilePhone =
-              clientData?['telefone'] ?? clientData?['whatsapp'] ?? '';
-          if (profilePhone.isNotEmpty &&
-              (_selectedClientPhone == null ||
-                  _selectedClientPhone!.isEmpty ||
-                  _selectedClientPhone == 'Não informado')) {
-            _selectedClientPhone = profilePhone;
-            widget.appointmentDoc.reference
-                .update({'client_phone': profilePhone});
+        final String profilePhone =
+            clientData['phone'] ?? clientData['telefone'] ?? clientData['whatsapp'] ?? '';
+        if (profilePhone.isNotEmpty &&
+            (_selectedClientPhone == null ||
+                _selectedClientPhone!.isEmpty ||
+                _selectedClientPhone == 'Não informado')) {
+          await Supabase.instance.client
+              .from('appointments')
+              .update({'client_phone': profilePhone})
+              .eq('id', widget.appointmentDoc['id']);
+          if (mounted) {
+            setState(() {
+              _selectedClientPhone = profilePhone;
+            });
           }
-          // Sincroniza tags
-          _clientTags = List<String>.from(clientData?['manualTags'] ?? []);
+        }
 
-          // Sincroniza Profissional se necessário
-          if (_selectedProfessionalId != null &&
-              (_selectedProfessionalName == null ||
-                  _selectedProfessionalName == "Não definido" ||
-                  _selectedProfessionalName!.isEmpty)) {
-            _fetchProfessionalName(shopId);
-          }
-        });
+        if (mounted) {
+          setState(() {
+            _clientTags = [];
+            if (_selectedProfessionalId != null &&
+                (_selectedProfessionalName == null ||
+                    _selectedProfessionalName == "Não definido" ||
+                    _selectedProfessionalName!.isEmpty)) {
+              _fetchProfessionalName(shopId);
+            }
+          });
+        }
       }
     } catch (e) {
       debugPrint('Erro ao sincronizar dados do cliente: $e');
@@ -171,23 +178,27 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
 
   Future<void> _fetchProfessionalName(String shopId) async {
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('employees')
-          .doc(_selectedProfessionalId)
-          .get();
-      if (doc.exists && mounted) {
-        final pData = doc.data() as Map<String, dynamic>;
+      final doc = await Supabase.instance.client
+          .from('employees')
+          .select()
+          .eq('id', _selectedProfessionalId!)
+          .maybeSingle();
+      if (doc != null && mounted) {
+        final pData = doc;
         setState(() {
-          _selectedProfessionalName = pData['nome'];
-          _selectedProfessionalFoto = pData['foto_url'];
-          _selectedProfessionalCargo = pData['cargo'];
+          _selectedProfessionalName = pData['name'];
+          _selectedProfessionalFoto = pData['photo_url'] ?? pData['foto_url'];
+          _selectedProfessionalCargo = pData['role'] ?? pData['cargo'];
         });
         // Atualiza o agendamento para persistir
-        widget.appointmentDoc.reference.update({
-          'profissional_nome': pData['nome'],
-          if (pData['foto_url'] != null) 'profissional_foto': pData['foto_url'],
-          if (pData['cargo'] != null) 'profissional_cargo': pData['cargo'],
-        });
+        await Supabase.instance.client
+            .from('appointments')
+            .update({
+              'professional_name': pData['name'] ?? pData['nome'],
+              if ((pData['photo_url'] ?? pData['foto_url']) != null) 'professional_photo': pData['photo_url'] ?? pData['foto_url'],
+              if ((pData['role'] ?? pData['cargo']) != null) 'professional_role': pData['role'] ?? pData['cargo'],
+            })
+            .eq('id', widget.appointmentDoc['id']);
       }
     } catch (e) {
       debugPrint('Erro ao buscar profissional: $e');
@@ -228,17 +239,17 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
           DateTime(fullDate.year, fullDate.month, fullDate.day, 23, 59);
 
       // Validação 1: Profissional
-      final snapProf = await FirebaseFirestore.instance
-          .collection('appointments')
-          .where('profissionalId', isEqualTo: _selectedProfessionalId)
-          .where('data_agendamento', isGreaterThanOrEqualTo: dayStart)
-          .where('data_agendamento', isLessThanOrEqualTo: dayEnd)
-          .get();
+      final snapProf = await Supabase.instance.client
+          .from('appointments')
+          .select()
+          .eq('professional_id', _selectedProfessionalId!)
+          .gte('scheduled_at', dayStart.toIso8601String())
+          .lte('scheduled_at', dayEnd.toIso8601String());
 
       bool hasProfConflict = false;
-      for (final doc in snapProf.docs) {
-        if (doc.id == widget.appointmentDoc.id) continue;
-        final data = doc.data();
+      for (final doc in snapProf) {
+        if (doc['id'] == widget.appointmentDoc['id']) continue;
+        final data = doc;
         final status = (data['status'] ?? '').toString().toLowerCase();
         if (status == 'cancelado' ||
             status == 'recusado' ||
@@ -246,8 +257,9 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
           continue;
         }
 
-        final dt = (data['data_agendamento'] as Timestamp).toDate();
-        final dur = int.tryParse(data['duracao_min']?.toString() ?? '') ?? 30;
+        final dtStr = (data['scheduled_at']).toString();
+        final dt = DateTime.parse(dtStr);
+        final dur = int.tryParse(data['duration_min']?.toString() ?? data['duracao_min']?.toString() ?? '') ?? 30;
         final startMin = dt.hour * 60 + dt.minute;
         final endMin = startMin + dur;
 
@@ -273,17 +285,17 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
 
       // Validação 2: Cliente
       if (_selectedClientId != null) {
-        final snapClient = await FirebaseFirestore.instance
-            .collection('appointments')
-            .where('clientId', isEqualTo: _selectedClientId)
-            .where('data_agendamento', isGreaterThanOrEqualTo: dayStart)
-            .where('data_agendamento', isLessThanOrEqualTo: dayEnd)
-            .get();
+        final snapClient = await Supabase.instance.client
+            .from('appointments')
+            .select()
+            .eq('client_id', _selectedClientId!)
+            .gte('scheduled_at', dayStart.toIso8601String())
+            .lte('scheduled_at', dayEnd.toIso8601String());
 
         bool hasClientConflict = false;
-        for (final doc in snapClient.docs) {
-          if (doc.id == widget.appointmentDoc.id) continue;
-          final data = doc.data();
+        for (final doc in snapClient) {
+          if (doc['id'] == widget.appointmentDoc['id']) continue;
+          final data = doc;
           final status = (data['status'] ?? '').toString().toLowerCase();
           if (status == 'cancelado' ||
               status == 'recusado' ||
@@ -291,8 +303,9 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
             continue;
           }
 
-          final dt = (data['data_agendamento'] as Timestamp).toDate();
-          final dur = int.tryParse(data['duracao_min']?.toString() ?? '') ?? 30;
+          final dtStr = (data['scheduled_at']).toString();
+          final dt = DateTime.parse(dtStr);
+          final dur = int.tryParse(data['duration_min']?.toString() ?? data['duracao_min']?.toString() ?? '') ?? 30;
           final startMin = dt.hour * 60 + dt.minute;
           final endMin = startMin + dur;
 
@@ -317,24 +330,34 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
       }
       // --- FIM VALIDAÇÃO AVANÇADA ---
 
-      await widget.appointmentDoc.reference.update({
-        'clientId': _selectedClientId,
-        'client_nome': _selectedClientName,
-        'data_agendamento': Timestamp.fromDate(fullDate),
-        'servicoId': _selectedServiceId,
-        'servico_nome': _selectedServiceName,
-        'profissionalId': _selectedProfessionalId,
-        'profissional_nome': _selectedProfessionalName,
-        'profissional_foto': _selectedProfessionalFoto,
-        'profissional_cargo': _selectedProfessionalCargo,
-        'valor_total': _selectedPrice ??
-            double.tryParse(_priceController.text.replaceAll(',', '.')) ??
-            0.0,
-        'valor': _selectedPrice ??
-            double.tryParse(_priceController.text.replaceAll(',', '.')) ??
-            0.0,
-        'duracao_min': _selectedServiceDuration ?? 30,
-      });
+      await Supabase.instance.client
+          .from('appointments')
+          .update({
+            'client_id': _selectedClientId,
+            'client_name': _selectedClientName,
+            'scheduled_at': fullDate.toIso8601String(),
+            'service_id': _selectedServiceId,
+            'service_name': _selectedServiceName,
+            'professional_id': _selectedProfessionalId,
+            'professional_name': _selectedProfessionalName,
+            'professional_photo': _selectedProfessionalFoto,
+            'professional_role': _selectedProfessionalCargo,
+            'total_price': _selectedPrice ??
+                double.tryParse(_priceController.text.replaceAll(',', '.')) ??
+                0.0,
+            'price': _selectedPrice ??
+                double.tryParse(_priceController.text.replaceAll(',', '.')) ??
+                0.0,
+            'total_value': _selectedPrice ??
+                double.tryParse(_priceController.text.replaceAll(',', '.')) ??
+                0.0,
+            'valor_total': _selectedPrice ??
+                double.tryParse(_priceController.text.replaceAll(',', '.')) ??
+                0.0,
+            'duration_min': _selectedServiceDuration ?? 30,
+            'updated_at': DateTime.now().toIso8601String(),
+          })
+          .eq('id', widget.appointmentDoc['id']);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -352,7 +375,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
   }
 
   Future<void> _deleteAppointment() async {
-    final data = widget.appointmentDoc.data() as Map<String, dynamic>;
+    final data = widget.appointmentDoc;
     final status = data['status'] ?? '';
     final isHistory = status == 'cancelado' || status == 'concluido';
 
@@ -455,7 +478,10 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
       setState(() => _isLoading = true);
 
       try {
-        await widget.appointmentDoc.reference.delete();
+        await Supabase.instance.client
+          .from('appointments')
+          .delete()
+          .eq('id', widget.appointmentDoc['id']);
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -556,8 +582,8 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
   Widget _buildBodyContent(double hPadding) {
     if (_isLoading) return const Center(child: CircularProgressIndicator());
 
-    final data = widget.appointmentDoc.data() as Map<String, dynamic>;
-    final shopId = data['shopId'];
+    final data = widget.appointmentDoc;
+    final shopId = data['shop_id'] ?? data['shopId'];
     final status = data['status'] ?? 'agendado';
 
     return SingleChildScrollView(
@@ -654,37 +680,28 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
               // Buscar dados completos do cliente no Firestore antes de navegar
               setState(() => _isLoading = true);
               try {
-                final shopId = (widget.appointmentDoc.data()
-                    as Map<String, dynamic>)['shopId'];
+                final shopId = widget.appointmentDoc['shopId'];
 
                 // Tenta buscar na coleção users
-                DocumentSnapshot userDoc = await FirebaseFirestore.instance
-                    .collection('users')
-                    .doc(_selectedClientId)
-                    .get();
+                final userDoc = await Supabase.instance.client
+                    .from('users')
+                    .select()
+                    .eq('id', _selectedClientId!)
+                    .maybeSingle();
 
                 Map<String, dynamic> clientData;
-                if (userDoc.exists) {
-                  clientData = userDoc.data() as Map<String, dynamic>;
+                if (userDoc != null) {
+                  clientData = userDoc;
+                  // Ensure name and phone use correct keys
+                  clientData['nome'] = clientData['name'] ?? clientData['nome'];
+                  clientData['telefone'] = clientData['phone'] ?? clientData['telefone'];
                 } else {
-                  // Fallback: Tenta buscar na subcoleção de clientes da loja
-                  final clientDoc = await FirebaseFirestore.instance
-                      .collection('shops')
-                      .doc(shopId)
-                      .collection('clients')
-                      .doc(_selectedClientId)
-                      .get();
-
-                  if (clientDoc.exists) {
-                    clientData = clientDoc.data() as Map<String, dynamic>;
-                  } else {
-                    // Fallback final: Usa os dados que já temos no agendamento
-                    clientData = {
-                      'nome': _selectedClientName,
-                      'telefone': _selectedClientPhone,
-                      'origem': 'manual',
-                    };
-                  }
+                  // Fallback final: Usa os dados que já temos no agendamento
+                  clientData = {
+                    'nome': _selectedClientName,
+                    'telefone': _selectedClientPhone,
+                    'origem': 'manual',
+                  };
                 }
 
                 if (mounted) {
@@ -859,12 +876,14 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
 
   // --- PAINEL FINANCEIRO ULTRA-COMPACTO ---
   Widget _buildFinancialHeroPanel(Map<String, dynamic> data) {
-    final double total = double.tryParse(data['valor_total']?.toString() ??
+    final double total = double.tryParse(data['total_price']?.toString() ??
+            data['valor_total']?.toString() ??
+            data['price']?.toString() ??
             data['valor']?.toString() ??
             "0") ??
         0.0;
     final double pago =
-        double.tryParse(data['valor_pago']?.toString() ?? "0") ?? 0.0;
+        double.tryParse(data['paid_amount']?.toString() ?? data['valor_pago']?.toString() ?? "0") ?? 0.0;
     final double restante = total - pago;
 
     double percentPaid = total > 0 ? (pago / total) : 0.0;
@@ -963,9 +982,136 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
               ])),
             ],
           ),
+
+          // NOVO: Botão de verificar pagamento PIX manualmente
+          if (restante > 0.01 && data['payment_id'] != null && data['payment_id'].toString().isNotEmpty && (data['metodo_pagamento']?.toString().toLowerCase().contains('pix') ?? false)) ...[
+            const SizedBox(height: 15),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.refresh, size: 16),
+                label: const Text("Verificar Pagamento Pix"),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primaryPurple.withValues(alpha: 0.1),
+                  foregroundColor: AppColors.primaryPurple,
+                  elevation: 0,
+                  shadowColor: Colors.transparent,
+                ),
+                onPressed: () async {
+                  setState(() => _isLoading = true);
+                  try {
+                    final statusPix = await MercadoPagoService.verificarStatusPix(
+                      shopId: data['shop_id'] ?? data['shopId'],
+                      paymentId: data['payment_id'],
+                    );
+                    if (statusPix == 'approved') {
+                      final novoPago = pago + restante;
+                      await Supabase.instance.client
+                          .from('appointments')
+                          .update({
+                        'status': 'confirmado',
+                        'valor_pago': novoPago,
+                        'restante_a_pagar': 0,
+                        'pago_em': DateTime.now().toIso8601String(),
+                      }).eq('id', widget.appointmentDoc['id']);
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Pagamento confirmado e agendamento atualizado!'), backgroundColor: Colors.green),
+                        );
+                        _loadData();
+                      }
+                    } else if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Status atual do pagamento: $statusPix'), backgroundColor: Colors.orange),
+                      );
+                    }
+                  } catch (e) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Erro ao verificar pagamento: $e'), backgroundColor: Colors.red),
+                      );
+                    }
+                  } finally {
+                    if (mounted) setState(() => _isLoading = false);
+                  }
+                },
+              ),
+            ),
+          ],
+          // NOVO: Botão Marcar como Pago (Aprovação Manual)
+          if (restante > 0.01) ...[
+            const SizedBox(height: 15),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.check_circle_outline, size: 16),
+                label: const Text("Marcar como Pago"),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green.withValues(alpha: 0.1),
+                  foregroundColor: Colors.green,
+                  elevation: 0,
+                  shadowColor: Colors.transparent,
+                ),
+                onPressed: () => _marcarComoPagoManual(pago, restante),
+              ),
+            ),
+          ],
         ],
       ),
     );
+  }
+
+  Future<void> _marcarComoPagoManual(double pago, double restante) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Marcar como Pago"),
+        content: const Text(
+            "Tem certeza que deseja marcar este agendamento como aprovado? O valor pendente será zerado e o status será alterado para confirmado."),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("Cancelar", style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
+            child: const Text("Confirmar"),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    setState(() => _isLoading = true);
+    try {
+      final novoPago = pago + restante;
+      await Supabase.instance.client
+          .from('appointments')
+          .update({
+            'status': 'confirmado',
+            'paid_amount': novoPago,
+            'remaining_amount': 0,
+            'paid_at': DateTime.now().toIso8601String(),
+            'payment_method': 'Manual',
+          })
+          .eq('id', widget.appointmentDoc['id']);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Pagamento confirmado manualmente!'), backgroundColor: Colors.green),
+        );
+        _loadData();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro ao atualizar pagamento: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   // --- FORMULÁRIO COMPACTO ---
@@ -1006,34 +1152,26 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
   Future<void> _openClientProfile() async {
     setState(() => _isLoading = true);
     try {
-      final data = widget.appointmentDoc.data() as Map<String, dynamic>;
-      final shopId = data['shopId'];
+      final data = widget.appointmentDoc;
+      final shopId = data['shop_id'] ?? data['shopId'];
 
-      DocumentSnapshot userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(_selectedClientId)
-          .get();
+      final userDoc = await Supabase.instance.client
+          .from('users')
+          .select()
+          .eq('id', _selectedClientId!)
+          .maybeSingle();
 
       Map<String, dynamic> clientData;
-      if (userDoc.exists) {
-        clientData = userDoc.data() as Map<String, dynamic>;
+      if (userDoc != null) {
+        clientData = userDoc;
+        clientData['nome'] = clientData['name'] ?? clientData['nome'];
+        clientData['telefone'] = clientData['phone'] ?? clientData['telefone'];
       } else {
-        final clientDoc = await FirebaseFirestore.instance
-            .collection('shops')
-            .doc(shopId)
-            .collection('clients')
-            .doc(_selectedClientId)
-            .get();
-
-        if (clientDoc.exists) {
-          clientData = clientDoc.data() as Map<String, dynamic>;
-        } else {
-          clientData = {
-            'nome': _selectedClientName,
-            'telefone': _selectedClientPhone,
-            'origem': 'manual',
-          };
-        }
+        clientData = {
+          'nome': _selectedClientName,
+          'telefone': _selectedClientPhone,
+          'origem': 'manual',
+        };
       }
 
       if (mounted) {
@@ -1253,11 +1391,11 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
   Future<void> _openRescheduleFlow() async {
     setState(() => _isLoading = true);
     try {
-      final data = widget.appointmentDoc.data() as Map<String, dynamic>;
-      final shopId = data['shopId'] as String?;
-      final serviceId = _selectedServiceId ?? data['servicoId'] as String?;
+      final data = widget.appointmentDoc;
+      final shopId = data['shop_id'] ?? data['shopId'];
+      final serviceId = _selectedServiceId ?? data['service_id'] ?? data['servicoId'];
       final profId =
-          _selectedProfessionalId ?? data['profissionalId'] as String?;
+          _selectedProfessionalId ?? data['professional_id'] ?? data['profissionalId'];
 
       if (shopId == null || serviceId == null || profId == null) {
         if (mounted) {
@@ -1273,16 +1411,16 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
 
       // Carrega em paralelo
       final results = await Future.wait([
-        FirebaseFirestore.instance.collection('shops').doc(shopId).get(),
-        FirebaseFirestore.instance.collection('services').doc(serviceId).get(),
-        FirebaseFirestore.instance.collection('employees').doc(profId).get(),
+        Supabase.instance.client.from('shops').select().eq('id', shopId).maybeSingle(),
+        Supabase.instance.client.from('services').select().eq('id', serviceId).maybeSingle(),
+        Supabase.instance.client.from('employees').select().eq('id', profId).maybeSingle(),
       ]);
 
       final shopDoc = results[0];
       final serviceDoc = results[1];
       final profDoc = results[2];
 
-      if (!shopDoc.exists || !serviceDoc.exists || !profDoc.exists) {
+      if (shopDoc == null || serviceDoc == null || profDoc == null) {
         if (mounted) {
           setState(() => _isLoading = false);
           ScaffoldMessenger.of(context).showSnackBar(
@@ -1293,7 +1431,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
         return;
       }
 
-      final shopData = shopDoc.data() as Map<String, dynamic>;
+      final shopData = shopDoc;
       final Map<String, dynamic> shopConfig =
           shopData['config'] as Map<String, dynamic>? ?? {};
       final int intervalMinutes =
@@ -1301,24 +1439,24 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
 
       // Group all pending non-saved state edits
       final pendingUpdates = <String, dynamic>{
-        if (_selectedClientId != null) 'clientId': _selectedClientId,
-        if (_selectedClientName != null) 'client_nome': _selectedClientName,
-        if (_selectedServiceId != null) 'servicoId': _selectedServiceId,
-        if (_selectedServiceName != null) 'servico_nome': _selectedServiceName,
+        if (_selectedClientId != null) 'client_id': _selectedClientId,
+        if (_selectedClientName != null) 'client_name': _selectedClientName,
+        if (_selectedServiceId != null) 'service_id': _selectedServiceId,
+        if (_selectedServiceName != null) 'service_name': _selectedServiceName,
         if (_selectedProfessionalId != null)
-          'profissionalId': _selectedProfessionalId,
+          'professional_id': _selectedProfessionalId,
         if (_selectedProfessionalName != null)
-          'profissional_nome': _selectedProfessionalName,
+          'professional_name': _selectedProfessionalName,
         if (_selectedProfessionalFoto != null)
-          'profissional_foto': _selectedProfessionalFoto,
+          'professional_photo': _selectedProfessionalFoto,
         if (_selectedProfessionalCargo != null)
-          'profissional_cargo': _selectedProfessionalCargo,
+          'professional_role': _selectedProfessionalCargo,
         if (_selectedServiceDuration != null)
-          'duracao_min': _selectedServiceDuration,
-        'valor_total': _selectedPrice ??
+          'duration_min': _selectedServiceDuration,
+        'total_price': _selectedPrice ??
             double.tryParse(_priceController.text.replaceAll(',', '.')) ??
             0.0,
-        'valor': _selectedPrice ??
+        'price': _selectedPrice ??
             double.tryParse(_priceController.text.replaceAll(',', '.')) ??
             0.0,
       };
@@ -1359,35 +1497,35 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
 
   // --- DROPDOWNS (Mantidos com estilo de texto ajustado) ---
   Widget _buildClientDropdown(String shopId) {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('clients')
-          .where('shopId', isEqualTo: shopId)
-          .snapshots(),
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: Supabase.instance.client
+          .from('shop_clients')
+          .stream(primaryKey: ['id'])
+          .eq('shop_id', shopId),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const CircularProgressIndicator();
 
-        final docs = snapshot.data!.docs;
+        final docs = snapshot.data!;
         if (docs.isEmpty) {
           return const Text("Nenhum cliente cadastrado",
               style: TextStyle(fontSize: 13, color: Colors.grey));
         }
 
-        return Autocomplete<DocumentSnapshot>(
+        return Autocomplete<Map<String, dynamic>>(
           initialValue: TextEditingValue(text: _selectedClientName ?? ''),
           optionsBuilder: (TextEditingValue textEditingValue) {
             if (textEditingValue.text.isEmpty) {
               return docs;
             }
             return docs.where((doc) {
-              final data = doc.data() as Map<String, dynamic>;
+              final data = doc;
               final nome = (data['nome'] ?? '').toString().toLowerCase();
               final search = textEditingValue.text.toLowerCase();
               return nome.contains(search);
             });
           },
-          displayStringForOption: (DocumentSnapshot option) {
-            final data = option.data() as Map<String, dynamic>;
+          displayStringForOption: (Map<String, dynamic> option) {
+            final data = option;
             return data['nome'] ?? '';
           },
           fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
@@ -1395,9 +1533,9 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
               controller: controller,
               focusNode: focusNode,
               style: const TextStyle(fontSize: 13),
-              decoration: InputDecoration(
+              decoration: const InputDecoration(
                 hintText: 'Buscar ou digitar cliente',
-                hintStyle: const TextStyle(fontSize: 13, color: Colors.grey),
+                hintStyle: TextStyle(fontSize: 13, color: Colors.grey),
                 border: InputBorder.none,
                 isDense: true,
                 contentPadding: EdgeInsets.zero,
@@ -1411,10 +1549,10 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
               },
             );
           },
-          onSelected: (DocumentSnapshot selection) {
-            final data = selection.data() as Map<String, dynamic>;
+          onSelected: (Map<String, dynamic> selection) {
+            final data = selection;
             setState(() {
-              _selectedClientId = selection.id;
+              _selectedClientId = selection['user_id'] ?? selection['id'];
               _selectedClientName = data['nome'];
             });
           },
@@ -1424,91 +1562,131 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
   }
 
   Widget _buildServiceDropdown(String shopId) {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('services')
-          .where('shopId', isEqualTo: shopId)
-          .where('ativo', isEqualTo: true)
-          .snapshots(),
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: Supabase.instance.client
+          .from('services')
+          .stream(primaryKey: ['id'])
+          .map((list) => list.where((d) => d['shop_id'] == shopId && (d['is_active'] ?? d['ativo']) == true).toList()),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const CircularProgressIndicator();
+        
+        // WORKAROUND: Client-side filtering because of compilation issues with stream.eq()
+        final filteredDocs = snapshot.data!;
 
-        final docs = snapshot.data!.docs;
-        if (docs.isEmpty) {
+        if (filteredDocs.isEmpty) {
           return const Text("Nenhum serviço ativo",
               style: TextStyle(fontSize: 13, color: Colors.grey));
         }
 
-        // Ordenar serviços alfabeticamente
-        final sortedDocs = docs.toList()
+        // Verifica se o serviço selecionado existe na lista
+        final sortedDocs = filteredDocs
           ..sort((a, b) {
-            final nomeA = ((a.data() as Map<String, dynamic>)['nome'] ?? '')
-                .toString()
-                .toLowerCase();
-            final nomeB = ((b.data() as Map<String, dynamic>)['nome'] ?? '')
-                .toString()
-                .toLowerCase();
+            final nomeA = (a['nome'] ?? '').toString().toLowerCase();
+            final nomeB = (b['nome'] ?? '').toString().toLowerCase();
             return nomeA.compareTo(nomeB);
           });
 
-        // Verifica se o serviço selecionado existe na lista
-        final serviceExists = sortedDocs.any((d) => d.id == _selectedServiceId);
-        final validValue = serviceExists ? _selectedServiceId : null;
+        return LayoutBuilder(
+          builder: (context, constraints) => Autocomplete<Map<String, dynamic>>(
+            initialValue: TextEditingValue(text: _selectedServiceName ?? ''),
+            optionsBuilder: (TextEditingValue textEditingValue) {
+              if (textEditingValue.text.isEmpty) return sortedDocs;
+              return sortedDocs.where((doc) {
+                final name = (doc['name'] ?? '').toString().toLowerCase();
+                return name.contains(textEditingValue.text.toLowerCase());
+              });
+            },
+            displayStringForOption: (option) => option['name'] ?? '',
+            onSelected: (selection) {
+              final data = selection;
+              final newPrice = double.tryParse(data['price']?.toString() ?? '0') ?? 0.0;
+              final newDur = int.tryParse(data['duration_min']?.toString() ?? '30') ?? 30;
+              setState(() {
+                _selectedServiceId = data['id'].toString();
+                _selectedServiceName = data['name'];
+                _selectedPrice = newPrice;
+                _selectedServiceDuration = newDur;
+                _priceController.text = newPrice.toStringAsFixed(2).replaceAll('.', ',');
 
-        return DropdownButton<String>(
-          value: validValue,
-          isExpanded: true,
-          underline: const SizedBox(),
-          hint: Text(_selectedServiceName ?? 'Selecione um serviço',
-              style: const TextStyle(fontSize: 13)),
-          items: sortedDocs.map((doc) {
-            final data = doc.data() as Map<String, dynamic>;
-            return DropdownMenuItem(
-                value: doc.id,
-                child: Text('${data['nome']}', // Sem exibir preço
-                    style: const TextStyle(fontSize: 13)));
-          }).toList(),
-          onChanged: (val) {
-            final doc = docs.firstWhere((d) => d.id == val);
-            final data = doc.data() as Map<String, dynamic>;
-            final newPrice = double.tryParse(data['preco'].toString()) ?? 0.0;
-            final newDur = int.tryParse(data['tempo_min'].toString()) ?? 30;
-            setState(() {
-              _selectedServiceId = val;
-              _selectedServiceName = data['nome'];
-              _selectedPrice = newPrice;
-              _selectedServiceDuration = newDur;
-              // Atualiza campo de texto do preço
-              _priceController.text =
-                  newPrice.toStringAsFixed(2).replaceAll('.', ',');
-
-              // Reforça fluxo rigoroso sequencial:
-              // Mudou serviço > Zera Profissional > Zera Data/Hora
-              _selectedProfessionalId = null;
-              _selectedProfessionalName = null;
-              _selectedProfessionalFoto = null;
-              _selectedProfessionalCargo = null;
-
-              _selectedDate = null;
-              _selectedTime = null;
-            });
-          },
+                // Reset professional and date
+                _selectedProfessionalId = null;
+                _selectedProfessionalName = null;
+                _selectedProfessionalFoto = null;
+                _selectedProfessionalCargo = null;
+                _selectedDate = null;
+                _selectedTime = null;
+              });
+            },
+            fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+              return TextField(
+                controller: controller,
+                focusNode: focusNode,
+                style: const TextStyle(fontSize: 13),
+                decoration: InputDecoration(
+                  hintText: 'Buscar serviço...',
+                  hintStyle: const TextStyle(fontSize: 13, color: Colors.grey),
+                  border: InputBorder.none,
+                  isDense: true,
+                  contentPadding: EdgeInsets.zero,
+                  suffixIcon: controller.text.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear, size: 16),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          onPressed: () {
+                            controller.clear();
+                            setState(() {
+                              _selectedServiceId = null;
+                              _selectedServiceName = null;
+                            });
+                          },
+                        )
+                      : null,
+                ),
+              );
+            },
+            optionsViewBuilder: (context, onSelected, options) {
+              return Align(
+                alignment: Alignment.topLeft,
+                child: Material(
+                  elevation: 4,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    width: constraints.maxWidth,
+                    constraints: const BoxConstraints(maxHeight: 250),
+                    child: ListView.builder(
+                      padding: EdgeInsets.zero,
+                      shrinkWrap: true,
+                      itemCount: options.length,
+                      itemBuilder: (ctx, index) {
+                        final option = options.elementAt(index);
+                        return ListTile(
+                          title: Text(option['name'] ?? '', style: const TextStyle(fontSize: 13)),
+                          subtitle: Text('R\$ ${option['price'] ?? '0.00'}', style: const TextStyle(fontSize: 11)),
+                          onTap: () => onSelected(option),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
         );
       },
     );
   }
 
   Widget _buildProfessionalDropdown(String shopId) {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('employees')
-          .where('shopId', isEqualTo: shopId)
-          .snapshots(),
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: Supabase.instance.client
+          .from('employees')
+          .stream(primaryKey: ['id'])
+          .map((list) => list.where((d) => (d['shop_id'] ?? d['shopId']) == shopId).toList()),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const SizedBox();
-        final profs = snapshot.data!.docs.where((d) {
-          final skills =
-              (d.data() as Map)['servicos_habilidade'] as List? ?? [];
+        final profs = snapshot.data!.where((d) {
+          final skills = d['servicos_habilidade'] as List? ?? [];
           return skills.isEmpty || skills.contains(_selectedServiceId);
         }).toList();
 
@@ -1517,36 +1695,94 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
               style: TextStyle(fontSize: 12, color: Colors.red));
         }
 
-        return DropdownButton<String>(
-          value: profs.any((d) => d.id == _selectedProfessionalId)
-              ? _selectedProfessionalId
-              : null,
-          isExpanded: true,
-          underline: const SizedBox(),
-          hint: Text(_selectedProfessionalName ?? 'Selecione o profissional',
-              style: const TextStyle(fontSize: 13)),
-          items: profs
-              .map((doc) => DropdownMenuItem(
-                  value: doc.id,
-                  child:
-                      Text(doc['nome'], style: const TextStyle(fontSize: 13))))
-              .toList(),
-          onChanged: (val) {
-            final doc = profs.firstWhere((d) => d.id == val);
-            final data = doc.data() as Map<String, dynamic>;
-            setState(() {
-              _selectedProfessionalId = val;
-              _selectedProfessionalName = data['nome'];
-              _selectedProfessionalFoto = data['foto_url'];
-              _selectedProfessionalCargo = data['cargo'];
+        return LayoutBuilder(
+          builder: (context, constraints) => Autocomplete<Map<String, dynamic>>(
+            initialValue: TextEditingValue(text: _selectedProfessionalName ?? ''),
+            optionsBuilder: (TextEditingValue textEditingValue) {
+              if (textEditingValue.text.isEmpty) return profs;
+              return profs.where((doc) {
+                final name = (doc['name'] ?? '').toString().toLowerCase();
+                return name.contains(textEditingValue.text.toLowerCase());
+              });
+            },
+            displayStringForOption: (option) => option['name'] ?? '',
+            onSelected: (selection) {
+              final data = selection;
+              setState(() {
+                _selectedProfessionalId = data['id'].toString();
+                _selectedProfessionalName = data['name'];
+                _selectedProfessionalFoto = data['photo_url'] ?? data['foto_url'];
+                _selectedProfessionalCargo = data['role'] ?? data['cargo'];
 
-              // Reforça fluxo rigoroso sequencial:
-              // Mudou profissional > Zera Data/Hora, pois a disponibilidade
-              // do novo profissional será diferente.
-              _selectedDate = null;
-              _selectedTime = null;
-            });
-          },
+                // Mudou profissional > Zera Data/Hora
+                _selectedDate = null;
+                _selectedTime = null;
+              });
+            },
+            fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+              return TextField(
+                controller: controller,
+                focusNode: focusNode,
+                style: const TextStyle(fontSize: 13),
+                decoration: InputDecoration(
+                  hintText: 'Buscar profissional...',
+                  hintStyle: const TextStyle(fontSize: 13, color: Colors.grey),
+                  border: InputBorder.none,
+                  isDense: true,
+                  contentPadding: EdgeInsets.zero,
+                  suffixIcon: controller.text.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear, size: 16),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          onPressed: () {
+                            controller.clear();
+                            setState(() {
+                              _selectedProfessionalId = null;
+                              _selectedProfessionalName = null;
+                            });
+                          },
+                        )
+                      : null,
+                ),
+              );
+            },
+            optionsViewBuilder: (context, onSelected, options) {
+              return Align(
+                alignment: Alignment.topLeft,
+                child: Material(
+                  elevation: 4,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    width: constraints.maxWidth,
+                    constraints: const BoxConstraints(maxHeight: 250),
+                    child: ListView.builder(
+                      padding: EdgeInsets.zero,
+                      shrinkWrap: true,
+                      itemCount: options.length,
+                      itemBuilder: (ctx, index) {
+                        final option = options.elementAt(index);
+                        return ListTile(
+                          leading: CircleAvatar(
+                            radius: 14,
+                            backgroundImage: (option['photo_url'] ?? option['foto_url']) != null
+                                ? NetworkImage(option['photo_url'] ?? option['foto_url'])
+                                : null,
+                            child: (option['photo_url'] ?? option['foto_url']) == null
+                                ? const Icon(Icons.person, size: 14)
+                                : null,
+                          ),
+                          title: Text(option['name'] ?? option['nome'] ?? '', style: const TextStyle(fontSize: 13)),
+                          subtitle: Text(option['role'] ?? option['cargo'] ?? 'Profissional', style: const TextStyle(fontSize: 11)),
+                          onTap: () => onSelected(option),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
         );
       },
     );

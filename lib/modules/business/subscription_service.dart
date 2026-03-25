@@ -1,13 +1,12 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_functions/cloud_functions.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 import '../../core/services/session_service.dart';
 import 'trial_service.dart';
 import '../../core/services/stripe_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/premium_dialogs.dart';
+import '../../core/services/auth_service.dart';
 
 enum SubscriptionPlan { free, start, plus, pro }
 
@@ -91,17 +90,20 @@ class SubscriptionService {
   /// Retorna o plano atual da loja logada
   static Future<SubscriptionPlan> getCurrentPlan() async {
     try {
+      final supabase = sb.Supabase.instance.client;
       String? shopId = await SessionService.getShopId();
 
       if (shopId == null) {
-        final user = FirebaseAuth.instance.currentUser;
+        final user = AuthService().currentUser;
         if (user != null) {
           try {
-            final userDoc = await FirebaseFirestore.instance
-                .collection('users')
-                .doc(user.uid)
-                .get();
-            shopId = userDoc.data()?['shopId'];
+            final userDoc = await supabase
+                .from('users')
+                .select('shop_id')
+                .eq('id', user.id)
+                .maybeSingle();
+            
+            shopId = userDoc?['shop_id'];
             if (shopId != null) {
               await SessionService.saveShopId(shopId);
             }
@@ -113,23 +115,28 @@ class SubscriptionService {
 
       if (shopId == null) return SubscriptionPlan.free;
 
-      final doc = await FirebaseFirestore.instance
-          .collection(_collection)
-          .doc(shopId)
-          .get();
-      if (!doc.exists) return SubscriptionPlan.free;
+      final doc = await supabase
+          .from(_collection)
+          .select()
+          .eq('id', shopId)
+          .maybeSingle();
+      
+      if (doc == null) return SubscriptionPlan.free;
 
-      final data = doc.data();
-      final sub = data?['subscription'] as Map<String, dynamic>?;
+      final data = doc;
+      final sub = data['subscription'] as Map<String, dynamic>?;
 
       // 1. Verifica Novo Sistema de Trial (Prioridade se não houver assinatura paga ativa)
-      final trialActive = data?['trial_active'] == true;
-      if (trialActive) {
-        Timestamp? end = data?['trial_end_date'];
-        if (end != null && end.toDate().isAfter(DateTime.now())) {
-          return _parsePlanId(data?['trial_plan'] as String?);
-        } else if (end != null) {
-          await TrialService.checkAndDeactivateExpiredTrial();
+      final trialActive = data['trial_active'] == true;
+      if (trialActive && sub != null) {
+        final endStr = (sub['trial_end_date'] ?? sub['trial_ends_at'])?.toString();
+        if (endStr != null) {
+          final end = DateTime.parse(endStr);
+          if (end.isAfter(DateTime.now())) {
+            return _parsePlanId(sub['plan_id'] as String?);
+          } else {
+            await TrialService.checkAndDeactivateExpiredTrial();
+          }
         }
       }
 
@@ -137,9 +144,12 @@ class SubscriptionService {
       if (sub != null) {
         // Verifica Trial Clássico (legado no objeto sub)
         if (sub['status'] == 'trial') {
-          final end = (sub['trial_ends_at'] as Timestamp?)?.toDate();
-          if (end != null && end.isAfter(DateTime.now())) {
-            return SubscriptionPlan.pro;
+          final endsAtStr = sub['trial_ends_at']?.toString();
+          if (endsAtStr != null) {
+             final end = DateTime.parse(endsAtStr);
+             if (end.isAfter(DateTime.now())) {
+               return SubscriptionPlan.pro;
+             }
           }
         }
 
@@ -148,28 +158,34 @@ class SubscriptionService {
         }
         
         if (sub['status'] == 'canceled' || sub['status'] == 'cancelled') {
-           final accessUntil = (sub['access_until'] as Timestamp?)?.toDate();
-           if (accessUntil != null && accessUntil.isAfter(DateTime.now())) {
-             return _parsePlanId(sub['plan_id'] as String?);
+           final accessUntilStr = sub['access_until']?.toString();
+           if (accessUntilStr != null) {
+             final accessUntil = DateTime.parse(accessUntilStr);
+             if (accessUntil.isAfter(DateTime.now())) {
+               return _parsePlanId(sub['plan_id'] as String?);
+             }
            }
         }
       }
 
-      // 3. Fallback final: campos plan/plan_id na raiz
-      final rootPlanId = (data?['plan'] as String?) ?? (data?['plan_id'] as String?);
+      // 3. Fallback final: plan_id na raiz (FK to plans table)
+      final rootPlanId = data['plan_id'] as String?;
       if (rootPlanId != null && rootPlanId != 'free') {
         return _parsePlanId(rootPlanId);
       }
 
       return SubscriptionPlan.free;
     } catch (e) {
+      debugPrint("getCurrentPlan error: $e");
       return SubscriptionPlan.free;
     }
   }
 
   static SubscriptionPlan _parsePlanId(String? id) {
-    switch (id) {
+    if (id == null) return SubscriptionPlan.free;
+    switch (id.toLowerCase()) {
       case 'start':
+      case 'starter':
         return SubscriptionPlan.start;
       case 'plus':
         return SubscriptionPlan.plus;
@@ -185,7 +201,7 @@ class SubscriptionService {
 
   /// Converte enum para string do plano (público)
   static String getPlanId(SubscriptionPlan plan) {
-    if (plan == SubscriptionPlan.start) return 'start';
+    if (plan == SubscriptionPlan.start) return 'starter';
     if (plan == SubscriptionPlan.plus) return 'plus';
     if (plan == SubscriptionPlan.pro) return 'pro';
     return 'free';
@@ -239,22 +255,28 @@ class SubscriptionService {
   /// Usado pelo checkout para verificar o plano do DONO da loja, não do cliente.
   static Future<SubscriptionPlan> getShopPlan(String shopId) async {
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection(_collection)
-          .doc(shopId)
-          .get();
-      if (!doc.exists) return SubscriptionPlan.free;
-      final data = doc.data();
-      final sub = data?['subscription'] as Map<String, dynamic>?;
+      final supabase = sb.Supabase.instance.client;
+      final doc = await supabase
+          .from(_collection)
+          .select()
+          .eq('id', shopId)
+          .maybeSingle();
+
+      if (doc == null) return SubscriptionPlan.free;
+      final data = doc;
+      final sub = data['subscription'] as Map<String, dynamic>?;
 
       // 1. Verifica Novo Sistema de Trial
-      final trialActive = data?['trial_active'] == true;
-      if (trialActive) {
-        Timestamp? end = data?['trial_end_date'];
-        if (end != null && end.toDate().isAfter(DateTime.now())) {
-          return _parsePlanId(data?['trial_plan'] as String?);
-        } else if (end != null) {
-          await TrialService.checkAndDeactivateExpiredTrial();
+      final trialActive = data['trial_active'] == true;
+      if (trialActive && sub != null) {
+        final endStr = (sub['trial_end_date'] ?? sub['trial_ends_at'])?.toString();
+        if (endStr != null) {
+          final end = DateTime.parse(endStr);
+          if (end.isAfter(DateTime.now())) {
+            return _parsePlanId(sub['plan_id'] as String?);
+          } else {
+            await TrialService.checkAndDeactivateExpiredTrial();
+          }
         }
       }
 
@@ -262,17 +284,23 @@ class SubscriptionService {
       if (sub != null) {
         // Legado: trial clássico
         if (sub['status'] == 'trial') {
-          final end = (sub['trial_ends_at'] as Timestamp?)?.toDate();
-          if (end != null && end.isAfter(DateTime.now())) {
-            return SubscriptionPlan.pro;
+          final endsAtStr = sub['trial_ends_at']?.toString();
+          if (endsAtStr != null) {
+             final end = DateTime.parse(endsAtStr);
+             if (end.isAfter(DateTime.now())) {
+               return SubscriptionPlan.pro;
+             }
           }
         }
 
         // Assinatura cancelada
         if (sub['status'] == 'canceled' || sub['status'] == 'cancelled') {
-          final accessUntil = (sub['access_until'] as Timestamp?)?.toDate();
-          if (accessUntil != null && accessUntil.isAfter(DateTime.now())) {
-            return _parsePlanId(sub['plan_id'] as String?);
+          final accessUntilStr = sub['access_until']?.toString();
+          if (accessUntilStr != null) {
+            final accessUntil = DateTime.parse(accessUntilStr);
+            if (accessUntil.isAfter(DateTime.now())) {
+              return _parsePlanId(sub['plan_id'] as String?);
+            }
           }
         } else {
           // Ativa ou outros status que concedem plano
@@ -281,8 +309,8 @@ class SubscriptionService {
         }
       }
 
-      // 3. Fallback final: campos na raiz
-      final rootPlanId = (data?['plan'] as String?) ?? (data?['plan_id'] as String?);
+      // 3. Fallback final: plan_id na raiz (FK to plans table)
+      final rootPlanId = data['plan_id'] as String?;
       return _parsePlanId(rootPlanId);
     } catch (e) {
       debugPrint('getShopPlan error: $e');
@@ -331,7 +359,11 @@ class SubscriptionService {
 
   /// Inicia o fluxo de assinatura, upgrade ou downgrade de plano.
   static Future<bool> startPurchaseFlow(
-      BuildContext context, SubscriptionPlan plan) async {
+      BuildContext context, SubscriptionPlan plan, {
+        String? affiliateId,
+        String? affiliateCouponCode,
+        String? commissionType,
+      }) async {
     final planDetails = _plans[plan]!;
     final planPrice = (planDetails['price'] as num).toDouble();
     final planName = planDetails['name'] as String;
@@ -340,13 +372,15 @@ class SubscriptionService {
     // Busca shopId
     String? shopId = await SessionService.getShopId();
     if (shopId == null) {
-      final user = FirebaseAuth.instance.currentUser;
+      final user = AuthService().currentUser;
       if (user != null) {
-        final userDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .get();
-        shopId = userDoc.data()?['shopId'];
+        final supabase = sb.Supabase.instance.client;
+        final userDoc = await supabase
+            .from('users')
+            .select('shop_id')
+            .eq('id', user.id)
+            .maybeSingle();
+        shopId = userDoc?['shop_id'];
         if (shopId != null) await SessionService.saveShopId(shopId);
       }
     }
@@ -361,8 +395,9 @@ class SubscriptionService {
     }
 
     // Detecta plano atual e status de trial
-    final doc = await FirebaseFirestore.instance.collection(_collection).doc(shopId).get();
-    final shopData = doc.data();
+    final supabase = sb.Supabase.instance.client;
+    final doc = await supabase.from(_collection).select().eq('id', shopId).maybeSingle();
+    final shopData = doc;
     final isTrial = shopData?['trial_active'] == true;
     
     final currentPlan = await getCurrentPlan();
@@ -462,6 +497,9 @@ class SubscriptionService {
         planId: planId,
         planName: planName,
         planPrice: planPrice,
+        affiliateId: affiliateId,
+        affiliateCouponCode: affiliateCouponCode,
+        commissionType: commissionType,
       );
     }
 
@@ -523,6 +561,9 @@ class SubscriptionService {
       planId: planId,
       planName: planName,
       planPrice: planPrice,
+      affiliateId: affiliateId,
+      affiliateCouponCode: affiliateCouponCode,
+      commissionType: commissionType,
     );
   }
 
@@ -533,9 +574,12 @@ class SubscriptionService {
     required String planId,
     required String planName,
     required double planPrice,
+    String? affiliateId,
+    String? affiliateCouponCode,
+    String? commissionType,
   }) async {
     try {
-      final user = FirebaseAuth.instance.currentUser;
+      final user = AuthService().currentUser;
       if (user == null || user.email == null) {
         throw Exception("Usuário não autenticado ou sem e-mail.");
       }
@@ -546,6 +590,9 @@ class SubscriptionService {
         planId: planId,
         shopId: shopId,
         customerEmail: user.email!,
+        affiliateId: affiliateId,
+        affiliateCouponCode: affiliateCouponCode,
+        commissionType: commissionType,
       );
 
       if (context.mounted) PremiumDialogs.hideLoading(context);
@@ -581,29 +628,44 @@ class SubscriptionService {
   }) async {
     String? shopId = await SessionService.getShopId();
     if (shopId == null) {
-      final user = FirebaseAuth.instance.currentUser;
+      final user = sb.Supabase.instance.client.auth.currentUser;
       if (user != null) {
-        final userDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .get();
-        shopId = userDoc.data()?['shopId'];
+        final userDoc = await sb.Supabase.instance.client
+            .from('users')
+            .select('shop_id')
+            .eq('id', user.id)
+            .maybeSingle();
+        shopId = userDoc?['shop_id'];
         if (shopId != null) await SessionService.saveShopId(shopId);
       }
     }
 
     if (shopId != null) {
-      await FirebaseFirestore.instance
-          .collection(_collection)
-          .doc(shopId)
+      final supabase = sb.Supabase.instance.client;
+      await supabase
+          .from(_collection)
           .update({
+        'plan_id': planId,
+        'trial_active': false,
         'subscription': {
-          'plan_id': planId,
+          'plan': 'free',
           'status': 'active',
+          'plan_id': null,
+          'trial_used': true,
           'billing_cycle': null,
-          'updated_at': FieldValue.serverTimestamp(),
+          'updated_at': DateTime.now().toIso8601String(),
+        },
+      }).eq('id', shopId);
+
+      // Atualiza também na tabela users (para sincronia do auth profile, se aplicável ao dono logado)
+      final user = sb.Supabase.instance.client.auth.currentUser;
+      if (user != null) {
+        try {
+          await supabase.from('users').update({'plan': planId}).eq('id', user.id);
+        } catch (e) {
+          debugPrint('Aviso: Falha ao atualizar plano na tabela users: $e');
         }
-      });
+      }
 
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -626,43 +688,42 @@ class SubscriptionService {
     }
   }
 
-  /// TESTE 12 — Cancela a assinatura. Acesso mantido até fim do período atual.
+  /// Cancela a assinatura. Acesso mantido até fim do período atual.
   static Future<bool> cancelSubscription({
     required BuildContext context,
     required String shopId,
   }) async {
     try {
-      final callable =
-          FirebaseFunctions.instance.httpsCallable('cancelSubscription');
-      final result = await callable.call({'shopId': shopId});
-      final success = result.data?['success'] == true;
+      final supabase = sb.Supabase.instance.client;
+      final response = await supabase.functions.invoke('cancel-subscription', body: {'shop_id': shopId});
+      
+      final success = response.status == 200;
+      final data = response.data as Map<String, dynamic>?;
+
       if (success && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(result.data?['message'] ?? 'Assinatura cancelada.'),
+            content: Text(data?['message'] ?? 'Assinatura cancelada.'),
             backgroundColor: Colors.orange,
           ),
         );
       }
       return success;
-    } on FirebaseFunctionsException catch (e) {
-      debugPrint('cancelSubscription error: ${e.code} - ${e.message}');
+    } catch (e) {
+      debugPrint('cancelSubscription error: $e');
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Erro ao cancelar: ${e.message}'),
+            content: Text('Erro ao cancelar: $e'),
             backgroundColor: Colors.red,
           ),
         );
       }
       return false;
-    } catch (e) {
-      debugPrint('cancelSubscription error: $e');
-      return false;
     }
   }
 
-  /// TESTE 10 — Faz upgrade de plano com crédito pro-rata calculado pelo backend.
+  /// Faz upgrade de plano com crédito pro-rata calculado pelo backend.
   static Future<bool> upgradeSubscription({
     required BuildContext context,
     required String shopId,
@@ -671,42 +732,41 @@ class SubscriptionService {
     required double newPlanPrice,
   }) async {
     try {
-      final callable =
-          FirebaseFunctions.instance.httpsCallable('upgradeSubscription');
-      final result = await callable.call({
-        'shopId': shopId,
-        'newPlanId': newPlanId,
-        'newPlanName': newPlanName,
-        'newPlanPrice': newPlanPrice,
+      final supabase = sb.Supabase.instance.client;
+      final response = await supabase.functions.invoke('upgrade-subscription', body: {
+        'shop_id': shopId,
+        'new_plan_id': newPlanId,
+        'new_plan_name': newPlanName,
+        'new_plan_price': newPlanPrice,
       });
-      final success = result.data?['success'] == true;
+
+      final success = response.status == 200;
+      final data = response.data as Map<String, dynamic>?;
+
       if (success && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(result.data?['message'] ?? 'Plano atualizado!'),
+            content: Text(data?['message'] ?? 'Plano atualizado!'),
             backgroundColor: Colors.green,
           ),
         );
       }
       return success;
-    } on FirebaseFunctionsException catch (e) {
-      debugPrint('upgradeSubscription error: ${e.code} - ${e.message}');
+    } catch (e) {
+      debugPrint('upgradeSubscription error: $e');
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Erro no upgrade: ${e.message}'),
+            content: Text('Erro no upgrade: $e'),
             backgroundColor: Colors.red,
           ),
         );
       }
       return false;
-    } catch (e) {
-      debugPrint('upgradeSubscription error: $e');
-      return false;
     }
   }
 
-  /// TESTE 11 — Agenda downgrade de plano para o próximo ciclo de cobrança.
+  /// Agenda downgrade de plano para o próximo ciclo de cobrança.
   static Future<bool> scheduleDowngrade({
     required BuildContext context,
     required String shopId,
@@ -714,41 +774,40 @@ class SubscriptionService {
     String? newPlanName,
   }) async {
     try {
-      final callable =
-          FirebaseFunctions.instance.httpsCallable('downgradeSubscription');
-      final result = await callable.call({
-        'shopId': shopId,
-        'newPlanId': newPlanId,
-        'newPlanName': newPlanName ?? newPlanId,
+      final supabase = sb.Supabase.instance.client;
+      final response = await supabase.functions.invoke('downgrade-subscription', body: {
+        'shop_id': shopId,
+        'new_plan_id': newPlanId,
+        'new_plan_name': newPlanName ?? newPlanId,
       });
-      final success = result.data?['success'] == true;
+
+      final success = response.status == 200;
+      final data = response.data as Map<String, dynamic>?;
+
       if (success && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(result.data?['message'] ?? 'Downgrade agendado.'),
+            content: Text(data?['message'] ?? 'Downgrade agendado.'),
             backgroundColor: Colors.blue,
           ),
         );
       }
       return success;
-    } on FirebaseFunctionsException catch (e) {
-      debugPrint('scheduleDowngrade error: ${e.code} - ${e.message}');
+    } catch (e) {
+      debugPrint('scheduleDowngrade error: $e');
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Erro ao agendar downgrade: ${e.message}'),
+            content: Text('Erro ao agendar downgrade: $e'),
             backgroundColor: Colors.red,
           ),
         );
       }
       return false;
-    } catch (e) {
-      debugPrint('scheduleDowngrade error: $e');
-      return false;
     }
   }
 
-  /// TESTE 13 — Reativa assinatura cancelada ou com downgrade pendente.
+  /// Reativa assinatura cancelada ou com downgrade pendente.
   static Future<bool> reactivateSubscription({
     required BuildContext context,
     required String shopId,
@@ -756,37 +815,36 @@ class SubscriptionService {
     String? planName,
   }) async {
     try {
-      final callable =
-          FirebaseFunctions.instance.httpsCallable('reactivateSubscription');
-      final result = await callable.call({
-        'shopId': shopId,
-        if (planId != null) 'planId': planId,
-        if (planName != null) 'planName': planName,
+      final supabase = sb.Supabase.instance.client;
+      final response = await supabase.functions.invoke('reactivate-subscription', body: {
+        'shop_id': shopId,
+        if (planId != null) 'new_plan_id': planId,
+        if (planName != null) 'new_plan_name': planName,
       });
-      final success = result.data?['success'] == true;
+
+      final success = response.status == 200;
+      final data = response.data as Map<String, dynamic>?;
+
       if (success && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content:
-                Text(result.data?['message'] ?? 'Assinatura reativada! 🚀'),
+                Text(data?['message'] ?? 'Assinatura reativada! 🚀'),
             backgroundColor: Colors.green,
           ),
         );
       }
       return success;
-    } on FirebaseFunctionsException catch (e) {
-      debugPrint('reactivateSubscription error: ${e.code} - ${e.message}');
+    } catch (e) {
+      debugPrint('reactivateSubscription error: $e');
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Erro ao reativar: ${e.message}'),
+            content: Text('Erro ao reativar: $e'),
             backgroundColor: Colors.red,
           ),
         );
       }
-      return false;
-    } catch (e) {
-      debugPrint('reactivateSubscription error: $e');
       return false;
     }
   }
