@@ -262,7 +262,7 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    final List photos = widget.serviceData['fotos_urls'] ?? [];
+    final List photos = widget.serviceData['photos_urls'] ?? widget.serviceData['fotos_urls'] ?? [];
     final bool hasPhotos = photos.isNotEmpty;
     final variations = widget.serviceData['variations'] as List?;
     final bool hasVariations = variations != null && variations.isNotEmpty;

@@ -50,6 +50,7 @@ class PlanFeatures {
   // Folgas e Feriados
   final bool holidaysManagement;
   final bool customHolidays;
+  final bool customLink;
 
   const PlanFeatures({
     required this.onlineBooking,
@@ -79,6 +80,7 @@ class PlanFeatures {
     required this.commissionView,
     required this.holidaysManagement,
     required this.customHolidays,
+    required this.customLink,
   });
 }
 
@@ -111,6 +113,7 @@ const Map<PlanKey, PlanFeatures> planFeaturesConfig = {
     commissionView: false,
     holidaysManagement: false,
     customHolidays: false,
+    customLink: true,
   ),
   PlanKey.starter: PlanFeatures(
     onlineBooking: true,
@@ -140,6 +143,7 @@ const Map<PlanKey, PlanFeatures> planFeaturesConfig = {
     commissionView: true,
     holidaysManagement: false,
     customHolidays: false,
+    customLink: true,
   ),
   PlanKey.plus: PlanFeatures(
     onlineBooking: true,
@@ -169,6 +173,7 @@ const Map<PlanKey, PlanFeatures> planFeaturesConfig = {
     commissionView: true,
     holidaysManagement: true,
     customHolidays: false,
+    customLink: true,
   ),
   PlanKey.pro: PlanFeatures(
     onlineBooking: true,
@@ -198,5 +203,6 @@ const Map<PlanKey, PlanFeatures> planFeaturesConfig = {
     commissionView: true,
     holidaysManagement: true,
     customHolidays: true,
+    customLink: true,
   ),
 };

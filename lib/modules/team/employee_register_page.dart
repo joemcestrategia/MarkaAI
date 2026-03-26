@@ -10,6 +10,7 @@ import '../../core/services/auth_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 import '../../core/services/image_service.dart';
+import '../../core/services/plan_features_service.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
 class EmployeeRegisterPage extends StatefulWidget {
@@ -235,6 +236,37 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
     setState(() => _isSaving = true);
 
     try {
+      // 🆕 Check Plan Limit
+      if (widget.employeeToEdit == null) {
+        final features = await PlanFeaturesService.loadFeaturesByShopId(_shopId!);
+        
+        // Forma correta de pegar o count no Supabase Flutter 2.0+
+        final countRes = await sb.Supabase.instance.client
+            .from('employees')
+            .select('id')
+            .eq('shop_id', _shopId!)
+            .count(sb.CountOption.exact);
+        
+        final currentCount = countRes.count;
+        
+        if (currentCount >= features.maxProfessionals) {
+           if (mounted) {
+             setState(() => _isSaving = false);
+             showDialog(
+               context: context,
+               builder: (ctx) => AlertDialog(
+                 title: const Text("Limite de Plano"),
+                 content: Text("Seu plano atual permite até ${features.maxProfessionals} profissionais. "
+                     "Faça um upgrade para adicionar mais."),
+                 actions: [
+                   TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Entendi")),
+                 ],
+               ),
+             );
+           }
+           return;
+        }
+      }
       String? photoUrl = _existingPhotoUrl;
 
       if (_imageFile != null) {

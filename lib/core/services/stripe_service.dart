@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../services/session_service.dart';
 
 class StripeService {
@@ -9,6 +10,12 @@ class StripeService {
   StripeService._();
 
   static final _supabase = Supabase.instance.client;
+
+  /// URL base do Edge Function de sucesso do checkout
+  static String get _successFunctionUrl {
+    final supabaseUrl = _supabase.rest.url.replaceAll('/rest/v1', '');
+    return '$supabaseUrl/functions/v1/stripe-checkout-success';
+  }
 
   /// Aparência do PaymentSheet no estilo MarkaAI (roxo)
   static PaymentSheetAppearance get _appAppearance =>
@@ -82,6 +89,133 @@ class StripeService {
     }
   }
 
+  // ════════════════════════════════════════════════════════════
+  //  WEB: Stripe Checkout Sessions (redirect para página hospedada)
+  // ════════════════════════════════════════════════════════════
+
+  /// Calcula a URL base do app para redirects (Web)
+  static String _getAppBaseUrl() {
+    // Em produção usa a URL do browser; fallback para Firebase Hosting
+    try {
+      final base = Uri.base;
+      return '${base.scheme}://${base.host}${base.hasPort ? ':${base.port}' : ''}';
+    } catch (_) {
+      return 'https://wismart-118c3.web.app';
+    }
+  }
+
+  /// Cria Checkout Session no Stripe e abre a página de pagamento (Web)
+  Future<bool> _webCheckoutSubscription({
+    required String planId,
+    required String shopId,
+    required String customerEmail,
+    String? affiliateId,
+    String? affiliateCouponCode,
+    String? commissionType,
+  }) async {
+    final appBaseUrl = _getAppBaseUrl();
+    final successUrl =
+        '$_successFunctionUrl?app_url=${Uri.encodeComponent('$appBaseUrl/payment-success')}';
+    final cancelUrl = '$appBaseUrl/subscription_plans';
+
+    final response = await _supabase.functions.invoke(
+      'create-stripe-checkout-session',
+      body: {
+        'mode': 'subscription',
+        'plan_id': planId,
+        'shop_id': shopId,
+        'email': customerEmail,
+        'success_url': successUrl,
+        'cancel_url': cancelUrl,
+        'affiliate_id': affiliateId,
+        'affiliate_coupon_code': affiliateCouponCode,
+        'commission_type': commissionType,
+      },
+    );
+
+    if (response.status != 200) {
+      final errMsg = response.data is Map
+          ? (response.data['error'] ?? 'Erro ao criar sessão de checkout.')
+          : 'Erro ao criar sessão de checkout.';
+      throw Exception(errMsg);
+    }
+
+    final url = response.data['url'] as String?;
+    if (url == null || url.isEmpty) {
+      throw Exception('URL de checkout não retornada pelo servidor.');
+    }
+
+    debugPrint('[StripeService] Abrindo Stripe Checkout (Web): $url');
+    final launched = await launchUrl(
+      Uri.parse(url),
+      mode: LaunchMode.inAppBrowserView,
+      webOnlyWindowName: '_self',
+    );
+    if (!launched) {
+      throw Exception('Não foi possível abrir a página de pagamento.');
+    }
+
+    // Na Web, o redirect acontece na mesma aba. O retorno aqui não é alcançado
+    // após o redirect, mas retornamos true para o caso de popups bloqueados etc.
+    return true;
+  }
+
+  /// Cria Checkout Session para pagamento avulso e abre a página (Web)
+  Future<bool> _webCheckoutOneTime({
+    required double amount,
+    required String currency,
+    required String description,
+    String? shopId,
+  }) async {
+    final appBaseUrl = _getAppBaseUrl();
+    final successUrl =
+        '$_successFunctionUrl?app_url=${Uri.encodeComponent('$appBaseUrl/payment-success')}';
+    final cancelUrl = appBaseUrl;
+
+    final email = _supabase.auth.currentUser?.email;
+
+    final response = await _supabase.functions.invoke(
+      'create-stripe-checkout-session',
+      body: {
+        'mode': 'payment',
+        'amount': (amount * 100).toInt(),
+        'currency': currency,
+        'description': description,
+        'success_url': successUrl,
+        'cancel_url': cancelUrl,
+        if (shopId != null) 'shop_id': shopId,
+        if (email != null) 'email': email,
+      },
+    );
+
+    if (response.status != 200) {
+      final errMsg = response.data is Map
+          ? (response.data['error'] ?? 'Erro ao criar sessão de checkout.')
+          : 'Erro ao criar sessão de checkout.';
+      throw Exception(errMsg);
+    }
+
+    final url = response.data['url'] as String?;
+    if (url == null || url.isEmpty) {
+      throw Exception('URL de checkout não retornada pelo servidor.');
+    }
+
+    debugPrint('[StripeService] Abrindo Stripe Checkout OneTime (Web): $url');
+    final launched = await launchUrl(
+      Uri.parse(url),
+      mode: LaunchMode.inAppBrowserView,
+      webOnlyWindowName: '_self',
+    );
+    if (!launched) {
+      throw Exception('Não foi possível abrir a página de pagamento.');
+    }
+    return true;
+  }
+
+  // ════════════════════════════════════════════════════════════
+  //  MOBILE: Payment Sheet nativo (existente)
+  // ════════════════════════════════════════════════════════════
+
   /// Inicializa o Payment Sheet para uma Assinatura (Subscription)
   Future<bool> setupSubscriptionPayment({
     required String planId,
@@ -91,6 +225,19 @@ class StripeService {
     String? affiliateCouponCode,
     String? commissionType,
   }) async {
+    // ── WEB → Checkout Session com redirect ──────────────────
+    if (kIsWeb) {
+      return _webCheckoutSubscription(
+        planId: planId,
+        shopId: shopId,
+        customerEmail: customerEmail,
+        affiliateId: affiliateId,
+        affiliateCouponCode: affiliateCouponCode,
+        commissionType: commissionType,
+      );
+    }
+
+    // ── MOBILE → Payment Sheet nativo ────────────────────────
     try {
       // 1. Chamar Supabase Function para criar o cliente/assinatura
       final response = await _supabase.functions.invoke('create-stripe-subscription', body: {
@@ -133,10 +280,6 @@ class StripeService {
       );
 
       // 3. Exibir o Payment Sheet
-      if (kIsWeb) {
-        debugPrint('[StripeService] PaymentSheet not supported on Web.');
-        throw Exception('Pagamento via Modal não disponível na Web. Por favor, use o app ou entre em contato.');
-      }
       await Stripe.instance.presentPaymentSheet();
 
       // 4. Pagamento aprovado — atualizar plano no Supabase imediatamente
@@ -155,10 +298,10 @@ class StripeService {
       if (e.error.code == FailureCode.Canceled) {
         return false; // cancelamento não é erro
       }
-      return false;
+      rethrow;
     } catch (e) {
       debugPrint('[StripeService] Error in setupSubscriptionPayment: $e');
-      return false;
+      rethrow;
     }
   }
 
@@ -169,6 +312,17 @@ class StripeService {
     required String description,
     String? shopId,
   }) async {
+    // ── WEB → Checkout Session com redirect ──────────────────
+    if (kIsWeb) {
+      return _webCheckoutOneTime(
+        amount: amount,
+        currency: currency,
+        description: description,
+        shopId: shopId,
+      );
+    }
+
+    // ── MOBILE → Payment Sheet nativo ────────────────────────
     try {
       // 1. Chamar Supabase Function para criar o PaymentIntent
       final response = await _supabase.functions.invoke('create-stripe-payment-intent', body: {
@@ -198,20 +352,36 @@ class StripeService {
       );
 
       // 3. Exibir o Payment Sheet
-      if (kIsWeb) {
-        debugPrint('[StripeService] PaymentSheet (OneTime) not supported on Web.');
-        throw Exception('Pagamento via Modal não disponível na Web.');
-      }
       await Stripe.instance.presentPaymentSheet();
 
       return true;
     } on StripeException catch (e) {
       debugPrint(
           '[StripeService] StripeException (one-time): ${e.error.localizedMessage}');
-      return false;
+      if (e.error.code == FailureCode.Canceled) {
+        return false; // cancelamento não é erro
+      }
+      rethrow;
     } catch (e) {
       debugPrint('[StripeService] Error in processOneTimePayment: $e');
-      return false;
+      rethrow;
+    }
+  }
+
+  /// Verifica o status de uma Checkout Session (chamado após redirect de sucesso)
+  Future<Map<String, dynamic>?> verifyCheckoutSession(String sessionId) async {
+    try {
+      final response = await _supabase.functions.invoke(
+        'stripe-checkout-success',
+        body: {'session_id': sessionId},
+      );
+      if (response.status == 200 && response.data is Map) {
+        return Map<String, dynamic>.from(response.data);
+      }
+      return null;
+    } catch (e) {
+      debugPrint('[StripeService] verifyCheckoutSession error: $e');
+      return null;
     }
   }
 }

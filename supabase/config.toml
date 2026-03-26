@@ -1,2 +1,11 @@
 [functions.mercadopagoCallback]
 verify_jwt = false
+
+[functions.create-stripe-subscription]
+verify_jwt = false
+
+[functions.create-stripe-payment-intent]
+verify_jwt = false
+
+[functions.create-stripe-checkout-session]
+verify_jwt = false

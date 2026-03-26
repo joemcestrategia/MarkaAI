@@ -444,7 +444,8 @@ class _PublicShopPageState extends State<PublicShopPage> {
                     delegate: SliverChildBuilderDelegate(
                       (context, index) {
                         final sData = sortedServices[index];
-                        dynamic rawFotos = sData['fotos_urls'] ??
+                        dynamic rawFotos = sData['photos_urls'] ??
+                            sData['fotos_urls'] ??
                             sData['fotos'] ??
                             sData['imageUrl'] ??
                             sData['imagens'];

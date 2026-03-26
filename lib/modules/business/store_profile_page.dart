@@ -9,6 +9,8 @@ import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 import '../../core/services/image_service.dart';
+import '../../core/services/plan_features_service.dart';
+import '../../core/constants/plan_features.dart';
 
 // Lista fixa das UFs brasileiras
 const List<String> _kStoreUFs = [
@@ -124,6 +126,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
   bool _isSaving = false;
   double _uploadProgress = 0.0;
   String? _shopId;
+  PlanFeatures? _planFeatures;
 
   @override
   void initState() {
@@ -188,10 +191,12 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
               .maybeSingle();
           if (shopDoc != null) {
             final data = shopDoc;
+            final features = PlanFeaturesService.getFeaturesForShop(data);
 
             if (mounted) {
               setState(() {
                 _shopId = id;
+                _planFeatures = features;
                 _nameController.text = data['name'] ?? "";
                 _descController.text = data['description'] ?? "";
                 _addressController.text = data['address'] ?? "";
@@ -1059,8 +1064,20 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                                 const SizedBox(height: 10),
                                 TextFormField(
                                   controller: _slugController,
+                                  enabled: _planFeatures?.customLink ?? false,
                                   decoration: InputDecoration(
                                     labelText: "Seu Mini Site (ex: afroED)",
+                                    helperText: (_planFeatures?.customLink ?? false) 
+                                        ? "Este é o link que você deve divulgar"
+                                        : "Disponível apenas nos planos Plus e Pro",
+                                    helperStyle: TextStyle(
+                                      color: (_planFeatures?.customLink ?? false) 
+                                          ? Colors.grey 
+                                          : Colors.orange[800],
+                                      fontWeight: (_planFeatures?.customLink ?? false) 
+                                          ? FontWeight.normal 
+                                          : FontWeight.bold,
+                                    ),
                                     prefixIcon: const Icon(Icons.link,
                                         color: AppColors.primaryPurple),
                                     prefixText: "markaai.com.br/",

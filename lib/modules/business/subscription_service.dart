@@ -54,7 +54,7 @@ class SubscriptionService {
       'clientLimit': 999999,
       'adEnabled': false,
       'onlinePayment': true,
-      'financialModule': false,
+      'financialModule': true,
       'commissionModule': true,
       'inventoryModule': true,
       'customLink': true,
@@ -613,8 +613,13 @@ class SubscriptionService {
       if (context.mounted) PremiumDialogs.hideLoading(context);
       debugPrint("_iniciarPagamentoAssinatura error: $e");
       if (context.mounted) {
-        PremiumDialogs.showError(
-            context, "Não conseguimos iniciar seu sucesso agora: $e");
+        if (e.toString().contains('401') || e.toString().contains('Invalid JWT')) {
+          PremiumDialogs.showError(
+              context, "Sua sessão expirou por segurança. Por favor, saia do aplicativo (Logout) e faça login novamente para prosseguir com o pagamento.");
+        } else {
+          PremiumDialogs.showError(
+              context, "Não conseguimos iniciar seu serviço agora: $e");
+        }
       }
       return false;
     }

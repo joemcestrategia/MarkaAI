@@ -107,12 +107,25 @@ class _BoostShopPageState extends State<BoostShopPage>
 
     PremiumDialogs.showLoading(context, "Turbinando seu perfil...");
 
-    final success = await StripeService.instance.processOneTimePayment(
-      amount: amount,
-      currency: 'brl',
-      description: description,
-      shopId: shopId,
-    );
+    bool success;
+    try {
+      success = await StripeService.instance.processOneTimePayment(
+        amount: amount,
+        currency: 'brl',
+        description: description,
+        shopId: shopId,
+      );
+    } catch (e) {
+      debugPrint("Erro no pagamento Stripe (boost): $e");
+      if (mounted) {
+        PremiumDialogs.hideLoading(context);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text("Erro ao processar pagamento: $e"),
+          backgroundColor: Colors.red,
+        ));
+      }
+      return;
+    }
 
     if (!success) {
       if (mounted) PremiumDialogs.hideLoading(context);

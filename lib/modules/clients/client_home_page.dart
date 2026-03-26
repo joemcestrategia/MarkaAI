@@ -1889,7 +1889,8 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
     final sData = widget.serviceData;
 
     List<String> images = [];
-    dynamic rawFotos = sData['fotos_urls'] ??
+    dynamic rawFotos = sData['photos_urls'] ??
+        sData['fotos_urls'] ??
         sData['fotos'] ??
         sData['imageUrl'] ??
         sData['imagens'];

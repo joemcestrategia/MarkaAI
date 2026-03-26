@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/theme/app_colors.dart';
 
@@ -97,14 +97,14 @@ class _AppointmentConfirmationPageState
     final data = _appointmentData!;
     final dateStr = data['scheduled_at'] ?? '';
     final date = DateTime.tryParse(dateStr) ?? DateTime.now();
-    final servico = data['servico_nome'] ?? 'Serviço';
-    final horario = data['horario'] ?? '';
-    final valor = (data['valor_total'] ?? 0.0).toDouble();
-    final metodoPagamento = data['metodo_pagamento'] ?? '';
+    final servico = data['service_name'] ?? data['servico_nome'] ?? 'Serviço';
+    final horario = data['horario'] ?? '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    final valor = (data['total_price'] ?? data['valor_total'] ?? 0.0).toDouble();
+    final metodoPagamento = data['payment_method'] ?? data['metodo_pagamento'] ?? '';
     final precisaPagar =
         (metodoPagamento.toLowerCase().contains('pessoalmente') ||
                 metodoPagamento.toLowerCase().contains('local')) &&
-            (data['valor_pago'] ?? 0.0) == 0.0;
+            (data['paid_amount'] ?? data['valor_pago'] ?? 0.0) == 0.0;
 
     return Scaffold(
       appBar: AppBar(

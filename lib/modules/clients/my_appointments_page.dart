@@ -585,10 +585,12 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
     );
 
     try {
-      await Supabase.instance.client.functions.invoke('cancelAppointment', body: {
-        'appointmentId': appointment['id'],
-        'requestRefund': false,
-      });
+      await Supabase.instance.client
+          .from('appointments')
+          .update({
+            'status': 'cancelado',
+          })
+          .eq('id', appointment['id']);
 
       if (mounted) Navigator.pop(context); // close loading
       if (!mounted) return;

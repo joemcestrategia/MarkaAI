@@ -139,65 +139,16 @@ class ClientVerificationService {
     }
   }
 
-  /// Registra o uso do desconto de aniversário.
-  static Future<void> registerBirthdayDiscountUsage(
-      String userId, String shopId) async {
-    try {
-      final now = DateTime.now();
-      final currentYear = now.year;
-      
-      final userDoc = await _supabase
-          .from('users')
-          .select('email, phone')
-          .eq('id', userId)
-          .maybeSingle();
-      
-      if (userDoc == null) return;
-
-      final email = (userDoc['email'] ?? '').toString().toLowerCase().trim();
-      final phone = (userDoc['phone'] ?? '').toString().replaceAll(RegExp(r'\D'), '');
-
-      // 1. Registro no documento do usuário (Trava Global)
-      await _supabase.from('users').update({
-        'birthday_locked': true,
-        'last_birthday_discount_year': currentYear,
-      }).eq('id', userId);
-
-      // 2. Registros na loja para evitar multi-conta
-      final List<Map<String, dynamic>> registros = [];
-      if (email.isNotEmpty) {
-        registros.add({
-          'shop_id': shopId,
-          'identifier': 'email_$email',
-          'year': currentYear,
-          'user_id': userId,
-          'used_at': now.toIso8601String(),
-        });
-      }
-      if (phone.isNotEmpty) {
-        registros.add({
-          'shop_id': shopId,
-          'identifier': 'phone_$phone',
-          'year': currentYear,
-          'user_id': userId,
-          'used_at': now.toIso8601String(),
-        });
-      }
-
-      if (registros.isNotEmpty) {
-        await _supabase.from('birthday_discount_registry').upsert(registros);
-      }
-    } catch (e) {
-      debugPrint('Erro ao registrar uso de desconto de aniversário: $e');
-    }
-  }
+  /// Nota: O registro do uso do desconto de aniversário agora é feito automaticamente 
+  /// por um gatilho (trigger) no Supabase (ver migração 114_birthday_discount_trigger.sql)
+  /// para garantir atomicidade e segurança.
 
   /// Verifica se o mês alvo (ou atual) é o mês de aniversário do cliente.
   static Future<bool> isBirthdayMonth(String userId, {int? targetMonth}) async {
     try {
       final userDoc = await _supabase
           .from('users')
-          .select('aniversario, data_nascimento, nascimento, birthDate, birth_date')
+          .select('birth_date, aniversario, data_nascimento, nascimento, birthDate')
           .eq('id', userId)
           .maybeSingle();
       

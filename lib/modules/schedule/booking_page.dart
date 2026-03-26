@@ -229,8 +229,7 @@ class _BookingPageState extends State<BookingPage> {
         }
 
         final profs = (snapshot.data ?? []).where((d) {
-          final skills =
-              d['services_ids'] ?? d['servicos_habilidade'] as List? ?? [];
+          final skills = d['services_ids'] as List? ?? [];
           return skills.isEmpty || skills.contains(widget.serviceId);
         }).toList();
 
@@ -545,9 +544,9 @@ class _BookingTimePageState extends State<BookingTimePage> {
       }
 
       final profData = widget.professionalDoc;
-      final startStr = profData['work_start'] ?? profData['horario_inicio'] ?? "08:00";
-      final endStr = profData['work_end'] ?? profData['horario_fim'] ?? "18:00";
-      final rawWorkDays = profData['work_days'] ?? profData['dias_trabalho'] ?? [1, 2, 3, 4, 5, 6];
+      final startStr = profData['work_start'] ?? "08:00";
+      final endStr = profData['work_end'] ?? "18:00";
+      final rawWorkDays = profData['work_days'] ?? [1, 2, 3, 4, 5, 6];
       final workDays = rawWorkDays.map((e) => int.parse(e.toString())).toList();
       final preventGaps = widget.shopConfig['evitar_buracos_agenda'] ?? false;
 
@@ -597,7 +596,7 @@ class _BookingTimePageState extends State<BookingTimePage> {
           endStr: endStr,
           interval: widget.intervalMinutes,
           serviceDuration:
-              int.tryParse((widget.serviceData['duration_min'] ?? widget.serviceData['tempo_min']).toString()) ?? 30,
+              int.tryParse(widget.serviceData['duration_min'].toString()) ?? 30,
           busyIntervals: busy,
           preventGaps: preventGaps,
           minAdvanceHours: widget.minAdvanceHours,

@@ -17,9 +17,9 @@ class PlanFeaturesService {
     final key = parsePlanKey(planString);
     final baseFeatures = planFeaturesConfig[key]!;
 
-    // REGRA DE NEGÓCIO: Aba Financeiro SÓ no plano Pro.
-    // Se o plano for menor que Pro, desativamos as flags do financeiro.
-    if (key != PlanKey.pro) {
+    // REGRA DE NEGÓCIO: Aba Financeiro SÓ no plano Plus e Pro.
+    // Se o plano for menor que Plus, desativamos as flags do financeiro.
+    if (key == PlanKey.free || key == PlanKey.starter) {
       return _applyFinancialRestriction(baseFeatures);
     }
 
@@ -53,7 +53,7 @@ class PlanFeaturesService {
     final baseFeatures = planFeaturesConfig[key]!;
     
     // Aplicamos a mesma restrição do financeiro para consistência
-    if (key != PlanKey.pro) {
+    if (key == PlanKey.free || key == PlanKey.starter) {
       return _applyFinancialRestriction(baseFeatures);
     }
 
@@ -90,6 +90,7 @@ class PlanFeaturesService {
       commissionView: base.commissionView,
       holidaysManagement: base.holidaysManagement,
       customHolidays: base.customHolidays,
+      customLink: base.customLink,
     );
   }
 

@@ -155,6 +155,10 @@ class AppRouter {
       return MaterialPageRoute(
           builder: (_) => const SubscriptionPlansPage(), settings: settings);
     }
+    if (cleanPath == 'payment-success') {
+      return MaterialPageRoute(
+          builder: (_) => const _PaymentSuccessPage(), settings: settings);
+    }
     if (cleanPath == 'business/price_adjustment') {
       return MaterialPageRoute(
           builder: (_) => const PriceAdjustmentPage(), settings: settings);
@@ -216,6 +220,7 @@ class AppRouter {
       'setup-admin-secret',
       'afiliados',
       'afiliados/painel',
+      'payment-success',
     ];
     return knownRoutes.contains(route.toLowerCase());
   }
@@ -489,6 +494,85 @@ class AdminAuthGate extends StatelessWidget {
 
         return const LoginPage(redirectPath: '/admin');
       },
+    );
+  }
+}
+
+/// Página de sucesso após pagamento Stripe Checkout (redirect de volta ao app)
+class _PaymentSuccessPage extends StatefulWidget {
+  const _PaymentSuccessPage();
+
+  @override
+  State<_PaymentSuccessPage> createState() => _PaymentSuccessPageState();
+}
+
+class _PaymentSuccessPageState extends State<_PaymentSuccessPage> {
+  bool _redirecting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Redireciona automaticamente para a home após 3 segundos
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted && !_redirecting) {
+        _redirecting = true;
+        Navigator.of(context).pushNamedAndRemoveUntil('/', (_) => false);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: AppColors.primaryPurple.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.check_circle,
+                    color: AppColors.primaryPurple, size: 48),
+              ),
+              const SizedBox(height: 24),
+              const Text(
+                'Pagamento Confirmado!',
+                style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF111827)),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Sua assinatura foi ativada com sucesso.\nRedirecionando...',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 16, color: Color(0xFF6B7280)),
+              ),
+              const SizedBox(height: 32),
+              const CircularProgressIndicator(color: AppColors.primaryPurple),
+              const SizedBox(height: 24),
+              TextButton(
+                onPressed: () {
+                  if (!_redirecting) {
+                    _redirecting = true;
+                    Navigator.of(context)
+                        .pushNamedAndRemoveUntil('/', (_) => false);
+                  }
+                },
+                child: const Text('Ir para o início',
+                    style: TextStyle(color: AppColors.primaryPurple)),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

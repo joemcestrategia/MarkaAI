@@ -35,7 +35,7 @@ class MercadoPagoService {
     } on FunctionException catch (e) {
       debugPrint("❌ Erro na Supabase Function: ${e.status} - ${e.details}");
       // Detect specific backend error for collector not enabled for PIX QR
-      final messageStr = (e.details ?? e.toString()).toLowerCase();
+      final messageStr = (e.details?.toString() ?? e.toString()).toLowerCase();
       if (messageStr.contains('collector_not_enabled_for_qr')) {
         throw Exception('collector_not_enabled_for_qr');
       }

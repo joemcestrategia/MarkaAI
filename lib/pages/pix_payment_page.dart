@@ -122,7 +122,7 @@ class _PixPaymentPageState extends State<PixPaymentPage> {
                                     height: 32),
                                 const SizedBox(height: 8),
                                 Image.memory(base64Decode(widget.qrBase64),
-                                    height: 160),
+                                    height: 240),
                               ],
                             ),
                           )

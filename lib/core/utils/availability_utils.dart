@@ -37,12 +37,11 @@ class AvailabilityUtils {
       final DateTime startTime = DateTime.parse(data['scheduled_at']);
       int startMin = startTime.hour * 60 + startTime.minute;
 
-      int? duration = int.tryParse(data['duration_min']?.toString() ?? '') ??
-          int.tryParse(data['duracao_min']?.toString() ?? '');
+      int? duration = int.tryParse(data['duration_min']?.toString() ?? '');
 
       // Fallback para compromissos legados
       if (duration == null) {
-        String? servicoId = data['service_id']?.toString() ?? data['servicoId']?.toString();
+        String? servicoId = data['service_id']?.toString();
         if (servicoId != null && servicoId.isNotEmpty) {
           try {
             final svcDoc = await Supabase.instance.client

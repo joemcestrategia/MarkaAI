@@ -12,6 +12,7 @@ import '../core/widgets/birthday_celebration_modal.dart';
 import '../core/services/client_verification_service.dart';
 import '../core/services/coupon_service.dart';
 import '../core/services/plan_features_service.dart';
+import '../core/constants/plan_features.dart';
 import '../core/widgets/loading_page.dart';
 import '../modules/clients/my_appointments_page.dart';
 import '../modules/clients/client_home_page.dart';
@@ -161,10 +162,14 @@ class _CheckoutPageState extends State<CheckoutPage> {
       final double birthdayPercent = double.tryParse(
               config['birthday_pix_discount_percent']?.toString() ?? "0.0") ??
           0.0;
+      
+      // 🆕 Pega as features completas do plano da loja
+      final PlanFeatures shopFeatures = PlanFeaturesService.getFeaturesForShop(data);
       final double cardTax = double.tryParse(
               (config['tax_percent'] ?? config['porcentagem_a_vista'] ?? "0.0")
                   .toString()) ??
           0.0;
+      debugPrint('💳 [Checkout] Taxa de cartão carregada: $cardTax%');
 
       // Pre-calcula as flags da loja antes de disparar o VIP check
       final bool baseAceitaPix =
@@ -189,8 +194,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
         isProblematic = status['isProblematic'] ?? false;
         isVip = status['isVip'] ?? false;
         
-        isBirthday = await ClientVerificationService.isBirthdayMonth(user.id,
-            targetMonth: widget.date.month);
+        // 🆕 Só verifica aniversário se o plano permitir
+        if (shopFeatures.birthdayDiscount) {
+          isBirthday = await ClientVerificationService.isBirthdayMonth(user.id,
+              targetMonth: widget.date.month);
+        }
 
         if (isBirthday && birthdayEnabled) {
           final hasUsed =
@@ -327,13 +335,29 @@ class _CheckoutPageState extends State<CheckoutPage> {
         base = base * (1 + (_cardTaxPercent / 100.0));
       }
 
+      debugPrint('💰 [Recalculate] Método: $_selectedMethod, Taxa: $_cardTaxPercent%, Base: $base');
       valorFinalComJuros = base;
+      debugPrint('✅ [Recalculate] Valor Final: $valorFinalComJuros');
     });
   }
 
   Future<void> _applyCoupon() async {
     final code = _couponController.text.trim();
     if (code.isEmpty) return;
+
+    // 🆕 Verifica se o plano permite cupons antes de validar
+    final shopFeatures = PlanFeaturesService.getFeaturesForShop(widget.shopData);
+    if (!shopFeatures.coupons) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Esta loja não possui o módulo de cupons ativo."),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
 
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) return;
@@ -1073,9 +1097,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
   @override
   Widget build(BuildContext context) {
     double valorExibido = valorFinalComJuros;
-    if (_selectedPaymentType == 'sinal' && _selectedMethod != 'card') {
-      valorExibido = valorFinalComJuros; // valorFinalComJuros already accounts for signal in _recalculateTotals
-    }
 
     return Scaffold(
       appBar: AppBar(
@@ -1799,7 +1820,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
           'Esta loja não configurou os meios de pagamento online ainda.');
       return;
     }
-    bool pixShown = false; // Tracks if QR Code page was successfully opened
     // show full-screen loading
     if (mounted) {
       Navigator.push(
@@ -1818,18 +1838,15 @@ class _CheckoutPageState extends State<CheckoutPage> {
         description: desc,
         externalReference: externalRef,
       );
-      // O MercadoPagoService.gerarPix já retorna Map<String, dynamic>.from(result.data)
-      final qrCode64 = result['point_of_interaction']?['transaction_data']
-          ?['qr_code_base64'];
-      final copyPaste =
-          result['point_of_interaction']?['transaction_data']?['qr_code'];
+      
+      final qrCode64 = result['point_of_interaction']?['transaction_data']?['qr_code_base64'];
+      final copyPaste = result['point_of_interaction']?['transaction_data']?['qr_code'];
       final paymentId = result['id']?.toString() ?? '';
 
       if (qrCode64 == null || copyPaste == null || paymentId.isEmpty) {
         throw Exception("Dados do PIX incompletos na resposta do servidor.");
       }
 
-      // Atualiza imediatamente o agendamento com o paymentId gerado
       if (_preSavedAppointmentId != null) {
         try {
           await Supabase.instance.client
@@ -1842,23 +1859,15 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
       if (mounted) {
         _startPixMonitoring(paymentId, amount);
-        // close loading page
-        Navigator.pop(context);
-        // Mark as shown BEFORE pushing so the finally block won't close it
-        pixShown = true;
+        // close loading page safely
+        if (Navigator.canPop(context)) Navigator.pop(context);
         _showPixModal(qrCode64, copyPaste, paymentId, amount);
       }
     } catch (e) {
+      if (mounted && Navigator.canPop(context)) Navigator.pop(context);
       _showError("Erro ao gerar PIX: $e");
     } finally {
       if (mounted) {
-        if (!pixShown) {
-          // Only pop the loading page if PIX screen was NOT shown
-          // (i.e., an error occurred before we could show the QR code)
-          try {
-            Navigator.pop(context);
-          } catch (_) {}
-        }
         setState(() => _isLoading = false);
       }
     }
@@ -1975,14 +1984,16 @@ class _CheckoutPageState extends State<CheckoutPage> {
       try {
         final result = await Supabase.instance.client.functions.invoke('checkAvailability', body: {
           'professional_id': widget.professionalDoc['id'],
+          'shop_id': widget.shopId,
           'start_time': bookingDate.toIso8601String(),
           'duration': duration,
         });
 
         if (result.data['available'] != true) {
           if (mounted) {
-            // Fecha o loading de "Finalizando agendamento..."
-            Navigator.pop(context);
+            // Fecha o loading de "Finalizando agendamento..." se ele estiver aberto
+            if (Navigator.canPop(context)) Navigator.pop(context);
+            
             await showDialog(
               context: context,
               builder: (ctx) => AlertDialog(
@@ -2079,11 +2090,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
         'shop_id': widget.shopId,
         'client_id': user.id,
         'client_name': user.userMetadata?['full_name'] ?? user.email ?? 'Cliente',
-        'client_email': user.email, 
         'service_name': widget.serviceNameOverride ?? widget.serviceDoc['name'],
         'professional_id': widget.professionalDoc['id'],
         'professional_name': profData['name'] ?? 'Profissional',
-        'professional_photo_url': profData['foto_url'],
         'service_id': widget.serviceDoc['id'],
         'total_price': valorTotal,
         'valor_com_desconto': totalWithTax,
@@ -2092,7 +2101,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
         'duration_min': duration,
         'scheduled_at': bookingDate.toIso8601String(),
         'end_at': endDate.toIso8601String(),
-        'horario': horarioStr,
         'status': status,
         'payment_method': metodo,
         'payment_id': paymentId,
@@ -2141,13 +2149,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         );
       }
 
-      // Se usou presente de aniversário, registra o uso anual
-      if (_birthdayGiftAccepted) {
-        await ClientVerificationService.registerBirthdayDiscountUsage(
-          user.id,
-          widget.shopId,
-        );
-      }
+      // O registro do uso do presente de aniversário agora é feito automaticamente por um gatilho (trigger) no Supabase.
 
       if (mounted) {
         final svcName = widget.serviceNameOverride ??
