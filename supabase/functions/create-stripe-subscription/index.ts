@@ -39,7 +39,7 @@ serve(async (req: Request) => {
       return new Response(JSON.stringify({ error: 'Unauthorized', details: userError }), { status: 401, headers: corsHeaders })
     }
 
-    const { plan_id, email, shop_id, affiliate_id, affiliate_coupon_code, commission_type } = await req.json()
+    const { plan_id, email, shop_id } = await req.json()
 
     if (!plan_id || !email || !shop_id) {
       throw new Error('Dados incompletos')
@@ -77,15 +77,7 @@ serve(async (req: Request) => {
       expand: ['latest_invoice.payment_intent'],
       metadata: { 
         store_id: shop_id,
-        affiliate_id: affiliate_id || '',
-        affiliate_coupon_code: affiliate_coupon_code || '',
-        commission_type: commission_type || 'recurring'
       },
-    }
-
-    // Aplicar cupom de desconto se fornecido
-    if (affiliate_coupon_code) {
-      subscriptionData.discounts = [{ coupon: affiliate_coupon_code }]
     }
 
     const subscription = await stripe.subscriptions.create(subscriptionData)

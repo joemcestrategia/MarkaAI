@@ -21,6 +21,7 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
   bool _isLoading = true;
   late PlanFeatures _currentFeatures = planFeaturesConfig[PlanKey.free]!;
   int _currentEmployeeCount = 0;
+  int _refreshKey = 0;
 
   // Controle do Painel Lateral (Apenas Desktop)
   bool _showPanel = false;
@@ -97,7 +98,7 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
             ),
           ),
         ),
-      );
+      ).then((_) { if (mounted) setState(() => _refreshKey++); });
     } else {
       // 💻 MODO PC: Abre painel lateral
       _openPanelDesktop(doc);
@@ -123,6 +124,7 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
       setState(() {
         _showPanel = false;
         _employeeToEdit = null;
+        _refreshKey++;
       });
     }
   }
@@ -225,6 +227,7 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
         // LISTA
         Expanded(
           child: StreamBuilder<List<Map<String, dynamic>>>(
+            key: ValueKey('emp_stream_$_refreshKey'),
             stream: sb.Supabase.instance.client
                 .from('employees')
                 .stream(primaryKey: ['id'])

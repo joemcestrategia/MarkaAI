@@ -177,13 +177,33 @@ class AuthService {
     }
   }
 
-  /// Envia e-mail de recuperação de senha.
+  /// Envia e-mail de recuperação de senha via Edge Function (Resend).
+  /// Usa o mesmo provedor Resend das notificações de agendamento.
   Future<void> sendPasswordReset(String email) async {
     try {
-      await _supabase.auth.resetPasswordForEmail(email.trim());
-    } on sb.AuthException catch (e) {
-      _handleAuthError(e);
-      rethrow;
+      final response = await _supabase.functions.invoke(
+        'sendPasswordReset',
+        body: {'email': email.trim()},
+      );
+
+      if (response.status != 200) {
+        final msg = (response.data is Map) ? response.data['error'] : null;
+        throw Exception(msg ?? 'Erro ao enviar e-mail.');
+      }
+    } on sb.FunctionException catch (e) {
+      // Trata erro técnico da Edge Function e tenta pegar a mensagem amigável
+      final details = e.details;
+      String? msg;
+      if (details is Map && details.containsKey('error')) {
+        msg = details['error'];
+      }
+      throw Exception(msg ?? 'Não foi possível completar a solicitação.');
+    } catch (e) {
+      debugPrint('[AuthService] Erro fatal em sendPasswordReset: $e');
+      if (e.toString().contains('Exception: ')) {
+        rethrow;
+      }
+      throw Exception('Falha ao processar solicitação. Tente novamente.');
     }
   }
 

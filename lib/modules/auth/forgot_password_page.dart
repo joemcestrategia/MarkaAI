@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/theme/app_colors.dart';
 
@@ -46,16 +45,9 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     try {
       await AuthService().sendPasswordReset(email);
       if (mounted) setState(() => _emailSent = true);
-    } on AuthException catch (e) {
-      if (e.message.contains('User not found')) {
-        _showError("E-mail não encontrado no sistema.");
-      } else if (e.message.contains('invalid email')) {
-        _showError("Formato de e-mail inválido.");
-      } else {
-        _showError("Erro: ${e.message}");
-      }
-    } catch (_) {
-      _showError("Ocorreu um erro inesperado.");
+    } catch (e) {
+      final msg = e.toString().replaceFirst('Exception: ', '');
+      _showError(msg.isNotEmpty ? msg : 'Ocorreu um erro inesperado.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

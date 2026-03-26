@@ -10,23 +10,37 @@ class ClientVerificationService {
   static Future<Map<String, bool>> getClientStatus(
       String userId, String shopId) async {
     try {
-      // 1. Verificação de classificação e configuração da loja
-      final shopDoc = await _supabase
-          .from('shops')
-          .select('config')
-          .eq('id', shopId)
-          .maybeSingle();
-      
+      // 1. Buscar classificação manual do usuário e configuração da loja em paralelo
+      final futures = await Future.wait([
+        _supabase
+            .from('shops')
+            .select('config')
+            .eq('id', shopId)
+            .maybeSingle(),
+        _supabase
+            .from('users')
+            .select('is_vip, is_problematic')
+            .eq('id', userId)
+            .maybeSingle(),
+        _supabase
+            .from('appointments')
+            .select('scheduled_at, status')
+            .eq('shop_id', shopId)
+            .eq('client_id', userId)
+            .order('scheduled_at', ascending: false),
+      ]);
+
+      final shopDoc = futures[0] as Map<String, dynamic>?;
+      final userDoc = futures[1] as Map<String, dynamic>?;
+      final appointmentsList = futures[2] as List<dynamic>;
+
       final shopConfig = (shopDoc?['config'] as Map?) ?? {};
 
-      // 2. Cálculo de histórico (VIP automático e Sumido)
-      final appointmentsList = await _supabase
-          .from('appointments')
-          .select()
-          .eq('shop_id', shopId)
-          .eq('client_id', userId)
-          .order('scheduled_at', ascending: false);
+      // Flags manuais do dono da loja (persistidos em users)
+      final bool manualVip = userDoc?['is_vip'] == true;
+      final bool manualProblematic = userDoc?['is_problematic'] == true;
 
+      // 2. Cálculo de histórico (VIP automático e Sumido)
       final validAppointments = appointmentsList.where((appt) {
         final status = (appt['status'] ?? '').toString().toLowerCase();
         return status != 'cancelado' &&
@@ -36,11 +50,11 @@ class ClientVerificationService {
 
       if (validAppointments.isEmpty) {
         return {
-          'isVip': false,
+          'isVip': manualVip,
           'isSumido': false,
-          'isProblematic': false,
-          'isNovo': true, // Primeiro agendamento
-          'isTrusted': true,
+          'isProblematic': manualProblematic,
+          'isNovo': true,
+          'isTrusted': manualVip || !manualProblematic,
         };
       }
 
@@ -53,16 +67,17 @@ class ClientVerificationService {
       final int sumidoMaxDays = shopConfig['sumido_max_days'] ?? 45;
 
       bool isSumido = now.difference(lastVisit).inDays > sumidoMaxDays;
-      bool isVip = !isSumido && visits >= vipMinVisits;
+      bool autoVip = !isSumido && visits >= vipMinVisits;
+      bool isVip = manualVip || autoVip;
       bool isNovo =
           !isSumido && visits == 1 && now.difference(lastVisit).inDays < 30;
 
       return {
         'isVip': isVip,
         'isSumido': isSumido,
-        'isProblematic': false,
+        'isProblematic': manualProblematic,
         'isNovo': isNovo,
-        'isTrusted': !isSumido && (isVip || isNovo || visits > 1)
+        'isTrusted': !isSumido && !manualProblematic && (isVip || isNovo || visits > 1)
       };
     } catch (e) {
       debugPrint('Error in getClientStatus: $e');
@@ -210,8 +225,9 @@ class ClientVerificationService {
   }
 
   /// Verifica se um agendamento pode ser modificado (cancelado ou reagendado)
+  /// [isReschedule] quando true, verifica também a config 'permitir_reagendamento'
   static Future<Map<String, dynamic>> canModifyAppointment(
-      Map<String, dynamic> appointment) async {
+      Map<String, dynamic> appointment, {bool isReschedule = false}) async {
     try {
       final shopId = (appointment['shop_id'] ?? appointment['shopId']) as String;
       final appointmentDate = DateTime.parse(appointment['scheduled_at']);
@@ -222,6 +238,18 @@ class ClientVerificationService {
       }
 
       final config = await getShopConfig(shopId);
+
+      // Verifica se a loja permite reagendamento
+      if (isReschedule) {
+        final bool allowReschedule = config['permitir_reagendamento'] ?? true;
+        if (!allowReschedule) {
+          return {
+            'can': false,
+            'reason': 'Esta loja não permite reagendamento online. Entre em contato diretamente.'
+          };
+        }
+      }
+
       final int cancelHours = config['tempo_cancelamento_horas'] ?? 2;
 
       final diff = appointmentDate.difference(now);

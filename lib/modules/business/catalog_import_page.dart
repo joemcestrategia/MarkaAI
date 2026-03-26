@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
+import '../../core/services/shop_data_cache_service.dart';
 
 /// Importação de catálogo WhatsApp — apenas Web/PC.
 /// Fluxo automático via bookmarklet + postMessage.
@@ -420,6 +421,12 @@ class _CatalogImportPageState extends State<CatalogImportPage> {
         errors.add('${p.nome}: $e');
       }
     }
+    
+    // Invalida o cache após importar tudo
+    if (success > 0) {
+      ShopDataCacheService().invalidate(_shopId!, 'services');
+    }
+
     setState(() {
       _step = 5;
       _importStatus = errors.isEmpty

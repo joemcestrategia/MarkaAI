@@ -11,7 +11,11 @@ import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 import '../../core/services/image_service.dart';
 import '../../core/services/plan_features_service.dart';
+import 'package:flutter/services.dart';
+import '../../core/services/shop_data_cache_service.dart';
+import 'package:image_cropper/image_cropper.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+
 
 class EmployeeRegisterPage extends StatefulWidget {
   final Map<String, dynamic>? employeeToEdit;
@@ -115,9 +119,125 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
     }
   }
 
+  /// Prepara o SystemUI antes de abrir o ImageCropper no Android.
+  void _prepareSystemUIForCrop() {
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+        systemNavigationBarColor: Colors.transparent,
+        systemNavigationBarIconBrightness: Brightness.light,
+        systemNavigationBarDividerColor: Colors.transparent,
+      ),
+    );
+  }
+
+  /// Restaura o SystemUI ao estado padrão do app após o crop fechar.
+  void _restoreSystemUI() {
+    if (!mounted) return;
+    SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.manual,
+      overlays: SystemUiOverlay.values,
+    );
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.dark,
+        systemNavigationBarColor: Colors.white,
+        systemNavigationBarIconBrightness: Brightness.dark,
+      ),
+    );
+  }
+
+  Future<XFile?> _cropImage(XFile imageFile) async {
+    try {
+      if (kIsWeb) {
+        try {
+          final width = MediaQuery.of(context).size.width;
+          if (width < 900) {
+            return imageFile;
+          }
+        } catch (_) {}
+      }
+
+      if (!kIsWeb) {
+        _prepareSystemUIForCrop();
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
+
+      if (!mounted) return imageFile;
+
+      final croppedFile = await ImageCropper().cropImage(
+        sourcePath: imageFile.path,
+        compressFormat: ImageCompressFormat.jpg,
+        compressQuality: 85,
+        uiSettings: [
+          AndroidUiSettings(
+            toolbarTitle: 'Ajustar Foto',
+            toolbarColor: AppColors.primaryPurple,
+            toolbarWidgetColor: Colors.white,
+            backgroundColor: Colors.black,
+            activeControlsWidgetColor: AppColors.primaryPurple,
+            initAspectRatio: CropAspectRatioPreset.square,
+            lockAspectRatio: false,
+            showCropGrid: true,
+            hideBottomControls: false,
+            dimmedLayerColor: Colors.black54,
+            aspectRatioPresets: [
+              CropAspectRatioPreset.square,
+              CropAspectRatioPreset.ratio3x2,
+              CropAspectRatioPreset.original,
+              CropAspectRatioPreset.ratio4x3,
+              CropAspectRatioPreset.ratio16x9,
+            ],
+          ),
+          IOSUiSettings(
+            title: 'Ajustar Foto',
+            aspectRatioPresets: [
+              CropAspectRatioPreset.square,
+              CropAspectRatioPreset.ratio3x2,
+              CropAspectRatioPreset.original,
+              CropAspectRatioPreset.ratio4x3,
+              CropAspectRatioPreset.ratio16x9,
+            ],
+          ),
+          WebUiSettings(context: context),
+        ],
+      );
+
+      if (!kIsWeb) {
+        _restoreSystemUI();
+      }
+
+      if (croppedFile != null) {
+        return XFile(croppedFile.path);
+      }
+      return null;
+    } catch (e) {
+      if (!kIsWeb) {
+        _restoreSystemUI();
+      }
+      return imageFile;
+    }
+  }
+
   Future<void> _pickImage() async {
     final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
-    if (picked != null) setState(() => _imageFile = io.File(picked.path));
+    if (picked != null) {
+      final cropped = await _cropImage(picked);
+      if (cropped != null) {
+        setState(() => _imageFile = io.File(cropped.path));
+      }
+    }
+  }
+
+  Future<void> _editCurrentImage() async {
+    if (_imageFile == null) return;
+    final cropped = await _cropImage(XFile(_imageFile!.path));
+    if (cropped != null) {
+      setState(() => _imageFile = io.File(cropped.path));
+    }
   }
 
   Future<void> _showAddFolgaDialog() async {
@@ -216,7 +336,11 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
             .from('employees')
             .delete()
             .eq('id', widget.employeeToEdit!['id'])
-            .eq('shop_id', _shopId!); // Added this line based on the instruction's intent
+            .eq('shop_id', _shopId!); 
+
+        // Invalida o cache
+        ShopDataCacheService().invalidate(_shopId!, 'employees');
+
         widget.onClose();
       } catch (e) {
         if (mounted) setState(() => _isDeleting = false);
@@ -310,6 +434,9 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
             .eq('id', widget.employeeToEdit!['id']);
       }
 
+      // Invalida o cache
+      ShopDataCacheService().invalidate(_shopId!, 'employees');
+
       widget.onClose();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -376,21 +503,43 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
                         children: [
                           GestureDetector(
                             onTap: _pickImage,
-                            child: CircleAvatar(
-                              radius: 45,
-                              backgroundColor: Colors.grey[100],
-                              backgroundImage: _imageFile != null
-                                  ? (kIsWeb 
-                                      ? NetworkImage(_imageFile!.path) as ImageProvider
-                                      : FileImage(io.File(_imageFile!.path) as dynamic) as ImageProvider)
-                                  : (_existingPhotoUrl != null
-                                      ? CachedNetworkImageProvider(_existingPhotoUrl!)
-                                      : null) as ImageProvider?,
-                              child:
-                                  (_imageFile == null && _existingPhotoUrl == null)
-                                      ? const Icon(Icons.camera_alt,
-                                          size: 24, color: Colors.grey)
-                                      : null,
+                            child: Stack(
+                              alignment: Alignment.bottomRight,
+                              children: [
+                                CircleAvatar(
+                                  radius: 45,
+                                  backgroundColor: Colors.grey[100],
+                                  backgroundImage: _imageFile != null
+                                      ? (kIsWeb 
+                                          ? NetworkImage(_imageFile!.path) as ImageProvider
+                                          : FileImage(io.File(_imageFile!.path) as dynamic) as ImageProvider)
+                                      : (_existingPhotoUrl != null
+                                          ? CachedNetworkImageProvider(_existingPhotoUrl!)
+                                          : null) as ImageProvider?,
+                                  child:
+                                      (_imageFile == null && _existingPhotoUrl == null)
+                                          ? const Icon(Icons.camera_alt,
+                                              size: 24, color: Colors.grey)
+                                          : null,
+                                ),
+                                if (_imageFile != null)
+                                  Positioned(
+                                    right: 0,
+                                    bottom: 0,
+                                    child: GestureDetector(
+                                      onTap: _editCurrentImage,
+                                      child: Container(
+                                        padding: const EdgeInsets.all(4),
+                                        decoration: BoxDecoration(
+                                          color: AppColors.primaryPurple,
+                                          shape: BoxShape.circle,
+                                          border: Border.all(color: Colors.white, width: 2),
+                                        ),
+                                        child: const Icon(Icons.crop, size: 14, color: Colors.white),
+                                      ),
+                                    ),
+                                  ),
+                              ],
                             ),
                           ),
                           if (_uploadProgress > 0 && _uploadProgress < 1.0) ...[

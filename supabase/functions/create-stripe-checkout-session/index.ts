@@ -50,9 +50,6 @@ serve(async (req: Request) => {
       description,  // only for mode=payment
       success_url,
       cancel_url,
-      affiliate_id,
-      affiliate_coupon_code,
-      commission_type,
     } = body
 
     if (!success_url || !cancel_url) {
@@ -93,8 +90,6 @@ serve(async (req: Request) => {
         metadata: {
           shop_id,
           plan_id,
-          affiliate_id: affiliate_id || '',
-          commission_type: commission_type || '',
         },
         subscription_data: {
           metadata: {
@@ -110,9 +105,7 @@ serve(async (req: Request) => {
         sessionParams.customer_email = email
       }
 
-      if (affiliate_coupon_code) {
-        sessionParams.discounts = [{ coupon: affiliate_coupon_code }]
-      }
+      // Lógica de cupons de afiliados removida
 
       const session = await stripe.checkout.sessions.create(sessionParams)
 

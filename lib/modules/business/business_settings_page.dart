@@ -4,6 +4,7 @@ import '../../core/services/auth_service.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
+import '../../core/services/shop_data_cache_service.dart';
 import '../../core/services/plan_features_service.dart';
 import '../../core/constants/plan_features.dart';
 import '../../widgets/upgrade_modal.dart';
@@ -278,6 +279,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       }).eq('id', shopId!);
 
       if (mounted) {
+        // Invalida o cache de configuração da loja
+        ShopDataCacheService().invalidate(shopId!, 'config');
+        
         _showSnack("Configurações salvas com sucesso!", isError: false);
       }
     } catch (e) {

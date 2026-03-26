@@ -7,6 +7,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:image_cropper/image_cropper.dart';
 import 'package:uuid/uuid.dart';
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 import '../../core/services/auth_service.dart';
 
 import '../../core/theme/app_colors.dart';
@@ -233,6 +235,28 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
       content: Text(message),
       backgroundColor: isError ? Colors.red : Colors.green,
     ));
+  }
+
+  Future<void> _editExistingImage(String url) async {
+    try {
+      setState(() => _isSaving = true);
+      final response = await http.get(Uri.parse(url));
+      final tempDir = await getTemporaryDirectory();
+      final file = io.File('${tempDir.path}/temp_crop_${DateTime.now().millisecondsSinceEpoch}.jpg');
+      await file.writeAsBytes(response.bodyBytes);
+      
+      final cropped = await _cropImage(XFile(file.path));
+      if (cropped != null) {
+        setState(() {
+          _existingUrls.remove(url);
+          _newImages.add(cropped);
+        });
+      }
+    } catch (e) {
+      _showSnackBar("Erro ao preparar imagem para recorte: $e", isError: true);
+    } finally {
+      setState(() => _isSaving = false);
+    }
   }
 
   Future<XFile?> _cropImage(XFile imageFile) async {
@@ -1169,6 +1193,25 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                   ),
                 );
               },
+            ),
+          ),
+        ),
+        Positioned(
+          left: 4,
+          top: 4,
+          child: GestureDetector(
+            onTap: () => _editExistingImage(url),
+            child: Container(
+              padding: const EdgeInsets.all(4),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+                boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 3)],
+              ),
+              child: const CircleAvatar(
+                  radius: 10,
+                  backgroundColor: AppColors.primaryPurple,
+                  child: Icon(Icons.crop, size: 12, color: Colors.white)),
             ),
           ),
         ),

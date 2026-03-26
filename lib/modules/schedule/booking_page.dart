@@ -532,10 +532,7 @@ class _BookingTimePageState extends State<BookingTimePage> {
         final day = dt.day;
 
         int startMin = dt.hour * 60 + dt.minute;
-        int? duration = int.tryParse(data['duration_min']?.toString() ?? '') ??
-            int.tryParse(data['duracao_min']?.toString() ?? '') ??
-            int.tryParse(data['duracao']?.toString() ?? '') ??
-            30;
+        int duration = int.tryParse(data['duration_min']?.toString() ?? '') ?? 30;
 
         groupedByDay.putIfAbsent(day, () => []).add({
           'start': startMin,
@@ -1048,7 +1045,7 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final svcName = widget.serviceData['nome'] ?? 'Serviço';
+    final svcName = widget.serviceData['name'] ?? widget.serviceData['nome'] ?? 'Serviço';
     final isOwnerConfirmMode = widget.onOwnerSlotConfirmed != null;
 
     return Scaffold(
@@ -1214,7 +1211,7 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                         'newProfessionalId':
                                             widget.professionalDoc['id'],
                                         'newProfessionalName':
-                                            profData['nome'] ?? 'Profissional',
+                                            profData['name'] ?? profData['nome'] ?? 'Profissional',
                                       });
 
                                       if (!mounted) return;
@@ -1236,7 +1233,7 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                                   RescheduleSuccessPage(
                                                     appointmentId: widget.appointmentId!,
                                                     newDate: newDateTime,
-                                                    newProfessional: profData['nome'] ?? 'Profissional',
+                                                    newProfessional: profData['name'] ?? profData['nome'] ?? 'Profissional',
                                                     newServiceName: finalName,
                                                     oldDate: widget.oldDate,
                                                     oldProfessional: widget.oldProfessional ?? '',
@@ -1336,11 +1333,10 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
         continue;
       }
 
-      int? agDuration = int.tryParse(data['duracao_min']?.toString() ?? '') ??
-          int.tryParse(data['duracao']?.toString() ?? '');
+      int? agDuration = int.tryParse(data['duration_min']?.toString() ?? '');
 
       if (agDuration == null) {
-        String? savedServiceId = data['servicoId'] ?? data['servico_id'];
+        String? savedServiceId = data['service_id']?.toString();
         if (savedServiceId != null && savedServiceId.isNotEmpty) {
           try {
             final svcDoc = await Supabase.instance.client
@@ -1351,7 +1347,7 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
             if (svcDoc != null) {
               final svcData = svcDoc as Map<String, dynamic>;
               agDuration =
-                  int.tryParse(svcData['tempo_min']?.toString() ?? '');
+                  int.tryParse(svcData['duration_min']?.toString() ?? '');
             }
           } catch (_) {}
         }
@@ -1371,7 +1367,7 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
   Widget _buildSlotsList() {
     final profData = widget.professionalDoc;
     int duration =
-        int.tryParse(widget.serviceData['tempo_min'].toString()) ?? 30;
+        int.tryParse(widget.serviceData['duration_min']?.toString() ?? '30') ?? 30;
     final startDay = DateTime(widget.selectedDate.year,
         widget.selectedDate.month, widget.selectedDate.day);
     final endDay = startDay.add(const Duration(hours: 23, minutes: 59));
@@ -1422,8 +1418,8 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
         if (isOwnerMode) {
           // Gera todos os slots do turno, sem filtro de horário passado.
           // Slots que colidem com um serviço em andamento são marcados como occupied.
-          final startStr = profData['horario_inicio'] ?? "08:00";
-          final endStr = profData['horario_fim'] ?? "18:00";
+          final startStr = profData['work_start'] ?? "08:00";
+          final endStr = profData['work_end'] ?? "18:00";
           int startDayMin = int.parse(startStr.split(':')[0]) * 60 +
               int.parse(startStr.split(':')[1]);
           int endDayMin = int.parse(endStr.split(':')[0]) * 60 +
@@ -1438,8 +1434,8 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
           slots = allSlots;
         } else {
           slots = AvailabilityUtils.generateSmartSlots(
-            startStr: profData['horario_inicio'] ?? "08:00",
-            endStr: profData['horario_fim'] ?? "18:00",
+            startStr: profData['work_start'] ?? "08:00",
+            endStr: profData['work_end'] ?? "18:00",
             interval: widget.intervalMinutes,
             serviceDuration: duration,
             busyIntervals: busyIntervals,

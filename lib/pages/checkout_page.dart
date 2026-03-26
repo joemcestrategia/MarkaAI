@@ -325,8 +325,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
         totalDiscountPercent += _couponDiscountPercent;
       }
 
-      // Limita desconto a 100% (segurança)
-      if (totalDiscountPercent > 100) totalDiscountPercent = 100;
+      // Para pagamentos online, limita a 99% para não gerar valor R$0,00
+      // (gateways rejeitam transações com valor zero)
+      final bool isOnlinePayment = _selectedPaymentType != 'local';
+      final double maxDiscount = isOnlinePayment ? 99.0 : 100.0;
+      if (totalDiscountPercent > maxDiscount) totalDiscountPercent = maxDiscount;
 
       base = base * (1 - (totalDiscountPercent / 100.0));
 
@@ -334,6 +337,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
       if (_selectedMethod == 'card' && _selectedPaymentType != 'local') {
         base = base * (1 + (_cardTaxPercent / 100.0));
       }
+
+      // Segurança: nunca permite valor negativo
+      if (base < 0) base = 0;
 
       debugPrint('💰 [Recalculate] Método: $_selectedMethod, Taxa: $_cardTaxPercent%, Base: $base');
       valorFinalComJuros = base;
@@ -344,6 +350,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
   Future<void> _applyCoupon() async {
     final code = _couponController.text.trim();
     if (code.isEmpty) return;
+
+    // Segurança: impede aplicação dupla de cupom
+    if (_couponApplied) return;
 
     // 🆕 Verifica se o plano permite cupons antes de validar
     final shopFeatures = PlanFeaturesService.getFeaturesForShop(widget.shopData);
@@ -921,6 +930,13 @@ class _CheckoutPageState extends State<CheckoutPage> {
     debugPrint(
         'Executando ação final | Tipo: $_selectedPaymentType | Método: $_selectedMethod');
 
+    // Segurança: bloqueia pagamento online com valor abaixo do mínimo do gateway
+    if (_selectedPaymentType != 'local' && valorFinalComJuros < 1.0) {
+      _showError('O valor mínimo para pagamento online é R\$ 1,00. '
+          'Remova o cupom ou escolha pagar pessoalmente.');
+      return;
+    }
+
     if (_selectedPaymentType == 'local') {
       debugPrint('→ Pagamento LOCAL');
       _saveBooking(metodo: "No Local", status: "agendado", valorPago: 0);
@@ -929,19 +945,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
       double valor = valorFinalComJuros;
       String desc = (_selectedPaymentType == 'sinal') ? "Sinal" : "Total";
       
-      // SALVA O AGENDAMENTO COMO PENDENTE ANTES DE GERAR O PIX
-      // Isso garante que se a conexão cair ou o app fechar, o agendamento já existe
-      final appointmentId = await _saveBooking(
-        metodo: "Pix ($desc)",
-        status: "pendente",
-        valorPago: 0,
-        isPreSave: true,
-      );
-
-      if (appointmentId != null) {
-        _preSavedAppointmentId = appointmentId; // Salva na tela para reutilizar
-        _generatePix(valor, desc, externalRef: appointmentId);
-      }
+      // Gera referência temporária para o PIX (NÃO cria agendamento ainda).
+      // O agendamento só será criado quando o pagamento for confirmado (approved).
+      final tempRef = "ORD-${DateTime.now().millisecondsSinceEpoch}";
+      _preSavedAppointmentId = null;
+      _generatePix(valor, desc, externalRef: tempRef);
     } else {
       debugPrint('→ Pagamento CARTÃO → cobrando com dados já coletados');
       double valorParaCobrar = valorFinalComJuros;
@@ -2072,7 +2080,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
       if (_couponApplied) {
         activeDiscountPercent += _couponDiscountPercent;
       }
-      if (activeDiscountPercent > 100) activeDiscountPercent = 100;
+      // Para pagamentos online, limita a 99% (gateway rejeita R$0)
+      final bool isOnline = _selectedPaymentType != 'local';
+      final double maxDiscount = isOnline ? 99.0 : 100.0;
+      if (activeDiscountPercent > maxDiscount) activeDiscountPercent = maxDiscount;
 
       final double totalDiscounted = valorTotal * (1 - (activeDiscountPercent / 100.0));
       double totalWithTax = totalDiscounted;

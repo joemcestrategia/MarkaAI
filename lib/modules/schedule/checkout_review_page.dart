@@ -88,7 +88,7 @@ class _CheckoutReviewPageState extends State<CheckoutReviewPage> {
       'scheduled_at': bookingDate.toIso8601String(),
       'status': 'confirmado',
       'payment_method': 'Cartão de Crédito',
-      'total_value': widget.paymentData['valor'],
+      'total_price': widget.paymentData['valor'],
       'metadata': {'payment_id': paymentId},
     });
 

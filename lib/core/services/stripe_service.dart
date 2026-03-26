@@ -109,9 +109,6 @@ class StripeService {
     required String planId,
     required String shopId,
     required String customerEmail,
-    String? affiliateId,
-    String? affiliateCouponCode,
-    String? commissionType,
   }) async {
     final appBaseUrl = _getAppBaseUrl();
     final successUrl =
@@ -127,9 +124,6 @@ class StripeService {
         'email': customerEmail,
         'success_url': successUrl,
         'cancel_url': cancelUrl,
-        'affiliate_id': affiliateId,
-        'affiliate_coupon_code': affiliateCouponCode,
-        'commission_type': commissionType,
       },
     );
 
@@ -221,9 +215,6 @@ class StripeService {
     required String planId,
     required String shopId,
     required String customerEmail,
-    String? affiliateId,
-    String? affiliateCouponCode,
-    String? commissionType,
   }) async {
     // ── WEB → Checkout Session com redirect ──────────────────
     if (kIsWeb) {
@@ -231,9 +222,6 @@ class StripeService {
         planId: planId,
         shopId: shopId,
         customerEmail: customerEmail,
-        affiliateId: affiliateId,
-        affiliateCouponCode: affiliateCouponCode,
-        commissionType: commissionType,
       );
     }
 
@@ -244,9 +232,6 @@ class StripeService {
         'plan_id': planId,
         'shop_id': shopId,
         'email': customerEmail,
-        'affiliate_id': affiliateId,
-        'affiliate_coupon_code': affiliateCouponCode,
-        'commission_type': commissionType,
       });
 
       if (response.status != 200) {

@@ -65,11 +65,19 @@ class CouponService {
         }
       }
  
-      // 4. Verifica validade (data)
+      // 3b. Verifica se o desconto é válido (segurança contra dados corrompidos)
+      final double discountValue = (couponData['discount_percent'] as num?)?.toDouble() ?? 0.0;
+      if (discountValue <= 0 || discountValue > 100) {
+        return CouponValidationResult(
+            isValid: false, message: 'Cupom com desconto inválido.');
+      }
+
+      // 4. Verifica validade (data) — usa fim do dia para incluir o dia inteiro
       final validUntilStr = couponData['valid_until'];
       if (validUntilStr != null) {
         final validUntil = DateTime.parse(validUntilStr.toString());
-        if (validUntil.isBefore(DateTime.now())) {
+        final endOfDay = DateTime(validUntil.year, validUntil.month, validUntil.day, 23, 59, 59);
+        if (endOfDay.isBefore(DateTime.now())) {
           return CouponValidationResult(
               isValid: false, message: 'Este cupom expirou.');
         }
@@ -106,7 +114,7 @@ class CouponService {
  
       return CouponValidationResult(
         isValid: true,
-        discountPercent: (couponData['discount_percent'] as num?)?.toDouble() ?? 0.0,
+        discountPercent: discountValue,
         couponId: couponId,
       );
     } catch (e) {
@@ -116,7 +124,9 @@ class CouponService {
     }
   }
  
-  /// Registra o uso do cupom após o agendamento ser confirmado
+  /// Registra o uso do cupom após o agendamento ser confirmado.
+  /// A tabela coupon_usage possui UNIQUE(coupon_id, user_id), então
+  /// tentativas duplicadas são rejeitadas no banco (proteção contra race condition).
   static Future<void> markCouponAsUsed({
     required String shopId,
     required String couponId,
@@ -125,6 +135,7 @@ class CouponService {
   }) async {
     try {
       // 1. Registra o uso na tabela coupon_usage
+      //    Se houver UNIQUE violation, o cupom já foi usado por este usuário.
       await _supabase.from('coupon_usage').insert({
         'coupon_id': couponId,
         'user_id': userId,
@@ -132,14 +143,19 @@ class CouponService {
         'used_at': DateTime.now().toIso8601String(),
       });
  
-      // 2. Incrementa o contador de uso global
+      // 2. Incrementa o contador de uso global via RPC atômico
+      //    A função verifica se max_usage não foi atingido antes de incrementar.
       try {
         await _supabase.rpc('increment_coupon_usage', params: {'coupon_id': couponId});
       } catch (e) {
-        // Fallback: update manual
-        final couponQuery = await _supabase.from('coupons').select('usage_count').eq('id', couponId).single();
-        final currentCount = int.tryParse(couponQuery['usage_count']?.toString() ?? '0') ?? 0;
-        await _supabase.from('coupons').update({'usage_count': currentCount + 1}).eq('id', couponId);
+        if (kDebugMode) print('Erro ao incrementar uso do cupom (RPC): $e');
+      }
+    } on PostgrestException catch (e) {
+      // Código 23505 = unique_violation → cupom já usado por este usuário
+      if (e.code == '23505') {
+        if (kDebugMode) print('Cupom $couponId já foi utilizado pelo usuário $userId (unique constraint).');
+      } else {
+        if (kDebugMode) print('Erro PostgrestException ao marcar cupom: $e');
       }
     } catch (e) {
       if (kDebugMode) print('Erro ao marcar cupom como usado: $e');

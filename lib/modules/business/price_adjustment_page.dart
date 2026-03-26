@@ -5,6 +5,7 @@ import '../../core/services/session_service.dart';
 import '../../core/services/plan_features_service.dart';
 import '../../core/constants/plan_features.dart';
 import '../../widgets/upgrade_modal.dart';
+import '../../core/services/shop_data_cache_service.dart';
 
 class PriceAdjustmentPage extends StatefulWidget {
   const PriceAdjustmentPage({super.key});
@@ -231,6 +232,9 @@ class _PriceAdjustmentPageState extends State<PriceAdjustmentPage> {
       // Update future appointments (unpaid and "No Local")
       await _updateFutureAppointments(newPrices);
 
+      // Invalida o cache
+      ShopDataCacheService().invalidate(shopId!, 'services');
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -323,6 +327,9 @@ class _PriceAdjustmentPageState extends State<PriceAdjustmentPage> {
           .from('price_adjustment_history')
           .delete()
           .eq('id', _lastAdjustment!['id']);
+
+      // Invalida o cache
+      ShopDataCacheService().invalidate(shopId!, 'services');
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

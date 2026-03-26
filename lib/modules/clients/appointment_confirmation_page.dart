@@ -98,7 +98,7 @@ class _AppointmentConfirmationPageState
     final dateStr = data['scheduled_at'] ?? '';
     final date = DateTime.tryParse(dateStr) ?? DateTime.now();
     final servico = data['service_name'] ?? data['servico_nome'] ?? 'Serviço';
-    final horario = data['horario'] ?? '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    final horario = '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
     final valor = (data['total_price'] ?? data['valor_total'] ?? 0.0).toDouble();
     final metodoPagamento = data['payment_method'] ?? data['metodo_pagamento'] ?? '';
     final precisaPagar =

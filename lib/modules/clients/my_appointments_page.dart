@@ -795,7 +795,7 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
                       child: ElevatedButton(
                         onPressed: () async {
                           // --- NOVA VALIDAÇÃO DE POLÍTICA ---
-                          final validation = await ClientVerificationService.canModifyAppointment(appointment);
+                          final validation = await ClientVerificationService.canModifyAppointment(appointment, isReschedule: true);
                           if (!validation['can']) {
                             if (!mounted) return;
                             _showError(validation['reason']);
@@ -975,8 +975,8 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
 
   Future<void> _rescheduleViaBookingPage(Map<String, dynamic> appointment) async {
     final shopId = (appointment['shop_id'] ?? appointment['shopId']) as String;
-    final professionalId = appointment['profissionalId'] as String;
-    final serviceId = appointment['servicoId'] as String;
+    final professionalId = (appointment['professional_id'] ?? appointment['profissionalId']).toString();
+    final serviceId = (appointment['service_id'] ?? appointment['servicoId']).toString();
 
     showDialog(
       context: context,

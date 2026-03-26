@@ -285,6 +285,7 @@ class ServicesManagementPage extends StatefulWidget {
 class _ServicesManagementPageState extends State<ServicesManagementPage> {
   String? shopId;
   bool _isLoading = true;
+  int _refreshKey = 0;
 
   // Controle Desktop
   bool _showPanel = false;
@@ -362,7 +363,7 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
             ),
           ),
         ),
-      );
+      ).then((_) { if (mounted) setState(() => _refreshKey++); });
     } else {
       // 💻 DESKTOP: Abre painel lateral
       _openDetailsModeDesktop(data);
@@ -390,7 +391,7 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
             ),
           ),
         ),
-      );
+      ).then((_) { if (mounted) setState(() => _refreshKey++); });
     } else {
       // 💻 DESKTOP: Abre painel lateral
       if (docToEdit != null) {
@@ -448,6 +449,7 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
       _showPanel = false;
       _selectedService = null;
       _isEditing = false;
+      _refreshKey++;
     });
   }
 
@@ -615,6 +617,7 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
         // LISTA (STREAM)
         Expanded(
           child: StreamBuilder<List<Map<String, dynamic>>>(
+            key: ValueKey('svc_stream_$_refreshKey'),
             stream: sb.Supabase.instance.client
                 .from('services')
                 .stream(primaryKey: ['id'])
@@ -897,7 +900,7 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
           ],
         ),
       ),
-    );
+    ).then((_) { if (mounted) setState(() => _refreshKey++); });
   }
 
   Widget _buildModalItem({
@@ -977,7 +980,7 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
           ),
         ],
       ),
-    );
+    ).then((_) { if (mounted) setState(() => _refreshKey++); });
   }
 }
 

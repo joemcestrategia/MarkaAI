@@ -41,7 +41,7 @@ import '../help/help_guide_page.dart';
 import 'price_adjustment_page.dart';
 import '../../pages/privacy_settings_page.dart';
 import 'holidays_page.dart';
-import '../clients/client_affiliate_page.dart';
+// import '../clients/client_affiliate_page.dart'; // Removido: sistema de afiliados desativado
 
 class BusinessHomePage extends StatefulWidget {
   const BusinessHomePage({super.key});
@@ -669,7 +669,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       case 9: return const PriceAdjustmentPage();
       case 10: return const PrivacySettingsPage();
       case 11: return HolidaysPage(shopId: shopId ?? "");
-      case 12: return const ClientAffiliatePage();
+      // case 12: return const ClientAffiliatePage(); // Removido
       default: return _buildHomeDashboard(isDesktop: isDesktop);
     }
   }
@@ -811,11 +811,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                   ),
                 ),
 
-                _buildDesktopMenuItem(
-                  12,
-                  Icons.stars_outlined,
-                  "Programa de Afiliados",
-                ),
+                // Item de afiliados removido
 
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),

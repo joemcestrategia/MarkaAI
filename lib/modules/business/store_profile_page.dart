@@ -11,6 +11,7 @@ import '../../core/services/session_service.dart';
 import '../../core/services/image_service.dart';
 import '../../core/services/plan_features_service.dart';
 import '../../core/constants/plan_features.dart';
+import '../../core/services/shop_data_cache_service.dart';
 
 // Lista fixa das UFs brasileiras
 const List<String> _kStoreUFs = [
@@ -448,6 +449,9 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
           .from('shops')
           .update(updateData)
           .eq('id', _shopId!);
+
+      // Invalida o cache de perfil/configuração da loja
+      ShopDataCacheService().invalidate(_shopId!, 'config');
 
       if (mounted) {
         setState(() {

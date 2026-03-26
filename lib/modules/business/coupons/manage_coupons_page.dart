@@ -64,6 +64,7 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
   bool _isGeneratingImage = false;
   late PlanFeatures _currentFeatures = planFeaturesConfig[PlanKey.free]!;
   List<Map<String, dynamic>> _services = [];
+  int _refreshKey = 0;
 
   Map<String, dynamic>? _couponToShare;
 
@@ -165,6 +166,7 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
           body: Stack(
             children: [
               StreamBuilder<List<Map<String, dynamic>>>(
+                key: ValueKey('cpn_stream_$_refreshKey'),
                 stream: Supabase.instance.client
                     .from('coupons')
                     .stream(primaryKey: ['id'])
@@ -736,9 +738,9 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
                   ),
                   child: Slider(
                     value: discountValue,
-                    min: 0,
+                    min: 1,
                     max: 100,
-                    divisions: 100,
+                    divisions: 99,
                     label: "${discountValue.toInt()}%",
                     onChanged: (val) {
                       setDialogState(() {
@@ -923,9 +925,16 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
                   height: 56,
                   child: ElevatedButton(
                     onPressed: () async {
-                      if (codeCtrl.text.isEmpty) {
+                      if (codeCtrl.text.trim().isEmpty) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(content: Text('O código do cupom é obrigatório')),
+                        );
+                        return;
+                      }
+
+                      if (discountValue <= 0 || discountValue > 100) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('O percentual de desconto deve ser entre 1% e 100%')),
                         );
                         return;
                       }
@@ -1047,7 +1056,7 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
         ),
       ),
     ),
-    );
+    ).then((_) { if (mounted) setState(() => _refreshKey++); });
   }
 
   void _confirmDelete(String id) {
@@ -1076,7 +1085,7 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
           ),
         ],
       ),
-    );
+    ).then((_) { if (mounted) setState(() => _refreshKey++); });
   }
 
   void _showUpgradeDialog() {

@@ -21,11 +21,6 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
   int _trialDaysRemaining = 0;
   String? _shopId;
 
-  // Afiliados
-  final TextEditingController _couponController = TextEditingController();
-  bool _isValidatingCoupon = false;
-  Map<String, dynamic>? _affiliateData;
-  String? _couponError;
 
   @override
   void initState() {
@@ -97,45 +92,6 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
     }
   }
 
-  Future<void> _validarCupom() async {
-    final code = _couponController.text.trim();
-    if (code.isEmpty) return;
-
-    setState(() {
-      _isValidatingCoupon = true;
-      _couponError = null;
-      _affiliateData = null;
-    });
-
-    try {
-      final response = await Supabase.instance.client.functions.invoke(
-        'validate-coupon',
-        body: {'coupon_code': code, 'store_id': _shopId},
-      );
-
-      if (response.status == 200 && response.data['valid'] == true) {
-        setState(() {
-          _affiliateData = response.data;
-          _isValidatingCoupon = false;
-        });
-        if (mounted) {
-           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('🎉 Cupom aplicado com sucesso!'), backgroundColor: Colors.green),
-          );
-        }
-      } else {
-        setState(() {
-          _couponError = response.data['message'] ?? 'Cupom inválido';
-          _isValidatingCoupon = false;
-        });
-      }
-    } catch (e) {
-      setState(() {
-        _couponError = 'Erro ao validar cupom';
-        _isValidatingCoupon = false;
-      });
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -187,8 +143,6 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
                     if (_canUseTrial && !_trialActive) _buildTrialBanner(),
                     if (_trialActive) _buildTrialActiveBanner(),
                     const SizedBox(height: 16),
-                    _buildCouponSection(),
-                    const SizedBox(height: 16),
                     _buildPlanCard(SubscriptionPlan.free,
                         isCurrent: _currentPlan == SubscriptionPlan.free),
                     _buildPlanCard(SubscriptionPlan.start,
@@ -201,85 +155,6 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
                 );
               },
             ),
-    );
-  }
-
-  Widget _buildCouponSection() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _affiliateData != null ? Colors.green.shade300 : Colors.grey.shade200),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Tem um cupom de indicação?',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _couponController,
-                  enabled: _affiliateData == null && !_isValidatingCoupon,
-                  decoration: InputDecoration(
-                    hintText: 'Digite o código',
-                    isDense: true,
-                    errorText: _couponError,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: Colors.grey),
-                    ),
-                  ),
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                  textCapitalization: TextCapitalization.characters,
-                ),
-              ),
-              const SizedBox(width: 10),
-              _affiliateData != null
-                  ? TextButton.icon(
-                      onPressed: () {
-                        setState(() {
-                          _affiliateData = null;
-                          _couponController.clear();
-                        });
-                      },
-                      icon: const Icon(Icons.close, color: Colors.red),
-                      label: const Text('Remover', style: TextStyle(color: Colors.red)),
-                    )
-                  : ElevatedButton(
-                      onPressed: _isValidatingCoupon ? null : _validarCupom,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primaryPurple,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                      child: _isValidatingCoupon
-                          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                          : const Text('Aplicar'),
-                    ),
-            ],
-          ),
-          if (_affiliateData != null) ...[
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                const Icon(Icons.check_circle, color: Colors.green, size: 16),
-                const SizedBox(width: 6),
-                Text(
-                  'Desconto de ${_affiliateData!['discount_percent']}% aplicado ao primeiro mês!',
-                  style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 12),
-                ),
-              ],
-            ),
-          ],
-        ],
-      ),
     );
   }
 
@@ -599,9 +474,6 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
                         final success =
                             await SubscriptionService.startPurchaseFlow(
                                 context, plan,
-                                affiliateId: _affiliateData?['affiliate_id'],
-                                affiliateCouponCode: _couponController.text,
-                                commissionType: _affiliateData?['commission_type'],
                             );
                         if (success && mounted) {
                           setState(() => _currentPlan = plan);
@@ -651,9 +523,6 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
                         final success =
                             await SubscriptionService.startPurchaseFlow(
                                 context, plan,
-                                affiliateId: _affiliateData?['affiliate_id'],
-                                affiliateCouponCode: _couponController.text,
-                                commissionType: _affiliateData?['commission_type'],
                             );
                         if (success && mounted) {
                           setState(() => _currentPlan = plan);
@@ -679,9 +548,6 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
                         final success =
                             await SubscriptionService.startPurchaseFlow(
                                 context, plan,
-                                affiliateId: _affiliateData?['affiliate_id'],
-                                affiliateCouponCode: _couponController.text,
-                                commissionType: _affiliateData?['commission_type'],
                             );
                         if (success && mounted) {
                           setState(() => _currentPlan = plan);

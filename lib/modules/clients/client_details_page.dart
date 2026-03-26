@@ -1118,7 +1118,7 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
         data['nome_servico'] ??
         data['service_name'] ??
         'Serviço';
-    final String horario = data['horario'] ?? DateFormat('HH:mm').format(date);
+    final String horario = DateFormat('HH:mm').format(date);
     final String profissional = data['profissional_nome'] ?? '';
 
     final bool isToday = DateFormat('yyyyMMdd').format(date) ==

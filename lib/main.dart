@@ -23,7 +23,7 @@ void main() async {
       url: ApiKeys.supabaseUrl,
       anonKey: ApiKeys.supabaseAnonKey,
       authOptions: const FlutterAuthClientOptions(
-        authFlowType: AuthFlowType.pkce,
+        authFlowType: AuthFlowType.implicit,
       ),
     );
     print("=== BOOT STEP 1: Supabase Inicializado ===");

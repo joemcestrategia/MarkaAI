@@ -632,8 +632,8 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                                 final slots =
                                     AvailabilityUtils.generateSmartSlots(
                                   startStr:
-                                      empData['horario_inicio'] ?? "08:00",
-                                  endStr: empData['horario_fim'] ?? "18:00",
+                                      empData['work_start'] ?? "08:00",
+                                  endStr: empData['work_end'] ?? "18:00",
                                   interval:
                                       _shopConfig['intervalo_agenda_min'] ?? 30,
                                   serviceDuration: duration,
@@ -1564,8 +1564,8 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                                       if (!empSnapshot.hasData) return const SizedBox();
                                       final empData = empSnapshot.data ?? {};
                                       final slots = AvailabilityUtils.generateSmartSlots(
-                                        startStr: empData['horario_inicio'] ?? "08:00",
-                                        endStr: empData['horario_fim'] ?? "18:00",
+                                        startStr: empData['work_start'] ?? "08:00",
+                                        endStr: empData['work_end'] ?? "18:00",
                                         interval: _shopConfig['intervalo_agenda_min'] ?? 30,
                                         serviceDuration: durationMin,
                                         busyIntervals: busySnapshot.data!,

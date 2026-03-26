@@ -15,10 +15,8 @@ import '../../modules/clients/rescheduling_success_page.dart';
 import '../../modules/business/price_adjustment_page.dart';
 import '../../modules/admin/admin_dashboard_page.dart';
 import '../../modules/admin/admin_setup_page.dart';
-import '../../modules/clients/client_affiliate_page.dart';
 import '../../core/services/session_service.dart';
 import '../../core/services/auth_service.dart';
-import '../../modules/public/affiliate_landing_page.dart';
 
 class AppRouter {
   static Route<dynamic> generateRoute(RouteSettings settings) {
@@ -76,6 +74,17 @@ class AppRouter {
     if (mode == 'resetPassword' && oobCode != null && oobCode.isNotEmpty) {
       return MaterialPageRoute(
         builder: (_) => ResetPasswordPage(oobCode: oobCode),
+        settings: settings,
+      );
+    }
+
+    // ── Rota de Reset de Senha (Supabase OTP) ──────────────────────────
+    // O Supabase redireciona para /reset-password com ?code=... ou #access_token=...
+    // O SDK Flutter/Web troca automaticamente o token e emite PASSWORD_RECOVERY.
+    // Aqui apenas renderizamos o AuthGate que detecta o evento.
+    if (cleanPath == 'reset-password') {
+      return MaterialPageRoute(
+        builder: (_) => const _PasswordRecoveryGate(),
         settings: settings,
       );
     }
@@ -141,14 +150,6 @@ class AppRouter {
     if (cleanPath == 'setup-admin-secret') {
       return MaterialPageRoute(
           builder: (_) => const AdminSetupPage(), settings: settings);
-    }
-    if (cleanPath == 'afiliados') {
-      return MaterialPageRoute(
-          builder: (_) => const AffiliateLandingPage(), settings: settings);
-    }
-    if (cleanPath == 'afiliados/painel') {
-      return MaterialPageRoute(
-          builder: (_) => const ClientAffiliatePage(), settings: settings);
     }
 
     if (baseRoute == 'subscription_plans') {
@@ -218,9 +219,8 @@ class AppRouter {
       'reschedule_success',
       'business/price_adjustment',
       'setup-admin-secret',
-      'afiliados',
-      'afiliados/painel',
       'payment-success',
+      'reset-password', // Rota de redefinição de senha via Supabase OTP
     ];
     return knownRoutes.contains(route.toLowerCase());
   }
@@ -301,6 +301,14 @@ class _AuthGateState extends State<AuthGate> {
         // Se conseguirmos uma sessão válida (com ou sem código), limpamos o timer
         if (session != null) {
           _fallbackTimer?.cancel();
+        }
+
+        // Detecta evento de recuperação de senha → redireciona para tela de redefinição
+        if (event == sb.AuthChangeEvent.passwordRecovery) {
+          debugPrint('AuthGate: evento PASSWORD_RECOVERY detectado → ResetPasswordPage');
+          // Limpa a URL do navegador
+          if (kIsWeb) html.window.history.replaceState(null, '', '/reset-password');
+          return const ResetPasswordPage(oobCode: '');
         }
 
         // Sem sessão e já passou do initial ou não tem code na URL, ou superou Timeout = deslogado
@@ -574,5 +582,105 @@ class _PaymentSuccessPageState extends State<_PaymentSuccessPage> {
         ),
       ),
     );
+  }
+}
+
+// ── Gate que aguarda o evento PASSWORD_RECOVERY do Supabase ──────────────────
+// Renderizado quando o usuário acessa /reset-password vindo do e-mail.
+// USA StatefulWidget para assinar o stream em initState (evita perder eventos
+// emitidos logo após Supabase.initialize()) E chama getSessionFromUrl()
+// explicitamente para o implicit flow com hash fragment #access_token=...
+class _PasswordRecoveryGate extends StatefulWidget {
+  const _PasswordRecoveryGate();
+
+  @override
+  State<_PasswordRecoveryGate> createState() => _PasswordRecoveryGateState();
+}
+
+class _PasswordRecoveryGateState extends State<_PasswordRecoveryGate> {
+  bool _isRecovery = false;
+  bool _ready = false;
+  StreamSubscription<sb.AuthState>? _sub;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    final supabase = sb.Supabase.instance.client;
+
+    // 1. Assina o stream ANTES de qualquer await para não perder eventos futuros
+    _sub = supabase.auth.onAuthStateChange.listen((state) {
+      debugPrint('[PasswordRecoveryGate] evento: ${state.event}');
+      if (state.event == sb.AuthChangeEvent.passwordRecovery ||
+          state.event == sb.AuthChangeEvent.signedIn) {
+        // Verifica se o tipo da sessão é recovery
+        final isRecoverySession = state.event == sb.AuthChangeEvent.passwordRecovery;
+        if (mounted && isRecoverySession) {
+          setState(() {
+            _isRecovery = true;
+            _ready = true;
+          });
+        }
+      }
+    });
+
+    // 2. Tenta processar o hash da URL explicitamente (implicit flow)
+    // O hash terá o formato: #access_token=...&type=recovery
+    if (kIsWeb) {
+      try {
+        final fragment = Uri.base.fragment;
+        debugPrint('[PasswordRecoveryGate] Fragment da URL: $fragment');
+
+        if (fragment.contains('type=recovery') || fragment.contains('access_token=')) {
+          // Força o SDK a processar o hash e criar a sessão
+          final response = await supabase.auth.getSessionFromUrl(Uri.base);
+          debugPrint('[PasswordRecoveryGate] getSessionFromUrl OK, session: ${response.session.user.email}');
+
+          if (mounted) {
+            setState(() {
+              _isRecovery = true;
+              _ready = true;
+            });
+            // Limpa o hash da URL para não poluir
+            html.window.history.replaceState(null, '', '/reset-password');
+            return;
+          }
+        }
+      } catch (e) {
+        debugPrint('[PasswordRecoveryGate] getSessionFromUrl erro: $e');
+      }
+    }
+
+    // 3. Se não encontrou o token no hash, marca como pronto (vai para login)
+    if (mounted && !_isRecovery) {
+      // Aguarda um breve momento para o stream emitir o evento PASSWORD_RECOVERY
+      await Future.delayed(const Duration(milliseconds: 800));
+      if (mounted && !_isRecovery) {
+        setState(() => _ready = true);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Recovery confirmado → tela de nova senha
+    if (_isRecovery) {
+      return const ResetPasswordPage(oobCode: '');
+    }
+
+    // Ainda carregando
+    if (!_ready) return const _SplashLoading();
+
+    // Nenhum token de recovery encontrado → login
+    return const LoginPage();
   }
 }

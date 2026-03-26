@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'package:intl/intl.dart';
 import '../../core/theme/app_colors.dart';
 import 'categories_page.dart';
+import '../../core/services/shop_data_cache_service.dart';
 
 class AdminSimplePage extends StatefulWidget {
   const AdminSimplePage({super.key});
@@ -59,7 +60,7 @@ class _AdminSimplePageState extends State<AdminSimplePage> {
     }
 
     return DefaultTabController(
-      length: 9,
+      length: 8,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Painel Admin'),
@@ -82,7 +83,6 @@ class _AdminSimplePageState extends State<AdminSimplePage> {
             Tab(text: 'Agendamentos'),
             Tab(text: 'Feriados'),
             Tab(text: 'Planos'),
-            Tab(text: 'Afiliados'),
           ]),
         ),
         body: TabBarView(children: [
@@ -94,7 +94,6 @@ class _AdminSimplePageState extends State<AdminSimplePage> {
           _appointmentsTab(),
           _holidaysTab(),
           _plansLinkTab(),
-          _affiliatesTab(),
         ]),
       ),
     );
@@ -994,6 +993,10 @@ class _AdminSimplePageState extends State<AdminSimplePage> {
                     'name': nameCtrl.text.trim(),
                     'is_platform_closed': true,
                   });
+
+                  // Invalida o cache global
+                  ShopDataCacheService().invalidateAll(null);
+
                   if (mounted) Navigator.pop(ctx);
                 } catch (e) {
                   debugPrint("Erro ao salvar feriado global: $e");
@@ -1026,174 +1029,13 @@ class _AdminSimplePageState extends State<AdminSimplePage> {
     if (confirm == true) {
       try {
         await Supabase.instance.client.from('global_holidays').delete().eq('id', id);
+        
+        // Invalida o cache global
+        ShopDataCacheService().invalidateAll(null);
       } catch (e) {
         debugPrint("Erro ao excluir feriado global: $e");
       }
     }
   }
 
-  Widget _affiliatesTab() {
-    return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: Supabase.instance.client
-          .from('affiliates')
-          .stream(primaryKey: ['id'])
-          .order('created_at', ascending: false),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        final affiliates = snapshot.data!;
-        
-        return Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: ElevatedButton.icon(
-                onPressed: () => _editAffiliateConfig(),
-                icon: const Icon(Icons.settings),
-                label: const Text('Configurar Programa'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primaryPurple,
-                  foregroundColor: Colors.white,
-                ),
-              ),
-            ),
-            Expanded(
-              child: ListView.builder(
-                itemCount: affiliates.length,
-                itemBuilder: (context, index) {
-                  final aff = affiliates[index];
-                  final bool isActive = aff['status'] == 'active';
-                  
-                  return ListTile(
-                    title: Text(aff['coupon_code'] ?? 'SEM CUPOM'),
-                    subtitle: Text('Status: ${aff['status']} • Vendas: ${aff['total_referrals']}'),
-                    trailing: Switch(
-                      value: isActive,
-                      onChanged: (val) => _toggleAffiliateStatus(aff['id'], val),
-                    ),
-                    onTap: () => _showAffiliateDetails(aff),
-                  );
-                },
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Future<void> _toggleAffiliateStatus(String id, bool val) async {
-    try {
-      await Supabase.instance.client
-          .from('affiliates')
-          .update({'status': val ? 'active' : 'inactive'})
-          .eq('id', id);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Status atualizado: ${val ? "Ativo" : "Inativo"}')),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao atualizar status: $e'), backgroundColor: Colors.red),
-        );
-      }
-    }
-  }
-
-  Future<void> _editAffiliateConfig() async {
-    final configSnap = await Supabase.instance.client
-        .from('affiliate_program_config')
-        .select()
-        .maybeSingle();
-    
-    final Map<String, dynamic> config = configSnap ?? {
-      'commission_percent': 20,
-      'discount_percent': 10,
-      'is_active': true,
-    };
-
-    final commCtrl = TextEditingController(text: config['commission_percent'].toString());
-    final discCtrl = TextEditingController(text: config['discount_percent'].toString());
-    bool isActive = config['is_active'] ?? true;
-
-    await showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setModalState) => AlertDialog(
-          title: const Text('Configuração do Programa'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: commCtrl,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Comissão (%)', suffixText: '%'),
-              ),
-              TextField(
-                controller: discCtrl,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Desconto Cliente (%)', suffixText: '%'),
-              ),
-              SwitchListTile(
-                title: const Text('Programa Ativo'),
-                value: isActive,
-                onChanged: (val) => setModalState(() => isActive = val),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
-            ElevatedButton(
-              onPressed: () async {
-                final newConfig = {
-                  'commission_percent': int.tryParse(commCtrl.text) ?? 20,
-                  'discount_percent': int.tryParse(discCtrl.text) ?? 10,
-                  'is_active': isActive,
-                  'updated_at': DateTime.now().toIso8601String(),
-                };
-                
-                if (configSnap == null) {
-                  await Supabase.instance.client.from('affiliate_program_config').insert(newConfig);
-                } else {
-                  await Supabase.instance.client.from('affiliate_program_config').update(newConfig).eq('id', config['id']);
-                }
-                
-                if (mounted) {
-                  Navigator.pop(ctx);
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Configuração salva!')));
-                }
-              },
-              child: const Text('Salvar'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showAffiliateDetails(Map<String, dynamic> aff) {
-    showModalBottomSheet(
-      context: context,
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Cupom: ${aff['coupon_code']}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-            const Divider(),
-            Text('ID: ${aff['id']}'),
-            Text('Total de Vendas: ${aff['total_referrals']}'),
-            Text('Comissões Totais: R\$ ${((aff['total_commissions'] ?? 0) / 100).toStringAsFixed(2)}'),
-            Text('Pendente: R\$ ${((aff['pending_payout'] ?? 0) / 100).toStringAsFixed(2)}'),
-            const SizedBox(height: 16),
-            const Text('Histórico de comissões e vendas pode ser visualizado no banco de dados.', style: TextStyle(fontStyle: FontStyle.italic, color: Colors.grey)),
-          ],
-        ),
-      ),
-    );
-  }
 }

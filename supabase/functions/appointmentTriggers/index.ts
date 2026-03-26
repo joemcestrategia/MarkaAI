@@ -94,10 +94,6 @@ async function buildPayloadFromAppointment(supabase: any, appt: any) {
     const d = new Date(appt.scheduled_at);
     date = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getFullYear()}`;
     time = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
-  } else if (appt.data_agendamento) {
-    const d = new Date(appt.data_agendamento);
-    date = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getFullYear()}`;
-    time = appt.horario || "";
   }
 
   if (!clientPhone && appt.client_id) {
@@ -154,6 +150,17 @@ serve(async (req) => {
     // Handle Database Webhook
     if (payload.type === 'INSERT') {
       const appt = payload.record
+      
+      // Só envia notificação de confirmação para status finais.
+      // Ignora 'pendente', 'pendente_verificacao' e outros status intermediários
+      // para evitar notificar o cliente antes do pagamento ser confirmado.
+      const notifiableStatuses = ['agendado', 'confirmado']
+      const currentStatus = (appt.status || '').toLowerCase()
+      if (!notifiableStatuses.includes(currentStatus)) {
+        console.log(`Skipping notification for appointment ${appt.id}: status="${currentStatus}" is not notifiable`)
+        return new Response(JSON.stringify({ skipped: true, reason: `status ${currentStatus} not notifiable` }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+      }
+
       const data = await buildPayloadFromAppointment(supabase, appt)
       
       if (!data.clientPhone && !data.clientEmail) {
@@ -161,13 +168,85 @@ serve(async (req) => {
         return new Response('No contact info', { status: 200 })
       }
 
-      const emailHtml = `<h1>Agendamento Confirmado!</h1>
-        <p>Olá ${data.payload.clientName}, seu agendamento no salão <strong>${data.payload.salonName}</strong> foi confirmado.</p>
-        <ul>
-          <li><strong>Serviço:</strong> ${data.payload.serviceName}</li>
-          <li><strong>Profissional:</strong> ${data.payload.professionalName}</li>
-          <li><strong>Data:</strong> ${data.payload.date} às ${data.payload.time}</li>
-        </ul>`
+      const emailHtml = `
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Agendamento Confirmado – MarkaAI</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f4f0fb;font-family:'Segoe UI',Helvetica,Arial,sans-serif;">
+
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f0fb;">
+    <tr>
+      <td align="center" style="padding:48px 20px;">
+
+        <table width="560" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;width:100%;">
+
+          <!-- HEADER -->
+          <tr>
+            <td align="center" style="background:linear-gradient(160deg, #3b0f8c 0%, #5c1fc4 60%, #7c3aed 100%); border-radius:16px 16px 0 0; padding:36px 48px 32px;">
+              <img src="https://uhccgcojwqvkfyzrmebv.supabase.co/storage/v1/object/public/Logo%20MarkaAI/logo_white.png" alt="MarkaAI" width="148" style="display:block;margin:0 auto;max-height:44px;object-fit:contain;" />
+            </td>
+          </tr>
+
+          <tr><td style="height:3px;background:linear-gradient(90deg,#7c3aed,#a78bfa,#7c3aed);"></td></tr>
+
+          <!-- CORPO -->
+          <tr>
+            <td style="background:#ffffff;padding:44px 48px 36px;">
+              <p style="margin:0 0 20px;color:#1a1a2e;font-size:20px;font-weight:700;line-height:1.3;">
+                Agendamento Confirmado! 🗓️
+              </p>
+
+              <p style="margin:0 0 16px;color:#4b5563;font-size:15px;line-height:1.75;">
+                Olá <strong>${data.payload.clientName}</strong>, seu agendamento no salão <strong style="color:#5c1fc4;">${data.payload.salonName}</strong> foi confirmado com sucesso.
+              </p>
+
+              <div style="background:#f9fafb; border-radius:12px; padding:24px; margin-bottom:32px; border:1px solid #f3f4f6;">
+                <p style="margin:0 0 12px; font-size:14px; color:#6b7280; text-transform:uppercase; font-weight:600; letter-spacing:0.5px;">Detalhes do Agendamento</p>
+                <p style="margin:0 0 8px; color:#1a1a2e; font-size:16px;"><strong>Serviço:</strong> ${data.payload.serviceName}</p>
+                <p style="margin:0 0 8px; color:#1a1a2e; font-size:16px;"><strong>Profissional:</strong> ${data.payload.professionalName}</p>
+                <p style="margin:0 0 8px; color:#1a1a2e; font-size:16px;"><strong>Data:</strong> ${data.payload.date} às ${data.payload.time}</p>
+                ${data.payload.address ? `<p style="margin:0; color:#1a1a2e; font-size:16px;"><strong>Endereço:</strong> ${data.payload.address}</p>` : ''}
+              </div>
+
+              <!-- Botão -->
+              <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td align="center" style="padding-bottom:36px;">
+                    <a href="https://markaai.com.br" style="display:inline-block; background:linear-gradient(135deg,#5c1fc4,#7c3aed); color:#ffffff; text-decoration:none; font-size:15px; font-weight:600; padding:16px 44px; border-radius:10px; letter-spacing:0.2px; box-shadow:0 6px 20px rgba(92,31,196,0.35);">
+                      Ver meus agendamentos
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Link alternativo -->
+              <p style="margin:0 0 4px;color:#9ca3af;font-size:12px;text-align:center;">Para mais informações, acesse o app:</p>
+              <p style="margin:0;color:#7c3aed;font-size:12px;word-break:break-all;line-height:1.6;text-align:center;">markaai.com.br</p>
+
+            </td>
+          </tr>
+
+          <!-- FOOTER -->
+          <tr>
+            <td style="background:#faf8ff; border-top:1px solid #ede9fe; border-radius:0 0 16px 16px; padding:24px 48px; text-align:center;">
+              <p style="margin:0;color:#c4b5fd;font-size:11px;line-height:1.6;">
+                © 2026 MarkaAI · Email automático, não responda.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+
+      </td>
+    </tr>
+  </table>
+
+</body>
+</html>`
 
       await Promise.allSettled([
         data.clientPhone ? sendWhatsApp(data.clientPhone, 'appointment_confirmation', [data.payload.clientName, data.payload.salonName, data.payload.date, data.payload.time, data.payload.serviceName]) : Promise.resolve(),
@@ -181,8 +260,78 @@ serve(async (req) => {
       if (before.status !== after.status && after.status === 'cancelado') {
         const data = await buildPayloadFromAppointment(supabase, after)
         
-        const emailHtml = `<h1>Agendamento Cancelado</h1>
-        <p>Olá ${data.payload.clientName}, informamos que seu agendamento de ${data.payload.date} às ${data.payload.time} em <strong>${data.payload.salonName}</strong> foi cancelado.</p>`
+        const emailHtml = `
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Agendamento Cancelado – MarkaAI</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f4f0fb;font-family:'Segoe UI',Helvetica,Arial,sans-serif;">
+
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f0fb;">
+    <tr>
+      <td align="center" style="padding:48px 20px;">
+
+        <table width="560" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;width:100%;">
+
+          <!-- HEADER -->
+          <tr>
+            <td align="center" style="background:linear-gradient(160deg, #3b0f8c 0%, #5c1fc4 60%, #7c3aed 100%); border-radius:16px 16px 0 0; padding:36px 48px 32px;">
+              <img src="https://uhccgcojwqvkfyzrmebv.supabase.co/storage/v1/object/public/Logo%20MarkaAI/logo_white.png" alt="MarkaAI" width="148" style="display:block;margin:0 auto;max-height:44px;object-fit:contain;" />
+            </td>
+          </tr>
+
+          <tr><td style="height:3px;background:linear-gradient(90deg,#7c3aed,#a78bfa,#7c3aed);"></td></tr>
+
+          <!-- CORPO -->
+          <tr>
+            <td style="background:#ffffff;padding:44px 48px 36px;">
+              <p style="margin:0 0 20px;color:#ef4444;font-size:20px;font-weight:700;line-height:1.3;">
+                Agendamento Cancelado ❌
+              </p>
+
+              <p style="margin:0 0 16px;color:#4b5563;font-size:15px;line-height:1.75;">
+                Olá <strong>${data.payload.clientName}</strong>, informamos que seu agendamento em <strong style="color:#5c1fc4;">${data.payload.salonName}</strong> foi cancelado.
+              </p>
+
+              <div style="background:#fef2f2; border-radius:12px; padding:24px; margin-bottom:32px; border:1px solid #fee2e2;">
+                <p style="margin:0 0 8px; color:#1a1a2e; font-size:16px;"><strong>O agendamento de:</strong> ${data.payload.date} às ${data.payload.time}</p>
+                <p style="margin:0; color:#1a1a2e; font-size:16px;"><strong>Serviço:</strong> ${data.payload.serviceName}</p>
+              </div>
+
+              <!-- Botão -->
+              <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td align="center" style="padding-bottom:36px;">
+                    <a href="https://markaai.com.br" style="display:inline-block; background:linear-gradient(135deg,#5c1fc4,#7c3aed); color:#ffffff; text-decoration:none; font-size:15px; font-weight:600; padding:16px 44px; border-radius:10px; letter-spacing:0.2px; box-shadow:0 6px 20px rgba(92,31,196,0.35);">
+                      Agendar novo horário
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+            </td>
+          </tr>
+
+          <!-- FOOTER -->
+          <tr>
+            <td style="background:#faf8ff; border-top:1px solid #ede9fe; border-radius:0 0 16px 16px; padding:24px 48px; text-align:center;">
+              <p style="margin:0;color:#c4b5fd;font-size:11px;line-height:1.6;">
+                © 2026 MarkaAI · Email automático, não responda.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+
+      </td>
+    </tr>
+  </table>
+
+</body>
+</html>`
 
         await Promise.allSettled([
           data.clientPhone ? sendWhatsApp(data.clientPhone, 'appointment_cancellation', [data.payload.clientName, data.payload.salonName, data.payload.date, data.payload.time]) : Promise.resolve(),

@@ -126,7 +126,13 @@ class ShopDataCacheService {
 
   void invalidateAll(String? shopId) {
     if (shopId != null) {
-      final prefixes = ['services_$shopId', 'employees_$shopId', 'config_$shopId'];
+      final prefixes = [
+        'services_$shopId',
+        'employees_$shopId',
+        'config_$shopId',
+        'coupons_$shopId',
+        'categories_$shopId'
+      ];
       _cache.removeWhere((key, _) => prefixes.any((p) => key.startsWith(p)));
     } else {
       _cache.clear();

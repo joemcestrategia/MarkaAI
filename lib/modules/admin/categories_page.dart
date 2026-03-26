@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/services/shop_data_cache_service.dart';
 
 class CategoriesPage extends StatefulWidget {
   const CategoriesPage({super.key});
@@ -213,6 +214,10 @@ class _CategoriesPageState extends State<CategoriesPage> {
                             .from('shops')
                             .update({'category': finalName})
                             .eq('id', shopId);
+                        
+                        // Invalida o cache da loja afetada
+                        ShopDataCacheService().invalidateAll(shopId);
+
                         await Supabase.instance.client
                             .from('admin_audit')
                             .insert({

@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
+import '../../core/services/shop_data_cache_service.dart';
 import 'subscription_service.dart';
 
 class PaymentSettingsPage extends StatefulWidget {
@@ -348,6 +349,9 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
       await Supabase.instance.client.from('shops').update({
         'mercadopago': null,
       }).eq('id', _shopId!);
+
+      // Invalida o cache
+      ShopDataCacheService().invalidate(_shopId!, 'config');
 
       if (mounted) {
         setState(() {

@@ -359,11 +359,7 @@ class SubscriptionService {
 
   /// Inicia o fluxo de assinatura, upgrade ou downgrade de plano.
   static Future<bool> startPurchaseFlow(
-      BuildContext context, SubscriptionPlan plan, {
-        String? affiliateId,
-        String? affiliateCouponCode,
-        String? commissionType,
-      }) async {
+      BuildContext context, SubscriptionPlan plan) async {
     final planDetails = _plans[plan]!;
     final planPrice = (planDetails['price'] as num).toDouble();
     final planName = planDetails['name'] as String;
@@ -497,9 +493,6 @@ class SubscriptionService {
         planId: planId,
         planName: planName,
         planPrice: planPrice,
-        affiliateId: affiliateId,
-        affiliateCouponCode: affiliateCouponCode,
-        commissionType: commissionType,
       );
     }
 
@@ -561,9 +554,6 @@ class SubscriptionService {
       planId: planId,
       planName: planName,
       planPrice: planPrice,
-      affiliateId: affiliateId,
-      affiliateCouponCode: affiliateCouponCode,
-      commissionType: commissionType,
     );
   }
 
@@ -574,9 +564,6 @@ class SubscriptionService {
     required String planId,
     required String planName,
     required double planPrice,
-    String? affiliateId,
-    String? affiliateCouponCode,
-    String? commissionType,
   }) async {
     try {
       final user = AuthService().currentUser;
@@ -590,9 +577,6 @@ class SubscriptionService {
         planId: planId,
         shopId: shopId,
         customerEmail: user.email!,
-        affiliateId: affiliateId,
-        affiliateCouponCode: affiliateCouponCode,
-        commissionType: commissionType,
       );
 
       if (context.mounted) PremiumDialogs.hideLoading(context);
