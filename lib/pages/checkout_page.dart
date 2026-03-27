@@ -16,6 +16,7 @@ import '../core/constants/plan_features.dart';
 import '../core/widgets/loading_page.dart';
 import '../modules/clients/my_appointments_page.dart';
 import '../modules/clients/client_home_page.dart';
+import '../core/widgets/intentional_friction_modal.dart';
 
 class CheckoutPage extends StatefulWidget {
   final String shopId;
@@ -28,6 +29,7 @@ class CheckoutPage extends StatefulWidget {
   final String? serviceNameOverride;
   final double? servicePriceOverride;
   final bool fromSubdomain;
+  final String? rescheduleId; // Novo parâmetro para evitar duplicação
 
   Map<String, dynamic> get serviceData => serviceDoc;
 
@@ -45,6 +47,7 @@ class CheckoutPage extends StatefulWidget {
     this.fromSubdomain = false,
     this.selectedVariation,
     this.clientStatus,
+    this.rescheduleId,
   });
 
   final Map<String, dynamic>? selectedVariation;
@@ -55,7 +58,7 @@ class CheckoutPage extends StatefulWidget {
   State<CheckoutPage> createState() => _CheckoutPageState();
 }
 
-class _CheckoutPageState extends State<CheckoutPage> {
+class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMixin {
   final _currencyFormat = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
 
   bool _isLoading = false;
@@ -100,12 +103,27 @@ class _CheckoutPageState extends State<CheckoutPage> {
   String? _preSavedAppointmentId;
 
   Timer? _timerPolling;
+  
+  // Controladores de Animação
+  late AnimationController _couponAnimationController;
+  late Animation<double> _couponScaleAnimation;
+  double _animatedPrice = 0.0;
 
   @override
   void initState() {
     super.initState();
     debugPrint(
         '🚀 CheckoutPage: initState | shopId: ${widget.shopId} | serviceId: ${widget.serviceDoc['id']}');
+        
+    _couponAnimationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    );
+    _couponScaleAnimation = TweenSequence<double>([
+      TweenSequenceItem(tween: Tween(begin: 1.0, end: 1.05), weight: 50),
+      TweenSequenceItem(tween: Tween(begin: 1.05, end: 1.0), weight: 50),
+    ]).animate(CurvedAnimation(parent: _couponAnimationController, curve: Curves.easeInOut));
+
     _initializeCheckout();
   }
 
@@ -113,6 +131,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
   void dispose() {
     _timerPolling?.cancel();
     _couponController.dispose();
+    _couponAnimationController.dispose();
     super.dispose();
   }
 
@@ -194,7 +213,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         isProblematic = status['isProblematic'] ?? false;
         isVip = status['isVip'] ?? false;
         
-        // 🆕 Só verifica aniversário se o plano permitir
+        // 🆕 Verifica aniversário focado no mês do agendamento (regra de negócio confirmada)
         if (shopFeatures.birthdayDiscount) {
           isBirthday = await ClientVerificationService.isBirthdayMonth(user.id,
               targetMonth: widget.date.month);
@@ -245,6 +264,12 @@ class _CheckoutPageState extends State<CheckoutPage> {
           _trustedOnlyPayLocal = trustedOnly;
           _cardTaxPercent = cardTax;
 
+          // Automação do Desconto de Aniversário
+          if (_isBirthdayMonth && _birthdayDiscountEnabled) {
+            _birthdayGiftAccepted = true;
+            debugPrint('🎂 [Checkout] Desconto de aniversário aplicado automaticamente.');
+          }
+
           // Lógica VIP: Se a loja restringe local apenas para VIPs
           if (_trustedOnlyPayLocal) {
             // Se for VIP, habilitamos (mesmo que baseAceitaDinheiro seja false)
@@ -255,27 +280,28 @@ class _CheckoutPageState extends State<CheckoutPage> {
             aceitaDinheiro = baseAceitaDinheiro;
           }
 
-          // Seleção inicial inteligente
+          // Seleção inicial inteligente: Prioriza online para forçar atrito se escolher local
           if (exigeSinal && (aceitaPix || aceitaCartao)) {
             _selectedPaymentType = 'sinal';
-          } else if (aceitaDinheiro) {
-            _selectedPaymentType = 'local';
           } else if (aceitaPix || aceitaCartao) {
             _selectedPaymentType = 'total';
+          } else if (aceitaDinheiro) {
+            _selectedPaymentType = 'local';
           } else {
             // Fallback
-            _selectedPaymentType = 'total'; // Total is safer if local is discouraged
+            _selectedPaymentType = 'total';
           }
 
           _paymentConfigLoaded = true;
         });
 
         // Se for aniversário e tiver desconto, mostra a modal bonita
-        debugPrint('🎂 DEBUG Niver Month Check:');
-        debugPrint('   - isBirthdayMonth: $isBirthday');
-        debugPrint('   - birthdayEnabled: $birthdayEnabled');
-        debugPrint('   - Current Date: ${widget.date}');
-        debugPrint('   - Target Month: ${widget.date.month}');
+        debugPrint('🎂 [REGRAS DE ANIVERSÁRIO]');
+        debugPrint('   - Mês de Nascimento do Cliente: (Verifique log [BirthdayCheck] acima)');
+        debugPrint('   - Mês Escolhido para Agendamento: ${widget.date.month}');
+        debugPrint('   - Loja Habilitou Desconto? $birthdayEnabled');
+        debugPrint('   - Cliente já usou este ano? (Verifique log abaixo)');
+        debugPrint('   - RESULTADO FINAL: isBirthday=$isBirthday');
         
         if (isBirthday && birthdayEnabled) {
           final hasUsed =
@@ -388,11 +414,17 @@ class _CheckoutPageState extends State<CheckoutPage> {
         _appliedCouponCode = code.toUpperCase();
       });
       _recalculateTotals();
+      
+      // Dispara animação de sucesso
+      _couponAnimationController.forward(from: 0.0);
+      
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text("Cupom '$_appliedCouponCode' aplicado com sucesso!"),
             backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           ),
         );
       }
@@ -671,24 +703,30 @@ class _CheckoutPageState extends State<CheckoutPage> {
                             Expanded(
                               child: SizedBox(
                                 height: 45,
-                                child: TextField(
-                                  controller: _couponController,
-                                  decoration: InputDecoration(
-                                    hintText: "Código do Cupom",
-                                    hintStyle: const TextStyle(fontSize: 13),
-                                    enabled: !_couponApplied,
-                                    contentPadding: const EdgeInsets.symmetric(
-                                        horizontal: 12, vertical: 8),
-                                    border: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(8)),
-                                    fillColor: _couponApplied
-                                        ? Colors.grey[100]
-                                        : Colors.white,
-                                    filled: true,
+                                child: ScaleTransition(
+                                    scale: _couponScaleAnimation,
+                                    child: TextField(
+                                      controller: _couponController,
+                                      decoration: InputDecoration(
+                                        hintText: "Código do Cupom",
+                                        hintStyle: const TextStyle(fontSize: 13),
+                                        enabled: !_couponApplied,
+                                        contentPadding: const EdgeInsets.symmetric(
+                                            horizontal: 12, vertical: 8),
+                                        border: OutlineInputBorder(
+                                            borderRadius: BorderRadius.circular(8)),
+                                        fillColor: _couponApplied
+                                            ? Colors.green.withValues(alpha: 0.05)
+                                            : Colors.white,
+                                        filled: true,
+                                        suffixIcon: _couponApplied 
+                                          ? const Icon(Icons.check_circle, color: Colors.green, size: 20) 
+                                          : null,
+                                      ),
+                                      textCapitalization:
+                                          TextCapitalization.characters,
+                                    ),
                                   ),
-                                  textCapitalization:
-                                      TextCapitalization.characters,
-                                ),
                               ),
                             ),
                             const SizedBox(width: 8),
@@ -760,15 +798,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Builder(builder: (context) {
-                      String valorExibido = _currencyFormat.format(valorTotal);
                       String textoBotao = _selectedPaymentType == 'local'
                           ? "FINALIZAR AGENDAMENTO"
                           : "FINALIZAR E PAGAR AGORA";
-
-                      if (true) { // Sempre mostrar o valor final com juros/descontos
-                        valorExibido =
-                            _currencyFormat.format(valorFinalComJuros);
-                      }
 
                       return Column(
                         children: [
@@ -850,11 +882,19 @@ class _CheckoutPageState extends State<CheckoutPage> {
                                     style: TextStyle(
                                         fontWeight: FontWeight.bold,
                                         color: AppColors.primaryPurple)),
-                                Text(valorExibido,
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 20,
-                                        color: AppColors.primaryPurple)),
+                                  TweenAnimationBuilder<double>(
+                                    duration: const Duration(milliseconds: 500),
+                                    curve: Curves.easeOut,
+                                    tween: Tween<double>(begin: _animatedPrice, end: valorFinalComJuros),
+                                    onEnd: () => _animatedPrice = valorFinalComJuros,
+                                    builder: (context, value, child) {
+                                      return Text(_currencyFormat.format(value),
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 20,
+                                              color: AppColors.primaryPurple));
+                                    },
+                                  ),
                               ],
                             ),
                           ),
@@ -1355,7 +1395,45 @@ class _CheckoutPageState extends State<CheckoutPage> {
     return GestureDetector(
       onTap: disabled
           ? null
-          : () {
+          : () async {
+              if (value == 'local' && _selectedPaymentType != 'local') {
+                final confirmed = await showDialog<bool>(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (context) => IntentionalFrictionModal(
+                    title: "Pagar no Local",
+                    content: const Text.rich(
+                      TextSpan(
+                        children: [
+                          TextSpan(
+                              text:
+                                  "Ao escolher pagar no local, você se compromete a "),
+                          TextSpan(
+                              text: "comparecer no horário",
+                              style: TextStyle(fontWeight: FontWeight.bold)),
+                          TextSpan(
+                              text:
+                                  " para não prejudicar a agenda do profissional.\n\n"),
+                          TextSpan(
+                              text: "O não comparecimento sem aviso prévio",
+                              style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: AppColors.errorRed)),
+                          TextSpan(
+                              text: " poderá limitar seus agendamentos futuros."),
+                        ],
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    expectedPhrase: "CONCORDO",
+                    onConfirm: () => Navigator.pop(context, true),
+                    onCancel: () => Navigator.pop(context, false),
+                  ),
+                );
+
+                if (confirmed != true) return;
+              }
+
               setState(() {
                 _selectedPaymentType = value;
                 _recalculateTotals();
@@ -1445,12 +1523,19 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  Text(
-                    _currencyFormat.format(amount),
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                        color: AppColors.primaryPurple),
+                  TweenAnimationBuilder<double>(
+                    duration: const Duration(milliseconds: 500),
+                    curve: Curves.easeOut,
+                    tween: Tween<double>(begin: _animatedPrice, end: amount),
+                    builder: (context, value, child) {
+                      return Text(
+                        _currencyFormat.format(value),
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                            color: AppColors.primaryPurple),
+                      );
+                    },
                   ),
                 ],
               ),
@@ -2129,16 +2214,25 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
       String finalAppointmentId;
 
-      if (appointmentId != null && appointmentId.isNotEmpty) {
-        // Se já existe um ID (ex: presave prévio), atualiza o doc existente
-        // Atualiza 'atualizado_em' para os registros
+      // REGRA DE OURO: Priorizar o rescheduleId vindo do construtor para evitar duplicação (INSERT)
+      final String? effectiveRescheduleId = widget.rescheduleId ?? appointmentId;
+
+      if (effectiveRescheduleId != null && effectiveRescheduleId.isNotEmpty) {
+        // Se já existe um ID (reagendamento ou presave prévio), atualiza o doc existente
         bookingData['updated_at'] = DateTime.now().toIso8601String();
-        await Supabase.instance.client.from('appointments').update(bookingData).eq('id', appointmentId);
-        finalAppointmentId = appointmentId;
+        await Supabase.instance.client
+            .from('appointments')
+            .update(bookingData)
+            .eq('id', effectiveRescheduleId);
+        finalAppointmentId = effectiveRescheduleId;
       } else {
         // Se for novo, adiciona
         bookingData['created_at'] = DateTime.now().toIso8601String();
-        final response = await Supabase.instance.client.from('appointments').insert(bookingData).select('id').single();
+        final response = await Supabase.instance.client
+            .from('appointments')
+            .insert(bookingData)
+            .select('id')
+            .single();
         finalAppointmentId = response['id'];
       }
 

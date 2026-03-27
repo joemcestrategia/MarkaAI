@@ -50,11 +50,30 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
     if (appointmentDate == null) return false;
     
     final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final apptDay = DateTime(appointmentDate.year, appointmentDate.month, appointmentDate.day);
 
-    // Próximos: futuros e não cancelados/concluídos
-    return appointmentDate.isAfter(now) &&
+    // Próximos: futuros ou hoje que não foram cancelados/concluídos
+    return (appointmentDate.isAfter(now) || apptDay.isAtSameMomentAs(today)) &&
         !status.contains('cancelado') &&
         status != 'concluido';
+  }
+
+  double _getTotalValue(Map<String, dynamic> appointment) {
+    return ((appointment['valor_com_desconto'] ??
+            appointment['total_price'] ??
+            appointment['total_value'] ??
+            appointment['valor_total'] ??
+            appointment['valor'] ??
+            0) as num)
+        .toDouble();
+  }
+
+  double _getPaidValue(Map<String, dynamic> appointment) {
+    final meta = appointment['metadata'] as Map<String, dynamic>? ?? {};
+    final metaPaid = (meta['valor_pago'] ?? 0) as num;
+    final directPaid = (appointment['valor_pago'] ?? appointment['paid_amount'] ?? 0) as num;
+    return (metaPaid > directPaid ? metaPaid : directPaid).toDouble();
   }
 
   List<Map<String, dynamic>> _filterAppointments(
@@ -117,8 +136,8 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
   }
 
   Future<void> _showPaymentOptions(Map<String, dynamic> appointment) async {
-    final valorTotal = (appointment['valor_total'] ?? appointment['valor'] ?? 0).toDouble();
-    final valorPago = (appointment['valor_pago'] ?? 0).toDouble();
+    final valorTotal = _getTotalValue(appointment);
+    final valorPago = _getPaidValue(appointment);
     final valorRestante = valorTotal - valorPago;
 
     if (valorRestante <= 0) {
@@ -409,16 +428,19 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
     String method,
     String paymentId,
   ) async {
-    final currentMeta = (appointment['metadata'] as Map<String, dynamic>?) ?? {};
-    final currentPaid = ((currentMeta['valor_pago'] ?? 0) as num).toDouble();
+    final currentPaid = _getPaidValue(appointment);
     final newPaid = currentPaid + paidAmount;
-    final valorTotal = ((appointment['total_value'] ?? 0) as num).toDouble();
+    final valorTotal = _getTotalValue(appointment);
+    final currentMeta = (appointment['metadata'] as Map<String, dynamic>?) ?? {};
 
     await Supabase.instance.client
         .from('appointments')
         .update({
       'payment_method': method,
       'status': 'confirmado',
+      'valor_pago': newPaid,
+      'paid_amount': newPaid,
+      'remaining_amount': valorTotal - newPaid,
       'metadata': {
         ...currentMeta,
         'payment_id': paymentId,
@@ -445,9 +467,11 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
     
     if (appointmentDate == null) return false;
     final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final apptDay = DateTime(appointmentDate.year, appointmentDate.month, appointmentDate.day);
 
-    // Não mostrar ações se já passou, foi cancelado ou concluído
-    return appointmentDate.isAfter(now) &&
+    // Não mostrar ações se já passou de hoje, foi cancelado ou concluído
+    return (appointmentDate.isAfter(now) || apptDay.isAtSameMomentAs(today)) &&
         !status.contains('cancelado') &&
         status != 'concluido';
   }
@@ -572,7 +596,7 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
     final validation = await ClientVerificationService.canModifyAppointment(appointment);
     if (!validation['can']) {
       if (!mounted) return;
-      _showError(validation['reason']);
+      _showLatePolicyInfoModal(appointment['shop_name']?.toString() ?? 'o estabelecimento');
       return;
     }
 
@@ -613,8 +637,8 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
   // Exibe o modal com os detalhes e as ações do agendamento
   void _showAppointmentDetails(Map<String, dynamic> appointment, bool isUpcoming,
       String shopName, String shopLogo) {
-    final valorTotal = (appointment['valor_total'] ?? appointment['valor'] ?? 0).toDouble();
-    final valorPago = (appointment['valor_pago'] ?? 0).toDouble();
+    final valorTotal = _getTotalValue(appointment);
+    final valorPago = _getPaidValue(appointment);
     final valorRestante = valorTotal - valorPago;
     final ts = appointment['scheduled_at'];
     DateTime appointmentDate = ts is String ? DateTime.parse(ts) : ts;
@@ -767,6 +791,26 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
                   ],
                 ),
               ],
+              if (valorRestante > 0 && isUpcoming && _shouldShowActions(appointment)) ...[
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () => _showPaymentOptions(appointment),
+                    icon: const Icon(Icons.payments_outlined),
+                    label: const Text('PAGAR AGORA',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF25D366),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      elevation: 0,
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 32),
               if (isUpcoming && _shouldShowActions(appointment)) ...[
                 Row(
@@ -798,7 +842,7 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
                           final validation = await ClientVerificationService.canModifyAppointment(appointment, isReschedule: true);
                           if (!validation['can']) {
                             if (!mounted) return;
-                            _showError(validation['reason']);
+                            _showLatePolicyInfoModal(appointment['shop_name']?.toString() ?? 'o estabelecimento');
                             return;
                           }
 
@@ -946,6 +990,9 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
                                 slug: slug,
                                 isReschedule: true,
                                 rescheduleAppointmentId: appointment['id'],
+                                oldDate: DateTime.tryParse(appointment['scheduled_at']?.toString() ?? ''),
+                                oldProfessional: appointment['professional_id']?.toString(),
+                                oldServiceName: appointment['service_name']?.toString(),
                               ),
                             ),
                           );
@@ -1030,6 +1077,54 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
         _showError('Erro ao carregar dados para reagendar: $e');
       }
     }
+  }
+
+  void _showLatePolicyInfoModal(String shopName) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.info_outline, color: AppColors.primaryPurple),
+            SizedBox(width: 10),
+            Text("Atenção", style: TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              "O prazo para cancelamento ou reagendamento via aplicativo expirou para este agendamento.",
+              style: TextStyle(color: Colors.grey[800], fontSize: 15),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              "Por favor, entre em contato direto com $shopName para verificar as possibilidades devido ao imprevisto.",
+              style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 15),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.purple.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Text(
+                "Uma justificativa plausível é o ideal nessas situações para que o estabelecimento possa te ajudar da melhor forma.",
+                style: TextStyle(fontStyle: FontStyle.italic, color: AppColors.primaryPurple, fontSize: 13),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("ENTENDI", style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.primaryPurple)),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showError(String message) {
@@ -1159,8 +1254,8 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
 
   Widget _buildAppointmentCard(Map<String, dynamic> appointment, bool isUpcoming) {
     final shopId = appointment['shop_id'];
-    final valorTotal = (appointment['valor_total'] ?? appointment['valor'] ?? 0).toDouble();
-    final valorPago = (appointment['valor_pago'] ?? 0).toDouble();
+    final valorTotal = _getTotalValue(appointment);
+    final valorPago = _getPaidValue(appointment);
     final valorRestante = valorTotal - valorPago;
     final ts = appointment['scheduled_at'];
     DateTime appointmentDate = ts is String ? DateTime.parse(ts) : ts;

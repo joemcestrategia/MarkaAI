@@ -9,6 +9,7 @@ import '../../../core/services/plan_features_service.dart';
 import '../../../core/constants/plan_features.dart';
 import '../../../widgets/upgrade_modal.dart';
 import '../../../core/services/shop_data_cache_service.dart';
+import '../../../core/widgets/supabase_stream_widget.dart';
 
 class CouponTicketClipper extends CustomClipper<Path> {
   const CouponTicketClipper();
@@ -165,84 +166,23 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
           ),
           body: Stack(
             children: [
-              StreamBuilder<List<Map<String, dynamic>>>(
+              SupabaseStreamWidget<List<Map<String, dynamic>>>(
                 key: ValueKey('cpn_stream_$_refreshKey'),
+                initialFuture: ShopDataCacheService().getCoupons(widget.shopId),
                 stream: Supabase.instance.client
                     .from('coupons')
                     .stream(primaryKey: ['id'])
                     .eq('shop_id', widget.shopId),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
-                    return const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(32.0),
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    );
-                  }
-
-                  if (snapshot.hasError) {
-                    debugPrint('Erro no stream de cupons: ${snapshot.error}');
-                    return Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(24.0),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.error_outline, color: Colors.orange, size: 48),
-                            const SizedBox(height: 16),
-                            Text('Erro ao carregar cupons: ${snapshot.error}',
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(color: Colors.grey)),
-                            const SizedBox(height: 16),
-                            ElevatedButton(
-                              onPressed: () => setState(() {}),
-                              child: const Text('TENTAR NOVAMENTE'),
-                            )
-                          ],
-                        ),
-                      ),
-                    );
-                  }
-
-                  final coupons = List<Map<String, dynamic>>.from(snapshot.data ?? []);
+                onRetry: () => setState(() => _refreshKey++),
+                emptyBuilder: (context) => _buildEmptyState(),
+                builder: (context, couponsRaw) {
+                  final coupons = List<Map<String, dynamic>>.from(couponsRaw);
                   
                   coupons.sort((a, b) {
                     final aTime = DateTime.tryParse(a['created_at']?.toString() ?? '') ?? DateTime(2000);
                     final bTime = DateTime.tryParse(b['created_at']?.toString() ?? '') ?? DateTime(2000);
                     return bTime.compareTo(aTime);
                   });
-
-                  if (coupons.isEmpty) {
-                    return Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.confirmation_number_outlined,
-                               size: 80, color: Colors.grey[300]),
-                          const SizedBox(height: 16),
-                          const Text('Nenhum cupom criado ainda.',
-                               style: TextStyle(color: Colors.grey)),
-                          const SizedBox(height: 24),
-                          ElevatedButton.icon(
-                            onPressed: () {
-                              if (!_currentFeatures.coupons) {
-                                _showUpgradeDialog();
-                                return;
-                              }
-                              _showCouponDialog();
-                            },
-                            icon: const Icon(Icons.add),
-                            label: const Text('CRIAR MEU PRIMEIRO CUPOM'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.primaryPurple,
-                              foregroundColor: Colors.white,
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  }
 
                   return ListView.builder(
                     padding: const EdgeInsets.all(16),
@@ -310,6 +250,37 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.confirmation_number_outlined,
+               size: 80, color: Colors.grey[300]),
+          const SizedBox(height: 16),
+          const Text('Nenhum cupom criado ainda.',
+               style: TextStyle(color: Colors.grey)),
+          const SizedBox(height: 24),
+          ElevatedButton.icon(
+            onPressed: () {
+              if (!_currentFeatures.coupons) {
+                _showUpgradeDialog();
+                return;
+              }
+              _showCouponDialog();
+            },
+            icon: const Icon(Icons.add),
+            label: const Text('CRIAR MEU PRIMEIRO CUPOM'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primaryPurple,
+              foregroundColor: Colors.white,
+            ),
+          ),
+        ],
+      ),
     );
   }
 

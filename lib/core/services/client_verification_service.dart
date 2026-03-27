@@ -163,11 +163,16 @@ class ClientVerificationService {
     try {
       final userDoc = await _supabase
           .from('users')
-          .select('birth_date, aniversario, data_nascimento, nascimento, birthDate')
+          .select('birth_date')
           .eq('id', userId)
           .maybeSingle();
       
-      if (userDoc == null) return false;
+      if (userDoc == null) {
+        debugPrint('⚠️ [BirthdayCheck] Usuário não encontrado no DB: $userId');
+        return false;
+      }
+      
+      debugPrint('🔍 [BirthdayCheck] Dados do Usuário ($userId): $userDoc');
 
       final birthData = userDoc['birth_date'] ??
           userDoc['aniversario'] ??
@@ -200,10 +205,15 @@ class ClientVerificationService {
         birthDate = birthData;
       }
 
-      if (birthDate == null) return false;
+      if (birthDate == null) {
+        debugPrint('⚠️ [BirthdayCheck] Falha ao parsear data de nascimento: $birthData');
+        return false;
+      }
 
       final compareMonth = targetMonth ?? DateTime.now().month;
-      return birthDate.month == compareMonth;
+      final bool match = birthDate.month == compareMonth;
+      debugPrint('🎂 [BirthdayCheck] Comparando Mês Nascimento (${birthDate.month}) com Mês Alvo ($compareMonth) -> Resultado: $match');
+      return match;
     } catch (e) {
       debugPrint('Error in isBirthdayMonth: $e');
       return false;

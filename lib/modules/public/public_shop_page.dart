@@ -14,12 +14,18 @@ class PublicShopPage extends StatefulWidget {
   final String slug;
   final bool isReschedule;
   final String? rescheduleAppointmentId;
+  final DateTime? oldDate;
+  final String? oldProfessional;
+  final String? oldServiceName;
 
   const PublicShopPage({
     super.key,
     required this.slug,
     this.isReschedule = false,
     this.rescheduleAppointmentId,
+    this.oldDate,
+    this.oldProfessional,
+    this.oldServiceName,
   });
 
   @override
@@ -95,6 +101,9 @@ class _PublicShopPageState extends State<PublicShopPage> {
             serviceDoc: serviceDoc,
             isReschedule: widget.isReschedule,
             rescheduleAppointmentId: widget.rescheduleAppointmentId,
+            oldDate: widget.oldDate,
+            oldProfessional: widget.oldProfessional,
+            oldServiceName: widget.oldServiceName,
             fromSubdomain:
                 true, // Vindo de subdomínio: após booking, redireciona para ClientHomePage
           ),

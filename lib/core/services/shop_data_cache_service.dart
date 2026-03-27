@@ -117,6 +117,51 @@ class ShopDataCacheService {
     return List<Map<String, dynamic>>.from(data);
   }
 
+  Future<List<Map<String, dynamic>>> getCoupons(String shopId) async {
+    final key = 'coupons_$shopId';
+    final cached = getCached(key);
+    if (cached != null) return List<Map<String, dynamic>>.from(cached['list']);
+
+    final data = await Supabase.instance.client
+        .from('coupons')
+        .select()
+        .eq('shop_id', shopId);
+
+    setCache(key, {'list': data}, ttlServices); // Usa mesmo TTL de serviços
+    return List<Map<String, dynamic>>.from(data);
+  }
+
+  Future<List<Map<String, dynamic>>> getShopsByCity(String city) async {
+    final key = 'shops_city_$city';
+    final cached = getCached(key);
+    if (cached != null) return List<Map<String, dynamic>>.from(cached['list']);
+
+    final data = await Supabase.instance.client
+        .from('shops')
+        .select()
+        .eq('city', city);
+
+    setCache(key, {'list': data}, ttlConfig); // Usa TTL de config (30 min)
+    return List<Map<String, dynamic>>.from(data);
+  }
+
+  Future<Map<String, dynamic>?> getShop(String shopId) async {
+    final key = 'shop_$shopId';
+    final cached = getCached(key);
+    if (cached != null) return Map<String, dynamic>.from(cached);
+
+    final data = await Supabase.instance.client
+        .from('shops')
+        .select()
+        .eq('id', shopId)
+        .maybeSingle();
+
+    if (data != null) {
+      setCache(key, data, ttlConfig);
+    }
+    return data;
+  }
+
   // --- CONTROLE ---
 
   void invalidate(String shopId, String entity) {

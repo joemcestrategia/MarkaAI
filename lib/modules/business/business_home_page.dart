@@ -21,6 +21,7 @@ import '../../core/constants/plan_features.dart';
 import '../../core/services/plan_features_service.dart';
 import '../../widgets/upgrade_modal.dart';
 import '../../core/services/session_service.dart';
+import '../../core/services/shop_data_cache_service.dart';
 import '../login/login_page.dart';
 
 // --- MÓDULOS ---
@@ -33,6 +34,7 @@ import 'business_clients_page.dart';
 import '../financial/financial_dashboard_page.dart';
 // import 'financial_wallet_page.dart';
 import 'coupons/manage_coupons_page.dart';
+import '../../core/widgets/supabase_stream_widget.dart';
 
 import 'subscription_plans_page.dart';
 import '../../modules/inventory/inventory_home_page.dart';
@@ -602,16 +604,17 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       );
     }
 
-    return StreamBuilder<List<Map<String, dynamic>>>(
+    return SupabaseStreamWidget<List<Map<String, dynamic>>>(
+      initialFuture: shopId != null ? ShopDataCacheService().getShop(shopId!).then((s) => s != null ? [s] : []) : null,
       stream: shopId != null
           ? sb.Supabase.instance.client
               .from('shops')
               .stream(primaryKey: ['id'])
               .eq('id', shopId!)
-          : null,
-      builder: (context, snapshot) {
-        if (snapshot.hasData && snapshot.data!.isNotEmpty) {
-          final data = snapshot.data!.first;
+          : const Stream.empty(),
+      builder: (context, snapshotData) {
+        if (snapshotData.isNotEmpty) {
+          final data = snapshotData.first;
           
           // Extrair dados da stream de forma síncrona (sem setState durante build)
           // Estes valores são lidos diretamente nos widgets filhos

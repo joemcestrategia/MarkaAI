@@ -8,11 +8,13 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:intl/intl.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
-
 import 'package:geocoding/geocoding.dart';
+
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 import '../../core/services/profile_check_service.dart';
+import '../../core/services/shop_data_cache_service.dart';
+import '../../core/widgets/supabase_stream_widget.dart';
 import '../login/login_page.dart';
 import '../schedule/booking_page.dart';
 import 'shop_profile_page.dart';
@@ -859,36 +861,30 @@ class _ClientHomePageState extends State<ClientHomePage> {
     if (uid == null) {
       return const Center(child: Text('Faa login para ver seus favoritos'));
     }
-    return StreamBuilder<List<Map<String, dynamic>>>(
+    return SupabaseStreamWidget<List<Map<String, dynamic>>>(
       stream: Supabase.instance.client
           .from('favorites')
           .stream(primaryKey: ['id'])
           .eq('user_id', uid)
           .order('added_at', ascending: false),
-      builder: (context, favSnap) {
-        if (favSnap.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        final favDocs = favSnap.data ?? [];
-        if (favDocs.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.favorite_border, size: 64, color: Colors.grey[300]),
-                const SizedBox(height: 16),
-                Text('Nenhuma loja favorita ainda',
-                    style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey[500])),
-                const SizedBox(height: 8),
-                Text('Toque no ?? nas lojas para adicion-las aqui',
-                    style: TextStyle(fontSize: 13, color: Colors.grey[400])),
-              ],
-            ),
-          );
-        }
+      emptyBuilder: (context) => Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.favorite_border, size: 64, color: Colors.grey[300]),
+            const SizedBox(height: 16),
+            Text('Nenhuma loja favorita ainda',
+                style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey[500])),
+            const SizedBox(height: 8),
+            Text('Toque no coração nas lojas para adicioná-las aqui',
+                style: TextStyle(fontSize: 13, color: Colors.grey[400])),
+          ],
+        ),
+      ),
+      builder: (context, favDocs) {
         final shopIds = favDocs.map((d) => d['shop_id'] as String).toList();
         return FutureBuilder<List<Map<String, dynamic>>>(
           future: shopIds.isEmpty 
@@ -1173,14 +1169,21 @@ class _ClientHomePageState extends State<ClientHomePage> {
         const SliverToBoxAdapter(child: SizedBox(height: 15)),
 
         // GRID DE LOJAS
-        StreamBuilder<List<Map<String, dynamic>>>(
+        SupabaseStreamWidget<List<Map<String, dynamic>>>(
+          initialFuture: _cidadeSelecionada == null ? null : ShopDataCacheService().getShopsByCity(_cidadeSelecionada!.cidade),
           stream: _cidadeSelecionada == null
               ? const Stream.empty()
               : Supabase.instance.client
                   .from('shops')
                   .stream(primaryKey: ['id'])
                   .eq('city', _cidadeSelecionada!.cidade),
-          builder: (context, snapshot) {
+          loadingBuilder: (context) => const SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.only(top: 100),
+              child: Center(child: CircularProgressIndicator(color: AppColors.primaryPurple)),
+            ),
+          ),
+          emptyBuilder: (context) {
             if (_cidadeSelecionada == null) {
               return SliverFillRemaining(
                 hasScrollBody: false,
@@ -1200,42 +1203,35 @@ class _ClientHomePageState extends State<ClientHomePage> {
                 ),
               );
             }
-
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return const SliverToBoxAdapter(
-                child: Padding(
-                  padding: EdgeInsets.only(top: 100),
-                  child: Center(child: CircularProgressIndicator()),
-                ),
-              );
-            }
-
-            if (!snapshot.hasData || snapshot.data!.isEmpty) {
-              return SliverToBoxAdapter(
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 40, vertical: 80),
-                  child: Center(
-                    child: Column(
-                      children: [
-                        Icon(Icons.location_off_outlined,
-                            size: 60, color: Colors.grey[300]),
-                        const SizedBox(height: 16),
-                        Text(
-                          'Nenhuma loja encontrada em ${_cidadeSelecionada!.cidade}.\nTente outra cidade.',
-                          textAlign: TextAlign.center,
-                          style:
-                              TextStyle(color: Colors.grey[600], fontSize: 16),
-                        ),
-                      ],
-                    ),
+            return SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 80),
+                child: Center(
+                  child: Column(
+                    children: [
+                      Icon(Icons.location_off_outlined,
+                          size: 60, color: Colors.grey[300]),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Nenhuma loja encontrada em ${_cidadeSelecionada!.cidade}.\nTente outra cidade.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.grey[600], fontSize: 16),
+                      ),
+                    ],
                   ),
                 ),
-              );
-            }
-
-            final filtered = snapshot.data!.where((doc) {
-              final d = doc as Map<String, dynamic>;
+              ),
+            );
+          },
+          errorBuilder: (context, error) => SliverToBoxAdapter(
+            child: Center(child: Padding(
+              padding: const EdgeInsets.all(40.0),
+              child: Text("Erro ao carregar lojas: $error", style: const TextStyle(color: Colors.red)),
+            )),
+          ),
+          builder: (context, shopsRaw) {
+            final filtered = shopsRaw.where((doc) {
+              final d = doc;
               final bool isActive = d['ativo'] ?? true;
 
               // Filtro adicional por estado se houver ambiguidade (opcional)
@@ -1279,8 +1275,8 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
             // 🏆 Ordenação por Qualidade do Perfil (Media)
             filtered.sort((a, b) {
-              final da = a as Map<String, dynamic>;
-              final db = b as Map<String, dynamic>;
+              final da = a;
+              final db = b;
 
               int getScore(Map<String, dynamic> d) {
                 int s = 0;

@@ -152,8 +152,8 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
         final allDocs = snapshot.data!;
 
         final filteredDocs = allDocs.where((data) {
-          List<dynamic> servicosHabilitados = data['services_ids'] ?? [];
-          return servicosHabilitados.contains(_selectedService!['id']);
+          final List<dynamic> servicosHabilitados = data['services_ids'] ?? [];
+          return servicosHabilitados.map((id) => id.toString()).contains(_selectedService!['id'].toString());
         }).toList();
 
         if (filteredDocs.isEmpty) {
@@ -381,22 +381,29 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
               label: Text(timeStr,
                   style: TextStyle(
                       color: isBusy
-                          ? Colors.grey
+                          ? (isSelected ? Colors.white : Colors.orange)
                           : (isSelected ? Colors.white : Colors.black),
-                      decoration: isBusy ? TextDecoration.lineThrough : null)),
+                      decoration: isBusy && !isSelected ? TextDecoration.lineThrough : null)),
               selected: isSelected,
-              selectedColor: AppColors.primaryPurple,
+              selectedColor: isBusy ? Colors.orange : AppColors.primaryPurple,
               disabledColor: Colors.grey[200],
-              onSelected: isBusy
-                  ? null
-                  : (selected) {
-                      setState(() {
-                        final parts = timeStr.split(':');
-                        _selectedTime = TimeOfDay(
-                            hour: int.parse(parts[0]),
-                            minute: int.parse(parts[1]));
-                      });
-                    },
+              onSelected: (selected) async {
+                if (isBusy) {
+                  // Apenas administradores (fluxo manual) podem sobrepor
+                  if (widget.preSelectedClientId != null) {
+                    bool confirm = await _showConflictDialog(context, timeStr);
+                    if (!confirm) return;
+                  } else {
+                    return; // Cliente não pode clicar em busy
+                  }
+                }
+                setState(() {
+                  final parts = timeStr.split(':');
+                  _selectedTime = TimeOfDay(
+                      hour: int.parse(parts[0]),
+                      minute: int.parse(parts[1]));
+                });
+              },
             );
           }).toList(),
         );
@@ -727,6 +734,40 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
         ],
       ),
     );
+  }
+
+  Future<bool> _showConflictDialog(BuildContext context, String timeStr) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: const [
+            Icon(Icons.warning_amber_rounded, color: Colors.orange),
+            SizedBox(width: 10),
+            Text("Conflito Detectado"),
+          ],
+        ),
+        content: const Text(
+          "Este horário já possui um agendamento. Deseja realizar a sobreposição (overlap) administrativa?",
+          style: TextStyle(fontWeight: FontWeight.w500),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("CANCELAR", style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text("SIM, SOBREPOR"),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
   }
 }
 

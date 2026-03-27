@@ -76,37 +76,38 @@ class TransactionAutocompleteService {
   }) async {
     final supabase = Supabase.instance.client;
     
+    // Busca todos os funcionários da loja uma única vez para filtrar
+    final allProsSnap = await supabase
+        .from('employees')
+        .select()
+        .eq('shop_id', shopId);
+    
+    if (allProsSnap.isEmpty) return [];
+    final List<Map<String, dynamic>> allPros = List<Map<String, dynamic>>.from(allProsSnap);
+
     // Se temos serviceId, procuramos por habilidade
     if (serviceId != null && serviceId.isNotEmpty) {
-      // Tenta buscar funcionários que tenham o serviço em 'services_ids'
-      final prosBySkill = await supabase
-          .from('employees')
-          .select()
-          .eq('shop_id', shopId)
-          .contains('services_ids', [serviceId]);
+      final String targetId = serviceId.toString();
       
-      if (prosBySkill.isNotEmpty) return List<Map<String, dynamic>>.from(prosBySkill);
+      final prosBySkill = allPros.where((p) {
+        final List<dynamic> skills = p['services_ids'] ?? [];
+        return skills.map((id) => id.toString()).contains(targetId);
+      }).toList();
+      
+      if (prosBySkill.isNotEmpty) return prosBySkill;
 
       // Fallback: Verificar o contrário (se no serviço tem 'profissionais_aptos')
       final svcDoc = await supabase.from('services').select().eq('id', serviceId).maybeSingle();
       if (svcDoc != null) {
         final aptos = List<String>.from(svcDoc['profissionais_aptos'] ?? []);
         if (aptos.isNotEmpty) {
-          final prosBySvc = await supabase
-              .from('employees')
-              .select()
-              .inFilter('id', aptos);
-          return List<Map<String, dynamic>>.from(prosBySvc);
+          return allPros.where((p) => aptos.contains(p['id'].toString())).toList();
         }
       }
     }
 
-    // Fallback total: todos os funcionários ativos
-    final allPros = await supabase
-        .from('employees')
-        .select()
-        .eq('shop_id', shopId);
-    return List<Map<String, dynamic>>.from(allPros);
+    // Fallback total: todos os funcionários ativos da loja
+    return allPros;
   }
 
   /// Verifica se o profissional está disponível no dia e horário

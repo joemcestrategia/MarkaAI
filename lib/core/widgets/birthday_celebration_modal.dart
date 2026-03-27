@@ -227,7 +227,7 @@ class _BirthdayCelebrationModalState extends State<BirthdayCelebrationModal>
                             elevation: 0,
                           ),
                           child: const Text(
-                            "ACEITAR PRESENTE",
+                            "ENTENDI",
                             style: TextStyle(
                               fontWeight: FontWeight.bold,
                               fontSize: 16,

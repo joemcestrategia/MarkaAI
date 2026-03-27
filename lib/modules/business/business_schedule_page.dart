@@ -62,6 +62,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
   DateTime? _weekEndDate;
 
   // removed tabs: schedule shows active appointments by default
+  bool _isOpeningQuickEntry = false;
 
   @override
   void initState() {
@@ -568,7 +569,14 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                                     ? selectedProfessionalId
                                     : null,
                                 hint: Text(selectedProfessionalName),
-                                items: pros.map((pro) {
+                                items: pros.where((p) {
+                                  if (selectedServiceId == null) return true;
+                                  final List<dynamic> habilitados =
+                                      p['services_ids'] ?? [];
+                                  return habilitados
+                                      .map((id) => id.toString())
+                                      .contains(selectedServiceId.toString());
+                                }).map((pro) {
                                   final pData = pro;
                                   return DropdownMenuItem<String>(
                                     value: pro['id'].toString(),
@@ -794,41 +802,27 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                       return;
                     }
 
-                    // Verificação de Conflito de Horário
+                    // Verificação Completa de Regras de Negócio
                     if (selectedProfessionalId != null) {
-                      final busy = await AvailabilityUtils.getBusyIntervals(
-                        selectedProfessionalId!,
-                        appointmentDate,
+                      final conflicts = await _verifyBusinessRules(
+                        professionalId: selectedProfessionalId!,
+                        date: appointmentDate,
+                        time: appointmentTime,
+                        durationMin: int.tryParse(
+                                data['duracao_min']?.toString() ?? '30') ??
+                            30,
+                        serviceId: selectedServiceId,
                         excludeDocId: data['id']?.toString(),
                       );
 
-                      int duration = int.tryParse(
-                              data['duracao_min']?.toString() ?? '30') ??
-                          30;
-                      int startMin =
-                          appointmentTime.hour * 60 + appointmentTime.minute;
-
-                      bool available = AvailabilityUtils.isSlotAvailable(
-                          startMin, duration, busy);
-
-                      if (!available) {
-                        bool? confirm = await showDialog<bool>(
+                      if (conflicts.isNotEmpty) {
+                        bool confirm = await _showConflictDialog(
                           context: context,
-                          builder: (ctx) => AlertDialog(
-                            title: const Text("Conflito de Horário"),
-                            content: const Text(
-                                "Este profissional já possui um agendamento neste horário. Deseja agendar mesmo assim?"),
-                            actions: [
-                              TextButton(
-                                  onPressed: () => Navigator.pop(ctx, false),
-                                  child: const Text("NÃO")),
-                              TextButton(
-                                  onPressed: () => Navigator.pop(ctx, true),
-                                  child: const Text("SIM, AGENDAR")),
-                            ],
-                          ),
+                          professionalName: selectedProfessionalName,
+                          timeStr: appointmentTime.format(context),
+                          messages: conflicts,
                         );
-                        if (confirm != true) return;
+                        if (!confirm) return;
                       }
                     }
 
@@ -894,94 +888,109 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
   }
 
   void _showQuickEntryModal({DateTime? initialDate, Map<String, dynamic>? appointment}) async {
-    final Map<String, dynamic>? editData = appointment;
-
-
-    // Controladores básicos
-    final TextEditingController nameController = TextEditingController(text: editData?['client_name'] ?? editData?['client_nome'] ?? '');
-    final TextEditingController phoneController = TextEditingController(text: editData?['client_phone'] ?? editData?['telefone'] ?? '');
-    final TextEditingController serviceController = TextEditingController(text: editData?['service_name'] ?? editData?['servico_nome'] ?? '');
-    final TextEditingController valueController = TextEditingController();
-    
-    // Estado do Modal
-    String? selectedClientId = editData?['client_id'] ?? editData?['clientId'];
-    String? serviceId = editData?['service_id'] ?? editData?['servicoId'];
-    int durationMin = editData?['duration_min'] ?? editData?['duracao_min'] ?? 30;
-    String? selectedProfessionalId = editData?['professional_id'] ?? editData?['profissionalId'];
-    String selectedProfessionalName = editData?['professional_name'] ?? editData?['profissional_nome'] ?? 'Selecione Profissional';
-    DateTime manualDate = initialDate ?? _selectedDay;
-    TimeOfDay manualTime = TimeOfDay.now();
-
-    if (editData != null) {
-      final dateStr = editData['scheduled_at'] as String?;
-      if (dateStr != null) {
-        manualDate = DateTime.parse(dateStr);
-        manualTime = TimeOfDay.fromDateTime(manualDate);
-      }
-      double val = _safeParseValue(appointment!);
-      valueController.text = val > 0 ? val.toString().replaceAll('.', ',') : '';
-    }
-
-    // --- REVISÃO / INTELIGÊNCIA INICIAL ---
-    Map<String, dynamic>? suggestedService;
-    Map<String, dynamic>? suggestedProfessional;
-    bool isServiceConfirmed = false;
-    bool isProfessionalConfirmed = false;
-
-    Future<void> runInitialIntelligence() async {
-      // 1. Match de Serviço
-      if (serviceId == null && serviceController.text.isNotEmpty) {
-        suggestedService = await TransactionAutocompleteService.findBestMatchingService(
-          shopId: widget.shopId,
-          rawName: serviceController.text,
-        );
-      }
-
-      // 2. Sugestão de Profissional
-      if (selectedProfessionalId == null) {
-        final candidates = await TransactionAutocompleteService.getCandidates(
-          shopId: widget.shopId,
-          serviceId: serviceId ?? suggestedService?['id']?.toString(),
-        );
-
-        // Verifica disponibilidade e rankeia
-        List<Map<String, dynamic>> availableCands = [];
-        for (var cand in candidates) {
-          bool ok = await TransactionAutocompleteService.isProfessionalAvailable(
-            employeeId: cand['id'].toString(),
-            targetDate: manualDate,
-            durationMin: durationMin,
-            excludeDocId: appointment?['id']?.toString(),
-          );
-          if (ok) availableCands.add(cand);
-        }
-
-        if (availableCands.isNotEmpty) {
-          final ranked = await TransactionAutocompleteService.rankCandidatesByWorkload(
-            shopId: widget.shopId,
-            candidates: availableCands,
-            targetMonth: manualDate,
-          );
-          suggestedProfessional = ranked.first;
-        }
-      }
-    }
+    if (_isOpeningQuickEntry) return;
+    _isOpeningQuickEntry = true;
 
     try {
-      await runInitialIntelligence();
-    } catch (e) {
-      debugPrint("Erro na inteligência do agendamento: $e");
-    }
+      final Map<String, dynamic>? editData = appointment;
 
-    if (!mounted) return;
+      // Controladores básicos
+      final TextEditingController nameController = TextEditingController(text: editData?['client_name'] ?? editData?['client_nome'] ?? '');
+      final TextEditingController phoneController = TextEditingController(text: editData?['client_phone'] ?? editData?['telefone'] ?? '');
+      final TextEditingController serviceController = TextEditingController(text: editData?['service_name'] ?? editData?['servico_nome'] ?? '');
+      final TextEditingController valueController = TextEditingController();
+      
+      // Estado do Modal
+      String? selectedClientId = editData?['client_id'] ?? editData?['clientId'];
+      String? serviceId = editData?['service_id'] ?? editData?['servicoId'];
+      int durationMin = editData?['duration_min'] ?? editData?['duracao_min'] ?? 30;
+      String? selectedProfessionalId = editData?['professional_id'] ?? editData?['profissionalId'];
+      String selectedProfessionalName = editData?['professional_name'] ?? editData?['profissional_nome'] ?? 'Selecione Profissional';
+      DateTime manualDate = initialDate ?? _selectedDay;
+      TimeOfDay manualTime = TimeOfDay.now();
 
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
+      if (editData != null) {
+        final dateStr = editData['scheduled_at'] as String?;
+        if (dateStr != null) {
+          manualDate = DateTime.parse(dateStr);
+          manualTime = TimeOfDay.fromDateTime(manualDate);
+        }
+        double val = _safeParseValue(appointment!);
+        valueController.text = val > 0 ? val.toString().replaceAll('.', ',') : '';
+      }
+
+      // --- REVISÃƒO / INTELIGÃŠNCIA INICIAL ---
+      Map<String, dynamic>? suggestedService;
+      Map<String, dynamic>? suggestedProfessional;
+      bool isServiceConfirmed = false;
+      bool isProfessionalConfirmed = false;
+      bool isIntelligentLoading = (editData == null); // Só carregar inteligência para novos agendamentos
+
+      if (!mounted) {
+        _isOpeningQuickEntry = false;
+        return;
+      }
+
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (context) {
+          return StatefulBuilder(
+            builder: (context, setModalState) {
+              // Trigger inicial da inteligência se necessário
+              if (isIntelligentLoading) {
+                isIntelligentLoading = false; // Só rodar uma vez
+                Future.microtask(() async {
+                  try {
+                    // 1. Match de Serviço
+                    if (serviceId == null && serviceController.text.isNotEmpty) {
+                      suggestedService = await TransactionAutocompleteService.findBestMatchingService(
+                        shopId: widget.shopId,
+                        rawName: serviceController.text,
+                      );
+                    }
+
+                    // 2. Sugestão de Profissional
+                    if (selectedProfessionalId == null) {
+                      final candidates = await TransactionAutocompleteService.getCandidates(
+                        shopId: widget.shopId,
+                        serviceId: serviceId ?? suggestedService?['id']?.toString(),
+                      );
+
+                      List<Map<String, dynamic>> availableCands = [];
+                      for (var cand in candidates) {
+                        bool ok = await TransactionAutocompleteService.isProfessionalAvailable(
+                          employeeId: cand['id'].toString(),
+                          targetDate: manualDate,
+                          durationMin: durationMin,
+                          excludeDocId: appointment?['id']?.toString(),
+                        );
+                        if (ok) availableCands.add(cand);
+                      }
+
+                      if (availableCands.isNotEmpty) {
+                        final ranked = await TransactionAutocompleteService.rankCandidatesByWorkload(
+                          shopId: widget.shopId,
+                          candidates: availableCands,
+                          targetMonth: manualDate,
+                        );
+                        suggestedProfessional = ranked.first;
+                        
+                        // Aplicar sugestão automaticamente se o usuário não escolheu nada ainda
+                        if (selectedProfessionalId == null) {
+                           selectedProfessionalId = suggestedProfessional?['id']?.toString();
+                           selectedProfessionalName = suggestedProfessional?['name'] ?? suggestedProfessional?['nome'] ?? 'Profissional';
+                        }
+                      }
+                    }
+                    if (context.mounted) setModalState(() {});
+                  } catch (e) {
+                    debugPrint("Erro na inteligência: $e");
+                  }
+                });
+              }
+
             return Padding(
               padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
               child: Container(
@@ -1271,8 +1280,16 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                                      initialValue: TextEditingValue(
                                          text: selectedProfessionalId != null ? selectedProfessionalName : ''),
                                      optionsBuilder: (TextEditingValue textEditingValue) {
-                                       if (textEditingValue.text.isEmpty) return pros;
-                                       return pros.where((p) => (p['name'] ?? '')
+                                       // Filtra por habilitação (se houver serviço selecionado)
+                                       final filteredByService = pros.where((p) {
+                                         if (serviceId == null) return true;
+                                         final List<dynamic> habilitados = p['services_ids'] ?? [];
+                                         
+                                         return habilitados.map((id) => id.toString()).contains(serviceId.toString());
+                                       }).toList();
+
+                                       if (textEditingValue.text.isEmpty) return filteredByService;
+                                       return filteredByService.where((p) => (p['name'] ?? '')
                                            .toString()
                                            .toLowerCase()
                                            .contains(textEditingValue.text.toLowerCase()));
@@ -1615,22 +1632,23 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                                     return;
                                   }
                                   if (selectedProfessionalId != null) {
-                                    final busy = await AvailabilityUtils.getBusyIntervals(selectedProfessionalId!, manualDate, excludeDocId: appointment?['id']);
-                                    int startMin = manualTime.hour * 60 + manualTime.minute;
-                                    bool available = AvailabilityUtils.isSlotAvailable(startMin, durationMin, busy);
-                                    if (!available) {
-                                      bool? confirm = await showDialog<bool>(
+                                    final conflicts = await _verifyBusinessRules(
+                                      professionalId: selectedProfessionalId!,
+                                      date: manualDate,
+                                      time: manualTime,
+                                      durationMin: durationMin,
+                                      serviceId: serviceId,
+                                      excludeDocId: appointment?['id'],
+                                    );
+                                    
+                                    if (conflicts.isNotEmpty) {
+                                      bool confirm = await _showConflictDialog(
                                         context: context,
-                                        builder: (ctx) => AlertDialog(
-                                          title: const Text("Conflito de Horário"),
-                                          content: const Text("Este profissional já possui um agendamento. Prosseguir mesmo assim?"),
-                                          actions: [
-                                            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("NÃO")),
-                                            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("SIM")),
-                                          ],
-                                        ),
+                                        professionalName: selectedProfessionalName,
+                                        timeStr: manualTime.format(context),
+                                        messages: conflicts,
                                       );
-                                      if (confirm != true) return;
+                                      if (!confirm) return;
                                     }
                                   }
                                   double valor = double.tryParse(valueController.text.replaceAll(',', '.')) ?? 0.0;
@@ -1704,8 +1722,14 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
           },
         );
       },
-    );
+    ).whenComplete(() {
+      _isOpeningQuickEntry = false;
+    });
+  } catch (e) {
+    _isOpeningQuickEntry = false;
+    debugPrint("Erro ao abrir modal: $e");
   }
+}
 
   @override
   Widget build(BuildContext context) {
@@ -1995,6 +2019,134 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
         ],
       ),
     );
+  }
+
+  Future<List<String>> _verifyBusinessRules({
+    required String professionalId,
+    required DateTime date,
+    required TimeOfDay time,
+    required int durationMin,
+    String? serviceId,
+    String? excludeDocId,
+  }) async {
+    final List<String> conflicts = [];
+
+    // 1. Fetch Professional Data
+    final empDoc = await sb.Supabase.instance.client
+        .from('employees')
+        .select()
+        .eq('id', professionalId)
+        .maybeSingle();
+
+    if (empDoc == null) return ["Profissional não encontrado."];
+
+    // 2. Check Weekday
+    final List<int> workDays = List<int>.from(empDoc['work_days'] ?? []);
+    if (!workDays.contains(date.weekday) &&
+        !(date.weekday == 7 && (workDays.contains(0) || workDays.contains(7)))) {
+      conflicts.add("O profissional não trabalha neste dia da semana.");
+    }
+
+    // 3. Check Working Hours
+    final String startStr = empDoc['work_start'] ?? "08:00";
+    final String endStr = empDoc['work_end'] ?? "18:00";
+    int startDayMin =
+        int.parse(startStr.split(':')[0]) * 60 + int.parse(startStr.split(':')[1]);
+    int endDayMin =
+        int.parse(endStr.split(':')[0]) * 60 + int.parse(endStr.split(':')[1]);
+    int targetStartMin = time.hour * 60 + time.minute;
+    int targetEndMin = targetStartMin + durationMin;
+
+    if (targetStartMin < startDayMin) {
+      conflicts.add(
+          "O horário de início é antes do expediente do profissional ($startStr).");
+    }
+    if (targetEndMin > endDayMin) {
+      conflicts.add(
+          "O agendamento termina após o expediente do profissional ($endStr).");
+    }
+
+    // 4. Check Service Aptitude
+    if (serviceId != null) {
+      final List<String> proServices =
+          List<String>.from(empDoc['services_ids'] ?? []);
+      if (!proServices.contains(serviceId)) {
+        conflicts.add(
+            "Este profissional não está marcado como apto para este serviço.");
+      }
+    }
+
+    // 5. Check Overlaps
+    final busy = await AvailabilityUtils.getBusyIntervals(professionalId, date,
+        excludeDocId: excludeDocId);
+    bool available =
+        AvailabilityUtils.isSlotAvailable(targetStartMin, durationMin, busy);
+    if (!available) {
+      conflicts.add("Este horário já está ocupado por outro agendamento.");
+    }
+
+    return conflicts;
+  }
+
+  Future<bool> _showConflictDialog({
+    required BuildContext context,
+    required String professionalName,
+    required String timeStr,
+    List<String>? messages,
+  }) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: const [
+            Icon(Icons.warning_amber_rounded, color: Colors.orange),
+            SizedBox(width: 10),
+            Text("Conflito Detectado"),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              "O agendamento para $professionalName às $timeStr possui os seguintes pontos de atenção:",
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            if (messages != null && messages.isNotEmpty)
+              ...messages.map((m) => Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text("• ", style: TextStyle(fontWeight: FontWeight.bold)),
+                        Expanded(child: Text(m)),
+                      ],
+                    ),
+                  ))
+            else
+              const Text("Este horário já possui um agendamento (sobreposição)."),
+            const SizedBox(height: 12),
+            const Text("Deseja realizar a sobreposição administrativa mesmo assim?"),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("CANCELAR", style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text("SIM, SOBREPOR"),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
   }
 
   Widget _buildCalendarCard({required bool isMobile}) {

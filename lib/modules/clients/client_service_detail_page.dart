@@ -7,12 +7,16 @@ import '../login/login_page.dart';
 import '../../core/services/profile_check_service.dart';
 import 'client_register_page.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../core/widgets/intentional_friction_modal.dart';
 
 class ClientServiceDetailPage extends StatefulWidget {
   final Map<String, dynamic> serviceDoc;
   final bool isReschedule;
   final String? rescheduleAppointmentId;
   final bool fromSubdomain;
+  final DateTime? oldDate;
+  final String? oldProfessional;
+  final String? oldServiceName;
 
   const ClientServiceDetailPage({
     super.key,
@@ -20,6 +24,9 @@ class ClientServiceDetailPage extends StatefulWidget {
     this.isReschedule = false,
     this.rescheduleAppointmentId,
     this.fromSubdomain = false,
+    this.oldDate,
+    this.oldProfessional,
+    this.oldServiceName,
   });
 
   Map<String, dynamic> get serviceData => serviceDoc;
@@ -195,6 +202,34 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
       return;
     }
 
+    // 3. Verificar se o serviço requer aviso prévio
+    final bool requiresWarning = widget.serviceData['requires_warning'] ?? 
+                                 widget.serviceData['requiresWarning'] ?? false;
+    final String warningMessage = widget.serviceData['warning_message'] ?? 
+                                  widget.serviceData['warningMessage'] ?? 
+                                  'Este serviço possui requisitos que você deve concordar antes de prosseguir.';
+
+    if (requiresWarning && mounted) {
+      setState(() => _isNavigating = false);
+      final confirmed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => IntentionalFrictionModal(
+          title: "Aviso Importante",
+          content: Text(
+            warningMessage,
+            textAlign: TextAlign.center,
+          ),
+          expectedPhrase: "CONCORDO",
+          onConfirm: () => Navigator.pop(context, true),
+          onCancel: () => Navigator.pop(context, false),
+        ),
+      );
+
+      if (confirmed != true) return;
+      if (mounted) setState(() => _isNavigating = true);
+    }
+
     try {
       if (!mounted) return;
 
@@ -208,6 +243,9 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
             isReschedule: widget.isReschedule,
             appointmentId: widget.rescheduleAppointmentId,
             fromSubdomain: widget.fromSubdomain,
+            oldDate: widget.oldDate,
+            oldProfessional: widget.oldProfessional,
+            oldServiceName: widget.oldServiceName,
           ),
         ),
       );

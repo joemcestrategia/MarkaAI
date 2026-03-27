@@ -229,8 +229,9 @@ class _BookingPageState extends State<BookingPage> {
         }
 
         final profs = (snapshot.data ?? []).where((d) {
-          final skills = d['services_ids'] as List? ?? [];
-          return skills.isEmpty || skills.contains(widget.serviceId);
+          final List<dynamic> skills = d['services_ids'] ?? [];
+          final String targetId = widget.serviceId.toString();
+          return skills.map((id) => id.toString()).contains(targetId);
         }).toList();
 
         if (profs.isEmpty) {
@@ -259,6 +260,9 @@ class _BookingPageState extends State<BookingPage> {
                       minAdvanceHours: _minAdvanceHours,
                       isReschedule: widget.isReschedule,
                       appointmentId: widget.appointmentId,
+                      oldDate: widget.oldDate,
+                      oldProfessional: widget.oldProfessional,
+                      oldServiceName: widget.oldServiceName,
                       clientStatus: _clientStatus,
                     ),
                   ),
@@ -314,6 +318,11 @@ class _BookingPageState extends State<BookingPage> {
                               minAdvanceHours: _minAdvanceHours,
                               fromSubdomain: widget.fromSubdomain,
                               clientStatus: _clientStatus,
+                              isReschedule: widget.isReschedule,
+                              appointmentId: widget.appointmentId,
+                              oldDate: widget.oldDate,
+                              oldProfessional: widget.oldProfessional,
+                              oldServiceName: widget.oldServiceName,
                             ),
                           ),
                         );
@@ -427,6 +436,9 @@ class BookingTimePage extends StatefulWidget {
   final bool isReschedule;
   final String? appointmentId;
   final bool fromSubdomain;
+  final DateTime? oldDate;
+  final String? oldProfessional;
+  final String? oldServiceName;
 
   const BookingTimePage({
     super.key,
@@ -440,6 +452,9 @@ class BookingTimePage extends StatefulWidget {
     this.isReschedule = false,
     this.appointmentId,
     this.fromSubdomain = false,
+    this.oldDate,
+    this.oldProfessional,
+    this.oldServiceName,
     this.clientStatus,
   });
  
@@ -525,6 +540,11 @@ class _BookingTimePageState extends State<BookingTimePage> {
         if (status == 'cancelado' ||
             status == 'rejeitado' ||
             status == 'excluido') {
+          continue;
+        }
+
+        // Se for reagendamento, ignoramos o agendamento atual do próprio cliente
+        if (widget.isReschedule && data['id'].toString() == widget.appointmentId.toString()) {
           continue;
         }
 
@@ -1137,9 +1157,6 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                       _selectedTime!.minute,
                                     );
 
-                                    final utcDateTimeIso =
-                                        newDateTime.toUtc().toIso8601String();
-
                                     final sm = ScaffoldMessenger.of(context);
 
                                     // ── Mostra modal de confirmação antes de reagendar ──
@@ -1199,27 +1216,61 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                         }
                                       }
 
-                                      final response = await Supabase.instance.client
-                                          .functions.invoke(
-                                              'rescheduleAppointment',
-                                              body: {
-                                        'appointmentId': widget.appointmentId,
-                                        'newDateISO': utcDateTimeIso,
-                                        'newServiceId': (widget.serviceDoc['id'] ?? '').toString(),
-                                        'newServiceName': finalName,
-                                        'newPrice': finalPrice,
-                                        'newProfessionalId':
-                                            widget.professionalDoc['id'],
-                                        'newProfessionalName':
-                                            profData['name'] ?? profData['nome'] ?? 'Profissional',
-                                      });
+                                      final duration = int.tryParse(widget.serviceDoc['duration_min']?.toString() ?? '30') ?? 30;
+                                      final endDate = newDateTime.add(Duration(minutes: duration));
+
+                                      // 1. Validar Disponibilidade Localmente (Evita 401/404 de Edge Functions)
+                                      final conflictCheck = await Supabase.instance.client
+                                          .from('appointments')
+                                          .select('id, scheduled_at, duration_min')
+                                          .eq('professional_id', widget.professionalDoc['id'])
+                                          .neq('id', widget.appointmentId!) // EXCLUIR O ATUAL
+                                          .not('status', 'in', '("cancelado","rejeitado","excluido")')
+                                          // Busca uma janela de tempo ao redor do horário desejado
+                                          .gte('scheduled_at', newDateTime.subtract(const Duration(hours: 4)).toIso8601String())
+                                          .lte('scheduled_at', newDateTime.add(const Duration(hours: 4)).toIso8601String());
+
+                                      bool isConflicting = false;
+                                      for (var appt in conflictCheck) {
+                                        final apptStart = DateTime.parse(appt['scheduled_at']);
+                                        final apptDuration = int.tryParse(appt['duration_min']?.toString() ?? '30') ?? 30;
+                                        final apptEnd = apptStart.add(Duration(minutes: apptDuration));
+                                        
+                                        // Verificação de sobreposição
+                                        if (newDateTime.isBefore(apptEnd) && endDate.isAfter(apptStart)) {
+                                          isConflicting = true;
+                                          break;
+                                        }
+                                      }
+
+                                      if (isConflicting) {
+                                        if (mounted) {
+                                          Navigator.of(context).pop(); // tira loading
+                                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                                            content: Text('Este horário não está mais disponível. Por favor, escolha outro.'),
+                                            backgroundColor: Colors.red,
+                                          ));
+                                        }
+                                        return;
+                                      }
+
+                                      // 2. Atualizar Agendamento Direto
+                                      await Supabase.instance.client
+                                          .from('appointments')
+                                          .update({
+                                        'scheduled_at': newDateTime.toIso8601String(),
+                                        'end_at': endDate.toIso8601String(),
+                                        'service_id': widget.serviceDoc['id'],
+                                        'service_name': finalName,
+                                        'total_price': finalPrice,
+                                        'professional_id': widget.professionalDoc['id'],
+                                        'professional_name': profData['name'] ?? profData['nome'] ?? 'Profissional',
+                                        'duration_min': duration,
+                                      })
+                                      .eq('id', widget.appointmentId!);
 
                                       if (!mounted) return;
-                                      Navigator.of(context).pop();
-
-                                      if (response.status != 200) {
-                                        throw response.data?['error'] ?? 'Erro desconhecido';
-                                      }
+                                      Navigator.of(context).pop(); // tira loading
 
                                       if (!mounted) return;
 
@@ -1268,6 +1319,7 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                           selectedVariation:
                                               widget.selectedVariation,
                                           fromSubdomain: widget.fromSubdomain,
+                                          rescheduleId: widget.appointmentId,
                                         ),
                                       ),
                                     );
@@ -1330,6 +1382,11 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
 
       if (widget.ownerExcludeAppointmentId != null &&
           data['id'] == widget.ownerExcludeAppointmentId) {
+        continue;
+      }
+
+      // Se for reagendamento do cliente, ignoramos o agendamento atual dele
+      if (widget.isReschedule && data['id'].toString() == widget.appointmentId.toString()) {
         continue;
       }
 
@@ -1443,6 +1500,9 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
             minAdvanceHours: widget.minAdvanceHours,
             selectedDate: widget.selectedDate,
           );
+          
+          // Se for reagendamento e o horário original não apareceu (por minAdvanceHours), 
+          // o usuário agora orientou que deve ser respeitada a política de antecedência.
         }
 
         if (slots.isEmpty) {

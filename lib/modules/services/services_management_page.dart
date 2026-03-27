@@ -9,6 +9,7 @@ import '../../core/utils/service_image_keywords.dart';
 import '../../core/widgets/pexels_image_widget.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/services/shop_data_cache_service.dart';
+import '../../core/widgets/supabase_stream_widget.dart';
 import 'package:flutter/foundation.dart';
 
 // --- CLASSE DE DETALHES (MANTIDA E OTIMIZADA) ---
@@ -616,8 +617,9 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
 
         // LISTA (STREAM)
         Expanded(
-          child: StreamBuilder<List<Map<String, dynamic>>>(
+          child: SupabaseStreamWidget<List<Map<String, dynamic>>>(
             key: ValueKey('svc_stream_$_refreshKey'),
+            initialFuture: ShopDataCacheService().getServices(shopId!),
             stream: sb.Supabase.instance.client
                 .from('services')
                 .stream(primaryKey: ['id'])
@@ -627,27 +629,15 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
                   list.sort((a, b) => (a['name'] ?? '').toString().toLowerCase().compareTo((b['name'] ?? '').toString().toLowerCase()));
                   return list;
                 }),
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(
-                    child: CircularProgressIndicator(
-                        color: AppColors.primaryPurple));
-              }
-
-              if (snapshot.hasError) {
-                return Center(child: Text("Erro: ${snapshot.error}"));
-              }
-
-              if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                return _buildEmptyState();
-              }
-
+            emptyBuilder: (context) => _buildEmptyState(),
+            onRetry: () => setState(() => _refreshKey++),
+            builder: (context, services) {
               return ListView.separated(
                 padding: const EdgeInsets.fromLTRB(24, 0, 24, 80),
-                itemCount: snapshot.data!.length,
+                itemCount: services.length,
                 separatorBuilder: (_, __) => const SizedBox(height: 10),
                 itemBuilder: (context, index) {
-                  var data = snapshot.data![index];
+                  var data = services[index];
                   // Seleção visual apenas no Desktop
                   bool isSelected =
                       !isMobile && _showPanel && _selectedService?['id'] == data['id'];

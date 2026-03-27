@@ -103,8 +103,8 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
               ? data['commission_percent'].toString()
               : '0';
           _cargoController.text = data['role'] ?? data['position'] ?? "";
-          if (data['service_skills'] != null) {
-            _selectedServices = List<String>.from(data['service_skills']);
+          if (data['services_ids'] != null) {
+            _selectedServices = List<String>.from(data['services_ids']);
           }
 
           if (data['work_days'] != null) {
@@ -411,7 +411,7 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
         'start_time': _startWorkController.text,
         'end_time': _endWorkController.text,
         'photo_url': photoUrl,
-        'service_skills': _selectedServices,
+        'services_ids': _selectedServices,
         'work_days': _workDays,
         'breaks': _folgas,
         'shop_id': _shopId,

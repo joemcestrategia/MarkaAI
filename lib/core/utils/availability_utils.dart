@@ -20,6 +20,7 @@ class AvailabilityUtils {
     final List<dynamic> dataList = response;
     List<Map<String, int>> busy = [];
 
+    // 1. Processar Agendamentos
     for (var data in dataList) {
       if (excludeDocId != null && data['id']?.toString() == excludeDocId) {
         continue;
@@ -61,6 +62,46 @@ class AvailabilityUtils {
 
       int endMin = startMin + duration;
       busy.add({'start': startMin, 'end': endMin});
+    }
+
+    // 2. Processar Folgas (Breaks) do Profissional
+    try {
+      final empRes = await Supabase.instance.client
+          .from('employees')
+          .select('breaks')
+          .eq('id', professionalId)
+          .maybeSingle();
+      
+      if (empRes != null && empRes['breaks'] != null) {
+        final List<dynamic> folgasList = empRes['breaks'];
+        for (var folga in folgasList) {
+          final startFolgaStr = folga['start']?.toString();
+          final endFolgaStr = folga['end']?.toString();
+          
+          if (startFolgaStr != null && endFolgaStr != null) {
+            final startFolga = DateTime.parse(startFolgaStr);
+            final endFolga = DateTime.parse(endFolgaStr);
+            
+            // Verifica se a folga sobrepõe o dia selecionado
+            if (startFolga.isBefore(endOfDay) && endFolga.isAfter(startOfDay)) {
+              // Calcular minutos no dia selecionado
+              int fStartMin = 0;
+              if (startFolga.year == date.year && startFolga.month == date.month && startFolga.day == date.day) {
+                fStartMin = startFolga.hour * 60 + startFolga.minute;
+              }
+              
+              int fEndMin = 1440; // 24h em minutos
+              if (endFolga.year == date.year && endFolga.month == date.month && endFolga.day == date.day) {
+                fEndMin = endFolga.hour * 60 + endFolga.minute;
+              }
+              
+              busy.add({'start': fStartMin, 'end': fEndMin});
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint("Erro ao buscar folgas do profissional: $e");
     }
 
     return busy;
