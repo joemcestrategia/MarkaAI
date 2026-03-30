@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/theme/app_colors.dart';
@@ -34,59 +33,39 @@ class PublicShopPage extends StatefulWidget {
 
 class _PublicShopPageState extends State<PublicShopPage> {
   String? _selectedCategoryId;
-  final _currency = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
-  Future<void> _launchWhatsApp(BuildContext context, String whatsapp) async {
-    try {
-      final phone = whatsapp.replaceAll(RegExp(r'[^0-9]'), '');
-
-      // Tenta abrir o app nativo do WhatsApp primeiro
-      final nativeUri = Uri.parse('whatsapp://send?phone=$phone');
-      if (await canLaunchUrl(nativeUri)) {
-        await launchUrl(nativeUri, mode: LaunchMode.externalApplication);
-        return;
-      }
-
-      // Fallback: abre no navegador
-      final webUri = Uri.parse('https://wa.me/$phone');
-      if (await canLaunchUrl(webUri)) {
-        await launchUrl(webUri, mode: LaunchMode.externalApplication);
-      }
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao abrir WhatsApp: $e')),
-        );
-      }
+  
+  Future<void> _launchWhatsApp(String whatsapp) async {
+    final phone = whatsapp.replaceAll(RegExp(r'[^0-9]'), '');
+    final uri = Uri.parse('https://wa.me/$phone');
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
     }
   }
 
-  Future<void> _launchInstagram(BuildContext context, String instagram) async {
-    try {
-      final username = instagram
-          .replaceAll('@', '')
-          .replaceAll('instagram.com/', '')
-          .replaceAll('/', '');
-
-      // Tenta abrir o app nativo do Instagram primeiro
-      final nativeUri = Uri.parse('instagram://user?username=$username');
-      if (await canLaunchUrl(nativeUri)) {
-        await launchUrl(nativeUri, mode: LaunchMode.externalApplication);
-        return;
-      }
-
-      // Fallback: abre no navegador
-      final webUri = Uri.parse('https://instagram.com/$username');
-      if (await canLaunchUrl(webUri)) {
-        await launchUrl(webUri, mode: LaunchMode.externalApplication);
-      }
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao abrir Instagram: $e')),
-        );
-      }
+  Future<void> _launchInstagram(String instagram) async {
+    final username = instagram.replaceAll('@', '');
+    final uri = Uri.parse('https://instagram.com/$username');
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
     }
   }
+
+  Future<void> _launchTikTok(String tiktok) async {
+    final username = tiktok.replaceAll('@', '');
+    final uri = Uri.parse('https://tiktok.com/@$username');
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  Future<void> _launchYouTube(String youtube) async {
+    final uri = youtube.startsWith('http') ? Uri.parse(youtube) : Uri.parse('https://youtube.com/$youtube');
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+
 
   Future<void> _handleServiceTap(
     BuildContext context,
@@ -158,194 +137,163 @@ class _PublicShopPageState extends State<PublicShopPage> {
         final instagram = data['instagram']?.toString() ?? '';
 
         return Scaffold(
-          backgroundColor: const Color(0xFFF5F7FA),
+          backgroundColor: Colors.white,
           body: CustomScrollView(
             slivers: [
               SliverAppBar(
                 expandedHeight: 200,
-                floating: false,
-                pinned: false,
+                pinned: true,
                 backgroundColor: AppColors.primaryPurple,
                 foregroundColor: Colors.white,
                 flexibleSpace: FlexibleSpaceBar(
-                  title: Text(
-                    data['name'] ?? 'Loja',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      shadows: [Shadow(color: Colors.black45, blurRadius: 8)],
-                    ),
-                  ),
-                  background: Hero(
-                    tag: 'cover_$shopId',
-                    child: () {
-                      final coverUrl = data['image_url']?.toString() ??
-                          '';
-                      if (coverUrl.isNotEmpty) {
-                        return CachedNetworkImage(
-                          imageUrl: coverUrl,
-                          fit: BoxFit.cover,
-                          placeholder: (context, url) =>
-                              Container(color: AppColors.primaryPurple),
-                          errorWidget: (context, url, error) => Container(
-                            decoration: const BoxDecoration(
-                              gradient: LinearGradient(
-                                  colors: [
-                                    AppColors.primaryPurple,
-                                    Color(0xFF4A148C)
-                                  ],
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight),
+                  background: () {
+                    final coverUrl = data['image_url']?.toString() ?? '';
+                    return Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        if (coverUrl.isNotEmpty)
+                          CachedNetworkImage(
+                            imageUrl: coverUrl,
+                            fit: BoxFit.cover,
+                            placeholder: (context, url) => Container(color: AppColors.primaryPurple),
+                            errorWidget: (context, url, error) => Container(color: Colors.black87),
+                          )
+                        else
+                          Container(color: Colors.black87),
+                        Container(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [Colors.transparent, Colors.black.withValues(alpha: 0.5)],
                             ),
-                            child: const Center(
-                                child: Icon(Icons.store,
-                                    color: Colors.white70, size: 48)),
                           ),
-                        );
-                      }
-                      return Container(
-                        decoration: const BoxDecoration(
-                          gradient: LinearGradient(
-                               colors: [
-                                 AppColors.primaryPurple,
-                                 Color(0xFF4A148C)
-                               ],
-                               begin: Alignment.topLeft,
-                               end: Alignment.bottomRight),
                         ),
-                      );
-                    }(),
+                        Positioned(
+                          left: 16,
+                          bottom: 16,
+                          right: 16,
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Container(
+                                width: 72,
+                                height: 72,
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.white, width: 3),
+                                  image: data['logo_url'] != null
+                                      ? DecorationImage(
+                                          image: NetworkImage(data['logo_url']),
+                                          fit: BoxFit.cover)
+                                      : null,
+                                ),
+                                child: data['logo_url'] == null
+                                    ? const Icon(Icons.store, size: 36)
+                                    : null,
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      data['name'] ?? 'Loja',
+                                      style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 22,
+                                          fontWeight: FontWeight.bold),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      data['address'] ?? data['endereco'] ?? "Endereço",
+                                      style: const TextStyle(color: Colors.white70, fontSize: 13),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    );
+                  }(),
+                ),
+                leading: Container(
+                  margin: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.3),
+                    shape: BoxShape.circle,
+                  ),
+                  child: IconButton(
+                    icon: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
+                    onPressed: () => Navigator.maybePop(context),
                   ),
                 ),
               ),
 
               SliverToBoxAdapter(
                 child: Padding(
-                  padding: const EdgeInsets.all(20),
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Header: logo + name + rating
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          Container(
-                            width: 72,
-                            height: 72,
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: Colors.grey.shade200),
-                              image: data['logo_url'] != null
-                                  ? DecorationImage(
-                                      image: NetworkImage(data['logo_url']),
-                                      fit: BoxFit.cover)
-                                  : null,
-                            ),
-                            child: data['logo_url'] == null
-                                ? const Icon(Icons.store, size: 36)
-                                : null,
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  data['name'] ?? 'Loja',
-                                  style: const TextStyle(
-                                      fontSize: 22,
-                                      fontWeight: FontWeight.bold),
-                                ),
-                                const SizedBox(height: 6),
-                                // Rating stars and score
-                                Row(
-                                  children: [
-                                    if (data['google_business'] != null &&
-                                        data['google_business']['rating'] !=
-                                            null)
-                                      ..._buildStars((data['google_business']
-                                              ['rating'] as num)
-                                          .toDouble()),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      data['google_business'] != null &&
-                                              data['google_business']
-                                                      ['user_ratings_total'] !=
-                                                  null
-                                          ? '${data['google_business']['rating']} (${data['google_business']['user_ratings_total']})'
-                                          : (data['rating'] != null
-                                              ? '${data['rating']}'
-                                              : ''),
-                                      style: TextStyle(
-                                          color: Colors.grey[700],
-                                          fontSize: 13),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      if (data['descricao'] != null &&
-                          data['descricao'].toString().isNotEmpty) ...[
+                      // Bio/Descrição
+                      if (data['descricao'] != null && data['descricao'].toString().isNotEmpty) ...[
                         Text(
                           data['descricao'],
-                          style:
-                              const TextStyle(fontSize: 14, color: Colors.grey),
+                          style: const TextStyle(fontSize: 15, color: AppColors.textSecondary, height: 1.4),
                         ),
                         const SizedBox(height: 16),
                       ],
 
-                      // Redes sociais
-                      if (whatsapp.isNotEmpty || instagram.isNotEmpty)
-                        Row(
+                      // Redes Sociais - Estilo Novo
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
                           children: [
                             if (whatsapp.isNotEmpty)
-                              Expanded(
-                                child: ElevatedButton.icon(
-                                  onPressed: () =>
-                                      _launchWhatsApp(context, whatsapp),
-                                  icon: const FaIcon(FontAwesomeIcons.whatsapp,
-                                      size: 20),
-                                  label: const Text("WhatsApp"),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF25D366),
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 12),
-                                    shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(8)),
-                                  ),
-                                ),
+                              _buildSocialIconBox(
+                                icon: FontAwesomeIcons.whatsapp,
+                                color: const Color(0xFF25D366),
+                                onTap: () => _launchWhatsApp(whatsapp),
                               ),
-                            if (whatsapp.isNotEmpty && instagram.isNotEmpty)
-                              const SizedBox(width: 12),
                             if (instagram.isNotEmpty)
-                              Expanded(
-                                child: ElevatedButton.icon(
-                                  onPressed: () =>
-                                      _launchInstagram(context, instagram),
-                                  icon: const FaIcon(FontAwesomeIcons.instagram,
-                                      size: 20),
-                                  label: const Text("Instagram"),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFFE1306C),
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 12),
-                                    shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(8)),
-                                  ),
-                                ),
+                              _buildSocialIconBox(
+                                icon: FontAwesomeIcons.instagram,
+                                color: const Color(0xFFE1306C),
+                                onTap: () => _launchInstagram(instagram),
+                              ),
+                            if (data['tiktok'] != null && data['tiktok'].toString().isNotEmpty)
+                              _buildSocialIconBox(
+                                icon: FontAwesomeIcons.tiktok,
+                                color: Colors.black,
+                                onTap: () => _launchTikTok(data['tiktok']),
+                              ),
+                            if (data['youtube'] != null && data['youtube'].toString().isNotEmpty)
+                              _buildSocialIconBox(
+                                icon: FontAwesomeIcons.youtube,
+                                color: const Color(0xFFFF0000),
+                                onTap: () => _launchYouTube(data['youtube']),
                               ),
                           ],
                         ),
+                      ),
+                      const SizedBox(height: 20),
+                      
+                      const Divider(height: 1),
                     ],
                   ),
                 ),
+              ),
+
+              // Vitrine de Destaques
+              SliverToBoxAdapter(
+                child: _buildServicesShowcase(shopId),
               ),
 
               // Título "Serviços"
@@ -353,8 +301,13 @@ class _PublicShopPageState extends State<PublicShopPage> {
                 child: Padding(
                   padding: EdgeInsets.fromLTRB(20, 20, 20, 10),
                   child: Text(
-                    "Serviços Disponíveis",
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    "SERVIÇOS",
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.1,
+                      color: AppColors.textSecondary,
+                    ),
                   ),
                 ),
               ),
@@ -521,30 +474,39 @@ class _PublicShopPageState extends State<PublicShopPage> {
                                               softWrap: true,
                                             ),
                                             const SizedBox(height: 4),
-                                            Text(
-                                              "${sData['duration_min'] ?? 30} min",
-                                              style: const TextStyle(
-                                                  fontSize: 12,
-                                                  color: Colors.grey),
-                                            ),
-                                            const SizedBox(height: 4),
-                                            Text(
-                                              _currency.format(double.tryParse(
-                                                      (sData['price'])
-                                                              ?.toString() ??
-                                                          '0') ??
-                                                  0),
-                                              style: const TextStyle(
-                                                fontSize: 16,
-                                                fontWeight: FontWeight.bold,
-                                                color: AppColors.primaryPurple,
+                                            if (sData['description'] != null && sData['description'].toString().isNotEmpty)
+                                              Padding(
+                                                padding: const EdgeInsets.only(bottom: 6),
+                                                child: Text(
+                                                  sData['description'],
+                                                  maxLines: 2,
+                                                  overflow: TextOverflow.ellipsis,
+                                                  style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                                                ),
                                               ),
+                                            Row(
+                                              children: [
+                                                Text(
+                                                  "R\$ ${sData['price'] ?? '0'}",
+                                                  style: const TextStyle(
+                                                    fontSize: 16,
+                                                    fontWeight: FontWeight.w900,
+                                                    color: AppColors.textPrimary,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 12),
+                                                const Icon(Icons.access_time, size: 14, color: Colors.grey),
+                                                const SizedBox(width: 4),
+                                                Text(
+                                                  "${sData['duration_min'] ?? 30} min",
+                                                  style: const TextStyle(fontSize: 13, color: Colors.grey),
+                                                ),
+                                              ],
                                             ),
                                           ],
                                         ),
                                       ),
-                                      const Icon(Icons.arrow_forward_ios,
-                                          size: 16, color: Colors.grey),
+                                      const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey),
                                     ],
                                   ),
                                 ),
@@ -559,7 +521,12 @@ class _PublicShopPageState extends State<PublicShopPage> {
                 },
               ),
 
-              // Avaliações do Google (Depois dos Serviços)
+              // Mini-Mapa
+              SliverToBoxAdapter(
+                child: _buildMiniMap(data),
+              ),
+
+              // Avaliações do Google (Depois do Mapa)
               if (data['google_business'] != null &&
                   data['google_business']['place_id'] != null)
                 SliverToBoxAdapter(
@@ -597,7 +564,7 @@ class _StickyCategoryDelegate extends SliverPersistentHeaderDelegate {
   Widget build(
       BuildContext context, double shrinkOffset, bool overlapsContent) {
     return Container(
-      color: const Color(0xFFF5F7FA), // Fundo combinando com a página
+      color: Colors.white, // Fundo branco para as categorias também
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: StreamBuilder<List<Map<String, dynamic>>>(
         // ✅ FIX: A tabela 'categories' usa shop_id (snake_case)
@@ -683,19 +650,264 @@ class _StickyCategoryDelegate extends SliverPersistentHeaderDelegate {
   }
 }
 
-// Helper to render star icons for rating
-List<Widget> _buildStars(double rating) {
-  final full = rating.floor();
-  final half = (rating - full) >= 0.5;
-  final stars = <Widget>[];
-  for (int i = 0; i < 5; i++) {
-    if (i < full) {
-      stars.add(const Icon(Icons.star, size: 16, color: Colors.amber));
-    } else if (i == full && half) {
-      stars.add(const Icon(Icons.star_half, size: 16, color: Colors.amber));
-    } else {
-      stars.add(const Icon(Icons.star_border, size: 16, color: Colors.amber));
-    }
-  }
-  return stars;
+// Helper para ícones sociais coloridos em caixas (Estilo ShopProfile)
+Widget _buildSocialIconBox({required IconData icon, required Color color, required VoidCallback onTap}) {
+  return Padding(
+    padding: const EdgeInsets.only(right: 12),
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        width: 50,
+        height: 50,
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: color.withValues(alpha: 0.2), width: 1.5),
+        ),
+        child: Center(
+          child: FaIcon(icon, color: color, size: 24),
+        ),
+      ),
+    ),
+  );
 }
+
+// Widget da Vitrine de Destaques
+Widget _buildServicesShowcase(String shopId) {
+  return FutureBuilder<List<Map<String, dynamic>>>(
+    future: Supabase.instance.client
+        .from('services')
+        .select()
+        .eq('shop_id', shopId),
+    builder: (context, snapshot) {
+      if (!snapshot.hasData || snapshot.data!.isEmpty) return const SizedBox.shrink();
+
+      final activeServices = snapshot.data!.where((s) => s['is_active'] == null || s['is_active'] == true).toList();
+      final docsWithPhotos = activeServices.where((data) {
+        final fotos = data['photos_urls'] ?? data['fotos_urls'] ?? data['fotos'] ?? data['imageUrl'] ?? data['imagens'];
+        return (fotos is String && fotos.isNotEmpty) || (fotos is List && fotos.isNotEmpty);
+      }).toList();
+
+      if (docsWithPhotos.isEmpty) return const SizedBox.shrink();
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(20, 20, 20, 15),
+            child: Row(
+              children: [
+                Icon(Icons.stars, color: Colors.amber, size: 20),
+                SizedBox(width: 8),
+                Text("Destaques da Vitrine", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              ],
+            ),
+          ),
+          SizedBox(
+            height: 160,
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 15),
+              scrollDirection: Axis.horizontal,
+              itemCount: docsWithPhotos.length,
+              itemBuilder: (context, index) {
+                final data = docsWithPhotos[index];
+                dynamic fotosData = data['photos_urls'] ?? data['fotos_urls'] ?? data['fotos'] ?? data['imageUrl'] ?? data['imagens'];
+                String? thumb = fotosData is String ? fotosData : (fotosData is List && fotosData.isNotEmpty ? fotosData.first.toString() : null);
+
+                if (thumb == null) return const SizedBox.shrink();
+
+                return GestureDetector(
+                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => ClientServiceDetailPage(serviceDoc: data, fromSubdomain: true))),
+                  child: Container(
+                    width: 140,
+                    margin: const EdgeInsets.only(right: 12),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 8, offset: const Offset(0, 4))],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          CachedNetworkImage(imageUrl: thumb, fit: BoxFit.cover),
+                          Positioned(
+                            bottom: 0, left: 0, right: 0,
+                            child: Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.bottomCenter, end: Alignment.topCenter,
+                                  colors: [Colors.black.withValues(alpha: 0.8), Colors.transparent],
+                                ),
+                              ),
+                              child: Text(
+                                data['name'] ?? "Serviço",
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                                maxLines: 2, overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          )
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 10),
+        ],
+      );
+    },
+  );
+}
+
+// Widget do Mini-Mapa
+Widget _buildMiniMap(Map<String, dynamic> data) {
+  final fullAddress = _formatFullAddressStatic(data);
+  if (fullAddress.isEmpty) return const SizedBox.shrink();
+
+  return Builder(
+    builder: (context) {
+      return Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text("LOCALIZAÇÃO", style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, letterSpacing: 1.1, color: AppColors.textSecondary)),
+            const SizedBox(height: 16),
+            GestureDetector(
+              onTap: () => _showMapOptions(context, data),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: Container(
+                  height: 180,
+                  width: double.infinity,
+                  color: Colors.grey[200],
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      // Usando imagem estática do Google (Se houver chave no futuro, ou placeholder visual)
+                      CachedNetworkImage(
+                        imageUrl: "https://maps.googleapis.com/maps/api/staticmap?center=${Uri.encodeComponent(fullAddress)}&zoom=15&size=600x300&scale=2&maptype=roadmap&markers=color:red%7C${Uri.encodeComponent(fullAddress)}&key=AIzaSyDx-vFGigPinwH63Q0osFMVU3ITJuZNjDI",
+                        fit: BoxFit.cover,
+                        errorWidget: (c, u, e) => Container(
+                          color: AppColors.softGrey,
+                          child: const Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.map_outlined, size: 48, color: Colors.grey),
+                              SizedBox(height: 8),
+                              Text("Ver no Mapa", style: TextStyle(color: Colors.grey)),
+                            ],
+                          ),
+                        ),
+                      ),
+                      Container(
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey.shade300),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      Positioned(
+                        right: 12, bottom: 12,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)]),
+                          child: const Row(
+                            children: [
+                              Icon(Icons.directions, size: 18, color: AppColors.primaryPurple),
+                              SizedBox(width: 4),
+                              Text("Como chegar", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primaryPurple)),
+                            ],
+                          ),
+                        ),
+                      )
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+  );
+}
+
+void _showMapOptions(BuildContext context, Map<String, dynamic> data) {
+  showModalBottomSheet(
+    context: context,
+    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+    builder: (ctx) => AppMapSelectionDialogAlt(
+      onMaps: () { Navigator.pop(ctx); _launchMapsStatic(data); },
+      onWaze: () { Navigator.pop(ctx); _launchWazeStatic(data); },
+    ),
+  );
+}
+
+// Funções Estáticas para o helper e botões (usadas dentro dos widgets build)
+String _formatFullAddressStatic(Map<String, dynamic> data) {
+  final street = data['street']?.toString() ?? '';
+  final number = data['number']?.toString() ?? '';
+  final neighborhood = data['neighborhood']?.toString() ?? '';
+  final city = data['city']?.toString() ?? data['cidade']?.toString() ?? '';
+  final state = data['state']?.toString() ?? data['estado']?.toString() ?? '';
+  if (street.isNotEmpty) {
+    String full = street;
+    if (number.isNotEmpty) full += ', $number';
+    if (neighborhood.isNotEmpty) full += ' - $neighborhood';
+    if (city.isNotEmpty) full += ', $city';
+    if (state.isNotEmpty) full += ' - $state';
+    return full;
+  }
+  return data['address']?.toString() ?? '';
+}
+
+Future<void> _launchMapsStatic(Map<String, dynamic> data) async {
+  final address = _formatFullAddressStatic(data);
+  final query = Uri.encodeComponent(address);
+  final uri = Uri.parse('https://www.google.com/maps/search/?api=1&query=$query');
+  if (await canLaunchUrl(uri)) await launchUrl(uri, mode: LaunchMode.externalApplication);
+}
+
+Future<void> _launchWazeStatic(Map<String, dynamic> data) async {
+  final address = _formatFullAddressStatic(data);
+  final query = Uri.encodeComponent(address);
+  final uri = Uri.parse('https://waze.com/ul?q=$query&navigate=yes');
+  if (await canLaunchUrl(uri)) await launchUrl(uri, mode: LaunchMode.externalApplication);
+}
+
+class AppMapSelectionDialogAlt extends StatelessWidget {
+  final VoidCallback onMaps;
+  final VoidCallback onWaze;
+  const AppMapSelectionDialogAlt({super.key, required this.onMaps, required this.onWaze});
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 20),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text("Escolha o app de navegação", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 20),
+          ListTile(
+            leading: const Icon(Icons.map, color: Colors.blue),
+            title: const Text("Google Maps"),
+            onTap: onMaps,
+          ),
+          ListTile(
+            leading: const Icon(FontAwesomeIcons.waze, color: Color(0xFF33CCFF)),
+            title: const Text("Waze"),
+            onTap: onWaze,
+          ),
+          const SizedBox(height: 10),
+        ],
+      ),
+    );
+  }
+}
+
+
