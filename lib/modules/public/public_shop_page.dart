@@ -8,6 +8,7 @@ import '../../widgets/google_reviews_widget.dart';
 import '../../core/utils/service_image_keywords.dart';
 import '../../core/widgets/pexels_image_widget.dart';
 import '../clients/client_service_detail_page.dart';
+import '../../core/constants/api_keys.dart';
 
 class PublicShopPage extends StatefulWidget {
   final String slug;
@@ -791,7 +792,7 @@ Widget _buildMiniMap(Map<String, dynamic> data) {
                     children: [
                       // Usando imagem estática do Google (Se houver chave no futuro, ou placeholder visual)
                       CachedNetworkImage(
-                        imageUrl: "https://maps.googleapis.com/maps/api/staticmap?center=${Uri.encodeComponent(fullAddress)}&zoom=15&size=600x300&scale=2&maptype=roadmap&markers=color:red%7C${Uri.encodeComponent(fullAddress)}&key=AIzaSyDx-vFGigPinwH63Q0osFMVU3ITJuZNjDI",
+                        imageUrl: "https://maps.googleapis.com/maps/api/staticmap?center=${Uri.encodeComponent(fullAddress)}&zoom=15&size=600x300&scale=2&maptype=roadmap&markers=color:red%7C${Uri.encodeComponent(fullAddress)}&key=${ApiKeys.geminiApiKey}",
                         fit: BoxFit.cover,
                         errorWidget: (c, u, e) => Container(
                           color: AppColors.softGrey,
@@ -855,15 +856,27 @@ String _formatFullAddressStatic(Map<String, dynamic> data) {
   final neighborhood = data['neighborhood']?.toString() ?? '';
   final city = data['city']?.toString() ?? data['cidade']?.toString() ?? '';
   final state = data['state']?.toString() ?? data['estado']?.toString() ?? '';
+  final address = data['address']?.toString() ?? '';
+
+  String full = '';
   if (street.isNotEmpty) {
-    String full = street;
+    full = street;
     if (number.isNotEmpty) full += ', $number';
     if (neighborhood.isNotEmpty) full += ' - $neighborhood';
     if (city.isNotEmpty) full += ', $city';
     if (state.isNotEmpty) full += ' - $state';
-    return full;
+  } else if (address.isNotEmpty) {
+    full = address;
+    if (city.isNotEmpty) full += ', $city';
+    if (state.isNotEmpty) full += ' - $state';
   }
-  return data['address']?.toString() ?? '';
+
+  // Debug (Remover após teste se necessário)
+  if (full.isEmpty) {
+    debugPrint('⚠️ PublicShopPage: Endereço vazio para o mapa.');
+  }
+
+  return full;
 }
 
 Future<void> _launchMapsStatic(Map<String, dynamic> data) async {
