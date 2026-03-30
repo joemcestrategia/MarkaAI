@@ -45,10 +45,10 @@ serve(async (req) => {
     }
 
     if (!userData) {
-      console.warn('[sendPasswordReset] Usuário não encontrado:', email)
+      console.warn('[sendPasswordReset] Usuário não encontrado (resposta genérica enviada):', email)
       return new Response(
-        JSON.stringify({ error: 'Este e-mail não está cadastrado em nossa base. Verifique e tente novamente.' }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ success: true }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
@@ -239,7 +239,7 @@ serve(async (req) => {
     const resendData = await resendRes.json()
 
     if (!resendRes.ok) {
-      console.error('[sendPasswordReset] Resend erro:', resendData)
+      console.error('[sendPasswordReset] Resend error:', JSON.stringify(resendData, null, 2))
       return new Response(
         JSON.stringify({ error: 'Falha ao enviar e-mail.', detail: resendData }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
