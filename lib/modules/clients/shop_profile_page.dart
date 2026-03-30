@@ -6,6 +6,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/service_image_keywords.dart';
 import '../../core/widgets/pexels_image_widget.dart';
+import '../../core/constants/api_keys.dart';
 import '../../widgets/google_reviews_widget.dart';
 
 class ShopProfilePage extends StatefulWidget {
@@ -133,35 +134,7 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
     }
   }
 
-  Future<void> _launchMaps() async {
-    final data = widget.shopDoc;
-    final street = data['street']?.toString() ?? '';
-    final number = data['number']?.toString() ?? '';
-    final neighborhood = data['neighborhood']?.toString() ?? '';
-    final city = data['city']?.toString() ?? '';
-    final state = data['state'] ?? '';
-    final address = data['address']?.toString() ?? '';
 
-    String fullAddress = '';
-    if (street.isNotEmpty) {
-      fullAddress = street;
-      if (number.isNotEmpty) fullAddress += ', $number';
-      if (neighborhood.isNotEmpty) fullAddress += ' - $neighborhood';
-      if (city.isNotEmpty) fullAddress += ', $city';
-      if (state.isNotEmpty) fullAddress += ' - $state';
-    } else {
-      fullAddress = address;
-      if (city.isNotEmpty) fullAddress += ', $city';
-      if (state.isNotEmpty) fullAddress += ' - $state';
-    }
-
-    final query = Uri.encodeComponent(fullAddress);
-    final uri = Uri.parse('https://www.google.com/maps/search/?api=1&query=$query');
-
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -387,12 +360,7 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
                               icon: FontAwesomeIcons.youtube,
                               color: const Color(0xFFFF0000),
                             ),
-                          if (hasAddress)
-                            _buildSocialIcon(
-                              onPressed: _launchMaps,
-                              icon: FontAwesomeIcons.mapLocationDot,
-                              color: const Color(0xFF4285F4),
-                            ),
+                          // Removido ícone de GPS individual para usar o Mini-Mapa novo
                         ],
                       ),
                     ),
@@ -672,6 +640,11 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
           ),
           const SliverToBoxAdapter(child: SizedBox(height: 8)),
 
+          // Mini-Mapa Novo
+          SliverToBoxAdapter(
+            child: _buildMiniMap(widget.shopDoc),
+          ),
+
           // Avaliações do Google (se conectado) - movidas para depois dos serviços
           if (data['google_business'] != null &&
               data['google_business']['place_id'] != null)
@@ -864,5 +837,143 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
         ),
       ),
     );
+  }
+
+  // --- MÉTODOS DO MINI-MAPA ---
+
+  Widget _buildMiniMap(Map<String, dynamic> data) {
+    final fullAddress = _formatFullAddress(data);
+    if (fullAddress.isEmpty) return const SizedBox.shrink();
+
+    return Builder(
+      builder: (context) {
+        return Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text("LOCALIZAÇÃO", style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, letterSpacing: 1.1, color: AppColors.textSecondary)),
+              const SizedBox(height: 16),
+              GestureDetector(
+                onTap: () => _showMapOptions(context, data),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: Container(
+                    height: 180,
+                    width: double.infinity,
+                    color: Colors.grey[200],
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        CachedNetworkImage(
+                          imageUrl: "https://maps.googleapis.com/maps/api/staticmap?center=${Uri.encodeComponent(fullAddress)}&zoom=15&size=600x300&scale=2&maptype=roadmap&markers=color:red%7C${Uri.encodeComponent(fullAddress)}&key=${ApiKeys.geminiApiKey}",
+                          fit: BoxFit.cover,
+                          errorWidget: (c, u, e) => Container(
+                            color: AppColors.softGrey,
+                            child: const Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.map_outlined, size: 48, color: Colors.grey),
+                                SizedBox(height: 8),
+                                Text("Ver no Mapa", style: TextStyle(color: Colors.grey)),
+                              ],
+                            ),
+                          ),
+                        ),
+                        Container(
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.grey.shade300),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                        Positioned(
+                          right: 12, bottom: 12,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)]),
+                            child: const Row(
+                              children: [
+                                Icon(Icons.directions, size: 18, color: AppColors.primaryPurple),
+                                SizedBox(width: 4),
+                                Text("Como chegar", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primaryPurple)),
+                              ],
+                            ),
+                          ),
+                        )
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      }
+    );
+  }
+
+  void _showMapOptions(BuildContext context, Map<String, dynamic> data) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => Container(
+        padding: const EdgeInsets.symmetric(vertical: 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text("Escolha o app de navegação", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 20),
+            ListTile(
+              leading: const Icon(Icons.map, color: Colors.blue),
+              title: const Text("Google Maps"),
+              onTap: () { Navigator.pop(ctx); _launchMapsStatic(data); },
+            ),
+            ListTile(
+              leading: const Icon(FontAwesomeIcons.waze, color: Color(0xFF33CCFF)),
+              title: const Text("Waze"),
+              onTap: () { Navigator.pop(ctx); _launchWazeStatic(data); },
+            ),
+            const SizedBox(height: 10),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatFullAddress(Map<String, dynamic> data) {
+    final street = data['street']?.toString() ?? '';
+    final number = data['number']?.toString() ?? '';
+    final neighborhood = data['neighborhood']?.toString() ?? '';
+    final city = data['city']?.toString() ?? data['cidade']?.toString() ?? '';
+    final state = data['state']?.toString() ?? data['estado']?.toString() ?? '';
+    final address = data['address']?.toString() ?? '';
+
+    String full = '';
+    if (street.isNotEmpty) {
+      full = street;
+      if (number.isNotEmpty) full += ', $number';
+      if (neighborhood.isNotEmpty) full += ' - $neighborhood';
+      if (city.isNotEmpty) full += ', $city';
+      if (state.isNotEmpty) full += ' - $state';
+    } else if (address.isNotEmpty) {
+      full = address;
+      if (city.isNotEmpty) full += ', $city';
+      if (state.isNotEmpty) full += ' - $state';
+    }
+    return full;
+  }
+
+  Future<void> _launchMapsStatic(Map<String, dynamic> data) async {
+    final address = _formatFullAddress(data);
+    final query = Uri.encodeComponent(address);
+    final uri = Uri.parse('https://www.google.com/maps/search/?api=1&query=$query');
+    if (await canLaunchUrl(uri)) await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  Future<void> _launchWazeStatic(Map<String, dynamic> data) async {
+    final address = _formatFullAddress(data);
+    final query = Uri.encodeComponent(address);
+    final uri = Uri.parse('https://waze.com/ul?q=$query&navigate=yes');
+    if (await canLaunchUrl(uri)) await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 }
