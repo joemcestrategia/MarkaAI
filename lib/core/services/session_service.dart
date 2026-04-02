@@ -1,58 +1,65 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class SessionService {
-  static const String _keyUserId = 'userId';
-  static const String _keyShopId = 'shopId';
-  static const String _keyUserType = 'userType';
+  static SharedPreferences? _prefs;
 
-  // Salva os dados do login
+  static const _secureStorage = FlutterSecureStorage(
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
+  );
+
+  static Future<void> init() async {
+    _prefs ??= await SharedPreferences.getInstance();
+  }
+
+  static const String _keyUserId = 'ss_userId';
+  static const String _keyShopId = 'ss_shopId';
+  static const String _keyUserType = 'ss_userType';
+
+  // Salva os dados do login em armazenamento criptografado
   static Future<void> saveLogin({
     required String userId,
     required String userType,
     String? shopId,
   }) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyUserId, userId);
-    await prefs.setString(_keyUserType, userType);
+    await _secureStorage.write(key: _keyUserId, value: userId);
+    await _secureStorage.write(key: _keyUserType, value: userType);
 
     if (shopId != null && shopId.isNotEmpty) {
-      await prefs.setString(_keyShopId, shopId);
+      await _secureStorage.write(key: _keyShopId, value: shopId);
       if (kDebugMode) {
-        debugPrint('DEBUG SessionService: shopId salvo no login: $shopId');
+        debugPrint('DEBUG SessionService: shopId salvo no login');
       }
     } else {
-      await prefs.remove(_keyShopId);
+      await _secureStorage.delete(key: _keyShopId);
       if (kDebugMode) {
-        debugPrint(
-            'DEBUG SessionService: shopId removido no login (null ou vazio)');
+        debugPrint('DEBUG SessionService: shopId removido no login (null ou vazio)');
       }
     }
   }
 
   static Future<void> saveShopId(String shopId) async {
-    final prefs = await SharedPreferences.getInstance();
     if (shopId.isEmpty) {
-      await prefs.remove(_keyShopId);
+      await _secureStorage.delete(key: _keyShopId);
       if (kDebugMode) {
         debugPrint('DEBUG SessionService: shopId removido (vazio)');
       }
     } else {
-      await prefs.setString(_keyShopId, shopId);
+      await _secureStorage.write(key: _keyShopId, value: shopId);
       if (kDebugMode) {
-        debugPrint(
-            'DEBUG SessionService: shopId salvo via saveShopId: $shopId');
+        debugPrint('DEBUG SessionService: shopId salvo via saveShopId');
       }
     }
   }
 
   static Future<String?> getShopId() async {
-    final prefs = await SharedPreferences.getInstance();
-    final shopId = prefs.getString(_keyShopId);
+    final shopId = await _secureStorage.read(key: _keyShopId);
     if (kDebugMode) {
       debugPrint(
-          'DEBUG SessionService: getShopId chamado - retornando: ${shopId ?? "NULL"}');
+          'DEBUG SessionService: getShopId chamado - retornando: ${shopId != null ? "[presente]" : "NULL"}');
     }
     return shopId;
   }
@@ -64,7 +71,7 @@ class SessionService {
 
   static Future<void> saveLastLocation(
       {required String address, double? lat, double? lng}) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = _prefs ?? await SharedPreferences.getInstance();
     await prefs.setString(_keyLastAddress, address);
     if (lat != null) await prefs.setDouble(_keyLastLat, lat);
     if (lng != null) await prefs.setDouble(_keyLastLng, lng);
@@ -75,7 +82,7 @@ class SessionService {
   }
 
   static Future<Map<String, dynamic>?> getLastLocation() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = _prefs ?? await SharedPreferences.getInstance();
     final address = prefs.getString(_keyLastAddress);
     if (address == null) return null;
     final lat =
@@ -86,18 +93,16 @@ class SessionService {
   }
 
   static Future<String?> getUserId() async {
-    final prefs = await SharedPreferences.getInstance();
-    final userId = prefs.getString(_keyUserId);
+    final userId = await _secureStorage.read(key: _keyUserId);
     if (kDebugMode) {
       debugPrint(
-          'DEBUG SessionService: getUserId chamado - retornando: ${userId ?? "NULL"}');
+          'DEBUG SessionService: getUserId chamado - retornando: ${userId != null ? "[presente]" : "NULL"}');
     }
     return userId;
   }
 
   static Future<String?> getUserType() async {
-    final prefs = await SharedPreferences.getInstance();
-    final userType = prefs.getString(_keyUserType);
+    final userType = await _secureStorage.read(key: _keyUserType);
     if (kDebugMode) {
       debugPrint(
           'DEBUG SessionService: getUserType chamado - retornando: ${userType ?? "NULL"}');
@@ -106,8 +111,8 @@ class SessionService {
   }
 
   static Future<bool> isLoggedIn() async {
-    final prefs = await SharedPreferences.getInstance();
-    final hasUserId = prefs.containsKey(_keyUserId);
+    final userId = await _secureStorage.read(key: _keyUserId);
+    final hasUserId = userId != null && userId.isNotEmpty;
     if (kDebugMode) {
       debugPrint(
           'DEBUG SessionService: isLoggedIn chamado - tem userId? $hasUserId');
@@ -117,8 +122,8 @@ class SessionService {
 
   // Novo método útil para checar se tem loja
   static Future<bool> hasShopId() async {
-    final prefs = await SharedPreferences.getInstance();
-    final hasShop = prefs.containsKey(_keyShopId);
+    final shopId = await _secureStorage.read(key: _keyShopId);
+    final hasShop = shopId != null && shopId.isNotEmpty;
     if (kDebugMode) {
       debugPrint(
           'DEBUG SessionService: hasShopId chamado - tem shopId? $hasShop');
@@ -180,11 +185,18 @@ class SessionService {
   }
 
   static Future<void> logout() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.clear();
+    await _secureStorage.delete(key: _keyUserId);
+    await _secureStorage.delete(key: _keyShopId);
+    await _secureStorage.delete(key: _keyUserType);
+    final prefs = _prefs ?? await SharedPreferences.getInstance();
+    // Remove apenas dados de sessão/cache — preserva preferências do usuário (cidade selecionada)
+    await prefs.remove(_keyLastAddress);
+    await prefs.remove(_keyLastLat);
+    await prefs.remove(_keyLastLng);
+    await prefs.remove('shop_data_cache');
     if (kDebugMode) {
       debugPrint(
-          'DEBUG SessionService: logout chamado - todas chaves removidas');
+          'DEBUG SessionService: logout chamado - dados de sessão removidos (cidade preservada)');
     }
   }
 }

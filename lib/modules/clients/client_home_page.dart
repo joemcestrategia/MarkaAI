@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:intl/intl.dart';
 import 'package:geolocator/geolocator.dart';
@@ -25,6 +27,8 @@ import 'client_search_page.dart';
 import 'client_register_page.dart';
 import '../../core/widgets/seletor_de_cidade.dart';
 import '../../core/utils/string_utils.dart';
+import '../../core/services/ad_service.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
 
 class ClientHomePage extends StatefulWidget {
   final int initialTabIndex;
@@ -45,6 +49,9 @@ class _ClientHomePageState extends State<ClientHomePage> {
   String _userTipo = 'cliente';
   bool _isLoadingUserData = true;
 
+  // Controle de Abas Visitadas (Lazy Loading)
+  final List<bool> _tabVisited = [false, false, false];
+
   // Filtros de localização
   String _selectedLocation = "";
   String _searchText = "";
@@ -53,8 +60,19 @@ class _ClientHomePageState extends State<ClientHomePage> {
   double? _userLng;
   final double _selectedRadius = 20.0; // km
 
+  // Chaves para os Navigators aninhados
+  final List<GlobalKey<NavigatorState>> _navigatorKeys = [
+    GlobalKey<NavigatorState>(),
+    GlobalKey<NavigatorState>(),
+    GlobalKey<NavigatorState>(),
+  ];
+
+  final GlobalKey<MyAppointmentsPageState> _appointmentsKey = GlobalKey();
+
   // ?? Cidade selecionada pelo cliente (persiste no SharedPreferences)
   CidadeSelecionada? _cidadeSelecionada;
+  // Notifier para propagar mudanças dentro dos Navigators aninhados
+  final ValueNotifier<CidadeSelecionada?> _cidadeNotifier = ValueNotifier(null);
 
   final List<Map<String, dynamic>> _categories = [
     {"name": "Todos", "icon": Icons.grid_view},
@@ -73,9 +91,16 @@ class _ClientHomePageState extends State<ClientHomePage> {
   void initState() {
     super.initState();
     _selectedIndex = widget.initialTabIndex;
+    _tabVisited[_selectedIndex] = true; // Marca aba inicial como visitada
     _loadUserData();
-    _setupNotifications();
     _loadCidadeSalva();
+    _setupNotifications();
+  }
+
+  @override
+  void dispose() {
+    _cidadeNotifier.dispose();
+    super.dispose();
   }
 
   // Carrega cidade salva no SharedPreferences
@@ -83,9 +108,14 @@ class _ClientHomePageState extends State<ClientHomePage> {
     final cidade = await CidadePrefs.carregar();
     if (mounted) {
       if (cidade != null) {
-        setState(() => _cidadeSelecionada = cidade);
+        setState(() {
+          _cidadeSelecionada = cidade;
+          _selectedLocation = cidade.cidade;
+        });
+        _cidadeNotifier.value = cidade;
+        // Cidade já salva: não sobrescreve com GPS (usuário pode alterar pelo seletor)
       } else {
-        // Primeira vez: tenta detectar automaticamente
+        // Primeira vez sem cidade salva: tenta detectar automaticamente
         _detectLocationAndSetCity();
       }
     }
@@ -102,47 +132,77 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
       final Position pos = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.low,
-        timeLimit: const Duration(seconds: 5),
+        timeLimit: const Duration(seconds: 10),
       );
 
-      final List<Placemark> placemarks =
-          await placemarkFromCoordinates(pos.latitude, pos.longitude);
+      String detectedCity = '';
+      String detectedState = '';
 
-      if (placemarks.isNotEmpty && mounted) {
-        final p = placemarks.first;
-        final String detectedCity =
-            (p.subAdministrativeArea ?? p.locality ?? '').trim();
-        final String detectedState = (p.administrativeArea ?? '').trim();
-
-        if (detectedCity.isNotEmpty) {
-          // Tenta "encaixar" no que temos no banco (case insensitive)
-          final suggestions =
-              await SeletorDeCidadeModal.getCitySuggestions(detectedCity);
-          CidadeSelecionada? finalCidade;
-
-          if (suggestions.isNotEmpty) {
-            final best = suggestions.first;
-            finalCidade = CidadeSelecionada(
-              cidade: best.cidade,
-              estado: best.estado,
-              definidoEm: DateTime.now(),
-            );
-          } else {
-            // Se não achou no banco, usa o que o GPS deu (fallback)
-            finalCidade = CidadeSelecionada(
-              cidade: detectedCity,
-              estado: detectedState.length > 2
-                  ? detectedState.substring(0, 2).toUpperCase()
-                  : detectedState.toUpperCase(),
-              definidoEm: DateTime.now(),
-            );
+      if (kIsWeb) {
+        // No web, geocoding package não funciona — usa Nominatim (OpenStreetMap)
+        try {
+          final uri = Uri.parse(
+            'https://nominatim.openstreetmap.org/reverse'
+            '?lat=${pos.latitude}&lon=${pos.longitude}'
+            '&format=json&accept-language=pt-BR',
+          );
+          final resp = await http.get(uri, headers: {'User-Agent': 'MarkaAI/1.0'});
+          if (resp.statusCode == 200) {
+            final data = jsonDecode(resp.body) as Map<String, dynamic>;
+            final addr = data['address'] as Map<String, dynamic>?;
+            detectedCity = (addr?['city'] ?? addr?['town'] ?? addr?['village'] ??
+                    addr?['municipality'] ?? '').toString().trim();
+            detectedState = (addr?['state_code'] ?? addr?['state'] ?? '').toString().trim();
           }
-
-          setState(() => _cidadeSelecionada = finalCidade);
-          await CidadePrefs.salvar(finalCidade);
-          debugPrint(
-              '📍 Localização automática: ${finalCidade.cidade}/${finalCidade.estado}');
+        } catch (_) {}
+      } else {
+        final List<Placemark> placemarks = await placemarkFromCoordinates(
+            pos.latitude, pos.longitude, localeIdentifier: 'pt_BR');
+        if (placemarks.isNotEmpty) {
+          final p = placemarks.first;
+          // locality é mais confiável para o nome da cidade; subAdministrativeArea como fallback
+          detectedCity = (p.locality ?? p.subAdministrativeArea ?? '').trim();
+          detectedState = (p.administrativeArea ?? '').trim();
         }
+      }
+
+      if (detectedCity.isEmpty || !mounted) return;
+
+      // Só define cidade se ainda não há nenhuma (evita sobrescrever seleção manual)
+      if (_cidadeSelecionada != null) return;
+
+      // Tenta "encaixar" no que temos no banco (case insensitive)
+      final suggestions =
+          await SeletorDeCidadeModal.getCitySuggestions(detectedCity);
+      CidadeSelecionada? finalCidade;
+
+      if (suggestions.isNotEmpty) {
+        final best = suggestions.first;
+        finalCidade = CidadeSelecionada(
+          cidade: best.cidade,
+          estado: best.estado,
+          definidoEm: DateTime.now(),
+        );
+      } else {
+        // Se não achou no banco, usa o que o GPS deu (fallback)
+        finalCidade = CidadeSelecionada(
+          cidade: detectedCity,
+          estado: detectedState.length > 2
+              ? detectedState.substring(0, 2).toUpperCase()
+              : detectedState.toUpperCase(),
+          definidoEm: DateTime.now(),
+        );
+      }
+
+      if (mounted) {
+        setState(() {
+          _cidadeSelecionada = finalCidade;
+          _selectedLocation = finalCidade!.cidade;
+        });
+        _cidadeNotifier.value = finalCidade;
+        await CidadePrefs.salvar(finalCidade);
+        debugPrint(
+            '📍 Localização automática: ${finalCidade.cidade}/${finalCidade.estado}');
       }
     } catch (e) {
       debugPrint('Erro ao detectar localização: $e');
@@ -159,9 +219,9 @@ class _ClientHomePageState extends State<ClientHomePage> {
           onCidadeSelecionada: (c) {
             setState(() {
               _cidadeSelecionada = c;
-              // Sincroniza com o filtro legado de lojas
               _selectedLocation = c.cidade;
             });
+            _cidadeNotifier.value = c;
           },
         ),
       ),
@@ -234,36 +294,41 @@ class _ClientHomePageState extends State<ClientHomePage> {
   }
 
   Future<void> _loadUserData() async {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user != null) {
-      final doc = await Supabase.instance.client
-          .from('users')
-          .select()
-          .eq('id', user.id)
-          .maybeSingle();
-      if (mounted) {
-        final data = doc;
-        setState(() {
-          _userId = user.id;
-          _userName = data?['name'] ?? data?['nome'] ?? "Cliente";
-          _userEmail = user.email ?? "";
-          _userPhotoUrl = data?['photo_url'];
-          _userTipo = data?['tipo'] ?? data?['role'] ?? 'cliente';
-          // Restaurar última localização salva
-          final lastLoc = data?['last_location'] as Map<String, dynamic>?;
-          if (lastLoc != null) {
-            _selectedLocation = lastLoc['label'] ?? '';
-            _userLat = lastLoc['lat'] != null
-                ? (lastLoc['lat'] as num).toDouble()
-                : null;
-            _userLng = lastLoc['lng'] != null
-                ? (lastLoc['lng'] as num).toDouble()
-                : null;
-          }
-          _isLoadingUserData = false;
-        });
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user != null) {
+        final doc = await Supabase.instance.client
+            .from('users')
+            .select()
+            .eq('id', user.id)
+            .maybeSingle();
+        if (mounted) {
+          final data = doc;
+          setState(() {
+            _userId = user.id;
+            _userName = data?['name'] ?? data?['nome'] ?? "Cliente";
+            _userEmail = user.email ?? "";
+            _userPhotoUrl = data?['photo_url'];
+            _userTipo = data?['tipo'] ?? data?['role'] ?? 'cliente';
+            // Restaurar última localização salva
+            final lastLoc = data?['last_location'] as Map<String, dynamic>?;
+            if (lastLoc != null) {
+              _selectedLocation = lastLoc['label'] ?? '';
+              _userLat = lastLoc['lat'] != null
+                  ? (lastLoc['lat'] as num).toDouble()
+                  : null;
+              _userLng = lastLoc['lng'] != null
+                  ? (lastLoc['lng'] as num).toDouble()
+                  : null;
+            }
+            _isLoadingUserData = false;
+          });
+        }
+      } else {
+        if (mounted) setState(() => _isLoadingUserData = false);
       }
-    } else {
+    } catch (e) {
+      debugPrint('⚠️ [ClientHome] Erro ao carregar dados do usuário: $e');
       if (mounted) setState(() => _isLoadingUserData = false);
     }
   }
@@ -636,10 +701,19 @@ class _ClientHomePageState extends State<ClientHomePage> {
         barrierDismissible: false,
         builder: (ctx) => const Center(child: CircularProgressIndicator()));
     try {
+      // Forçar refresh do token para garantir JWT válido
+      final sessionResult = await Supabase.instance.client.auth.refreshSession();
+      if (sessionResult.session == null) {
+        if (mounted) Navigator.pop(context);
+        throw Exception('Sessão expirada. Faça login novamente para excluir a conta.');
+      }
+      final freshToken = sessionResult.session!.accessToken;
+
       final response = await Supabase.instance.client.functions
           .invoke(
             'deleteUserAccount',
             body: {'userId': user.id},
+            headers: {'Authorization': 'Bearer $freshToken'},
           )
           .timeout(
             const Duration(seconds: 60),
@@ -650,7 +724,11 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
       final responseData = response.data;
       if (responseData is Map && responseData.containsKey('error')) {
-        throw Exception(responseData['error']);
+        final errMsg = responseData['error'] as String? ?? '';
+        if (errMsg.contains('Sessão') || errMsg.contains('inválida') || errMsg.contains('expirada')) {
+          throw Exception('Sua sessão expirou. Faça login novamente e tente excluir a conta.');
+        }
+        throw Exception(errMsg);
       }
 
       try {
@@ -806,11 +884,23 @@ class _ClientHomePageState extends State<ClientHomePage> {
                     children: [
                       _buildHeaderDesktop(),
                       Expanded(
-                        child: _selectedIndex == 0
-                            ? _buildExploreView(isDesktop: true)
-                            : _selectedIndex == 1
-                                ? _buildFavoritesView(isDesktop: true)
-                                : _buildScheduleView(isDesktop: true),
+                        child: IndexedStack(
+                          index: _selectedIndex,
+                          children: [
+                            _tabVisited[0]
+                                ? _buildTabNavigator(
+                                    0, _buildExploreView(isDesktop: true))
+                                : const SizedBox.shrink(),
+                            _tabVisited[1]
+                                ? _buildTabNavigator(
+                                    1, _buildFavoritesView(isDesktop: true))
+                                : const SizedBox.shrink(),
+                            _tabVisited[2]
+                                ? _buildTabNavigator(
+                                    2, _buildScheduleView(isDesktop: true))
+                                : const SizedBox.shrink(),
+                          ],
+                        ),
                       ),
                     ],
                   ),
@@ -820,36 +910,99 @@ class _ClientHomePageState extends State<ClientHomePage> {
           );
         }
 
-        return Scaffold(
-          backgroundColor: const Color(0xFFF5F7FA),
-          body: _selectedIndex == 0
-              ? _buildExploreView(isDesktop: false)
-              : _selectedIndex == 1
-                  ? _buildFavoritesView(isDesktop: false)
-                  : _buildScheduleView(isDesktop: false),
-          bottomNavigationBar: NavigationBar(
-            selectedIndex: _selectedIndex,
-            onDestinationSelected: (idx) =>
-                setState(() => _selectedIndex = idx),
-            backgroundColor: Colors.white,
-            elevation: 10,
-            shadowColor: Colors.black12,
-            indicatorColor: AppColors.primaryPurple.withOpacity(0.2),
-            destinations: const [
-              NavigationDestination(
-                  icon: Icon(Icons.explore_outlined),
-                  selectedIcon: Icon(Icons.explore),
-                  label: "Explorar"),
-              NavigationDestination(
-                  icon: Icon(Icons.favorite_border),
-                  selectedIcon: Icon(Icons.favorite),
-                  label: "Favoritos"),
-              NavigationDestination(
-                  icon: Icon(Icons.calendar_today_outlined),
-                  selectedIcon: Icon(Icons.calendar_today),
-                  label: "Agendamentos"),
-            ],
+        return PopScope(
+          canPop: false,
+          onPopInvokedWithResult: (didPop, result) async {
+            if (didPop) return;
+            
+            final NavigatorState? currentNavigator = _navigatorKeys[_selectedIndex].currentState;
+            if (currentNavigator != null && currentNavigator.canPop()) {
+              currentNavigator.pop();
+            } else {
+              if (_selectedIndex != 0) {
+                setState(() => _selectedIndex = 0);
+              } else {
+                // Se estiver na home e não puder mais voltar internamente, permite fechar o app
+                if (mounted) {
+                   Navigator.of(context).pop();
+                }
+              }
+            }
+          },
+          child: Scaffold(
+            backgroundColor: const Color(0xFFF5F7FA),
+            body: IndexedStack(
+              index: _selectedIndex,
+              children: [
+                _tabVisited[0]
+                    ? _buildTabNavigator(0, _buildExploreView(isDesktop: false))
+                    : const SizedBox.shrink(),
+                _tabVisited[1]
+                    ? _buildTabNavigator(1, _buildFavoritesView(isDesktop: false))
+                    : const SizedBox.shrink(),
+                _tabVisited[2]
+                    ? _buildTabNavigator(2, _buildScheduleView(isDesktop: false))
+                    : const SizedBox.shrink(),
+              ],
+            ),
+            bottomNavigationBar: NavigationBar(
+                  selectedIndex: _selectedIndex,
+                  onDestinationSelected: (idx) {
+                    if (_selectedIndex == idx) {
+                      // Se clicar na mesma aba, volta pro início dela
+                      _navigatorKeys[idx].currentState?.popUntil((r) => r.isFirst);
+                      if (idx == 2) {
+                        _appointmentsKey.currentState?.refreshData();
+                      }
+                    } else {
+                      _onTabChanged(idx);
+                    }
+                  },
+                  backgroundColor: Colors.white,
+                  elevation: 10,
+                  shadowColor: Colors.black12,
+                  indicatorColor: AppColors.primaryPurple.withOpacity(0.2),
+                  destinations: const [
+                    NavigationDestination(
+                        icon: Icon(Icons.explore_outlined),
+                        selectedIcon: Icon(Icons.explore),
+                        label: "Explorar"),
+                    NavigationDestination(
+                        icon: Icon(Icons.favorite_border),
+                        selectedIcon: Icon(Icons.favorite),
+                        label: "Favoritos"),
+                    NavigationDestination(
+                        icon: Icon(Icons.calendar_today_outlined),
+                        selectedIcon: Icon(Icons.calendar_today),
+                        label: "Agendamentos"),
+                  ],
+                ),
           ),
+        );
+      },
+    );
+  }
+
+  void _onTabChanged(int index) {
+    if (index >= 0 && index < _tabVisited.length) {
+      if (index == 2) {
+        // Força atualização ao entrar na aba de agendamentos
+        _appointmentsKey.currentState?.refreshData();
+      }
+      setState(() {
+        _tabVisited[index] = true;
+        _selectedIndex = index;
+      });
+    }
+  }
+
+  Widget _buildTabNavigator(int index, Widget child) {
+    return Navigator(
+      key: _navigatorKeys[index],
+      onGenerateRoute: (settings) {
+        return MaterialPageRoute(
+          builder: (context) => child,
+          settings: settings,
         );
       },
     );
@@ -866,7 +1019,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
           .from('favorites')
           .stream(primaryKey: ['id'])
           .eq('user_id', uid)
-          .order('added_at', ascending: false),
+          .order('created_at', ascending: false),
       emptyBuilder: (context) => Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -967,7 +1120,9 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
   // ============ VIEW: EXPLORAR ============
   Widget _buildExploreView({required bool isDesktop}) {
-    return CustomScrollView(
+    return ValueListenableBuilder<CidadeSelecionada?>(
+      valueListenable: _cidadeNotifier,
+      builder: (context, cidade, _) => CustomScrollView(
       physics: const BouncingScrollPhysics(),
       slivers: [
         if (!isDesktop)
@@ -991,7 +1146,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
                     child: Align(
                       alignment: Alignment.centerRight,
                       child: SeletorDeCidadeButton(
-                        cidadeSelecionada: _cidadeSelecionada,
+                        cidadeSelecionada: cidade,
                         onTap: _mostrarSeletorDeCidade,
                       ),
                     ),
@@ -1102,10 +1257,18 @@ class _ClientHomePageState extends State<ClientHomePage> {
         // ? SEO DESTAQUES  Banner largo logo abaixo da busca
         SliverToBoxAdapter(
           child: _BoostBannerCarousel(
-            cidadeSelecionada: _cidadeSelecionada,
+            cidadeSelecionada: cidade,
             onShopTap: _openShopProfile,
           ),
         ),
+
+        const SliverToBoxAdapter(child: SizedBox(height: 10)),
+
+        // AdMob banner inline — abaixo do carousel de destaques
+        if (!kIsWeb)
+          const SliverToBoxAdapter(child: _AdFooterBanner()),
+
+        const SliverToBoxAdapter(child: SizedBox(height: 10)),
 
         // Categorias
         SliverToBoxAdapter(
@@ -1169,22 +1332,10 @@ class _ClientHomePageState extends State<ClientHomePage> {
         const SliverToBoxAdapter(child: SizedBox(height: 15)),
 
         // GRID DE LOJAS
-        SupabaseStreamWidget<List<Map<String, dynamic>>>(
-          initialFuture: _cidadeSelecionada == null ? null : ShopDataCacheService().getShopsByCity(_cidadeSelecionada!.cidade),
-          stream: _cidadeSelecionada == null
-              ? const Stream.empty()
-              : Supabase.instance.client
-                  .from('shops')
-                  .stream(primaryKey: ['id'])
-                  .eq('city', _cidadeSelecionada!.cidade),
-          loadingBuilder: (context) => const SliverToBoxAdapter(
-            child: Padding(
-              padding: EdgeInsets.only(top: 100),
-              child: Center(child: CircularProgressIndicator(color: AppColors.primaryPurple)),
-            ),
-          ),
-          emptyBuilder: (context) {
-            if (_cidadeSelecionada == null) {
+        FutureBuilder<List<Map<String, dynamic>>>(
+          future: cidade == null ? Future.value([]) : ShopDataCacheService().getShopsByCity(cidade.cidade),
+          builder: (context, snapshot) {
+            if (cidade == null) {
               return SliverFillRemaining(
                 hasScrollBody: false,
                 child: Center(
@@ -1203,51 +1354,90 @@ class _ClientHomePageState extends State<ClientHomePage> {
                 ),
               );
             }
-            return SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 80),
-                child: Center(
-                  child: Column(
-                    children: [
-                      Icon(Icons.location_off_outlined,
-                          size: 60, color: Colors.grey[300]),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Nenhuma loja encontrada em ${_cidadeSelecionada!.cidade}.\nTente outra cidade.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.grey[600], fontSize: 16),
-                      ),
-                    ],
+
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.only(top: 100),
+                  child: Center(child: CircularProgressIndicator(color: AppColors.primaryPurple)),
+                ),
+              );
+            }
+
+            if (snapshot.hasError) {
+              return SliverToBoxAdapter(
+                child: Center(child: Padding(
+                  padding: const EdgeInsets.all(40.0),
+                  child: Text("Erro ao carregar lojas: ${snapshot.error}", style: const TextStyle(color: Colors.red)),
+                )),
+              );
+            }
+
+            final shopsRaw = snapshot.data ?? [];
+
+            if (shopsRaw.isEmpty) {
+              return SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 80),
+                  child: Center(
+                    child: Column(
+                      children: [
+                        Icon(Icons.location_off_outlined,
+                            size: 60, color: Colors.grey[300]),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Nenhuma loja encontrada em ${cidade.cidade}.\nTente outra cidade.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.grey[600], fontSize: 16),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            );
-          },
-          errorBuilder: (context, error) => SliverToBoxAdapter(
-            child: Center(child: Padding(
-              padding: const EdgeInsets.all(40.0),
-              child: Text("Erro ao carregar lojas: $error", style: const TextStyle(color: Colors.red)),
-            )),
-          ),
-          builder: (context, shopsRaw) {
+              );
+            }
+
             final filtered = shopsRaw.where((doc) {
               final d = doc;
-              final bool isActive = d['ativo'] ?? true;
+              final bool isActive = d['is_active'] ?? d['ativo'] ?? true;
 
               // Filtro adicional por estado se houver ambiguidade (opcional)
-              if (_cidadeSelecionada!.estado.isNotEmpty) {
-                final String shopEstado = (d['state'] ??
-                        d['uf'] ??
-                        '')
-                    .toString()
-                    .toUpperCase();
-                if (shopEstado.isNotEmpty &&
-                    !shopEstado
-                        .contains(_cidadeSelecionada!.estado.toUpperCase()) &&
-                    !_cidadeSelecionada!.estado
-                        .toUpperCase()
-                        .contains(shopEstado)) {
-                  return false;
+              if (cidade.estado.isNotEmpty) {
+                final String shopEstado = (d['state'] ?? d['uf'] ?? '').toString().toUpperCase();
+                
+                if (shopEstado.isNotEmpty) {
+                  final sEst = cidade.estado.toUpperCase();
+                  final bool isSameAcronym = shopEstado == sEst;
+                  
+                  // Verifica se são nomes completos ou siglas que coincidem (ex: MG e MINAS GERAIS)
+                  final bool containsEachOther = shopEstado.contains(sEst) || sEst.contains(shopEstado);
+                  
+                  // Se for diferente, testa as siglas comuns para evitar falso negativo.
+                  // Uma validação básica evita remover uma loja correta. Em caso de dúvida, mantemos.
+                  if (!isSameAcronym && !containsEachOther) {
+                    final Map<String, String> estadosSiglas = {
+                      'ACRE': 'AC', 'ALAGOAS': 'AL', 'AMAPA': 'AP', 'AMAPÁ': 'AP', 'AMAZONAS': 'AM',
+                      'BAHIA': 'BA', 'CEARA': 'CE', 'CEARÁ': 'CE', 'DISTRITO FEDERAL': 'DF',
+                      'ESPIRITO SANTO': 'ES', 'ESPÍRITO SANTO': 'ES', 'GOIAS': 'GO', 'GOIÁS': 'GO',
+                      'MARANHAO': 'MA', 'MARANHÃO': 'MA', 'MATO GROSSO': 'MT', 'MATO GROSSO DO SUL': 'MS',
+                      'MINAS GERAIS': 'MG', 'PARA': 'PA', 'PARÁ': 'PA', 'PARAIBA': 'PB', 'PARAÍBA': 'PB',
+                      'PARANA': 'PR', 'PARANÁ': 'PR', 'PERNAMBUCO': 'PE', 'PIAUI': 'PI', 'PIAUÍ': 'PI',
+                      'RIO DE JANEIRO': 'RJ', 'RIO GRANDE DO NORTE': 'RN', 'RIO GRANDE DO SUL': 'RS',
+                      'RONDONIA': 'RO', 'RONDÔNIA': 'RO', 'RORAIMA': 'RR', 'SANTA CATARINA': 'SC',
+                      'SAO PAULO': 'SP', 'SÃO PAULO': 'SP', 'SERGIPE': 'SE', 'TOCANTINS': 'TO'
+                    };
+                    
+                    final mappedState = estadosSiglas[shopEstado];
+                    final mappedCityState = estadosSiglas[sEst];
+                    
+                    if ((mappedState != null && mappedState == sEst) || 
+                        (mappedCityState != null && mappedCityState == shopEstado)) {
+                      // Match por mapeamento
+                    } else {
+                      // Se chegou aqui e realmente não bate, descarta.
+                      return false;
+                    }
+                  }
                 }
               }
 
@@ -1281,10 +1471,21 @@ class _ClientHomePageState extends State<ClientHomePage> {
               int getScore(Map<String, dynamic> d) {
                 int s = 0;
                 if ((d['logo_url'] ?? '').toString().isNotEmpty) s += 10;
-                if ((d['image_url'] ?? '').toString().isNotEmpty) {
-                  s += 10;
-                }
-                if (d['is_boosted'] == true) s += 100;
+                if ((d['image_url'] ?? '').toString().isNotEmpty) s += 10;
+                
+                // ? Verificação de Boost Ativo (com expiração)
+                final expiresStr = d['boost_expires_at']?.toString();
+                final expires = expiresStr != null ? DateTime.tryParse(expiresStr) : null;
+                final bool isBoostActive = d['is_boosted'] == true && 
+                    (expires == null || expires.isAfter(DateTime.now()));
+
+                if (isBoostActive) s += 100;
+
+                // ? Verificação de Nota Alta (Mesmo critério visual do card)
+                final googleData = d['google_business'] as Map<String, dynamic>?;
+                final double rt = googleData?['rating']?.toDouble() ?? (d['rating']?.toDouble() ?? 0.0);
+                if (rt >= 4.5) s += 50;
+
                 return s;
               }
 
@@ -1302,24 +1503,45 @@ class _ClientHomePageState extends State<ClientHomePage> {
               );
             }
 
+            // Constrói linhas: a cada 6 itens (2 linhas) insere um Native Ad
+            final int cols = isDesktop ? 4 : 3;
+            final List<List<Map<String, dynamic>>?> rows = [];
+            for (int i = 0; i < filtered.length; i += cols) {
+              final endIdx = i + cols < filtered.length ? i + cols : filtered.length;
+              rows.add(filtered.sublist(i, endIdx));
+            }
+
             return SliverPadding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              sliver: SliverGrid(
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: isDesktop
-                      ? 4
-                      : 3, // 3 colunas no mobile para cards menores
-                  childAspectRatio: isDesktop
-                      ? 0.85
-                      : 0.70, // Um pouco mais alto para evitar overflow no texto
-                  crossAxisSpacing: 10,
-                  mainAxisSpacing: 10,
-                ),
+              sliver: SliverList(
                 delegate: SliverChildBuilderDelegate(
-                  (context, index) => _ShopCard(
-                      shop: filtered[index],
-                      onTap: () => _openShopProfile(filtered[index])),
-                  childCount: filtered.length,
+                  (context, index) {
+                    final item = rows[index]!; // agora nunca é null
+                    final rowShops = item;
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          for (int c = 0; c < cols; c++) ...[
+                            if (c > 0) const SizedBox(width: 10),
+                            Expanded(
+                              child: c < rowShops.length
+                                  ? AspectRatio(
+                                      aspectRatio: isDesktop ? 0.85 : 0.70,
+                                      child: _ShopCard(
+                                        shop: rowShops[c],
+                                        onTap: () => _openShopProfile(rowShops[c]),
+                                      ),
+                                    )
+                                  : const SizedBox.shrink(),
+                            ),
+                          ],
+                        ],
+                      ),
+                    );
+                  },
+                  childCount: rows.length,
                 ),
               ),
             );
@@ -1328,12 +1550,13 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
         const SliverToBoxAdapter(child: SizedBox(height: 80)),
       ],
+    ),
     );
   }
 
   // ============ VIEW: AGENDA ============
   Widget _buildScheduleView({required bool isDesktop}) {
-    return const MyAppointmentsPage();
+    return MyAppointmentsPage(key: _appointmentsKey);
   }
 
   // --- DESKTOP WIDGETS ---
@@ -1385,7 +1608,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
             style: TextStyle(
                 color: isSelected ? AppColors.primaryPurple : Colors.grey[800],
                 fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
-        onTap: () => setState(() => _selectedIndex = idx),
+        onTap: () => _onTabChanged(idx),
       ),
     );
   }
@@ -1517,7 +1740,7 @@ class _ShopCardState extends State<_ShopCard> {
         await Supabase.instance.client.from('favorites').insert({
           'user_id': uid,
           'shop_id': widget.shop['id'],
-          'added_at': DateTime.now().toIso8601String(),
+          'created_at': DateTime.now().toIso8601String(),
         });
       } else {
         await Supabase.instance.client
@@ -1538,8 +1761,16 @@ class _ShopCardState extends State<_ShopCard> {
     final logoUrl = data['logo_url'] ?? data['logoUrl'] ?? "";
     final category = data['category'] ?? data['categoria'] ?? data['nicho'] ?? 'Outros';
 
-    final bool isDestaque = data['is_boosted'] == true ||
-        (data['rating'] != null && data['rating'] >= 4.5);
+    // ? Lógica unificada de Destaque (mesma do Banner e Ordenação)
+    final googleData = data['google_business'] as Map<String, dynamic>?;
+    final double rt = googleData?['rating']?.toDouble() ?? (data['rating']?.toDouble() ?? 0.0);
+    
+    final expiresStr = data['boost_expires_at']?.toString();
+    final expires = expiresStr != null ? DateTime.tryParse(expiresStr) : null;
+    final bool isBoostActive = data['is_boosted'] == true && 
+        (expires == null || expires.isAfter(DateTime.now()));
+
+    final bool isDestaque = isBoostActive || rt >= 4.5;
 
     Color getCatColor(String c) {
       switch (c.toLowerCase()) {
@@ -2120,17 +2351,116 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
   final PageController _pageCtrl = PageController(viewportFraction: 0.92);
   int _currentPage = 0;
   Timer? _autoScrollTimer;
+  List<Map<String, dynamic>> _slides = [];
 
   @override
   void initState() {
     super.initState();
-    _startAutoScroll();
+    _loadAndSetSlides();
   }
 
-  void _startAutoScroll() {
+  @override
+  void didUpdateWidget(_BoostBannerCarousel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.cidadeSelecionada?.cidade != widget.cidadeSelecionada?.cidade) {
+      _loadAndSetSlides();
+    }
+  }
+
+  Future<void> _loadAndSetSlides() async {
+    final slides = await _fetchSlides();
+    if (!mounted) return;
+    setState(() => _slides = slides);
+    _startAutoScroll(slides.length);
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchSlides() async {
+    final now = DateTime.now();
+    final selectedCityNorm = widget.cidadeSelecionada != null
+        ? StringUtils.removeDiacritics(widget.cidadeSelecionada!.cidade).toLowerCase()
+        : null;
+
+    // 1. Busca banners fixos do admin (MarkaAI)
+    List<Map<String, dynamic>> banners = [];
+    try {
+      final raw = await Supabase.instance.client
+          .from('app_banners')
+          .select()
+          .eq('is_active', true)
+          .order('sort_order', ascending: true);
+      banners = List<Map<String, dynamic>>.from(raw)
+          .map((d) => {...d, '_slide_type': 'marka'})
+          .toList();
+    } catch (e) {
+      debugPrint('[Carousel] erro ao buscar app_banners: $e');
+    }
+
+    // 2. Busca lojas em Destaque (Impulsionadas ou Nota Alta)
+    List<Map<String, dynamic>> highlights = [];
+    if (selectedCityNorm != null) {
+      try {
+        // ? OTIMIZAÇÃO: Usamos o cache service de cidade para evitar múltiplas chamadas ao Supabase
+        // Como a lista já carrega esses dados, o cache estará quente.
+        final raw = await ShopDataCacheService().getShopsByCity(widget.cidadeSelecionada!.cidade);
+
+        highlights = List<Map<String, dynamic>>.from(raw).where((d) {
+          final bool isActive = d['is_active'] ?? d['ativo'] ?? true;
+          if (!isActive) return false;
+
+          // Filtro de Cidade
+          String cityRaw = (d['city'] ?? d['cidade'] ?? '').toString();
+          if (cityRaw.isEmpty && d['endereco'] is Map) {
+            final em = d['endereco'] as Map;
+            cityRaw = (em['cidade'] ?? em['city'] ?? '').toString();
+          }
+          final cityNorm = StringUtils.removeDiacritics(cityRaw).toLowerCase();
+          if (cityNorm != selectedCityNorm) return false;
+
+          // ? Critério de Destaque: Boost Ativo OU Nota Alta
+          final expiresStr = d['boost_expires_at']?.toString();
+          final expires = expiresStr != null ? DateTime.tryParse(expiresStr) : null;
+          final bool isBoostActive = d['is_boosted'] == true && 
+              (expires == null || expires.isAfter(now));
+
+          final googleData = d['google_business'] as Map<String, dynamic>?;
+          final double rt = googleData?['rating']?.toDouble() ?? (d['rating']?.toDouble() ?? 0.0);
+          final bool isHighRated = rt >= 4.5;
+
+          return isBoostActive || isHighRated;
+        }).map((d) => {...d, '_slide_type': 'shop'}).toList();
+
+        // Ordenação preferencial: primeiro impulsionados, depois nota
+        highlights.sort((a, b) {
+          final expA = a['boost_expires_at'] != null ? DateTime.tryParse(a['boost_expires_at']) : null;
+          final bstA = a['is_boosted'] == true && (expA == null || expA.isAfter(now));
+          
+          final expB = b['boost_expires_at'] != null ? DateTime.tryParse(b['boost_expires_at']) : null;
+          final bstB = b['is_boosted'] == true && (expB == null || expB.isAfter(now));
+
+          if (bstA && !bstB) return -1;
+          if (!bstA && bstB) return 1;
+          return 0;
+        });
+
+        // Limita a 12 destaques no banner para não poluir
+        if (highlights.length > 12) highlights = highlights.sublist(0, 12);
+
+      } catch (e) {
+        debugPrint('[Carousel] erro ao buscar destaques: $e');
+      }
+    }
+
+    return [...highlights, ...banners];
+  }
+
+  void _startAutoScroll(int count) {
+    _autoScrollTimer?.cancel();
+    if (count <= 1) return;
     _autoScrollTimer = Timer.periodic(const Duration(seconds: 4), (_) {
-      if (!_pageCtrl.hasClients) return;
-      // will be updated after docs are loaded
+      if (!mounted || !_pageCtrl.hasClients) return;
+      final next = (_currentPage + 1) % count;
+      _pageCtrl.animateToPage(next,
+          duration: const Duration(milliseconds: 500), curve: Curves.easeInOut);
     });
   }
 
@@ -2141,327 +2471,447 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: Supabase.instance.client
-          .from('shops')
-          .stream(primaryKey: ['id'])
-          .eq('is_boosted', true),
-      builder: (context, snap) {
-        if (widget.cidadeSelecionada == null) return const SizedBox.shrink();
-
-        final now = DateTime.now();
-        final String selectedCityNormalized =
-            StringUtils.removeDiacritics(widget.cidadeSelecionada!.cidade)
-                .toLowerCase();
-
-        final docs = (snap.data ?? []).where((doc) {
-          final d = doc as Map<String, dynamic>;
-
-          // Identificar cidade da loja com fallbacks
-          String shopCityRaw = '';
-          if (d['cidade'] != null && d['cidade'].toString().isNotEmpty) {
-            shopCityRaw = d['cidade'].toString();
-          } else if (d['endereco'] is Map) {
-            final endMap = d['endereco'] as Map;
-            shopCityRaw = (endMap['cidade'] ?? endMap['city'] ?? '').toString();
-          }
-
-          if (shopCityRaw.isEmpty) return false;
-
-          final String shopCityNormalized =
-              StringUtils.removeDiacritics(shopCityRaw).toLowerCase();
-
-          // Filtro rigoroso de cidade: deve ser igual à selecionada
-          final bool matchesCity = shopCityNormalized == selectedCityNormalized;
-
-          // Filtro de boost expirado
-          final expires = d['boost_expires_at'] as DateTime?;
-          final isNotExpired = expires != null && expires.isAfter(now);
-
-          return isNotExpired && matchesCity;
-        }).toList();
-
-        if (docs.isEmpty) return const SizedBox.shrink();
-
-        // Restart auto-scroll when docs change
-        _autoScrollTimer?.cancel();
-        _autoScrollTimer = Timer.periodic(const Duration(seconds: 4), (_) {
-          if (!_pageCtrl.hasClients) return;
-          final next = (_currentPage + 1) % docs.length;
-          _pageCtrl.animateToPage(
-            next,
-            duration: const Duration(milliseconds: 500),
-            curve: Curves.easeInOut,
-          );
-        });
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Ttulo
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
-              child: Row(children: [
-                Container(
-                  padding: const EdgeInsets.all(5),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                        colors: [Color(0xFFFFD700), Color(0xFFFFA000)]),
-                    borderRadius: BorderRadius.circular(7),
-                  ),
-                  child: const Icon(Icons.rocket_launch,
-                      size: 15, color: Colors.white),
-                ),
-                const SizedBox(width: 8),
-                const Text(
-                  'Destaques',
-                  style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black87),
-                ),
-                const SizedBox(width: 6),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFD700).withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text('${docs.length}',
-                      style: const TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF9A6F00))),
-                ),
-              ]),
+  Widget _buildShopSlide(Map<String, dynamic> d) {
+    final img = (d['image_url'] ?? d['imageUrl'] ?? d['coverUrl'] ?? '').toString();
+    final nome = (d['name'] ?? d['nome'] ?? '').toString();
+    final cat = (d['categoria'] ?? d['nicho'] ?? '').toString();
+    final logo = (d['logo_url'] ?? d['logoUrl'] ?? '').toString();
+    return GestureDetector(
+      onTap: () => widget.onShopTap(d),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 6),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          gradient: const LinearGradient(
+            colors: [Color(0xFF6A1B9A), Color(0xFF4A148C)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF6A1B9A).withValues(alpha: 0.25),
+              blurRadius: 14,
+              offset: const Offset(0, 6),
             ),
-
-            // Carousel de banners largos
-            SizedBox(
-              height: 170,
-              child: PageView.builder(
-                controller: _pageCtrl,
-                itemCount: docs.length,
-                onPageChanged: (p) => setState(() => _currentPage = p),
-                itemBuilder: (ctx, i) {
-                  final d = docs[i] as Map<String, dynamic>;
-                  final img = d['coverUrl'] ?? d['imageUrl'] ?? '';
-                  final nome = d['nome'] ?? '';
-                  final cat = d['categoria'] ?? d['nicho'] ?? '';
-                  final logo = d['logoUrl'] ?? '';
-
-                  return GestureDetector(
-                    onTap: () => widget.onShopTap(docs[i]),
-                    child: Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 6),
+            BoxShadow(
+              color: const Color(0xFFFFD700).withValues(alpha: 0.08),
+              blurRadius: 20,
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: Stack(fit: StackFit.expand, children: [
+            if (img.isNotEmpty)
+              CachedNetworkImage(
+                imageUrl: img,
+                fit: BoxFit.cover,
+                errorWidget: (_, __, ___) =>
+                    Container(color: const Color(0xFF4A148C)),
+              ),
+            Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Colors.transparent, Color(0xDD1A0033)],
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                ),
+              ),
+            ),
+            Positioned(
+              top: 12, right: 12,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFFFFD700), Color(0xFFFFA000)],
+                  ),
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                        color: const Color(0xFFFFD700).withValues(alpha: 0.5),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2)),
+                  ],
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.rocket_launch, size: 11, color: Colors.white),
+                    SizedBox(width: 4),
+                    Text('DESTAQUE',
+                        style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                            letterSpacing: 0.6)),
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: 12, left: 12, right: 12,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  if (logo.isNotEmpty)
+                    Container(
+                      width: 44, height: 44,
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(18),
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF6A1B9A), Color(0xFF4A148C)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 2.5),
                         boxShadow: [
                           BoxShadow(
-                            color:
-                                const Color(0xFF6A1B9A).withValues(alpha: 0.25),
-                            blurRadius: 14,
-                            offset: const Offset(0, 6),
-                          ),
-                          BoxShadow(
-                            color:
-                                const Color(0xFFFFD700).withValues(alpha: 0.08),
-                            blurRadius: 20,
-                          ),
+                              color: Colors.black.withValues(alpha: 0.2),
+                              blurRadius: 6),
                         ],
                       ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(18),
-                        child: Stack(fit: StackFit.expand, children: [
-                          // Imagem de capa
-                          if (img.isNotEmpty)
-                            CachedNetworkImage(
-                              imageUrl: img,
-                              fit: BoxFit.cover,
-                              errorWidget: (_, __, ___) =>
-                                  Container(color: const Color(0xFF4A148C)),
-                            ),
-                          // Gradiente escurece o fundo para legibilidade
-                          Container(
-                            decoration: const BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [
-                                  Colors.transparent,
-                                  Color(0xDD1A0033),
-                                ],
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                              ),
-                            ),
-                          ),
-                          // Badge DESTAQUE  topo direito
-                          Positioned(
-                            top: 12,
-                            right: 12,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 10, vertical: 5),
-                              decoration: BoxDecoration(
-                                gradient: const LinearGradient(
-                                  colors: [
-                                    Color(0xFFFFD700),
-                                    Color(0xFFFFA000)
-                                  ],
-                                ),
-                                borderRadius: BorderRadius.circular(20),
-                                boxShadow: [
-                                  BoxShadow(
-                                      color: const Color(0xFFFFD700)
-                                          .withValues(alpha: 0.5),
-                                      blurRadius: 8,
-                                      offset: const Offset(0, 2)),
-                                ],
-                              ),
-                              child: const Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(Icons.rocket_launch,
-                                      size: 11, color: Colors.white),
-                                  SizedBox(width: 4),
-                                  Text('DESTAQUE',
-                                      style: TextStyle(
-                                          fontSize: 9,
-                                          fontWeight: FontWeight.bold,
-                                          color: Colors.white,
-                                          letterSpacing: 0.6)),
-                                ],
-                              ),
-                            ),
-                          ),
-                          // Contedo inferior: logo + nome + categoria
-                          Positioned(
-                            bottom: 12,
-                            left: 12,
-                            right: 12,
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                // Logo circle
-                                if (logo.isNotEmpty)
-                                  Container(
-                                    width: 44,
-                                    height: 44,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      border: Border.all(
-                                          color: Colors.white, width: 2.5),
-                                      boxShadow: [
-                                        BoxShadow(
-                                            color: Colors.black
-                                                .withValues(alpha: 0.2),
-                                            blurRadius: 6),
-                                      ],
-                                    ),
-                                    child: ClipOval(
-                                      child: CachedNetworkImage(
-                                        imageUrl: logo,
-                                        fit: BoxFit.cover,
-                                      ),
-                                    ),
-                                  ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Text(
-                                        nome,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.bold,
-                                          shadows: [
-                                            Shadow(
-                                                blurRadius: 8,
-                                                color: Colors.black45),
-                                          ],
-                                        ),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                      if (cat.isNotEmpty)
-                                        Text(
-                                          cat,
-                                          style: TextStyle(
-                                            color: Colors.white
-                                                .withValues(alpha: 0.8),
-                                            fontSize: 12,
-                                          ),
-                                          maxLines: 1,
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                                // Boto Ver Loja
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 12, vertical: 6),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withValues(alpha: 0.2),
-                                    borderRadius: BorderRadius.circular(20),
-                                    border: Border.all(
-                                        color: Colors.white
-                                            .withValues(alpha: 0.5)),
-                                  ),
-                                  child: const Text(
-                                    'Ver loja',
-                                    style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w600),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ]),
+                      child: ClipOval(
+                        child: CachedNetworkImage(imageUrl: logo, fit: BoxFit.cover),
                       ),
                     ),
-                  );
-                },
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(nome,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                              shadows: [Shadow(blurRadius: 8, color: Colors.black45)],
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis),
+                        if (cat.isNotEmpty)
+                          Text(cat,
+                              style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.8),
+                                  fontSize: 12),
+                              maxLines: 1),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.5)),
+                    ),
+                    child: const Text('Ver loja',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600)),
+                  ),
+                ],
               ),
             ),
+          ]),
+        ),
+      ),
+    );
+  }
 
-            // Dots indicadores
-            if (docs.length > 1) ...[
-              const SizedBox(height: 8),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(docs.length, (i) {
-                  final active = i == _currentPage;
-                  return AnimatedContainer(
-                    duration: const Duration(milliseconds: 250),
-                    margin: const EdgeInsets.symmetric(horizontal: 3),
-                    width: active ? 18 : 6,
-                    height: 6,
-                    decoration: BoxDecoration(
-                      color:
-                          active ? AppColors.primaryPurple : Colors.grey[300],
-                      borderRadius: BorderRadius.circular(3),
-                    ),
-                  );
-                }),
-              ),
-            ],
-            const SizedBox(height: 12),
-          ],
-        );
+  Widget _buildMarkaBannerSlide(Map<String, dynamic> banner) {
+    final title = (banner['title'] ?? 'MarkaAI').toString();
+    final subtitle = (banner['subtitle'] ?? '').toString();
+    final ctaText = (banner['cta_text'] ?? 'Saiba mais').toString();
+    final ctaUrl = (banner['cta_url'] ?? '').toString();
+    final imgUrl = (banner['image_url'] ?? '').toString();
+    return GestureDetector(
+      onTap: () async {
+        if (ctaUrl.isNotEmpty) {
+          final uri = Uri.tryParse(ctaUrl);
+          if (uri != null) {
+            try { await launchUrl(uri, mode: LaunchMode.externalApplication); } catch (_) {}
+          }
+        }
       },
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 6),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          gradient: const LinearGradient(
+            colors: [Color(0xFF6A1B9A), Color(0xFF9C27B0)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF6A1B9A).withValues(alpha: 0.3),
+              blurRadius: 14,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: Stack(fit: StackFit.expand, children: [
+            // Imagem de fundo (quando fornecida via admin)
+            if (imgUrl.isNotEmpty)
+              CachedNetworkImage(
+                imageUrl: imgUrl,
+                fit: BoxFit.cover,
+                errorWidget: (_, __, ___) => const SizedBox(),
+              ),
+            // Overlay gradiente roxo (sempre presente)
+            Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: imgUrl.isNotEmpty
+                      ? [
+                          const Color(0xFF6A1B9A).withValues(alpha: 0.82),
+                          const Color(0xFF1A0033).withValues(alpha: 0.82),
+                        ]
+                      : [
+                          const Color(0xFF6A1B9A),
+                          const Color(0xFF4A0080),
+                        ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+            ),
+            // Logo branco centralizado (somente quando não há imagem de fundo)
+            if (imgUrl.isEmpty)
+              Positioned(
+                top: 12, left: 0, right: 0,
+                child: Center(
+                  child: Image.asset(
+                    'assets/images/logo_white.png',
+                    height: 34,
+                    fit: BoxFit.contain,
+                  ),
+                ),
+              ),
+            // Conteúdo inferior: título, subtítulo e CTA
+            Positioned(
+              bottom: 14, left: 14, right: 14,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(title,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          shadows: [Shadow(blurRadius: 6, color: Colors.black54)])),
+                  if (subtitle.isNotEmpty) ...[
+                    const SizedBox(height: 3),
+                    Text(subtitle,
+                        style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.85),
+                            fontSize: 11),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis),
+                  ],
+                  const SizedBox(height: 8),
+                  if (ctaText.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                      decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(20)),
+                      child: Text(ctaText,
+                          style: const TextStyle(
+                              color: Color(0xFF6A1B9A),
+                              fontWeight: FontWeight.bold,
+                              fontSize: 11)),
+                    ),
+                ],
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_slides.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Column(
+      children: [
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 135,
+          child: PageView.builder(
+            controller: _pageCtrl,
+            itemCount: _slides.length,
+            onPageChanged: (p) => setState(() => _currentPage = p),
+            itemBuilder: (ctx, i) {
+              final slide = _slides[i];
+              if (slide['_slide_type'] == 'marka') {
+                return _buildMarkaBannerSlide(slide);
+              }
+              return _buildShopSlide(slide);
+            },
+          ),
+        ),
+        if (_slides.length > 1) ...[
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(_slides.length, (i) {
+              final active = i == _currentPage;
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 250),
+                margin: const EdgeInsets.symmetric(horizontal: 3),
+                width: active ? 18 : 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  color: active ? AppColors.primaryPurple : Colors.grey[300],
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              );
+            }),
+          ),
+          const SizedBox(height: 8),
+        ],
+      ],
+    );
+  }
+}
+
+// =============================================================================
+// 📢 AD WIDGETS
+// =============================================================================
+
+// Native Ad card — inserted every 6 shops in the explore grid.
+// Shows nothing on web or when the ad fails to load.
+class _NativeAdCard extends StatefulWidget {
+  const _NativeAdCard();
+
+  @override
+  State<_NativeAdCard> createState() => _NativeAdCardState();
+}
+
+class _NativeAdCardState extends State<_NativeAdCard> {
+  NativeAd? _nativeAd;
+  bool _isLoaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (!kIsWeb) _loadAd();
+  }
+
+  void _loadAd() {
+    try {
+      _nativeAd = NativeAd(
+        adUnitId: AdHelper.nativeAdUnitId,
+        listener: NativeAdListener(
+          onAdLoaded: (_) {
+            if (mounted) setState(() => _isLoaded = true);
+          },
+          onAdFailedToLoad: (ad, _) {
+            ad.dispose();
+            _nativeAd = null;
+          },
+        ),
+        request: const AdRequest(),
+        nativeTemplateStyle: NativeTemplateStyle(
+          templateType: TemplateType.medium,
+          mainBackgroundColor: Colors.white,
+          cornerRadius: 12.0,
+        ),
+      )..load();
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    _nativeAd?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (kIsWeb || !_isLoaded || _nativeAd == null) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      height: 320,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: AdWidget(ad: _nativeAd!),
+      ),
+    );
+  }
+}
+
+// Footer Banner Ad — 52px fixed above the bottom navigation bar.
+// Shows nothing on web or when the ad fails to load.
+class _AdFooterBanner extends StatefulWidget {
+  const _AdFooterBanner();
+
+  @override
+  State<_AdFooterBanner> createState() => _AdFooterBannerState();
+}
+
+class _AdFooterBannerState extends State<_AdFooterBanner> {
+  BannerAd? _bannerAd;
+  bool _isLoaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (!kIsWeb) _loadAd();
+  }
+
+  void _loadAd() {
+    try {
+      _bannerAd = BannerAd(
+        adUnitId: AdHelper.bannerAdUnitId,
+        size: AdSize.banner, // 320x50
+        request: const AdRequest(),
+        listener: BannerAdListener(
+          onAdLoaded: (_) {
+            if (mounted) setState(() => _isLoaded = true);
+          },
+          onAdFailedToLoad: (ad, _) {
+            ad.dispose();
+            _bannerAd = null;
+          },
+        ),
+      )..load();
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    _bannerAd?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (kIsWeb || !_isLoaded || _bannerAd == null) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      height: 52,
+      color: Colors.white,
+      alignment: Alignment.center,
+      child: AdWidget(ad: _bannerAd!),
     );
   }
 }

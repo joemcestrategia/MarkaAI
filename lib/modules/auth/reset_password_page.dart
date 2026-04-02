@@ -59,8 +59,8 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
       return;
     }
 
-    if (pass.length < 6) {
-      _showError("A nova senha deve ter pelo menos 6 caracteres.");
+    if (pass.length < 8) {
+      _showError("A nova senha deve ter pelo menos 8 caracteres.");
       return;
     }
 

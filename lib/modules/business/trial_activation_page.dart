@@ -11,28 +11,19 @@ class TrialActivationPage extends StatefulWidget {
 }
 
 class _TrialActivationPageState extends State<TrialActivationPage> {
-  SubscriptionPlan? _selectedPlan;
+  final SubscriptionPlan _selectedPlan = SubscriptionPlan.plus;
   bool _isLoading = false;
 
-  final List<SubscriptionPlan> _availablePlans = [
-    SubscriptionPlan.start,
-    SubscriptionPlan.plus,
-    SubscriptionPlan.pro
-  ];
-
   Future<void> _activateTrial() async {
-    if (_selectedPlan == null) return;
-
-    final planDetails = SubscriptionService.getPlanDetails(_selectedPlan!);
-    final planIdString = _selectedPlan.toString().split('.').last;
+    final planDetails = SubscriptionService.getPlanDetails(_selectedPlan);
 
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text("Testar ${planDetails['name']}"),
         content: Text(
-            "Você tem certeza que deseja testar o plano ${planDetails['name']} grátis por 30 dias?\n\n"
-            "Esta escolha é única e não poderá ser alterada durante o teste."),
+            "Você tem certeza que deseja testar o plano ${planDetails['name']} grátis por 1 mês?\n\n"
+            "Após esse período, você poderá escolher se deseja assinar ou voltar para o plano gratuito."),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -54,14 +45,14 @@ class _TrialActivationPageState extends State<TrialActivationPage> {
 
     setState(() => _isLoading = true);
 
-    bool activated = await TrialService.activateTrial(planIdString);
+    bool activated = await TrialService.activateTrial();
 
     if (mounted) {
       if (activated) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-                "🎉 Parabéns! Trial ativado com sucesso. Aproveite seus 30 dias!"),
+                "🎉 Parabéns! Trial ativado com sucesso. Aproveite seu 1 mês de Plus!"),
             backgroundColor: Colors.green,
           ),
         );
@@ -82,10 +73,12 @@ class _TrialActivationPageState extends State<TrialActivationPage> {
 
   @override
   Widget build(BuildContext context) {
+    final details = SubscriptionService.getPlanDetails(_selectedPlan);
+
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FD),
       appBar: AppBar(
-        title: const Text("Teste Grátis por 30 Dias",
+        title: const Text("Teste Grátis por 1 Mês",
             style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
         centerTitle: true,
         backgroundColor: AppColors.primaryPurple,
@@ -100,125 +93,101 @@ class _TrialActivationPageState extends State<TrialActivationPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  const Icon(Icons.stars, size: 80, color: AppColors.primaryPurple),
+                  const SizedBox(height: 24),
                   const Text(
-                    "Qual plano você deseja testar?",
+                    "Experimente o Plano Plus",
                     style: TextStyle(
-                        fontSize: 22,
+                        fontSize: 24,
                         fontWeight: FontWeight.bold,
                         color: AppColors.primaryPurple),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    "Escolha abaixo qual plano pago você gostaria de experimentar de graça durante 30 dias. Sem cartão de crédito.",
+                    "Libere todos os recursos do plano Plus gratuitamente por 1 mês. Sem compromisso e sem cartão de crédito.",
                     style: TextStyle(fontSize: 16, color: Colors.black87),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 32),
-                  ..._availablePlans.map((plan) {
-                    final details = SubscriptionService.getPlanDetails(plan);
-                    final isSelected = _selectedPlan == plan;
-
-                    return GestureDetector(
-                      onTap: () {
-                        setState(() => _selectedPlan = plan);
-                      },
-                      child: Container(
-                        margin: const EdgeInsets.only(bottom: 16),
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          color: isSelected
-                              ? AppColors.primaryPurple.withValues(alpha: 0.08)
-                              : Colors.white,
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: isSelected
-                                ? AppColors.primaryPurple
-                                : Colors.grey.shade300,
-                            width: 2,
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.05),
-                              blurRadius: 10,
-                              offset: const Offset(0, 4),
-                            )
-                          ],
-                        ),
-                        child: Row(
+                  Container(
+                    padding: const EdgeInsets.all(24),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: AppColors.primaryPurple.withValues(alpha: 0.2)),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.05),
+                          blurRadius: 15,
+                          offset: const Offset(0, 5),
+                        )
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Radio<SubscriptionPlan>(
-                              value: plan,
-                              groupValue: _selectedPlan,
-                              activeColor: AppColors.primaryPurple,
-                              onChanged: (SubscriptionPlan? val) {
-                                if (val != null) {
-                                  setState(() => _selectedPlan = val);
-                                }
-                              },
-                            ),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Text(
-                                        details['name'],
-                                        style: TextStyle(
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.bold,
-                                          color: isSelected
-                                              ? AppColors.primaryPurple
-                                              : Colors.black87,
-                                        ),
-                                      ),
-                                      Text(
-                                        "R\$ ${details['price'].toStringAsFixed(2).replaceAll('.', ',')}/mês",
-                                        style: const TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w600,
-                                          color: Colors.grey,
-                                          decoration:
-                                              TextDecoration.lineThrough,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    details['description'],
-                                    style: const TextStyle(
-                                        fontSize: 14, color: Colors.black54),
-                                  ),
-                                ],
+                            Text(
+                              details['name'],
+                              style: const TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.primaryPurple,
                               ),
                             ),
+                            const Icon(Icons.check_circle, color: Colors.green),
                           ],
                         ),
-                      ),
-                    );
-                  }),
-                  const SizedBox(height: 24),
+                        const SizedBox(height: 12),
+                        Text(
+                          details['description'],
+                          style: const TextStyle(fontSize: 15, color: Colors.black54),
+                        ),
+                        const Divider(height: 32),
+                        const Text(
+                          "Recursos inclusos no teste:",
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                        ),
+                        const SizedBox(height: 12),
+                        ...((details['features'] as List? ?? []).take(5)).map((f) => Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.done, size: 16, color: Colors.green),
+                              const SizedBox(width: 8),
+                              Expanded(child: Text(f.toString(), style: const TextStyle(fontSize: 13))),
+                            ],
+                          ),
+                        )),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 32),
                   ElevatedButton(
-                    onPressed: _selectedPlan == null ? null : _activateTrial,
+                    onPressed: _activateTrial,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primaryPurple,
                       foregroundColor: Colors.white,
-                      disabledBackgroundColor: Colors.grey.shade300,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      padding: const EdgeInsets.symmetric(vertical: 18),
                       shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
+                          borderRadius: BorderRadius.circular(16)),
+                      elevation: 4,
                     ),
                     child: const Text(
-                      "Começar Teste Gratuitamente",
+                      "Começar Meu Mês Grátis",
                       style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white),
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold),
                     ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    "Ao final do teste, sua conta voltará automaticamente para o plano Free, a menos que você escolha assinar.",
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                    textAlign: TextAlign.center,
                   ),
                 ],
               ),

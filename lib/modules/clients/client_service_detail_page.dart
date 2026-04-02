@@ -436,25 +436,23 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
                               height: 60,
                               padding: const EdgeInsets.all(12),
                               decoration: BoxDecoration(
-                                color: AppColors.primaryPurple
-                                    .withOpacity(0.05),
+                                color: AppColors.softGrey,
                                 borderRadius: BorderRadius.circular(12),
                                 border: Border.all(
-                                  color: AppColors.primaryPurple
-                                      .withOpacity(0.1),
+                                  color: Colors.grey.shade200,
                                 ),
                               ),
                               child: Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
                                   const Icon(Icons.payments_outlined,
-                                      color: AppColors.primaryPurple, size: 20),
+                                      color: AppColors.textPrimary, size: 20),
                                   const SizedBox(width: 8),
                                   Text(
                                     "R\$ ${widget.serviceData['price'] ?? '0'}",
                                     style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      color: AppColors.primaryPurple,
+                                      fontWeight: FontWeight.w900,
+                                      color: AppColors.textPrimary,
                                       fontSize: 16,
                                     ),
                                   ),
@@ -611,11 +609,11 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
                         _isLoadingShop || _isNavigating ? null : _goToBooking,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: _isOnlineBookingActive
-                          ? AppColors.primaryPurple
-                          : Colors.green[600],
+                          ? AppColors.deepPurple
+                          : Colors.green[800],
                       disabledBackgroundColor: Colors.grey[300],
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(25),
                       ),
                       elevation: 0,
                     ),

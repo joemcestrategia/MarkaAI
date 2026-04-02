@@ -21,6 +21,30 @@ class AvailabilityUtils {
     List<Map<String, int>> busy = [];
 
     // 1. Processar Agendamentos
+    
+    // Otimização N+1: Coletar service_ids que precisam de duração
+    final missingDurationServiceIds = dataList
+        .where((d) => int.tryParse(d['duration_min']?.toString() ?? '') == null && d['service_id'] != null)
+        .map((d) => d['service_id'].toString())
+        .toSet()
+        .toList();
+
+    Map<String, int> serviceDurations = {};
+    if (missingDurationServiceIds.isNotEmpty) {
+      try {
+        final servicesData = await Supabase.instance.client
+            .from('services')
+            .select('id, duration_min')
+            .inFilter('id', missingDurationServiceIds);
+        
+        for (var s in servicesData) {
+          serviceDurations[s['id'].toString()] = int.tryParse(s['duration_min']?.toString() ?? '') ?? 30;
+        }
+      } catch (e) {
+        debugPrint("Erro ao buscar durações em lote: $e");
+      }
+    }
+
     for (var data in dataList) {
       if (excludeDocId != null && data['id']?.toString() == excludeDocId) {
         continue;
@@ -44,18 +68,7 @@ class AvailabilityUtils {
       if (duration == null) {
         String? servicoId = data['service_id']?.toString();
         if (servicoId != null && servicoId.isNotEmpty) {
-          try {
-            final svcDoc = await Supabase.instance.client
-                .from('services')
-                .select()
-                .eq('id', servicoId)
-                .maybeSingle();
-            if (svcDoc != null) {
-              duration = int.tryParse(svcDoc['duration_min']?.toString() ?? '');
-            }
-          } catch (e) {
-            debugPrint("Erro ao buscar duração original do serviço antigo: $e");
-          }
+          duration = serviceDurations[servicoId];
         }
         duration ??= 30;
       }

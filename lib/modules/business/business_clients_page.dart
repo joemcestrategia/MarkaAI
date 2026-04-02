@@ -29,10 +29,10 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _searchText = "";
 
-  // 0 = App (Vinculados), 1 = Manual (Walk-in)
+  // 0 = Clientes, 1 = Visitantes (Leads)
   int _selectedTabIndex = 0;
 
-  // Filtro de Tags: "Todos", "VIP", "Sumido", "Problematico"
+  // Filtro de Tags: "Todos", "VIP", "Sumido", "Problematico", "Favoritou", "Visitou"
   String _selectedTagFilter = "Todos";
 
   // --- CONTROLE DA COLUNA 3 (PC) ---
@@ -269,16 +269,37 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
 
     final featuresStream = PlanFeaturesService.streamFeaturesByShopId(shopId!);
 
-    return Rx.combineLatest3(
+    final favoritesStream = supabase
+        .from('favorites')
+        .stream(primaryKey: ['id'])
+        .eq('shop_id', shopId!);
+
+    final shopClientsStream = supabase
+        .from('shop_clients')
+        .stream(primaryKey: ['id'])
+        .eq('shop_id', shopId!);
+
+    final shopViewsStream = supabase
+        .from('shop_views')
+        .stream(primaryKey: ['id'])
+        .eq('shop_id', shopId!);
+
+    return Rx.combineLatest6(
       appointmentsAndUsersStream,
       shopStream,
       featuresStream,
-      (appData, shopList, features) {
+      favoritesStream,
+      shopClientsStream,
+      shopViewsStream,
+      (appData, shopList, features, favorites, shopClients, shopViews) {
         return {
           'appointments': appData['appointments'],
           'users': appData['users'],
           'shop': shopList.isNotEmpty ? shopList.first : {},
           'features': features,
+          'favorites': favorites,
+          'shopClients': shopClients,
+          'shopViews': shopViews,
         };
       },
     );
@@ -420,9 +441,9 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
             scrollDirection: Axis.horizontal,
             child: Row(
               children: [
-                _buildTabButton(0, "Pelo App", Icons.smartphone),
+                _buildTabButton(0, "Clientes", Icons.people_outline),
                 const SizedBox(width: 15),
-                _buildTabButton(1, "Manuais", Icons.edit_note),
+                _buildTabButton(1, "Visitantes", Icons.visibility_outlined, isLocked: !_currentFeatures.automationClientSawNoBook),
               ],
             ),
           ),
@@ -442,6 +463,10 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                 _buildTagFilterChip("VIP", icon: Icons.star, color: Colors.amber, isLocked: !_currentFeatures.clientFilter),
                 const SizedBox(width: 8),
                 _buildTagFilterChip("Novo", icon: Icons.new_releases, color: Colors.green, isLocked: !_currentFeatures.clientFilter),
+                const SizedBox(width: 8),
+                _buildTagFilterChip("Favoritou", icon: Icons.favorite, color: Colors.red, isLocked: !_currentFeatures.clientFilter),
+                const SizedBox(width: 8),
+                _buildTagFilterChip("Visitou", icon: Icons.visibility, color: Colors.blue, isLocked: !_currentFeatures.clientFilter),
                 const SizedBox(width: 8),
                 _buildTagFilterChip("Sumido",
                     icon: Icons.timer_off_outlined, color: Colors.grey, isLocked: !_currentFeatures.clientFilter),
@@ -474,20 +499,29 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                     final shopConfig = (data['shop'] as Map?)?['config'] as Map? ?? {};
                     _currentFeatures = data['features'] as PlanFeatures;
 
+                    final favoritesDocs = data['favorites'] as List<Map<String, dynamic>>? ?? [];
+                    final shopClientsDocs = data['shopClients'] as List<Map<String, dynamic>>? ?? [];
+                    final shopViewsDocs = data['shopViews'] as List<Map<String, dynamic>>? ?? [];
+
                     final Map<String, Map<String, dynamic>> usersMap = {
                       for (var doc in usersDocs)
                         doc['id']: doc as Map<String, dynamic>
                     };
 
-                    _cachedData = _processAppointments(
+                    _cachedData = _processClientsData(
                         appointmentDocs,
                         usersMap,
-                        shopConfig);
+                        shopConfig,
+                        favoritesDocs,
+                        shopClientsDocs,
+                        shopViewsDocs);
 
-                    List<Map<String, dynamic>> targetList =
-                        _selectedTabIndex == 0
-                            ? _cachedData!['app']!
-                            : _cachedData!['manual']!;
+                    List<Map<String, dynamic>> targetList;
+                    if (_selectedTabIndex == 0) {
+                      targetList = _cachedData!['clients']!;
+                    } else {
+                      targetList = _cachedData!['visitors']!;
+                    }
 
                     final filteredDocs = targetList.where((client) {
                       // Filtro de Texto
@@ -513,6 +547,12 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                       }
                       if (_selectedTagFilter == "Novo") {
                         return tags.contains('novo') || classification == 'novo';
+                      }
+                      if (_selectedTagFilter == "Favoritou") {
+                        return client['isFavorite'] == true || tags.contains('favoritou');
+                      }
+                      if (_selectedTagFilter == "Visitou") {
+                        return client['isVisitor'] == true || tags.contains('visitou');
                       }
                       if (_selectedTagFilter == "Sumido") {
                         return tags.contains('sumido') || classification == 'sumido';
@@ -545,134 +585,223 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
     );
   }
 
-  // ... (Mantenha o _processAppointments IGUAL ao anterior, não mudei nada nele) ...
-  Map<String, List<Map<String, dynamic>>> _processAppointments(
-      List<Map<String, dynamic>> docs,
+  // ?? LÓGICA DE UNIFICAÇÃO DE CLIENTES
+  Map<String, List<Map<String, dynamic>>> _processClientsData(
+      List<Map<String, dynamic>> appointments,
       Map<String, Map<String, dynamic>> usersMap,
-      Map<dynamic, dynamic> shopConfig) {
-    Map<String, Map<String, dynamic>> appClientsMap = {};
-    Map<String, Map<String, dynamic>> manualClientsMap = {};
+      Map<dynamic, dynamic> shopConfig,
+      List<Map<String, dynamic>> favorites,
+      List<Map<String, dynamic>> shopClients,
+      List<Map<String, dynamic>> shopViews) {
+    
+    Map<String, Map<String, dynamic>> allClientsMap = {};
+    final now = DateTime.now();
 
-    for (var doc in docs) {
+    // 1. Processar dados de 'shop_clients' (Tags manuais e customizações)
+    final Map<String, Map<String, dynamic>> manualDataMap = {
+      for (var doc in shopClients)
+        (doc['user_id'] ?? doc['userId'] ?? '').toString(): doc
+    };
+
+    // 2. Processar Favoritos
+    final Set<String> favoritedIds = favorites.map((f) => (f['user_id'] ?? f['userId'] ?? '').toString()).where((id) => id.isNotEmpty).toSet();
+
+    // 3. Processar Visualizações (Leads)
+    final Map<String, DateTime> visitorIds = {
+      for (var v in shopViews)
+        (v['user_id'] ?? v['userId'] ?? '').toString(): DateTime.tryParse(v['viewed_at']?.toString() ?? "") ?? now
+    };
+
+    // 4. Processar Agendamentos (Principal fonte de clientes)
+    for (var doc in appointments) {
       final data = doc;
-
-      String? userId = data['client_id'] ?? data['clientId'];
+      String? userId = (data['client_id'] ?? data['clientId'])?.toString();
       bool isManual = (userId == null || userId.isEmpty);
 
       final user = isManual ? null : usersMap[userId];
 
-      String nome = user?['name'] ??
-          data['client_name'] ??
-          data['client_nome'] ??
-          data['clientName'] ??
-          data['cliente_nome'] ??
-          "Cliente Desconhecido";
-          
-      String telefone = user?['phone'] ??
-          data['client_phone'] ?? data['phone'] ?? data['telefone'] ?? data['whatsapp'] ?? "";
-          
-      String email = user?['email'] ?? "";
+      String nome = user?['name'] ?? data['client_name'] ?? data['client_nome'] ?? "Cliente Desconhecido";
+      String telefone = user?['phone'] ?? data['client_phone'] ?? "";
       String photoUrl = user?['photo_url'] ?? "";
 
-      String key;
-      if (!isManual) {
-        key = userId!;
-      } else {
-        key = telefone.isNotEmpty ? telefone : "doc_${doc['id']}";
-      }
+      String key = !isManual ? userId : (telefone.isNotEmpty ? telefone : "doc_${doc['id']}");
 
-      double valor =
-          double.tryParse(data['valor_total']?.toString() ?? "0") ?? 0.0;
-      DateTime dataVisita;
-      try {
-        dataVisita = DateTime.parse(data['scheduled_at']);
-      } catch (e) {
-        dataVisita = DateTime.now();
-      }
+      double valor = double.tryParse(
+              (data['total_price'] ?? data['price'] ?? data['valor_total'] ?? "0")
+                  .toString()) ??
+          0.0;
+      DateTime dataVisita = DateTime.tryParse(data['scheduled_at'] ?? "") ?? now;
+      String status = (data['status'] ?? "").toString().toLowerCase();
 
-      var targetMap = isManual ? manualClientsMap : appClientsMap;
-
-      if (!targetMap.containsKey(key)) {
-        targetMap[key] = {
+      if (!allClientsMap.containsKey(key)) {
+        allClientsMap[key] = {
           'id': key,
+          'name': nome,
           'nome': nome,
           'telefone': telefone.isNotEmpty ? telefone : "Não informado",
-          'foto': photoUrl, // Atualizado para usar avatar de user
+          'foto': photoUrl,
           'origem': isManual ? 'manual' : 'app',
-          'totalGasto': valor,
-          'visitas': 1,
+          'totalGasto': (status == 'concluido' || status == 'pago') ? valor : 0.0,
+          'visitas': (status == 'concluido' || status == 'pago') ? 1 : 0,
+          'agendamentosCount': 1,
           'primeiraVisita': dataVisita,
           'ultimaVisita': dataVisita,
-          'email': email,
-          'created_at': user?['created_at'],
-          'birthDate': data['birth_date'] ?? data['data_nascimento'] ?? data['nascimento'] ?? data['birthDate']
+          'email': user?['email'] ?? "",
+          'isFavorite': favoritedIds.contains(userId),
+          'isVisitor': visitorIds.containsKey(userId),
+          'lastViewed': visitorIds[userId],
+          'tags': [],
+          'servicos': <String, int>{}, // Para calcular serviço preferido
+          'visitasDates': <DateTime>[dataVisita], // Para calcular intervalo médio
+          'ultimoServico': (status == 'concluido' || status == 'pago') ? (data['service_name'] ?? data['serviceName'] ?? "") : "",
         };
+        if (status == 'concluido' || status == 'pago') {
+          final sName = data['service_name'] ?? data['serviceName'] ?? "";
+          if (sName.isNotEmpty) allClientsMap[key]!['servicos'][sName] = 1;
+        }
       } else {
-        targetMap[key]!['totalGasto'] += valor;
-        targetMap[key]!['visitas'] += 1;
+        if (status == 'concluido' || status == 'pago') {
+          allClientsMap[key]!['totalGasto'] += valor;
+          allClientsMap[key]!['visitas'] += 1;
+          
+          final sName = data['service_name'] ?? data['serviceName'] ?? "";
+          if (sName.isNotEmpty) {
+            allClientsMap[key]!['servicos'][sName] = (allClientsMap[key]!['servicos'][sName] ?? 0) + 1;
+          }
+        }
+        allClientsMap[key]!['agendamentosCount'] += 1;
 
-        if (dataVisita.isBefore(targetMap[key]!['primeiraVisita'])) {
-          targetMap[key]!['primeiraVisita'] = dataVisita;
+        if (dataVisita.isBefore(allClientsMap[key]!['primeiraVisita'])) {
+          allClientsMap[key]!['primeiraVisita'] = dataVisita;
         }
-        if (dataVisita.isAfter(targetMap[key]!['ultimaVisita'])) {
-          targetMap[key]!['ultimaVisita'] = dataVisita;
+        if (dataVisita.isAfter(allClientsMap[key]!['ultimaVisita'])) {
+          allClientsMap[key]!['ultimaVisita'] = dataVisita;
+          if (status == 'concluido' || status == 'pago') {
+            allClientsMap[key]!['ultimoServico'] = data['service_name'] ?? data['serviceName'] ?? "";
+          }
         }
-
-        if (nome != "Cliente Desconhecido") {
-          targetMap[key]!['name'] = nome;
-        }
+        allClientsMap[key]!['visitasDates'].add(dataVisita);
       }
     }
 
-    final allApps = appClientsMap.values.toList();
+    // 5. Adicionar Favoritos e Visitantes que ainda não agendaram
+    final Set<String> allUserIds = {...favoritedIds, ...visitorIds.keys};
+    for (var uid in allUserIds) {
+      if (!allClientsMap.containsKey(uid) && uid.isNotEmpty) {
+        // Para esses leads, tentamos pegar o nome básico se disponível no usersMap
+        final user = usersMap[uid];
+        String nome = user?['name'] ?? "Cliente (Interesse)";
+        
+        allClientsMap[uid] = {
+          'id': uid,
+          'name': nome,
+          'nome': nome,
+          'telefone': user?['phone'] ?? "Não informado",
+          'foto': user?['photo_url'] ?? "",
+          'origem': 'app',
+          'totalGasto': 0.0,
+          'visitas': 0,
+          'agendamentosCount': 0,
+          'primeiraVisita': visitorIds[uid] ?? now,
+          'ultimaVisita': visitorIds[uid] ?? now,
+          'email': user?['email'] ?? "",
+          'isFavorite': favoritedIds.contains(uid),
+          'isVisitor': visitorIds.containsKey(uid),
+          'lastViewed': visitorIds[uid],
+          'tags': [],
+          'servicos': <String, int>{},
+          'visitasDates': <DateTime>[],
+        };
+      }
+    }
 
-    // 2. Add 'Vip', 'Novo', 'Sumido' tags automatically
-    final now = DateTime.now();
-
-    // Configurações da loja
+    // 6. Aplicar Tags e Classificações (Auto + Manual)
     final int vipMinVisits = shopConfig['vip_min_visits'] ?? 15;
-    final int vipAvgInterval = shopConfig['vip_avg_interval'] ?? 30;
     final int sumidoMaxDays = shopConfig['sumido_max_days'] ?? 45;
 
-    for (var c in allApps) {
-      String? autoTag;
-      final int visits = c['visitas'] as int;
-      final DateTime lastVisit = c['ultimaVisita'] as DateTime;
-      final DateTime firstVisit = c['primeiraVisita'] as DateTime;
+    for (var c in allClientsMap.values) {
+      final String uid = c['id'];
+      final mData = manualDataMap[uid];
+      
+      // Tags Automáticas
+      List<String> tags = [];
+      String classification = "";
 
-      double avgInterval = 0;
-      if (visits > 1) {
-        final totalDays = lastVisit.difference(firstVisit).inDays;
-        avgInterval = totalDays / (visits - 1);
-      }
+      if (c['origem'] == 'app') {
+        final int visits = (c['visitas'] ?? 0) as int;
+        final DateTime lastVisit = c['ultimaVisita'] as DateTime;
+        final int daysSinceLast = now.difference(lastVisit).inDays;
 
-      final daysSinceLast = now.difference(lastVisit).inDays;
-      if (daysSinceLast > sumidoMaxDays) {
-        autoTag = 'sumido';
-      } else {
-        bool meetsVisits = visits >= vipMinVisits;
-        bool meetsInterval = visits == 1 || avgInterval <= vipAvgInterval;
-
-        if (meetsVisits && meetsInterval && _currentFeatures.clientClassification) {
-          autoTag = 'vip';
+        if (daysSinceLast > sumidoMaxDays && visits > 0) {
+          classification = 'sumido';
+        } else if (visits >= vipMinVisits && _currentFeatures.clientClassification) {
+          classification = 'vip';
         } else if (visits == 1 && daysSinceLast < 30 && _currentFeatures.clientClassification) {
-          autoTag = 'novo';
+          classification = 'novo';
         }
       }
 
-      c['classification'] = autoTag ?? '';
-      c['tags'] = autoTag != null ? [autoTag] : [];
+      // Sobreposição Manual
+      if (mData != null) {
+        final manualTags = List<String>.from(mData['manual_tags'] ?? mData['manualTags'] ?? []);
+        final manualClass = mData['classification']?.toString();
+        
+        if (manualClass != null && manualClass.isNotEmpty) {
+          classification = manualClass;
+        }
+        tags.addAll(manualTags);
+      }
+
+      if (classification.isNotEmpty) tags.add(classification);
+      if (c['isFavorite'] == true) tags.add('favoritou');
+      if (c['isVisitor'] == true) tags.add('visitou');
+
+      c['classification'] = classification;
+      c['tags'] = tags.toSet().toList(); // Remove duplicatas
+
+      // FINALIZAR ESTATÍSTICAS
+      // 1. Serviço Preferido
+      final servicos = c['servicos'] as Map<String, int>;
+      if (servicos.isNotEmpty) {
+        final sortedServicos = servicos.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+        c['servicoPreferido'] = sortedServicos.first.key;
+      } else {
+        c['servicoPreferido'] = "Nenhum";
+      }
+
+      // 2. Intervalo Médio (em dias)
+      final dates = List<DateTime>.from(c['visitasDates'])..sort();
+      if (dates.length > 1) {
+        int totalDays = 0;
+        for (int i = 0; i < dates.length - 1; i++) {
+          totalDays += dates[i + 1].difference(dates[i]).inDays;
+        }
+        c['intervaloMedio'] = (totalDays / (dates.length - 1)).round();
+      } else {
+        c['intervaloMedio'] = 0;
+      }
+    }
+
+    // 7. Separar listas
+    List<Map<String, dynamic>> mainClients = [];
+    List<Map<String, dynamic>> visitorLeads = [];
+
+    for (var c in allClientsMap.values) {
+      if (c['origem'] == 'manual') {
+        if (c['telefone'] != "Não informado") mainClients.add(c);
+      } else {
+        // Se tem agendamento ou favoritou, vai para a aba principal
+        if (c['agendamentosCount'] > 0 || c['isFavorite'] == true) {
+          mainClients.add(c);
+        } else if (c['isVisitor'] == true) {
+          visitorLeads.add(c);
+        }
+      }
     }
 
     return {
-      'app': allApps,
-      // ?? FILTRO DE LIMPEZA: Remove clientes manuais sem telefone
-      'manual': manualClientsMap.values
-          .where((c) =>
-              c['telefone'] != null &&
-              c['telefone'].toString().isNotEmpty &&
-              c['telefone'] != "Não informado")
-          .toList()
+      'clients': mainClients,
+      'visitors': visitorLeads,
     };
   }
 
@@ -715,21 +844,35 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
   }
 
 
-  Widget _buildTabButton(int index, String label, IconData icon) {
+  Widget _buildTabButton(int index, String label, IconData icon, {bool isLocked = false}) {
     bool isSelected = _selectedTabIndex == index;
     return InkWell(
-      onTap: () => setState(() {
-        _selectedTabIndex = index;
-        _selectedTagFilter = "Todos"; // Reseta filtro ao mudar aba
-      }),
+      onTap: () {
+        if (isLocked) {
+          UpgradeModal.show(
+            context,
+            featureName: "Aba de Visitantes",
+            requiredPlan: "Plus",
+          );
+          return;
+        }
+        setState(() {
+          _selectedTabIndex = index;
+          _selectedTagFilter = "Todos"; // Reseta filtro ao mudar aba
+        });
+      },
       borderRadius: BorderRadius.circular(20),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         decoration: BoxDecoration(
-          color: isSelected
-              ? (index == 0 ? AppColors.primaryPurple : Colors.orange)
-              : Colors.grey[100],
+          color: isLocked
+              ? Colors.grey[200]
+              : (isSelected
+                  ? (index == 0
+                      ? AppColors.primaryPurple
+                      : Colors.blue)
+                  : Colors.grey[100]),
           borderRadius: BorderRadius.circular(20),
           border: isSelected
               ? Border.all(color: Colors.transparent)
@@ -737,12 +880,17 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
         ),
         child: Row(
           children: [
-            Icon(icon,
-                size: 16, color: isSelected ? Colors.white : Colors.grey[600]),
+            Icon(isLocked ? Icons.lock : icon,
+                size: 16,
+                color: isSelected
+                    ? Colors.white
+                    : (isLocked ? Colors.grey : Colors.grey[600])),
             const SizedBox(width: 8),
             Text(label,
                 style: TextStyle(
-                    color: isSelected ? Colors.white : Colors.grey[600],
+                    color: isSelected
+                        ? Colors.white
+                        : (isLocked ? Colors.grey : Colors.grey[600]),
                     fontWeight: FontWeight.bold,
                     fontSize: 13)),
           ],
@@ -784,6 +932,16 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                   style: const TextStyle(
                       fontWeight: FontWeight.bold, fontSize: 14)),
             ),
+            if (client['isFavorite'] == true)
+              const Padding(
+                padding: EdgeInsets.only(left: 4),
+                child: Icon(Icons.favorite, color: Colors.red, size: 14),
+              ),
+            if (client['isVisitor'] == true && client['agendamentosCount'] == 0)
+              const Padding(
+                padding: EdgeInsets.only(left: 4),
+                child: Icon(Icons.visibility, color: Colors.blue, size: 14),
+              ),
             if (_isBirthdayToday(client['birthDate']))
               Padding(
                 padding: const EdgeInsets.only(left: 4),

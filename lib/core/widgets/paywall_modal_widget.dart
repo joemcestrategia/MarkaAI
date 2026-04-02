@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 import '../../modules/business/trial_service.dart';
 import '../../modules/business/trial_activation_page.dart';
@@ -66,7 +66,7 @@ class PaywallModalWidget {
                     ),
                     const SizedBox(height: 8),
                     const Text(
-                      "Ative seu trial de 90 dias agora e desbloqueie tudo sem cartão de crédito.",
+                      "Ative seu trial de 1 mês agora e desbloqueie tudo sem cartão de crédito.",
                       style: TextStyle(color: Colors.white70, fontSize: 13),
                       textAlign: TextAlign.center,
                     ),
@@ -86,7 +86,7 @@ class PaywallModalWidget {
                               builder: (_) => const TrialActivationPage()),
                         );
                       },
-                      child: const Text("Ativar 90 Dias Grátis"),
+                      child: const Text("Ativar 1 Mês Grátis"),
                     ),
                   ],
                 ),

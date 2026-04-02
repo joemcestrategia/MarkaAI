@@ -53,13 +53,26 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
   double _taxaCredito = 0.0;
   double _valorComTaxa = 0.0;
   bool _showProfessional = true;
+  bool _saveCard = false;
 
   final List<dynamic> _paymentItems = [];
+  final FocusNode _cardNumberFocus = FocusNode();
 
   @override
   void initState() {
     super.initState();
     _loadConfig();
+  }
+
+  @override
+  void dispose() {
+    _cardNumberFocus.dispose();
+    _cardNumberController.dispose();
+    _holderNameController.dispose();
+    _expiryController.dispose();
+    _cvvController.dispose();
+    _cpfController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadConfig() async {
@@ -153,6 +166,12 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
 
     setState(() => _isLoading = true);
     try {
+      // Forçar refresh do JWT para evitar erro 401 na Edge Function
+      final sessionResult = await Supabase.instance.client.auth.refreshSession();
+      if (sessionResult.session == null) {
+        throw Exception('Sua sessão expirou. Faça login novamente para continuar.');
+      }
+
       final expiry = _expiryController.text.split('/');
       final month = expiry[0];
       final year = '20${expiry[1]}';
@@ -190,9 +209,10 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
         'paymentMethodId': tokenData['payment_method_id'],
         'issuerId': tokenData['issuer_id'],
         'cpf': _cpfController.text,
+        'saveCard': _saveCard,
       };
 
-      // Notify the system that autofill is complete
+      // Notificar sistema de autofill que o contexto foi concluído
       TextInput.finishAutofillContext();
 
       if (widget.collectOnly) {
@@ -421,13 +441,14 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    AutofillGroup(
-                      child: Expanded(
-                        child: SingleChildScrollView(
-                          physics: const ClampingScrollPhysics(),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        physics: const ClampingScrollPhysics(),
+                        child: AutofillGroup(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              // ─── Cabeçalho: valor + badge ───────────────────
                               Row(
                                 mainAxisAlignment:
                                     MainAxisAlignment.spaceBetween,
@@ -463,7 +484,7 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
                                           Colors.green.withValues(alpha: 0.1),
                                       borderRadius: BorderRadius.circular(20),
                                     ),
-                                    child: Row(
+                                    child: const Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
                                         Icon(Icons.credit_card,
@@ -471,7 +492,7 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
                                         SizedBox(width: 4),
                                         Text(
                                           'Até 12x no cartão',
-                                          style: const TextStyle(
+                                          style: TextStyle(
                                               color: Colors.green,
                                               fontSize: 12,
                                               fontWeight: FontWeight.bold),
@@ -491,10 +512,107 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
                                   ),
                                 ),
                               const SizedBox(height: 16),
+
+                              // ─── Botão: Usar cartão salvo no dispositivo ────
+                              Material(
+                                color: Colors.transparent,
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(12),
+                                  onTap: () {
+                                    // Solicita ao SO que preencha com cartão salvo
+                                    // (Google Autofill / iOS Keychain)
+                                    FocusScope.of(context).requestFocus(_cardNumberFocus);
+                                  },
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 16, vertical: 12),
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        colors: [
+                                          AppColors.primaryPurple
+                                              .withValues(alpha: 0.08),
+                                          Colors.blue
+                                              .withValues(alpha: 0.06),
+                                        ],
+                                      ),
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                          color: AppColors.primaryPurple
+                                              .withValues(alpha: 0.25)),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.all(8),
+                                          decoration: BoxDecoration(
+                                            color: AppColors.primaryPurple
+                                                .withValues(alpha: 0.12),
+                                            borderRadius:
+                                                BorderRadius.circular(8),
+                                          ),
+                                          child: const Icon(
+                                            Icons.credit_score,
+                                            color: AppColors.primaryPurple,
+                                            size: 20,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              const Text(
+                                                'Usar cartão salvo',
+                                                style: TextStyle(
+                                                  fontWeight: FontWeight.w700,
+                                                  fontSize: 14,
+                                                  color: AppColors.primaryPurple,
+                                                ),
+                                              ),
+                                              Text(
+                                                'Preencha com Google Pay ou cartão do dispositivo',
+                                                style: TextStyle(
+                                                    fontSize: 11,
+                                                    color: Colors.grey[600]),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        Icon(Icons.arrow_forward_ios,
+                                            size: 14,
+                                            color: AppColors.primaryPurple
+                                                .withValues(alpha: 0.5)),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+
+                              // ─── Separador opcional ─────────────────────────
+                              Row(
+                                children: [
+                                  const Expanded(child: Divider()),
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12),
+                                    child: Text('ou preencha manualmente',
+                                        style: TextStyle(
+                                            fontSize: 11,
+                                            color: Colors.grey[400])),
+                                  ),
+                                  const Expanded(child: Divider()),
+                                ],
+                              ),
+                              const SizedBox(height: 16),
+
+                              // ─── Campos do cartão ───────────────────────────
                               StripeTextField(
                                 label: 'Número do Cartão',
                                 hintText: '0000 0000 0000 0000',
                                 keyboardType: TextInputType.number,
+                                focusNode: _cardNumberFocus,
                                 autofillHints: const [
                                   AutofillHints.creditCardNumber
                                 ],
@@ -513,7 +631,7 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
                               const SizedBox(height: 16),
                               StripeTextField(
                                 label: 'Nome no Cartão',
-                                hintText: 'COMO ESTA NO CARTÃO',
+                                hintText: 'COMO ESTÁ NO CARTÃO',
                                 autofillHints: const [
                                   AutofillHints.creditCardName
                                 ],
@@ -620,6 +738,46 @@ class _CheckoutTransparentePageState extends State<CheckoutTransparentePage> {
                                   return null;
                                 },
                               ),
+                              const SizedBox(height: 4),
+                              // ─── Salvar cartão ───────────────────────────────
+                              InkWell(
+                                borderRadius: BorderRadius.circular(8),
+                                onTap: () => setState(() => _saveCard = !_saveCard),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 4),
+                                  child: Row(
+                                    children: [
+                                      SizedBox(
+                                        width: 24,
+                                        height: 24,
+                                        child: Checkbox(
+                                          value: _saveCard,
+                                          onChanged: (v) => setState(() => _saveCard = v ?? false),
+                                          activeColor: AppColors.primaryPurple,
+                                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            const Text(
+                                              'Salvar cartão para próximos pagamentos',
+                                              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                                            ),
+                                            Text(
+                                              'Você digitará apenas o CVC nas próximas vezes',
+                                              style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 16),
                             ],
                           ),
                         ),

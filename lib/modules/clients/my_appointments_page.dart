@@ -6,28 +6,50 @@ import '../../core/theme/app_colors.dart';
 import '../../core/services/mercado_pago_service.dart';
 import '../schedule/checkout_transparente_page.dart';
 import '../schedule/booking_page.dart';
+import '../schedule/booking_success_page.dart';
 import '../../pages/pix_payment_page.dart';
 import '../../core/services/client_verification_service.dart';
 import 'dart:async';
 import '../public/public_shop_page.dart';
+import '../business/subscription_service.dart';
+import '../../core/widgets/supabase_stream_widget.dart';
 
 class MyAppointmentsPage extends StatefulWidget {
   const MyAppointmentsPage({super.key});
 
   @override
-  State<MyAppointmentsPage> createState() => _MyAppointmentsPageState();
+  State<MyAppointmentsPage> createState() => MyAppointmentsPageState();
 }
 
-class _MyAppointmentsPageState extends State<MyAppointmentsPage>
+class MyAppointmentsPageState extends State<MyAppointmentsPage>
     with SingleTickerProviderStateMixin {
   final currencyFormat = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
   Timer? _timerPolling;
+  final Map<String, Future<Map<String, dynamic>?>> _shopDataCache = {};
   late TabController _tabController;
+
+  /// BUG #1 FIX: Garante que o JWT do usuário está fresco antes de invocar Edge Functions.
+  /// O token expira em ~1h. Se o cliente retorna ao app após um agendamento anterior,
+  /// o token pode estar inválido, causando erro 401 "invalid JWT" na Edge Function.
+  Future<bool> _ensureFreshSession() async {
+    try {
+      final response = await Supabase.instance.client.auth.refreshSession();
+      return response.session != null;
+    } catch (e) {
+      debugPrint('⚠️ [Auth] Falha ao renovar sessão: $e');
+      return false;
+    }
+  }
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+  }
+
+  /// Método público para forçar a atualização (ainda útil para disparar micro-ajustes se necessário)
+  Future<void> refreshData() async {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -60,7 +82,8 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
   }
 
   double _getTotalValue(Map<String, dynamic> appointment) {
-    return ((appointment['valor_com_desconto'] ??
+    return ((appointment['total_payable'] ??
+            appointment['valor_com_desconto'] ??
             appointment['total_price'] ??
             appointment['total_value'] ??
             appointment['valor_total'] ??
@@ -101,6 +124,10 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
       debugPrint('Erro ao buscar dados da loja: $e');
     }
     return {'nome': 'Estabelecimento', 'logo': ''};
+  }
+
+  Future<Map<String, dynamic>?> _getCachedShopData(String shopId) {
+    return _shopDataCache.putIfAbsent(shopId, () => _getShopData(shopId));
   }
 
   Color _getStatusColor(String? status) {
@@ -144,6 +171,65 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
             content: Text('Não há valor pendente para este agendamento.')),
+      );
+      return;
+    }
+
+    final shopId = appointment['shop_id'] as String?;
+    if (shopId == null) {
+      _showError('Loja não identificada no agendamento.');
+      return;
+    }
+
+    // BUG #3 FIX: Verificar plano e configuração da loja antes de exibir opções de
+    // pagamento online. Lojas no plano Free não possuem pagamento online habilitado.
+    // Verificação assíncrona — exibe loading enquanto consulta o backend.
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    bool aceitaPix = false;
+    bool aceitaCartao = false;
+
+    try {
+      final shopPlan = await SubscriptionService.getShopPlan(shopId);
+      final planAllowsOnline =
+          SubscriptionService.planSupportsOnlinePayment(shopPlan);
+
+      if (planAllowsOnline) {
+        final shopDoc = await Supabase.instance.client
+            .from('shops')
+            .select('config, mercadopago, mp_access_token')
+            .eq('id', shopId)
+            .maybeSingle();
+        final config = (shopDoc?['config'] as Map<String, dynamic>?) ?? {};
+        final mpData = (shopDoc?['mercadopago'] as Map<String, dynamic>?) ?? {};
+        final mpToken = mpData['access_token']?.toString() ??
+            shopDoc?['mp_access_token']?.toString() ?? '';
+        final hasMpToken = mpToken.length > 20;
+        aceitaPix = hasMpToken && config['pagamento_pix'] == true;
+        aceitaCartao = hasMpToken && config['pagamento_cartao'] == true;
+      }
+    } catch (e) {
+      debugPrint('❌ [PaymentOptions] Erro ao verificar plano da loja: $e');
+    } finally {
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop(); // Close loading
+      }
+    }
+
+    if (!mounted) return;
+
+    if (!aceitaPix && !aceitaCartao) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              'Esta loja não oferece pagamento online. Pague diretamente no estabelecimento.'),
+          duration: Duration(seconds: 4),
+        ),
       );
       return;
     }
@@ -206,41 +292,43 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
             const SizedBox(height: 15),
             Row(
               children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      _processPixPayment(appointment, valorRestante);
-                    },
-                    icon: const Icon(Icons.qr_code),
-                    label: const Text("PIX"),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF25D366),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
+                if (aceitaPix)
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        _processPixPayment(appointment, valorRestante);
+                      },
+                      icon: const Icon(Icons.qr_code),
+                      label: const Text("PIX"),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF25D366),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      _processCardPayment(appointment, valorRestante);
-                    },
-                    icon: const Icon(Icons.credit_card),
-                    label: const Text("CARTÃO"),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primaryPurple,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
+                if (aceitaPix && aceitaCartao) const SizedBox(width: 12),
+                if (aceitaCartao)
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        _processCardPayment(appointment, valorRestante);
+                      },
+                      icon: const Icon(Icons.credit_card),
+                      label: const Text("CARTÃO"),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryPurple,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
                     ),
                   ),
-                ),
               ],
             ),
           ],
@@ -253,9 +341,32 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
       Map<String, dynamic> appointment, double amount) async {
     final shopId = appointment['shop_id'];
 
+    if (!mounted) return;
+
+    // Cache navigator before async work — allows safely dismissing the loading dialog
+    // even if the widget becomes unmounted during the async operation.
+    final navigator = Navigator.of(context, rootNavigator: true);
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
     try {
       if (shopId == null) {
+        navigator.pop();
         _showError('Erro ao processar pagamento: loja não configurada');
+        return;
+      }
+
+      // BUG #1 FIX: Renovar o JWT antes de invocar a Edge Function de PIX.
+      // O token expira em ~1h. Se o cliente retorna ao app após um agendamento anterior,
+      // o token pode estar inválido, causando erro 401 "invalid JWT" na Edge Function.
+      final sessionOk = await _ensureFreshSession();
+      if (!sessionOk) {
+        navigator.pop();
+        _showError(
+            'Sessão expirada. Por favor, saia e entre novamente para realizar o pagamento.');
         return;
       }
 
@@ -274,8 +385,6 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
           result['point_of_interaction']['transaction_data']['qr_code'];
       final paymentId = result['id'].toString();
 
-      if (!mounted) return;
-
       // Atualiza imediatamente o paymentId no agendamento para evitar perda caso o usuário feche o app
       try {
         final currentMeta = (appointment['metadata'] as Map<String, dynamic>?) ?? {};
@@ -287,12 +396,16 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
         debugPrint('Erro ao salvar paymentId no restante: $e');
       }
 
+      navigator.pop(); // fechar loading
+
       // Inicia polling de status
       _startPixMonitoring(appointment, paymentId, amount);
 
-      // Abre a mesma tela de PIX usada no checkout
-      await Navigator.push(
-        context,
+      if (!mounted) return;
+      _isPixPageOpen = true;
+      // Abre a mesma tela de PIX usada no checkout (rootNavigator para cobrir toda a tela,
+      // incluindo a NavigationBar do ClientHomePage, assim como no checkout_page.dart)
+      await Navigator.of(context, rootNavigator: true).push(
         MaterialPageRoute(
           builder: (_) => PixPaymentPage(
             qrBase64: qrCode64,
@@ -312,22 +425,25 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
             },
             onPaid: () {
               _timerPolling?.cancel();
-              Navigator.pop(context);
+              if (_isPixPageOpen && mounted) {
+                _isPixPageOpen = false;
+                Navigator.of(context, rootNavigator: true).pop();
+              }
               _updateAppointmentPayment(appointment, amount, 'Pix', paymentId);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Pagamento aprovado!'),
-                  backgroundColor: Colors.green,
-                ),
-              );
+              _navigateToPaymentSuccess(appointment);
             },
           ),
         ),
       );
+      _isPixPageOpen = false;
+      _timerPolling?.cancel(); // Cancel polling when user closes PIX page without paying
     } catch (e) {
+      navigator.pop(); // fechar loading
       _showError("Erro ao gerar PIX: $e");
     }
   }
+
+  bool _isPixPageOpen = false;
 
   void _startPixMonitoring(
       Map<String, dynamic> appointment, String paymentId, double amount) {
@@ -346,13 +462,18 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
           await _updateAppointmentPayment(
               appointment, amount, 'Pix', paymentId);
           if (mounted) {
-            Navigator.pop(context); // Fecha o modal do PIX
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Pagamento aprovado!'),
-                backgroundColor: Colors.green,
-              ),
-            );
+            if (_isPixPageOpen) {
+              _isPixPageOpen = false;
+              Navigator.of(context, rootNavigator: true).pop(); // Fecha o modal do PIX somente se estiver aberto
+              _navigateToPaymentSuccess(appointment);
+            } else {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Pagamento aprovado!'),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            }
           }
         }
       } catch (e) {
@@ -394,31 +515,82 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
       return;
     }
 
-    final result = await Navigator.push<Map<String, dynamic>>(
+    // BUG #2 FIX: Aplicar a taxa de cartão da loja ao valor antes de enviar ao gateway.
+    // No fluxo de novo agendamento, checkout_page.dart calcula e passa o valor já com taxa.
+    // Neste fluxo de pagamento posterior, 'amount' é o valor bruto do serviço sem taxa.
+    final config = (shopData['config'] as Map<String, dynamic>?) ?? {};
+    final cardTaxPercent = double.tryParse(
+            (config['tax_percent'] ?? config['porcentagem_a_vista'] ?? '0')
+                .toString()) ??
+        0.0;
+    final amountWithTax = cardTaxPercent > 0
+        ? double.parse(
+            (amount * (1 + cardTaxPercent / 100)).toStringAsFixed(2))
+        : amount;
+    debugPrint(
+        '💳 [MyAppointments] Taxa cartão: $cardTaxPercent% | Valor: R\$$amount → R\$$amountWithTax');
+
+    // Coleta dados do cartão (collectOnly: true) — o pagamento é processado aqui,
+    // não no CheckoutReviewPage (que criaria um novo agendamento via pushAndRemoveUntil).
+    final cardData = await Navigator.push<Map<String, dynamic>>(
       context,
       MaterialPageRoute(
         builder: (context) => CheckoutTransparentePage(
           shopId: shopId,
-          valor: amount,
+          valor: amountWithTax,
           orderId:
               "ORD-REMAINING-${appointment['id']}-${DateTime.now().millisecondsSinceEpoch}",
           serviceDoc: serviceData,
           professionalDoc: professionalData ?? shopData,
           date: appointmentDate,
           time: TimeOfDay.fromDateTime(appointmentDate),
-          collectOnly: false,
+          collectOnly: true,
           skipPlanCheck: true,
         ),
       ),
     );
 
-    if (result != null && result['success'] == true) {
-      await _updateAppointmentPayment(
-        appointment,
-        amount,
-        'Cartão de Crédito',
-        result['paymentId'].toString(),
+    if (cardData == null || !mounted) return;
+
+    // Cobrar o cartão e atualizar o agendamento existente
+    final navigator = Navigator.of(context, rootNavigator: true);
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final user = Supabase.instance.client.auth.currentUser!;
+      final chargeResult = await MercadoPagoService.criarPagamentoCartao(
+        shopId: shopId,
+        cardToken: cardData['cardToken'],
+        amount: amountWithTax,
+        installments: cardData['installments'],
+        email: user.email ?? 'cliente@markaai.com.br',
+        description: "Pagamento - ${appointment['service_name'] ?? 'Serviço'}",
+        cpf: cardData['cpf'],
+        paymentMethodId: cardData['paymentMethodId'],
+        issuerId: cardData['issuerId'],
       );
+
+      navigator.pop();
+
+      if (chargeResult['success'] == true) {
+        await _updateAppointmentPayment(
+          appointment,
+          amount,
+          'Cartão de Crédito',
+          chargeResult['paymentId'].toString(),
+        );
+        _navigateToPaymentSuccess(appointment);
+      } else {
+        final errMsg = chargeResult['error']?.toString() ?? 'Pagamento recusado.';
+        _showError(errMsg);
+      }
+    } catch (e) {
+      navigator.pop();
+      _showError('Erro ao processar cartão: $e');
     }
   }
 
@@ -433,11 +605,15 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
     final valorTotal = _getTotalValue(appointment);
     final currentMeta = (appointment['metadata'] as Map<String, dynamic>?) ?? {};
 
+    // Preserve 'concluido' status — don't downgrade already-completed appointments
+    final currentStatus = appointment['status']?.toString().toLowerCase() ?? '';
+    final newStatus = currentStatus == 'concluido' ? 'concluido' : 'confirmado';
+
     await Supabase.instance.client
         .from('appointments')
         .update({
       'payment_method': method,
-      'status': 'confirmado',
+      'status': newStatus,
       'valor_pago': newPaid,
       'paid_amount': newPaid,
       'remaining_amount': valorTotal - newPaid,
@@ -616,7 +792,7 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
           })
           .eq('id', appointment['id']);
 
-      if (mounted) Navigator.pop(context); // close loading
+      if (mounted) Navigator.of(context, rootNavigator: true).pop(); // close loading
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -627,7 +803,7 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
       setState(() {}); // Refresh
     } catch (e) {
       if (!mounted) return;
-      if (Navigator.canPop(context)) Navigator.pop(context);
+      Navigator.of(context, rootNavigator: true).pop(); // close loading
       _showError('Não foi possível cancelar: $e');
     }
   }
@@ -751,16 +927,121 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
                       color: Colors.black),
                 ),
               ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Builder(
+                  builder: (context) {
+                    final method = (appointment['payment_method']?.toString() ?? 'local').toLowerCase();
+                    IconData icon = Icons.payments;
+                    if (method.contains('pix')) icon = Icons.qr_code;
+                    else if (method.contains('cart') || method.contains('card')) icon = Icons.credit_card;
+                    
+                    return Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryPurple.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(icon, color: AppColors.primaryPurple),
+                    );
+                  },
+                ),
+                title: const Text('Meio de Pagamento',
+                    style: TextStyle(fontSize: 14, color: Colors.grey)),
+                subtitle: Text(
+                  (appointment['payment_method']?.toString() ?? 'Pagamento no Local'),
+                  style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black),
+                ),
+                trailing: Builder(
+                  builder: (context) {
+                    final pStatus = appointment['payment_status']?.toString().toLowerCase();
+                    final isPaid = pStatus == 'pago' || valorPago >= (valorTotal - 0.05);
+                    final color = isPaid ? Colors.green : Colors.orange;
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: color.withValues(alpha: 0.3)),
+                      ),
+                      child: Text(
+                        isPaid ? "PAGO" : "PENDENTE",
+                        style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 12),
+                      ),
+                    );
+                  },
+                ),
+              ),
               const Divider(height: 32),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   const Text('Valor do serviço:',
                       style: TextStyle(color: Colors.grey)),
-                  Text(currencyFormat.format(valorTotal),
-                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      if (appointment['total_price'] != null || appointment['discount_amount'] != null)
+                        Builder(
+                          builder: (context) {
+                            final double original = double.tryParse((appointment['total_price'] ?? 0).toString()) ?? 0;
+                            final double discount = double.tryParse((appointment['discount_amount'] ?? 0).toString()) ?? 0;
+                            final double finalBase = double.tryParse((appointment['valor_com_desconto'] ?? valorTotal).toString()) ?? 0;
+                            
+                            // Tenta obter o desconto de várias formas para compatibilidade
+                            double discountValue = discount > 0 ? discount : (original - finalBase);
+                            double originalPrice = original > finalBase ? original : (finalBase + discountValue);
+
+                            if (discountValue > 0.01) {
+                              return Text(
+                                "${currencyFormat.format(originalPrice)} (- ${currencyFormat.format(discountValue)})",
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey,
+                                  decoration: TextDecoration.lineThrough,
+                                ),
+                              );
+                            }
+                            return const SizedBox.shrink();
+                          }
+                        ),
+                      Text(currencyFormat.format(valorTotal),
+                          style: const TextStyle(fontWeight: FontWeight.bold)),
+                    ],
+                  ),
                 ],
               ),
+              if (appointment['coupon_applied'] == true) ...[
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('Cupom aplicado:',
+                        style: TextStyle(color: Colors.blue, fontSize: 13, fontWeight: FontWeight.w500)),
+                    Text(
+                      appointment['coupon_code']?.toString() ?? 'Ativo',
+                      style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                  ],
+                ),
+              ],
+              if (appointment['birthday_discount_applied'] == true) ...[
+                const SizedBox(height: 8),
+                const Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Presente aniversário:',
+                        style: TextStyle(color: Colors.pink, fontSize: 13, fontWeight: FontWeight.w500)),
+                    Text(
+                      'Aplicado',
+                      style: TextStyle(color: Colors.pink, fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                  ],
+                ),
+              ],
               const SizedBox(height: 8),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -791,12 +1072,15 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
                   ],
                 ),
               ],
-              if (valorRestante > 0 && isUpcoming && _shouldShowActions(appointment)) ...[
+              if (valorRestante > 0 && !(appointment['status']?.toString().toLowerCase().contains('cancelado') ?? false)) ...[
                 const SizedBox(height: 24),
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    onPressed: () => _showPaymentOptions(appointment),
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _showPaymentOptions(appointment);
+                    },
                     icon: const Icon(Icons.payments_outlined),
                     label: const Text('PAGAR AGORA',
                         style: TextStyle(fontWeight: FontWeight.bold)),
@@ -1135,6 +1419,25 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
     }
   }
 
+  void _navigateToPaymentSuccess(Map<String, dynamic> appointment) {
+    if (!mounted) return;
+    final ts = appointment['scheduled_at'];
+    final date = ts is String ? DateTime.parse(ts) : ts as DateTime;
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute(
+        builder: (_) => BookingSuccessPage(
+          serviceName: appointment['service_name'] ?? 'Serviço',
+          professionalName: appointment['professional_name'] ?? 'Profissional',
+          date: DateFormat('dd/MM/yyyy').format(date),
+          time: DateFormat('HH:mm').format(date),
+          isPaid: true,
+          title: 'Pagamento Confirmado!',
+          subtitle: 'Seu pagamento foi processado com sucesso!',
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = Supabase.instance.client.auth.currentUser;
@@ -1171,22 +1474,36 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
         ),
       ),
       backgroundColor: const Color(0xFFF5F7FA),
-      body: StreamBuilder<List<Map<String, dynamic>>>(
+      body: SupabaseStreamWidget<List<Map<String, dynamic>>>(
         stream: Supabase.instance.client
             .from('appointments')
             .stream(primaryKey: ['id'])
             .eq('client_id', user.id)
             .order('scheduled_at', ascending: false),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
+        isEmpty: (data) => data.isEmpty,
+        emptyBuilder: (context) => const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.event_busy, size: 80, color: Colors.grey),
+              SizedBox(height: 20),
+              Text('Nenhum agendamento encontrado',
+                  style: TextStyle(color: Colors.grey)),
+            ],
+          ),
+        ),
+        builder: (context, allAppointmentsRaw) {
+          // Filtro de 30 dias aplicado no lado do cliente para flexibilidade máxima
+          final now = DateTime.now();
+          final cutoffDate = now.subtract(const Duration(days: 31)); // 31 para margem de segurança
+          
+          final allAppointments = allAppointmentsRaw.where((apt) {
+            final ts = apt['scheduled_at'];
+            if (ts == null) return false;
+            final dt = ts is String ? DateTime.parse(ts) : ts as DateTime;
+            return dt.isAfter(cutoffDate);
+          }).toList();
 
-          if (snapshot.hasError) {
-             return Center(child: Text('Erro: ${snapshot.error}'));
-          }
-
-          final allAppointments = snapshot.data ?? [];
           if (allAppointments.isEmpty) {
             return const Center(
               child: Column(
@@ -1194,23 +1511,29 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
                 children: [
                   Icon(Icons.event_busy, size: 80, color: Colors.grey),
                   SizedBox(height: 20),
-                  Text('Nenhum agendamento encontrado',
+                  Text('Nenhum agendamento recente',
                       style: TextStyle(color: Colors.grey)),
                 ],
               ),
             );
           }
 
-          final upcomingAppointments =
-              _filterAppointments(allAppointments, true);
-          final historyAppointments =
-              _filterAppointments(allAppointments, false);
+          final upcomingAppointments = _filterAppointments(allAppointments, true);
+          final historyAppointments = _filterAppointments(allAppointments, false);
 
           return TabBarView(
             controller: _tabController,
             children: [
-              _buildAppointmentsList(upcomingAppointments, true),
-              _buildAppointmentsList(historyAppointments, false),
+              RefreshIndicator(
+                onRefresh: refreshData,
+                color: AppColors.primaryPurple,
+                child: _buildAppointmentsList(upcomingAppointments, true),
+              ),
+              RefreshIndicator(
+                onRefresh: refreshData,
+                color: AppColors.primaryPurple,
+                child: _buildAppointmentsList(historyAppointments, false),
+              ),
             ],
           );
         },
@@ -1260,8 +1583,8 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
     final ts = appointment['scheduled_at'];
     DateTime appointmentDate = ts is String ? DateTime.parse(ts) : ts;
 
-    return FutureBuilder<Map<String, dynamic>>(
-      future: _getShopData(shopId),
+    return FutureBuilder<Map<String, dynamic>?>(
+      future: _getCachedShopData(shopId),
       builder: (context, shopSnapshot) {
         final shopData =
             shopSnapshot.data ?? {'nome': 'Carregando...', 'logo': ''};
@@ -1398,7 +1721,72 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
                       ),
                     ],
                   ),
-                  const Divider(height: 24),
+                  const SizedBox(height: 12),
+                  // Pagamento e Status
+                  Row(
+                    children: [
+                      // Meio de Pagamento
+                      Builder(
+                        builder: (context) {
+                          final method = (appointment['payment_method']?.toString() ?? 'local').toLowerCase();
+                          IconData icon = Icons.payments;
+                          String label = "Local";
+                          Color color = Colors.grey;
+
+                          if (method.contains('pix')) {
+                            icon = Icons.qr_code;
+                            label = "PIX";
+                            color = const Color(0xFF00BFA5);
+                          } else if (method.contains('cart') || method.contains('card')) {
+                            icon = Icons.credit_card;
+                            label = "Cartão";
+                            color = AppColors.primaryPurple;
+                          }
+
+                          return Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: color.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(icon, size: 14, color: color),
+                                const SizedBox(width: 4),
+                                Text(
+                                  label,
+                                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: color),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(width: 8),
+                      // Status do Pagamento (Pago / Pendente)
+                      Builder(
+                        builder: (context) {
+                          final isPaid = valorPago >= (valorTotal - 0.05); // Margem para erros de double
+                          final color = isPaid ? Colors.green : Colors.orange;
+                          final label = isPaid ? "PAGO" : "PGTO PENDENTE";
+
+                          return Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: color.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              label,
+                              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: color),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 32),
                   // Valores
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1409,9 +1797,35 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
                           const Text('Valor Total:',
                               style:
                                   TextStyle(fontSize: 12, color: Colors.grey)),
-                          Text(currencyFormat.format(valorTotal),
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.bold)),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                               if (appointment['total_price'] != null)
+                                Builder(
+                                  builder: (context) {
+                                    final double original = double.tryParse(appointment['total_price'].toString()) ?? 0;
+                                    // Use valor_com_desconto se disponível para comparar o desconto real (sem taxas)
+                                    final double finalBase = double.tryParse((appointment['valor_com_desconto'] ?? valorTotal).toString()) ?? 0;
+                                    final double discountValue = original - finalBase;
+                                    
+                                    if (discountValue > 0.01) {
+                                      return Text(
+                                        "${currencyFormat.format(original)} (- ${currencyFormat.format(discountValue)})",
+                                        style: const TextStyle(
+                                          fontSize: 10,
+                                          color: Colors.grey,
+                                          decoration: TextDecoration.lineThrough,
+                                        ),
+                                      );
+                                    }
+                                    return const SizedBox.shrink();
+                                  }
+                                ),
+                              Text(currencyFormat.format(valorTotal),
+                                  style:
+                                      const TextStyle(fontWeight: FontWeight.bold)),
+                            ],
+                          ),
                         ],
                       ),
                       Column(
@@ -1448,7 +1862,39 @@ class _MyAppointmentsPageState extends State<MyAppointmentsPage>
                       ),
                     ],
                   ),
-                  if (isUpcoming && valorRestante > 0 && _shouldShowActions(appointment)) ...[
+                  if (appointment['coupon_applied'] == true || appointment['birthday_discount_applied'] == true) ...[
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        if (appointment['coupon_applied'] == true)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.blue.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              "CUPOM: ${appointment['coupon_code'] ?? 'ATIVO'}",
+                              style: const TextStyle(color: Colors.blue, fontSize: 9, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        if (appointment['birthday_discount_applied'] == true)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.pink.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: const Text(
+                              "ANIVERSÁRIO",
+                              style: TextStyle(color: Colors.pink, fontSize: 9, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                  if (valorRestante > 0 && !(appointment['status']?.toString().toLowerCase().contains('cancelado') ?? false)) ...[
                     const SizedBox(height: 12),
                     SizedBox(
                       width: double.infinity,

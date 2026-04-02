@@ -56,9 +56,11 @@ const sendEmail = async (to: string, subject: string, html: string) => {
   const from = Deno.env.get('EMAIL_FROM') || 'MarkaAI <no-reply@markaai.com.br>'
   
   if (!apiKey) {
-    console.error('[sendEmail] RESEND_API_KEY missing.')
+    console.error('[sendEmail] RESEND_API_KEY missing - check Supabase Secrets.')
     return
   }
+
+  console.log(`[sendEmail] Tentando enviar email para: ${to} | Assunto: ${subject} | Remetente: ${from}`)
 
   try {
     const res = await fetch('https://api.resend.com/emails', {
@@ -67,18 +69,23 @@ const sendEmail = async (to: string, subject: string, html: string) => {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ from, to, forbidden_to: to, subject, html })
+      body: JSON.stringify({ 
+        from, 
+        to: [to], // Resend aceita string ou array, mas array é mais robusto
+        subject, 
+        html 
+      })
     })
     
     const data = await res.json()
     
     if (!res.ok) {
-      console.error(`[sendEmail] Error sending to ${to}:`, JSON.stringify(data, null, 2))
+      console.error(`[sendEmail] ERRO na API do Resend ao enviar para ${to}:`, JSON.stringify(data, null, 2))
     } else {
-      console.log(`[sendEmail] Email sent successfully to ${to}:`, data.id)
+      console.log(`[sendEmail] Sucesso! Email enviado para ${to}. ID: ${data.id}`)
     }
   } catch (err) {
-    console.error('[sendEmail] Unexpected error:', err)
+    console.error('[sendEmail] Erro inesperado na requisição (fetch):', err)
   }
 }
 
@@ -330,12 +337,13 @@ serve(async (req) => {
       const data = await buildPayloadFromAppointment(supabase, appt)
       
       if (!data.clientPhone && !data.clientEmail) {
-        console.warn('No contact info for appointment:', appt.id)
+        console.warn(`[INSERT] Sem informações de contato para o agendamento ${appt.id}. Registros presentes:`, JSON.stringify({ phone: data.clientPhone, email: data.clientEmail }))
         return new Response('No contact info', { status: 200 })
       }
 
       const emailHtml = buildConfirmationEmail(data)
 
+      console.log(`[INSERT] Disparando notificações para agendamento ${appt.id}...`)
       await Promise.allSettled([
         data.clientPhone ? sendWhatsApp(data.clientPhone, 'appointment_confirmation', [data.payload.clientName, data.payload.salonName, data.payload.date, data.payload.time, data.payload.serviceName]) : Promise.resolve(),
         data.clientEmail ? sendEmail(data.clientEmail, 'Agendamento Confirmado', emailHtml) : Promise.resolve()
@@ -352,7 +360,7 @@ serve(async (req) => {
 
       // 1. Mudança para Confirmação / Agendamento (ex: de 'pendente' para 'confirmado')
       if (statusChanged && notifiableStatuses.includes(currentStatus) && !notifiableStatuses.includes((before.status || '').toLowerCase())) {
-        console.log(`Status changed to ${currentStatus} for appointment ${after.id}. Sending confirmation email...`)
+        console.log(`[UPDATE] Status alterado para "${currentStatus}" no agendamento ${after.id}. Enviando email de confirmação...`)
         const data = await buildPayloadFromAppointment(supabase, after)
         const emailHtml = buildConfirmationEmail(data)
         
@@ -363,7 +371,7 @@ serve(async (req) => {
       }
       // 2. Mudança para Cancelamento
       else if (statusChanged && currentStatus === 'cancelado') {
-        console.log(`Status changed to cancelado for appointment ${after.id}. Sending cancellation email...`)
+        console.log(`[UPDATE] Status alterado para "cancelado" no agendamento ${after.id}. Enviando email de cancelamento...`)
         const data = await buildPayloadFromAppointment(supabase, after)
         const emailHtml = buildCancellationEmail(data)
         
@@ -374,11 +382,10 @@ serve(async (req) => {
       }
       // 3. Reagendamento (Mudança de Data/Hora mantendo status confirmado)
       else if (dateChanged && notifiableStatuses.includes(currentStatus)) {
-        console.log(`Date changed for appointment ${after.id}. Sending rescheduling email...`)
+        console.log(`[UPDATE] Data/Hora alterada no agendamento ${after.id}. Enviando email de reagendamento...`)
         const data = await buildPayloadFromAppointment(supabase, after)
         const emailHtml = buildReschedulingEmail(data)
         
-        // No WhatsApp, podemos usar o mesmo template de confirmação para informar os novos dados
         await Promise.allSettled([
           data.clientPhone ? sendWhatsApp(data.clientPhone, 'appointment_confirmation', [data.payload.clientName, data.payload.salonName, data.payload.date, data.payload.time, data.payload.serviceName]) : Promise.resolve(),
           data.clientEmail ? sendEmail(data.clientEmail, 'Agendamento Atualizado (Reagendamento)', emailHtml) : Promise.resolve()

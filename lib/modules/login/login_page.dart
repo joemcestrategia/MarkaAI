@@ -207,7 +207,7 @@ class _LoginPageState extends State<LoginPage>
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
-        _showError("Erro de conexão: $e");
+        _showError("Erro de conexão. Verifique sua internet e tente novamente.");
       }
     }
   }
@@ -235,8 +235,8 @@ class _LoginPageState extends State<LoginPage>
       _showError("Por favor, insira uma senha.");
       return false;
     }
-    if (_passCtrl.text.length < 6) {
-      _showError("A senha deve ter pelo menos 6 caracteres.");
+    if (_passCtrl.text.length < 8) {
+      _showError("A senha deve ter pelo menos 8 caracteres.");
       return false;
     }
     if (_passCtrl.text != _passConfirmCtrl.text) {
@@ -661,52 +661,17 @@ class _LoginPageState extends State<LoginPage>
     setState(() => _isLoading = true);
 
     try {
-      final supabase = sb.Supabase.instance.client;
-      final email = _emailCtrl.text.trim();
-      
-      // 1. Consultar se o e-mail existe na base (tabela users)
-      final doc = await supabase
-          .from('users')
-          .select('email')
-          .eq('email', email)
-          .maybeSingle();
-
-      if (doc == null) {
-        // E-mail NÃO encontrado -> redirecionar para tela de cadastro
-        if (mounted) {
-          setState(() {
-            _isRegistering = true;
-            _currentStep = 1; // Passo de seleção de perfil
-            _isLoading = false;
-          });
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("E-mail não encontrado. Crie sua conta para continuar!"),
-              backgroundColor: AppColors.primaryPurple,
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        }
-        return;
-      }
-
-      // E-mail ENCONTRADO -> tentar login
       final authService = AuthService();
       final res = await authService.signIn(
-          email: email, 
-          password: _passCtrl.text.trim()
+        email: _emailCtrl.text.trim(),
+        password: _passCtrl.text,
       );
       if (res.user != null) {
         await _routeUser(res.user!);
       }
     } catch (e) {
-      if (e.toString().contains('Invalid login credentials') || e.toString().contains('incorrect')) {
-         _showError("Senha incorreta.");
-         if (mounted) setState(() => _isLoading = false);
-      } else {
-        _handleAuthError(e);
-        if (mounted) setState(() => _isLoading = false);
-      }
+      _showError("E-mail ou senha inválidos.");
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 

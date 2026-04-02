@@ -4,8 +4,16 @@
 Write-Host "Realizando deploy da mercadopagoCallback..." -ForegroundColor Cyan
 supabase functions deploy mercadopagoCallback --no-verify-jwt
 
-# 2. Outras funções que podem ser deployadas normalmente
-# Write-Host "Realizando deploy de outras funções..." -ForegroundColor Cyan
-# supabase functions deploy nome-da-funcao
+# 2. PIX Payment (sem verificação de JWT para evitar erro 401 Invalid JWT)
+Write-Host "Realizando deploy da createPixPayment..." -ForegroundColor Cyan
+supabase functions deploy createPixPayment --no-verify-jwt
+
+# 3. Payment Status (sem verificação de JWT para polling de status)
+Write-Host "Realizando deploy da getPaymentStatus..." -ForegroundColor Cyan
+supabase functions deploy getPaymentStatus --no-verify-jwt
+
+# 4. Delete User Account (JWT validado internamente via getUser)
+Write-Host "Realizando deploy da deleteUserAccount..." -ForegroundColor Cyan
+supabase functions deploy deleteUserAccount --no-verify-jwt
 
 Write-Host "Deploy concluído!" -ForegroundColor Green

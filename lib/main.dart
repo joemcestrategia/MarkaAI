@@ -11,13 +11,16 @@ import 'package:flutter_stripe/flutter_stripe.dart';
 import 'core/constants/api_keys.dart';
 
 
+import 'core/services/session_service.dart';
+import 'core/services/shop_data_cache_service.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
 
 void main() async {
   try {
     WidgetsFlutterBinding.ensureInitialized();
     print("=== BOOT STEP 0: v2 - FlutterBinding Inicializado ===");
     
-    // 1. Inicializar Supabase
+    // 1. Inicializar Supabase (obrigatório antes de runApp)
     print("=== BOOT STEP 1.1: Iniciando Supabase ===");
     await Supabase.initialize(
       url: ApiKeys.supabaseUrl,
@@ -28,52 +31,30 @@ void main() async {
     );
     print("=== BOOT STEP 1: Supabase Inicializado ===");
 
-    // 3. Inicializar Stripe
+    // 2. Inicializar SessionService (obrigatório para roteamento)
+    print("=== BOOT STEP 2: Iniciando SessionService ===");
+    await SessionService.init();
+    print("=== BOOT STEP 2: SessionService Inicializado ===");
+
+    // 3. Configurar Stripe key (síncrono, não bloqueia)
     try {
       if (!kIsWeb) {
         print("=== BOOT STEP 3.1: Configurando Stripe Key (Mobile) ===");
         Stripe.publishableKey = ApiKeys.stripePublishableKey;
         print("=== BOOT STEP 3.2: Stripe Key Configurada (Mobile) ===");
-      } else {
-        print("=== BOOT STEP 3.1: Ignorando Stripe.publishableKey (Web) - Usando JS SDK ===");
       }
     } catch (e) {
       print("=== BOOT STEP 3.0 ERRO: Stripe Key Falhou = $e ===");
     }
-    
-    if (!kIsWeb) {
-      try {
-        print("=== BOOT STEP 3.3: Aplicando Configurações Stripe (Mobile) ===");
-        await Stripe.instance.applySettings();
-        print("=== BOOT STEP 3: Stripe API (Mobile) Configurado ===");
-      } catch (e) {
-        print("=== BOOT STEP 3 ERRO: Stripe Falhou = $e ===");
-      }
-    } else {
-      print("=== BOOT STEP 3: Stripe Configurado (Web key) ===");
-    }
 
     // 4. Configure path-based URLs (remove #) on web hosting
-    print("=== BOOT STEP 4.1: Configurando Path Strategy ===");
+    print("=== BOOT STEP 4: Configurando Path Strategy ===");
     configurePathUrlStrategy();
-    print("=== BOOT STEP 4: Path URL Strategy Configurado ===");
 
-    // 5. Inicializar IAP (In-App Purchases) - Perigosíssimo no Web
-    print("=== BOOT STEP 5.1: Checando IAP (kIsWeb=$kIsWeb) ===");
-    if (!kIsWeb) {
-      try {
-        print("=== BOOT STEP 5.2: Inicializando Mobile IAP ===");
-        await MobileSubscriptionManager.initialize();
-        print("=== BOOT STEP 5: Mobile IAP Inicializado ===");
-      } catch (e) {
-        print("=== BOOT STEP 5 ERRO: Falha ao inicializar IAP = $e ===");
-      }
-    } else {
-      print("=== BOOT STEP 5: Mobile IAP Ignorado (Web) ===");
-    }
-
-    print("=== BOOT STEP 6: Configurando ErrorWidget ===");
-    print("=== BOOT FINAL: Executando runApp ===");
+    // ──────────────────────────────────────────────────────────────────────────
+    // runApp() é chamado AGORA — a splash Flutter personalizada cobre a splash
+    // nativa imediatamente, sem aguardar IAP / Ads / Cache.
+    // ──────────────────────────────────────────────────────────────────────────
     ErrorWidget.builder = (FlutterErrorDetails details) {
       return Scaffold(
         backgroundColor: Colors.white,
@@ -88,7 +69,34 @@ void main() async {
         ),
       );
     };
+    print("=== BOOT STEP 5: Executando runApp ===");
     runApp(const MarkaAIApp());
+
+    // 5–7. Init pesados rodam em background (não bloqueiam a splash)
+    if (!kIsWeb) {
+      // Stripe applySettings
+      Stripe.instance.applySettings().catchError((e) {
+        print("=== BOOT BG: Stripe applySettings falhou = $e ===");
+      });
+
+      // IAP
+      MobileSubscriptionManager.initialize().catchError((e) {
+        print("=== BOOT BG: Mobile IAP falhou = $e ===");
+      });
+
+      // Mobile Ads
+      MobileAds.instance.initialize().catchError((e) {
+        print("=== BOOT BG: Mobile Ads falhou = $e ===");
+        return InitializationStatus({});
+      });
+    }
+
+    // Cache de dados da loja (não é bloqueante)
+    ShopDataCacheService.init().catchError((e) {
+      print("=== BOOT BG: ShopDataCacheService falhou = $e ===");
+    });
+
+    print("=== BOOT COMPLETO: init background disparado ===");
   } catch (globalError, stackTrace) {
     debugPrint("=== BOOT PARALISOU TOTALMENTE: $globalError ===");
     debugPrint(stackTrace.toString());

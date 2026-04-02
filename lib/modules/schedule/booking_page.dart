@@ -77,7 +77,7 @@ class _BookingPageState extends State<BookingPage> {
     final user = Supabase.instance.client.auth.currentUser;
     if (user != null) {
       try {
-        _clientStatus = await ClientVerificationService.getClientStatus(user.id, shopId);
+        _clientStatus ??= await ClientVerificationService.getClientStatus(user.id, shopId);
         final restrictProblematic = _shopConfig['restrict_problematic_clients'] ?? false;
         if (_clientStatus!['isProblematic'] == true && restrictProblematic) {
           if (mounted) {
@@ -649,7 +649,7 @@ class _BookingTimePageState extends State<BookingTimePage> {
     }
     final user = Supabase.instance.client.auth.currentUser;
     if (user != null) {
-      final status = await ClientVerificationService.getClientStatus(
+      final status = widget.clientStatus ?? await ClientVerificationService.getClientStatus(
           user.id, (widget.shop['id'] ?? '').toString());
       final restrictProblematic = widget.shopConfig['restrict_problematic_clients'] ?? false;
       if (status['isProblematic'] == true && restrictProblematic) {
@@ -676,9 +676,10 @@ class _BookingTimePageState extends State<BookingTimePage> {
       return;
     }
     final user = Supabase.instance.client.auth.currentUser;
-    if (user != null) {
-      final status = await ClientVerificationService.getClientStatus(
-          user.id, (widget.shop['id'] ?? '').toString());
+    final status = widget.clientStatus ?? 
+        (user != null ? await ClientVerificationService.getClientStatus(user.id, (widget.shop['id'] ?? '').toString()) : null);
+
+    if (status != null) {
       if (mounted) {
         setState(() {
           _isVip = status['isVip'] ?? false;
@@ -1370,6 +1371,27 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
 
     List<Map<String, dynamic>> results = [];
 
+    // Otimização N+1: Coletar service_ids que precisam de duração
+    final missingDurationServiceIds = querySnapshot
+        .where((d) => int.tryParse(d['duration_min']?.toString() ?? '') == null && d['service_id'] != null)
+        .map((d) => d['service_id'].toString())
+        .toSet()
+        .toList();
+
+    Map<String, int> serviceDurations = {};
+    if (missingDurationServiceIds.isNotEmpty) {
+      try {
+        final servicesData = await Supabase.instance.client
+            .from('services')
+            .select('id, duration_min')
+            .inFilter('id', missingDurationServiceIds);
+        
+        for (var s in servicesData) {
+          serviceDurations[s['id'].toString()] = int.tryParse(s['duration_min']?.toString() ?? '') ?? 30;
+        }
+      } catch (_) {}
+    }
+
     for (var d in querySnapshot) {
       final data = d as Map<String, dynamic>;
       final status = (data['status'] ?? '').toString().toLowerCase();
@@ -1395,18 +1417,7 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
       if (agDuration == null) {
         String? savedServiceId = data['service_id']?.toString();
         if (savedServiceId != null && savedServiceId.isNotEmpty) {
-          try {
-            final svcDoc = await Supabase.instance.client
-                .from('services')
-                .select()
-                .eq('id', savedServiceId)
-                .maybeSingle();
-            if (svcDoc != null) {
-              final svcData = svcDoc as Map<String, dynamic>;
-              agDuration =
-                  int.tryParse(svcData['duration_min']?.toString() ?? '');
-            }
-          } catch (_) {}
+          agDuration = serviceDurations[savedServiceId];
         }
         agDuration ??= 30; // fallback final
       }

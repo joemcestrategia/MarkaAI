@@ -79,6 +79,14 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
     // Features are now handled by StreamBuilder in build()
   }
 
+  static const _kTagNormalize = {
+    'vip': 'VIP',
+    'sumido': 'Sumido',
+    'problemático': 'Problemático',
+    'problematico': 'Problemático',
+    'novo': 'Novo',
+  };
+
   Future<void> _loadTags(String sid) async {
     try {
       final doc = await _supabase
@@ -88,7 +96,8 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
           .eq('user_id', widget.clientId)
           .maybeSingle();
       if (mounted && doc != null) {
-        final tags = List<String>.from(doc['manual_tags'] ?? doc['manualTags'] ?? []);
+        final raw = List<String>.from(doc['manual_tags'] ?? doc['manualTags'] ?? []);
+        final tags = raw.map((t) => _kTagNormalize[t.toLowerCase()] ?? t).toList();
         setState(() => _manualTags = tags);
       }
     } catch (e) {
@@ -98,6 +107,13 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
 
   Future<void> _saveTags() async {
     if (shopId == null) return;
+    // Clientes manuais (ID baseado em telefone) não podem ser salvos em shop_clients (FK para auth.users)
+    final uuidRegex = RegExp(
+      r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+      caseSensitive: false,
+    );
+    if (!uuidRegex.hasMatch(widget.clientId)) return;
+
     try {
       // Deriva a classificação oficial baseada nas tags manuais
       String? classification;
@@ -112,16 +128,24 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
       }
 
       await _supabase.from('shop_clients').upsert({
-        'shopId': shopId,
+        'shop_id': shopId,
         'user_id': widget.clientId,
-        'manual_tags': _manualTags.map((t) => t.toLowerCase().trim()).toList(),
+        'manual_tags': _manualTags.map((t) => t.trim()).toList(),
         'classification': classification ?? '',
         // Se houver uma classificação manual definida, marcamos como override
         'classification_override': classification != null,
         'last_updated': DateTime.now().toIso8601String(),
-      });
+      }, onConflict: 'shop_id,user_id');
     } catch (e) {
       debugPrint('Erro ao salvar tags: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao salvar classificação: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -337,7 +361,7 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
           // 1. Atualiza no perfil do cliente (tabela shop_clients)
           if (shopId != null) {
             await _supabase.from('shop_clients').upsert({
-              'shopId': shopId,
+              'shop_id': shopId,
               'user_id': widget.clientId,
               ...updateData,
               'last_updated': DateTime.now().toIso8601String(),
@@ -392,7 +416,7 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
             return d['client_name'] == nome;
           }
         }
-        return d['clientId'] == widget.clientId;
+        return (d['client_id'] ?? d['clientId']) == widget.clientId;
       }).toList();
 
       // Ordenar manualmente já que não podemos usar .order() com filtros no stream
@@ -429,7 +453,7 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
             return d['client_phone'] == tel;
           }
         }
-        return d['clientId'] == widget.clientId;
+        return (d['client_id'] ?? d['clientId']) == widget.clientId;
       }).toList();
 
       filtered.sort((a, b) {
@@ -526,18 +550,20 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
                           ],
                         ),
                         if (telefone.isNotEmpty && telefone != 'Não informado')
-                          GestureDetector(
-                            onTap: _launchWhatsApp,
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Icon(Icons.chat,
-                                    size: 12, color: Colors.green),
-                                const SizedBox(width: 4),
-                                Text(telefone,
-                                    style: const TextStyle(
-                                        fontSize: 12, color: Colors.green)),
-                              ],
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: ElevatedButton.icon(
+                              onPressed: _launchWhatsApp,
+                              icon: const Icon(Icons.chat_rounded, size: 14),
+                              label: const Text("WhatsApp", style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green,
+                                foregroundColor: Colors.white,
+                                elevation: 0,
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                                minimumSize: const Size(0, 32),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                              ),
                             ),
                           ),
                         if (isManual)
@@ -630,6 +656,34 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
             ],
           ),
         ),
+        if (widget.clientData['ultimoServico'] != null &&
+            widget.clientData['ultimoServico'].toString().isNotEmpty)
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.blue.withValues(alpha: 0.05),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.blue.withValues(alpha: 0.2)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.star_outline_rounded,
+                    size: 16, color: Colors.blue),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    "Último serviço: ${widget.clientData['ultimoServico']}",
+                    style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.blue),
+                  ),
+                ),
+              ],
+            ),
+          ),
 
         // ── KPI BAR ───────────────────────────────────────────────────
         StreamBuilder<List<Map<String, dynamic>>>(
@@ -674,29 +728,54 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
                 ? DateFormat('dd/MM/yy').format(lastVisit)
                 : '--';
 
+            // Dados pré-calculados vindos do BusinessClientsScreen
+            final prefService = widget.clientData['servicoPreferido'] ?? '--';
+            final int avgInterval = widget.clientData['intervaloMedio'] ?? 0;
+
             return Container(
               color: const Color(0xFFF8F9FD),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              child: Row(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Column(
                 children: [
-                  _kpiItem(
-                      label: 'Última Visita',
-                      value: lastVisitStr,
-                      icon: Icons.history,
-                      color: themeColor),
-                  _kpiDivider(),
-                  _kpiItem(
-                      label: 'Ticket Médio',
-                      value:
-                          ticketMedio > 0 ? currency.format(ticketMedio) : '--',
-                      icon: Icons.receipt_long,
-                      color: Colors.green),
-                  _kpiDivider(),
-                  _kpiItem(
-                      label: 'Visitas',
-                      value: '${docs.length}',
-                      icon: Icons.calendar_today,
-                      color: Colors.blue),
+                  Row(
+                    children: [
+                      _kpiItem(
+                          label: 'Última Visita',
+                          value: lastVisitStr,
+                          icon: Icons.history,
+                          color: themeColor),
+                      _kpiDivider(),
+                      _kpiItem(
+                          label: 'Ticket Médio',
+                          value: ticketMedio > 0 ? currency.format(ticketMedio) : '--',
+                          icon: Icons.receipt_long,
+                          color: Colors.green),
+                      _kpiDivider(),
+                      _kpiItem(
+                          label: 'Visitas',
+                          value: '${docs.length}',
+                          icon: Icons.calendar_today,
+                          color: Colors.blue),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  const Divider(height: 1),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      _kpiItem(
+                          label: 'Serviço Preferido',
+                          value: prefService,
+                          icon: Icons.favorite_outline,
+                          color: Colors.pink),
+                      _kpiDivider(),
+                      _kpiItem(
+                          label: 'Intervalo Médio',
+                          value: avgInterval > 0 ? '$avgInterval dias' : '--',
+                          icon: Icons.timer_outlined,
+                          color: Colors.orange),
+                    ],
+                  ),
                 ],
               ),
             );
@@ -1014,8 +1093,10 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
     } catch (_) {
       date = DateTime.now();
     }
-    final double valor =
-        double.tryParse(data['valor_total']?.toString() ?? '0') ?? 0.0;
+    final double valor = double.tryParse(
+            (data['total_price'] ?? data['price'] ?? data['valor_total'] ?? '0')
+                .toString()) ??
+        0.0;
     final String servico = data['servico_nome'] ??
         data['nome_servico'] ??
         data['service_name'] ??
@@ -1112,8 +1193,10 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
       date = DateTime.now();
     }
     final currency = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
-    final double valor =
-        double.tryParse(data['valor_total']?.toString() ?? '0') ?? 0.0;
+    final double valor = double.tryParse(
+            (data['total_price'] ?? data['price'] ?? data['valor_total'] ?? '0')
+                .toString()) ??
+        0.0;
     final String servico = data['servico_nome'] ??
         data['nome_servico'] ??
         data['service_name'] ??

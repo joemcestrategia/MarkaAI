@@ -31,6 +31,21 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
   void initState() {
     super.initState();
     _checkFavorite();
+    _recordVisit();
+  }
+
+  Future<void> _recordVisit() async {
+    try {
+      final uid = Supabase.instance.client.auth.currentUser?.id;
+      if (uid == null) return;
+
+      await Supabase.instance.client.from('shop_views').insert({
+        'user_id': uid,
+        'shop_id': widget.shopDoc['id'],
+      });
+    } catch (e) {
+      debugPrint('[ShopProfile] Cannot record visit: $e');
+    }
   }
 
   Future<void> _checkFavorite() async {
@@ -68,21 +83,24 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
     setState(() => _isFavorite = !_isFavorite);
 
     try {
-      // final callable = FirebaseFunctions.instanceFor(region: 'us-central1').httpsCallable('toggleFavorite');
-      final result = await Supabase.instance.client.functions.invoke('toggle-favorite', body: {
-        'shopId': widget.shopDoc['id'],
-        'shopName': widget.shopDoc['nome'] ?? '',
-        'isFavorite': !wasFavorite,
-      });
-
-      if (mounted && result.status != 200) {
-        setState(() => _isFavorite = wasFavorite);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Erro ao atualizar favoritos")),
-        );
+      if (wasFavorite) {
+        // Remover dos favoritos
+        await Supabase.instance.client
+            .from('favorites')
+            .delete()
+            .eq('user_id', uid)
+            .eq('shop_id', widget.shopDoc['id']);
+      } else {
+        // Adicionar aos favoritos
+        await Supabase.instance.client.from('favorites').insert({
+          'user_id': uid,
+          'shop_id': widget.shopDoc['id'],
+          'shop_name': widget.shopDoc['nome'] ?? widget.shopDoc['name'] ?? '',
+          'created_at': DateTime.now().toIso8601String(),
+        });
       }
     } catch (e) {
-      debugPrint("❌ Erro toggleFavorite: $e");
+      debugPrint("❌ Erro _toggleFavorite: $e");
       if (mounted) {
         setState(() => _isFavorite = wasFavorite);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -465,7 +483,7 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
                 .from('services')
                 .select()
                 .eq('shop_id', widget.shopDoc['id'])
-                .then((list) => list.where((d) => (d['is_active'] ?? d['ativo']) == true).toList()),
+                .then((list) => list.where((d) => (d['is_active'] ?? d['ativo'] ?? true) == true).toList()),
             builder: (context, snapshot) {
               if (snapshot.hasError) {
                 return SliverToBoxAdapter(
@@ -491,8 +509,8 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
               if (_selectedCategoryId != null) {
                 services = services.where((doc) {
                   final sData = doc;
-                  final ids = sData['categoryIds'] != null 
-                      ? List<String>.from(sData['categoryIds']) 
+                  final ids = sData['category_ids'] != null 
+                      ? List<String>.from(sData['category_ids']) 
                       : (sData['categoryId'] != null ? [sData['categoryId'].toString()] : []);
                   return ids.contains(_selectedCategoryId);
                 }).toList();
@@ -600,7 +618,7 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
                                         Row(
                                           children: [
                                             Text(
-                                              "R\$ ${sData['price'] ?? '0'}",
+                                              "R\$ ${sData['price'] ?? sData['preco'] ?? '0'}",
                                               style: const TextStyle(
                                                 fontSize: 15,
                                                 fontWeight: FontWeight.bold,
@@ -612,7 +630,7 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
                                                 size: 14, color: Colors.grey),
                                             const SizedBox(width: 4),
                                             Text(
-                                              "${sData['duration_min'] ?? '30'} min",
+                                              "${sData['duration_min'] ?? sData['tempo_min'] ?? '30'} min",
                                               style: const TextStyle(
                                                 fontSize: 13,
                                                 color: Colors.grey,
@@ -866,7 +884,7 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
                       fit: StackFit.expand,
                       children: [
                         CachedNetworkImage(
-                          imageUrl: "https://maps.googleapis.com/maps/api/staticmap?center=${Uri.encodeComponent(fullAddress)}&zoom=15&size=600x300&scale=2&maptype=roadmap&markers=color:red%7C${Uri.encodeComponent(fullAddress)}&key=${ApiKeys.geminiApiKey}",
+                          imageUrl: "https://maps.googleapis.com/maps/api/staticmap?center=${Uri.encodeComponent(fullAddress)}&zoom=15&size=600x300&scale=2&maptype=roadmap&markers=color:red%7C${Uri.encodeComponent(fullAddress)}&key=${ApiKeys.mapsApiKey}",
                           fit: BoxFit.cover,
                           errorWidget: (c, u, e) => Container(
                             color: AppColors.softGrey,

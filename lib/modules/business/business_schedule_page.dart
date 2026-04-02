@@ -5,6 +5,7 @@ import 'package:table_calendar/table_calendar.dart';
 import 'dart:async';
 import '../../core/theme/app_colors.dart';
 import 'appointment_details_page.dart';
+import 'transaction_details_page.dart';
 import '../../core/services/brasilapi_service.dart';
 import '../clients/client_details_page.dart';
 import '../../core/utils/availability_utils.dart';
@@ -64,15 +65,23 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
   // removed tabs: schedule shows active appointments by default
   bool _isOpeningQuickEntry = false;
 
+  late final Stream<List<Map<String, dynamic>>> _employeesStream;
+
   @override
   void initState() {
     super.initState();
     // por padrão, começar a lista a partir de hoje sem carregar passado
     _startFromSelectedDay = true;
     _startFromDate = DateTime.now();
+    
+    // Inicializa a janela da semana atual para garantir que o filtro funcione desde o início
+    final startOfWeek = _startFromDate!.subtract(Duration(days: _startFromDate!.weekday - 1));
+    final endOfWeek = startOfWeek.add(const Duration(days: 6));
+    _weekEndDate = DateTime(endOfWeek.year, endOfWeek.month, endOfWeek.day, 23, 59, 59);
+
     _loadShopConfig();
     _loadMonthEvents();
-    _loadAppointments();
+    _loadInitialAppointments();
     _fetchHolidays(); // Added by user
     _scrollController.addListener(() {
       // Start loading earlier for smoother experience (preload next page)
@@ -86,8 +95,16 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
         _loadMorePastAppointments();
       }
     });
+
+    // 1. Inicializar Stream de Employees compartilhado
+    _employeesStream = sb.Supabase.instance.client
+        .from('employees')
+        .stream(primaryKey: ['id'])
+        .eq('shop_id', widget.shopId);
+
     // Start periodic cache refresh to validate stale entries
-    _cacheRefreshTimer = Timer.periodic(const Duration(minutes: 2), (_) {
+    _cacheRefreshTimer = Timer.periodic(const Duration(minutes: 10), (_) {
+      if (!mounted) return;
       _refreshStaleCacheEntries();
     });
   }
@@ -118,15 +135,16 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     try {
       final snapshot = await sb.Supabase.instance.client
           .from('appointments')
-          .select()
+          .select('id, scheduled_at, status')
           .eq('shop_id', widget.shopId)
-          .gte('scheduled_at', startOfMonth.toIso8601String())
-          .lte('scheduled_at', endOfMonth.toIso8601String());
+          .gte('scheduled_at', startOfMonth.toUtc().toIso8601String())
+          .lte('scheduled_at', endOfMonth.toUtc().toIso8601String());
 
       final Map<DateTime, List<String>> events = {};
       for (var data in snapshot) {
         final dateStr = data['scheduled_at'] as String?;
         if (dateStr == null) continue;
+        
         final status = (data['status'] ?? '').toString().toLowerCase();
         if (status == 'cancelado') continue;
 
@@ -156,6 +174,101 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     return _events[dateKey] ?? [];
   }
 
+  // 🔄 CARGA INICIAL: últimos 20 agendamentos da data atual para trás
+  Future<void> _loadInitialAppointments() async {
+    if (_isLoading) return;
+    setState(() {
+      _isLoading = true;
+      _appointments = [];
+      _lastDocument = null;
+      _firstDocument = null;
+      _hasMore = true;
+      _hasMorePast = true;
+    });
+
+    try {
+      final endOfToday = DateTime(
+          DateTime.now().year, DateTime.now().month, DateTime.now().day, 23, 59, 59);
+
+      final snapshot = await sb.Supabase.instance.client
+          .from('appointments')
+          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, service_name, professional_name')
+          .eq('shop_id', widget.shopId)
+          .lte('scheduled_at', endOfToday.toUtc().toIso8601String())
+          .order('scheduled_at', ascending: false)
+          .limit(_perPage);
+
+      if (mounted) {
+        setState(() {
+          final ordered = snapshot.reversed.toList();
+          for (var d in ordered) {
+            _addToCache(d);
+            _appointments.add(d);
+          }
+          if (ordered.isNotEmpty) {
+            _firstDocument = ordered.first;
+            _lastDocument = ordered.last;
+          }
+          if (snapshot.length < _perPage) {
+            _hasMore = false;
+            _hasMorePast = false;
+          }
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Erro ao carregar agendamentos iniciais: $e');
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // 🗓 CARGA POR MÊS: carrega todos os agendamentos do mês exibido no calendário
+  Future<void> _loadAppointmentsForMonth(DateTime month) async {
+    if (_isLoading) return;
+    setState(() {
+      _isLoading = true;
+      _appointments = [];
+      _lastDocument = null;
+      _firstDocument = null;
+      _hasMore = true;
+      _hasMorePast = true;
+      _startFromSelectedDay = false;
+      _showOnlySelectedDay = false;
+    });
+
+    final startOfMonth = DateTime(month.year, month.month, 1);
+    final endOfMonth = DateTime(month.year, month.month + 1, 0, 23, 59, 59);
+
+    try {
+      final snapshot = await sb.Supabase.instance.client
+          .from('appointments')
+          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, service_name, professional_name')
+          .eq('shop_id', widget.shopId)
+          .gte('scheduled_at', startOfMonth.toUtc().toIso8601String())
+          .lte('scheduled_at', endOfMonth.toUtc().toIso8601String())
+          .order('scheduled_at', ascending: true)
+          .limit(_perPage);
+
+      if (mounted) {
+        setState(() {
+          for (var d in snapshot) {
+            _addToCache(d);
+            _appointments.add(d);
+          }
+          if (snapshot.isNotEmpty) {
+            _firstDocument = snapshot.first;
+            _lastDocument = snapshot.last;
+          }
+          if (snapshot.length < _perPage) _hasMore = false;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Erro ao carregar agendamentos do mês: $e');
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   // 🔄 CARREGAMENTO PRINCIPAL
   Future<void> _loadAppointments() async {
     if (_isLoading) return;
@@ -170,25 +283,25 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
 
     try {
       final client = sb.Supabase.instance.client;
-      var query = client.from('appointments').select().eq('shop_id', widget.shopId);
+      var query = client.from('appointments').select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, service_name, professional_name').eq('shop_id', widget.shopId);
 
       // Simple implementation: load first page
       if (_startFromSelectedDay && _startFromDate != null && _weekEndDate != null) {
         query = query
-          .gte('scheduled_at', _startFromDate!.toIso8601String())
-          .lte('scheduled_at', _weekEndDate!.toIso8601String());
+          .gte('scheduled_at', _startFromDate!.toUtc().toIso8601String())
+          .lte('scheduled_at', _weekEndDate!.toUtc().toIso8601String());
       } else if (_showOnlySelectedDay) {
         final start = DateTime(_selectedDay.year, _selectedDay.month, _selectedDay.day).subtract(const Duration(days: 7));
         final end = DateTime(_selectedDay.year, _selectedDay.month, _selectedDay.day).add(const Duration(days: 14, hours: 23, minutes: 59, seconds: 59));
         query = query
-          .gte('scheduled_at', start.toIso8601String())
-          .lte('scheduled_at', end.toIso8601String());
+          .gte('scheduled_at', start.toUtc().toIso8601String())
+          .lte('scheduled_at', end.toUtc().toIso8601String());
       } else {
         final start = DateTime(2020, 1, 1);
-        query = query.gte('scheduled_at', start.toIso8601String());
+        query = query.gte('scheduled_at', start.toUtc().toIso8601String());
       }
 
-      final snapshot = await query.order('scheduled_at').limit(_perPage);
+      final snapshot = await query.order('scheduled_at', ascending: true).limit(_perPage);
 
       if (mounted) {
         setState(() {
@@ -226,10 +339,10 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
       
       final snapshot = await sb.Supabase.instance.client
           .from('appointments')
-          .select()
+          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, service_name, professional_name')
           .eq('shop_id', widget.shopId)
           .gt('scheduled_at', lastDate)
-          .order('scheduled_at')
+          .order('scheduled_at', ascending: true)
           .limit(_perPage);
 
       if (mounted) {
@@ -270,7 +383,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
 
       final snapshot = await sb.Supabase.instance.client
           .from('appointments')
-          .select()
+          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, service_name, professional_name')
           .eq('shop_id', widget.shopId)
           .lt('scheduled_at', firstDate)
           .order('scheduled_at', ascending: false)
@@ -306,7 +419,6 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     }
   }
 
-  // Filtra apenas agendamentos ativos (exclui cancelados)
   bool _shouldShowAppointment(Map<String, dynamic> data) {
     final status = (data['status'] ?? '').toString().toLowerCase();
     return status != 'cancelado';
@@ -322,7 +434,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     _loadAppointments();
   }
 
-  // âœï¸ EDITAR AGENDAMENTO
+  // âœ ï¸  EDITAR AGENDAMENTO
   // ignore: unused_element
   void _showEditDialog(Map<String, dynamic> data) {
     final TextEditingController nameController =
@@ -475,11 +587,11 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                           .stream(primaryKey: ['id'])
                           .eq('shop_id', widget.shopId)
                           .map((list) => list
-                              .where((s) => s['is_active'] == true)
+                              .where((s) => (s['is_active'] ?? s['ativo'] ?? true) == true)
                               .toList()
-                            ..sort((a, b) => (a['name'] ?? '')
+                            ..sort((a, b) => (a['name'] ?? a['nome'] ?? '')
                                 .toString()
-                                .compareTo((b['name'] ?? '').toString()))),
+                                .compareTo((b['name'] ?? b['nome'] ?? '').toString()))),
                       builder: (context, snapshot) {
                         if (!snapshot.hasData) {
                           return const CircularProgressIndicator();
@@ -511,7 +623,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                                   return DropdownMenuItem<String>(
                                     value: service['id'].toString(),
                                     child: Text(
-                                        '${sData['name']} - R\$ ${sData['price']}'),
+                                        '${sData['name'] ?? sData['nome']} - R\$ ${sData['price'] ?? sData['preco']}'),
                                   );
                                 }).toList(),
                                 onChanged: (value) {
@@ -521,9 +633,9 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                                     final sData = service;
                                     setModalState(() {
                                       selectedServiceId = value;
-                                      selectedServiceName = sData['name'] ?? '';
+                                      selectedServiceName = sData['name'] ?? sData['nome'] ?? '';
                                       selectedServicePrice =
-                                          (sData['price'] ?? 0).toDouble();
+                                          (sData['price'] ?? sData['preco'] ?? 0).toDouble();
                                       valueController.text =
                                           selectedServicePrice
                                               .toStringAsFixed(2)
@@ -541,10 +653,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
 
                     // Profissional
                     StreamBuilder<List<Map<String, dynamic>>>(
-                      stream: sb.Supabase.instance.client
-                          .from('employees')
-                          .stream(primaryKey: ['id'])
-                          .eq('shop_id', widget.shopId),
+                      stream: _employeesStream,
                       builder: (context, snapshot) {
                         if (!snapshot.hasData) return const SizedBox();
                         final pros = snapshot.data!;
@@ -591,7 +700,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                                     setModalState(() {
                                       selectedProfessionalId = value;
                                       selectedProfessionalName =
-                                          pData['name'] ?? '';
+                                          pData['name'] ?? pData['nome'] ?? '';
                                     });
                                   }
                                 },
@@ -701,7 +810,8 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                                     );
                                   }).toList(),
                                 );
-                              });
+                              },
+                            );
                         },
                       ),
                     const SizedBox(height: 10),
@@ -894,10 +1004,15 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     try {
       final Map<String, dynamic>? editData = appointment;
 
-      // Controladores básicos
-      final TextEditingController nameController = TextEditingController(text: editData?['client_name'] ?? editData?['client_nome'] ?? '');
-      final TextEditingController phoneController = TextEditingController(text: editData?['client_phone'] ?? editData?['telefone'] ?? '');
-      final TextEditingController serviceController = TextEditingController(text: editData?['service_name'] ?? editData?['servico_nome'] ?? '');
+      // Controladores básicos alinhados com o esquema do banco de dados em inglês
+      final String initialName = (editData?['client_name'] ?? '').toString();
+      final TextEditingController nameController = TextEditingController(text: (initialName == 'null' || initialName == 'Null') ? '' : initialName);
+      
+      final String initialPhone = (editData?['client_phone'] ?? '').toString();
+      final TextEditingController phoneController = TextEditingController(text: (initialPhone == 'null' || initialPhone == 'Null') ? '' : initialPhone);
+      
+      final String initialService = (editData?['service_name'] ?? '').toString();
+      final TextEditingController serviceController = TextEditingController(text: (initialService == 'null' || initialService == 'Null') ? '' : initialService);
       final TextEditingController valueController = TextEditingController();
       
       // Estado do Modal
@@ -909,6 +1024,15 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
       DateTime manualDate = initialDate ?? _selectedDay;
       TimeOfDay manualTime = TimeOfDay.now();
 
+      String rawValue = (editData?['payment_method'] ?? '').toString().trim();
+      String paymentMethodFromDb = rawValue.toLowerCase();
+      String selectedPaymentMethod = rawValue.isNotEmpty ? rawValue : 'Pessoalmente';
+      if (paymentMethodFromDb == 'pix') selectedPaymentMethod = 'Pix';
+      if (paymentMethodFromDb == 'cartão' || paymentMethodFromDb == 'cartao' || paymentMethodFromDb == 'card') selectedPaymentMethod = 'Cartão';
+      if (paymentMethodFromDb == 'pessoalmente' || paymentMethodFromDb == 'no local' || paymentMethodFromDb == 'local') selectedPaymentMethod = 'Pessoalmente';
+
+      bool isPaid = (double.tryParse(editData?['paid_amount']?.toString() ?? '0') ?? 0) > 0.01;
+      
       if (editData != null) {
         final dateStr = editData['scheduled_at'] as String?;
         if (dateStr != null) {
@@ -917,6 +1041,9 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
         }
         double val = _safeParseValue(appointment!);
         valueController.text = val > 0 ? val.toString().replaceAll('.', ',') : '';
+        
+        // Se já houver valor pago maior que zero, assume que está pago
+        isPaid = (double.tryParse(editData['paid_amount']?.toString() ?? '0') ?? 0) > 0.01;
       }
 
       // --- REVISÃƒO / INTELIGÃŠNCIA INICIAL ---
@@ -992,7 +1119,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
               }
 
             return Padding(
-              padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+              padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom + MediaQuery.of(context).padding.bottom + 10),
               child: Container(
                 height: MediaQuery.of(context).size.height * 0.75,
                 decoration: const BoxDecoration(
@@ -1185,7 +1312,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                                               dense: true,
                                               leading: Icon(
                                                 hasId ? Icons.verified_user : Icons.person_outline,
-                                                size: 16,
+                                                size: 20,
                                                 color: hasId ? Colors.blue : Colors.grey,
                                               ),
                                               title: Text(option['name'] ?? '', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
@@ -1267,10 +1394,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                             ),
                             const SizedBox(height: 4),
                               StreamBuilder<List<Map<String, dynamic>>>(
-                               stream: sb.Supabase.instance.client
-                                   .from('employees')
-                                   .stream(primaryKey: ['id'])
-                                   .eq('shop_id', widget.shopId),
+                               stream: _employeesStream,
                                builder: (context, snapshot) {
                                  if (!snapshot.hasData) return const SizedBox(height: 40);
                                  final pros = snapshot.data!;
@@ -1452,6 +1576,10 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                                       });
                                     },
                                     fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+                                      // Sincronizar o controlador interno do Autocomplete com o valor inicial DE FORMA AGRESSIVA
+                                      if (controller.text.isEmpty && serviceController.text.isNotEmpty) {
+                                        Future.microtask(() => controller.text = serviceController.text);
+                                      }
                                       return SizedBox(
                                         height: 40,
                                         child: TextField(
@@ -1566,58 +1694,143 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                               ),
                             ),
                             const SizedBox(height: 10),
+                            // Método de Pagamento e Status
+                            const Text('Forma de Pagamento',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.grey)),
+                            const SizedBox(height: 6),
+                            Row(
+                              children: [
+                                _paymentMethodChip(
+                                  label: "Pix",
+                                  icon: Icons.pix,
+                                  isSelected: selectedPaymentMethod == 'Pix',
+                                  onTap: () => setModalState(() => selectedPaymentMethod = 'Pix'),
+                                ),
+                                const SizedBox(width: 8),
+                                _paymentMethodChip(
+                                  label: "Cartão",
+                                  icon: Icons.credit_card,
+                                  isSelected: selectedPaymentMethod == 'Cartão',
+                                  onTap: () => setModalState(() => selectedPaymentMethod = 'Cartão'),
+                                ),
+                                const SizedBox(width: 8),
+                                _paymentMethodChip(
+                                  label: "Pessoalmente",
+                                  icon: Icons.person_pin_circle_outlined,
+                                  isSelected: selectedPaymentMethod == 'Pessoalmente',
+                                  onTap: () => setModalState(() => selectedPaymentMethod = 'Pessoalmente'),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: InkWell(
+                                    onTap: () => setModalState(() => isPaid = false),
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(vertical: 10),
+                                      decoration: BoxDecoration(
+                                        color: !isPaid ? Colors.orange.withValues(alpha: 0.1) : Colors.grey.shade50,
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(color: !isPaid ? Colors.orange.withValues(alpha: 0.3) : Colors.grey.shade200),
+                                      ),
+                                      child: Row(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          Icon(Icons.hourglass_empty, size: 16, color: !isPaid ? Colors.orange : Colors.grey),
+                                          const SizedBox(width: 6),
+                                          const Text("Pendente", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: InkWell(
+                                    onTap: () => setModalState(() => isPaid = true),
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(vertical: 10),
+                                      decoration: BoxDecoration(
+                                        color: isPaid ? Colors.green.withValues(alpha: 0.1) : Colors.grey.shade50,
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(color: isPaid ? Colors.green.withValues(alpha: 0.3) : Colors.grey.shade200),
+                                      ),
+                                      child: Row(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          Icon(Icons.check_circle, size: 16, color: isPaid ? Colors.green : Colors.grey),
+                                          const SizedBox(width: 6),
+                                          const Text("Pago", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 40),
                             // Horários
-                            if (selectedProfessionalId != null) ...[
-                              const Text("Sugestões:",
-                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.grey)),
-                              const SizedBox(height: 6),
-                              FutureBuilder<List<Map<String, int>>>(
-                                future: AvailabilityUtils.getBusyIntervals(selectedProfessionalId!, manualDate, excludeDocId: appointment?['id']),
-                                builder: (context, busySnapshot) {
-                                  if (!busySnapshot.hasData) return const SizedBox(height: 38);
-                                  return FutureBuilder<Map<String, dynamic>?>(
-                                    future: sb.Supabase.instance.client.from('employees').select().eq('id', selectedProfessionalId!).maybeSingle(),
-                                    builder: (context, empSnapshot) {
-                                      if (!empSnapshot.hasData) return const SizedBox();
-                                      final empData = empSnapshot.data ?? {};
-                                      final slots = AvailabilityUtils.generateSmartSlots(
-                                        startStr: empData['work_start'] ?? "08:00",
-                                        endStr: empData['work_end'] ?? "18:00",
-                                        interval: _shopConfig['intervalo_agenda_min'] ?? 30,
-                                        serviceDuration: durationMin,
-                                        busyIntervals: busySnapshot.data!,
-                                        preventGaps: _shopConfig['evitar_buracos_agenda'] ?? false,
-                                        minAdvanceHours: 0,
-                                        selectedDate: manualDate,
-                                      );
-                                      if (slots.isEmpty) return const Text("Sem horários.", style: TextStyle(fontSize: 11));
-                                      return SizedBox(
-                                        height: 36,
-                                        child: ListView.separated(
-                                          scrollDirection: Axis.horizontal,
-                                          itemCount: slots.length,
-                                          separatorBuilder: (_, __) => const SizedBox(width: 8),
-                                          itemBuilder: (context, index) {
-                                            final slotStr = slots[index];
-                                            final parts = slotStr.split(':');
-                                            final slotTime = TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
-                                            final isCurrent = manualTime.hour == slotTime.hour && manualTime.minute == slotTime.minute;
-                                            return ActionChip(
-                                              label: Text(slotStr, style: TextStyle(fontSize: 12, color: isCurrent ? Colors.white : Colors.black87)),
-                                              onPressed: () => setModalState(() => manualTime = slotTime),
-                                              backgroundColor: isCurrent ? AppColors.primaryPurple : Colors.grey.shade100,
-                                              padding: EdgeInsets.zero,
-                                              side: BorderSide.none,
-                                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                            );
-                                          },
-                                        ),
+                            if (selectedProfessionalId != null)
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Text("Sugestões:",
+                                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.grey)),
+                                  const SizedBox(height: 6),
+                                  FutureBuilder<List<Map<String, int>>>(
+                                    future: AvailabilityUtils.getBusyIntervals(selectedProfessionalId!, manualDate, excludeDocId: appointment?['id']),
+                                    builder: (context, busySnapshot) {
+                                      if (!busySnapshot.hasData) return const SizedBox(height: 38);
+                                      return FutureBuilder<Map<String, dynamic>?>(
+                                        future: sb.Supabase.instance.client.from('employees').select().eq('id', selectedProfessionalId!).maybeSingle(),
+                                        builder: (context, empSnapshot) {
+                                          if (!empSnapshot.hasData) return const SizedBox();
+                                          final empData = empSnapshot.data ?? {};
+                                          final slots = AvailabilityUtils.generateSmartSlots(
+                                            startStr: empData['work_start'] ?? "08:00",
+                                            endStr: empData['work_end'] ?? "18:00",
+                                            interval: _shopConfig['intervalo_agenda_min'] ?? 30,
+                                            serviceDuration: durationMin,
+                                            busyIntervals: busySnapshot.data!,
+                                            preventGaps: _shopConfig['evitar_buracos_agenda'] ?? false,
+                                            minAdvanceHours: 0,
+                                            selectedDate: manualDate,
+                                          );
+                                          if (slots.isEmpty) return const Text("Sem horários.", style: TextStyle(fontSize: 11));
+                                          return SizedBox(
+                                            height: 36,
+                                            child: ListView.separated(
+                                              scrollDirection: Axis.horizontal,
+                                              itemCount: slots.length,
+                                              separatorBuilder: (_, __) => const SizedBox(width: 8),
+                                              itemBuilder: (context, index) {
+                                                final slotStr = slots[index];
+                                                final parts = slotStr.split(':');
+                                                final slotTime = TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
+                                                final isCurrent = manualTime.hour == slotTime.hour && manualTime.minute == slotTime.minute;
+                                                return ActionChip(
+                                                  label: Text(slotStr, style: TextStyle(fontSize: 12, color: isCurrent ? Colors.white : Colors.black87)),
+                                                  onPressed: () => setModalState(() => manualTime = slotTime),
+                                                  backgroundColor: isCurrent ? AppColors.primaryPurple : Colors.grey.shade100,
+                                                  padding: EdgeInsets.zero,
+                                                  side: BorderSide.none,
+                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                                );
+                                              },
+                                            ),
+                                          );
+                                        },
                                       );
                                     },
-                                  );
-                                },
-                              ),
-                            ] else
+                                  ),
+                                ],
+                              )
+                            else
                               const Text("Selecione um profissional para ver sugestões.",
                                   style: TextStyle(fontSize: 11, color: Colors.grey)),
                             const SizedBox(height: 16),
@@ -1669,9 +1882,18 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                                       'professional_id': selectedProfessionalId,
                                       'professional_name': selectedProfessionalName,
                                     },
-                                    'status': editData?['status'] ?? 'concluido',
+                                    'status': isPaid ? 'concluido' : 'agendado',
+                                    'payment_method': selectedPaymentMethod,
+                                    'payment_status': isPaid ? 'pago' : 'pendente',
+                                    'paid_amount': isPaid ? valor : 0.0,
+                                    'remaining_amount': isPaid ? 0.0 : valor,
                                     'scheduled_at': manualDateNormalized.toIso8601String(),
+                                    'updated_at': DateTime.now().toIso8601String(),
                                     if (appointment == null) 'created_at': DateTime.now().toIso8601String(),
+                                    // Garantir que o preço original seja salvo para histórico de descontos
+                                    'total_price': valor,
+                                    'total_payable': valor,
+                                    'valor_com_desconto': valor,
                                   };
 
                                   try {
@@ -1679,12 +1901,26 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                                       await sb.Supabase.instance.client.from('appointments').insert(appointmentData);
                                     } else {
                                       await sb.Supabase.instance.client.from('appointments').update(appointmentData).eq('id', appointment['id']);
+                                      final apptId = appointment['id'].toString();
+                                      setState(() {
+                                        if (_selectedAppointment != null && _selectedAppointment!['id']?.toString() == apptId) {
+                                          _selectedAppointment = {..._selectedAppointment!, ...appointmentData};
+                                        }
+                                        final idx = _appointments.indexWhere((a) => a['id']?.toString() == apptId);
+                                        if (idx != -1) {
+                                          _appointments[idx] = {..._appointments[idx], ...appointmentData};
+                                        }
+                                        if (_docCache.containsKey(apptId)) {
+                                          _docCache[apptId] = {..._docCache[apptId]!, ...appointmentData};
+                                        }
+                                        _isLoading = false;
+                                      });
                                     }
 
                                     ShopDataCacheService().invalidate(widget.shopId, 'appointments');
 
                                     if (!mounted) return;
-                                    Navigator.pop(context);
+                                    Navigator.pop(context, 'edit');
                                     _loadAppointments();
                                     _loadMonthEvents();
                                     
@@ -1753,7 +1989,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     );
   }
 
-  // ðŸ“± LAYOUT MOBILE
+  // 📱 LAYOUT MOBILE
   Widget _buildMobileLayout() {
     return RefreshIndicator(
       onRefresh: _loadAppointments,
@@ -1780,7 +2016,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     );
   }
 
-  // ðŸ–¥ï¸ LAYOUT DESKTOP
+  // 🖥️ LAYOUT DESKTOP
   Widget _buildDesktopLayout() {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1838,7 +2074,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                   child: _isLoading && _appointments.isEmpty
                       ? const Center(child: CircularProgressIndicator())
                       : () {
-                          // ðŸ†• Filtrar appointments baseado na aba selecionada
+                          // 🆕 Filtrar appointments baseado na aba selecionada
                           final filteredAppointments = _appointments
                               .where(_shouldShowAppointment)
                               .toList();
@@ -1871,7 +2107,6 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
             ],
           ),
         ),
-
         // --- LATERAL DIREITA (Detalhes) ---
         if (_selectedAppointment != null)
           Expanded(
@@ -1884,6 +2119,16 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                 appointmentDoc: _selectedAppointment!,
                 isEmbedded: true,
                 onEdit: () => _showQuickEntryModal(appointment: _selectedAppointment!),
+                onAppointmentUpdated: (updatedData) {
+                  final id = updatedData['id']?.toString();
+                  setState(() {
+                    _selectedAppointment = {...?_selectedAppointment, ...updatedData};
+                    if (id != null) {
+                      final idx = _appointments.indexWhere((a) => a['id']?.toString() == id);
+                      if (idx != -1) _appointments[idx] = {..._appointments[idx], ...updatedData};
+                    }
+                  });
+                },
                 onClose: () {
                   final id = _selectedAppointment?['id'];
                   setState(() => _selectedAppointment = null);
@@ -1913,7 +2158,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
       return SliverFillRemaining(child: _buildEmptyState());
     }
 
-    // ðŸ†• Filtrar appointments baseado na aba selecionada
+    // 🆕 Filtrar appointments baseado na aba selecionada
     var filteredAppointments =
         _appointments.where(_shouldShowAppointment).toList();
     // Se o usuário escolheu uma data para ser o início, filtramos para mostrar apenas daqui em diante.
@@ -2203,6 +2448,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
               _fetchHolidays();
             }
             _loadMonthEvents();
+            _loadAppointmentsForMonth(focusedDay);
           },
           calendarBuilders: CalendarBuilders(
             markerBuilder: (context, day, events) {
@@ -2354,12 +2600,18 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
 
         final status = (data['status'] ?? '').toString().toLowerCase();
         if (status == 'cancelado') continue;
-        String vp = data['paid_amount']?.toString() ?? data['valor_pago']?.toString() ?? '';
-        String vt = data['total_price']?.toString() ?? data['valor_total']?.toString() ?? '';
-        String v = data['price']?.toString() ?? data['valor']?.toString() ?? '';
-        String finalStr = vp.trim().isNotEmpty
-            ? vp
-            : (vt.trim().isNotEmpty ? vt : (v.trim().isNotEmpty ? v : '0'));
+
+        // ✅ Usando as colunas reais do banco de dados
+        String vt = data['total_value']?.toString() ?? 
+                    data['total_price']?.toString() ?? 
+                    data['valor_total']?.toString() ?? 
+                    data['valor_com_desconto']?.toString() ?? '';
+        String v = data['labor_value']?.toString() ?? 
+                   data['price']?.toString() ?? 
+                   data['valor']?.toString() ?? 
+                   data['preco']?.toString() ?? '0';
+        
+        String finalStr = vt.trim().isNotEmpty ? vt : v;
         sum += double.tryParse(finalStr.replaceAll(',', '.')) ?? 0.0;
       }
       return sum;
@@ -2386,12 +2638,18 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
 
         final status = (data['status'] ?? '').toString().toLowerCase();
         if (status == 'cancelado') continue;
-        String vp = data['paid_amount']?.toString() ?? data['valor_pago']?.toString() ?? '';
-        String vt = data['total_price']?.toString() ?? data['valor_total']?.toString() ?? '';
-        String v = data['price']?.toString() ?? data['valor']?.toString() ?? '';
-        String finalStr = vp.trim().isNotEmpty
-            ? vp
-            : (vt.trim().isNotEmpty ? vt : (v.trim().isNotEmpty ? v : '0'));
+
+        // ✅ Usando as colunas reais do banco de dados
+        String vt = data['total_value']?.toString() ?? 
+                    data['total_price']?.toString() ?? 
+                    data['valor_total']?.toString() ?? 
+                    data['valor_com_desconto']?.toString() ?? '';
+        String v = data['labor_value']?.toString() ?? 
+                   data['price']?.toString() ?? 
+                   data['valor']?.toString() ?? 
+                   data['preco']?.toString() ?? '0';
+        
+        String finalStr = vt.trim().isNotEmpty ? vt : v;
         sum += double.tryParse(finalStr.replaceAll(',', '.')) ?? 0.0;
       }
       return sum;
@@ -2400,7 +2658,14 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
 
   // --- CALCULADORAS ---
   double _safeParseValue(Map<String, dynamic> data) {
-    dynamic val = data['total_value'] ?? data['total_price'] ?? data['valor_total'] ?? data['price'] ?? data['valor'] ?? data['labor_value'] ?? data['preco'] ?? 0;
+    dynamic val = data['total_value'] ?? 
+                  data['valor_com_desconto'] ?? 
+                  data['total_price'] ?? 
+                  data['valor_total'] ?? 
+                  data['price'] ?? 
+                  data['valor'] ?? 
+                  data['labor_value'] ?? 
+                  data['preco'] ?? 0;
     if (val == null || val.toString().trim().isEmpty) return 0.0;
     if (val is num) return val.toDouble();
     if (val is String) return double.tryParse(val.replaceAll(',', '.')) ?? 0.0;
@@ -2506,11 +2771,11 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
           DateTime(endDate.year, endDate.month, endDate.day, 23, 59, 59);
       final snap = await sb.Supabase.instance.client
           .from('appointments')
-          .select()
+          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, birthday_discount_applied, metadata, service_id, client_name, client_phone, client_email, service_name, professional_name')
           .eq('shop_id', widget.shopId)
-          .gte('scheduled_at', start.toIso8601String())
-          .lte('scheduled_at', end.toIso8601String())
-          .order('scheduled_at');
+          .gte('scheduled_at', start.toUtc().toIso8601String())
+          .lte('scheduled_at', end.toUtc().toIso8601String())
+          .order('scheduled_at', ascending: true);
 
       if (!mounted) return;
       setState(() {
@@ -2531,11 +2796,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
           if (dateStr == null) continue;
           final status = (data['status'] ?? '').toString().toLowerCase();
           if (status == 'cancelado') continue;
-          final bool isManual =
-              (data['type'] ?? data['tipo'] ?? '').toString().toLowerCase() == 'manual';
-          final bool hasClient =
-              data['client_id'] != null;
-          if (!isManual && !hasClient) continue;
+          
           final date = DateTime.parse(dateStr);
           final dateKey = DateTime(date.year, date.month, date.day);
           final existing = _events[dateKey] ?? [];
@@ -2595,18 +2856,23 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     double total = _safeParseValue(data);
     double pago = double.tryParse(
       data['paid_amount']?.toString() ??
-      data['paid_value']?.toString() ??
-      data['valor_pago']?.toString() ??
+      data['paid_value']?.toString() ?? 
+      data['valor_pago']?.toString() ?? 
       data['valorPago']?.toString() ?? "0") ?? 0;
     String status = data['status']?.toString().toLowerCase() ?? '';
+    String paymentMethod = data['payment_method']?.toString() ?? 'Não informado';
+    bool hasOnlinePayment = data['metadata'] != null && data['metadata'] is Map && data['metadata']['payment_id'] != null;
 
+    // Priorizar payment_status se existir, senão inferir
+    String pStat = data['payment_status']?.toString().toLowerCase() ?? '';
+    bool quitado = pStat == 'pago' || (pago >= total && total > 0.01) || status == 'concluido';
     bool isCanceled = status == 'cancelado';
-    bool quitado = (pago >= total && total > 0) || status == 'concluido';
 
-    Color statusColor =
-        isCanceled ? Colors.red : (quitado ? Colors.green : Colors.orange);
-    String statusText =
-        isCanceled ? "CANCELADO" : (quitado ? "PAGO" : "PENDENTE");
+    Color statusColor = isCanceled ? Colors.red : Colors.green;
+    String statusText = isCanceled ? "CANCELADO" : "CONFIRMADO";
+
+    Color payColor = quitado ? Colors.green : (pago > 0.01 ? Colors.orange : Colors.grey);
+    String payText = quitado ? "PAGO" : (pago > 0.01 ? "ADIANTADO" : "PGTO. PENDENTE");
 
     bool isSelected = isDesktop && _selectedAppointment?['id']?.toString() == data['id']?.toString();
 
@@ -2664,31 +2930,33 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
             _selectedAppointment = data;
           });
         } else {
-          await Navigator.push(
+          final result = await Navigator.push(
             context,
             MaterialPageRoute(
               builder: (context) => AppointmentDetailsPage(
                 appointmentDoc: data,
                 onEdit: () {
-                  Navigator.pop(context); // Fecha Detalhes para abrir Modal
+                  Navigator.pop(context, 'edit'); // Fecha Detalhes para abrir Modal
                   _showQuickEntryModal(appointment: data);
                 },
               ),
             ),
           );
-          // Limpa cache específico do documento para evitar "flash" se foi deletado
-          final id = data['id'].toString();
-          setState(() {
-            _docCache.remove(id);
-            _cacheAccess.remove(id);
-            _appointments.removeWhere((d) => d['id'].toString() == id);
-            // Remove também dos eventos
-            for (var list in _events.values) {
-              list.remove(id);
-            }
-          });
-          _loadAppointments();
-          _loadMonthEvents();
+          // Se o pop foi pelo botão Editar, o modal cuida do reload — não recarregar agora
+          if (result != 'edit') {
+            final id = data['id'].toString();
+            setState(() {
+              _docCache.remove(id);
+              _cacheAccess.remove(id);
+              _appointments.removeWhere((d) => d['id'].toString() == id);
+              // Remove também dos eventos
+              for (var list in _events.values) {
+                list.remove(id);
+              }
+            });
+            _loadAppointments();
+            _loadMonthEvents();
+          }
         }
       },
       child: Container(
@@ -2726,23 +2994,54 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                   padding: const EdgeInsets.all(16),
                   child: Row(
                     children: [
-                      // Hora
+                      // Coluna de Horários e Ícone
                       Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
+                          GestureDetector(
+                            onTap: openClientProfile,
+                            child: Container(
+                              width: 32,
+                              height: 32,
+                              decoration: BoxDecoration(
+                                color: AppColors.primaryPurple.withValues(alpha: 0.1),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Center(
+                                child: Text(
+                                  clientInitial,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    color: AppColors.primaryPurple,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
                           Text(
                             DateFormat('HH:mm').format(hora),
                             style: const TextStyle(
                               fontWeight: FontWeight.w900,
-                              fontSize: 16,
+                              fontSize: 15,
                               color: Colors.black87,
                             ),
                           ),
                           Text(
+                            DateFormat('HH:mm').format(hora.add(Duration(minutes: int.tryParse(data['duration_min']?.toString() ?? '30') ?? 30))),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey.shade600,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
                             DateFormat('dd/MM').format(hora),
                             style: TextStyle(
-                              fontSize: 11,
-                              color: Colors.grey.shade500,
+                              fontSize: 10,
+                              color: Colors.grey.shade400,
                               fontWeight: FontWeight.w500,
                             ),
                           ),
@@ -2750,7 +3049,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                       ),
                       const SizedBox(width: 16),
                       Container(
-                          width: 1, height: 30, color: Colors.grey.shade200),
+                          width: 1, height: 60, color: Colors.grey.shade200),
                       const SizedBox(width: 16),
 
                       // Infos Cliente
@@ -2782,134 +3081,144 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
                               ],
                             ),
                             const SizedBox(height: 2),
-                            // Tags do cliente
-                            if (clientId != null)
-                              FutureBuilder<Map<String, dynamic>?>(
-                                future: sb.Supabase.instance.client
-                                    .from('clients')
-                                    .select()
-                                    .eq('id', clientId.toString())
-                                    .maybeSingle(),
-                                builder: (context, snapshot) {
-                                  if (!snapshot.hasData ||
-                                      snapshot.data == null) {
-                                    return const SizedBox.shrink();
-                                  }
-                                  final clientData = snapshot.data!;
-                                  final List<String> tags = List<String>.from(
-                                      clientData['manualTags'] ?? []);
-                                  if (tags.isEmpty) {
-                                    return const SizedBox.shrink();
-                                  }
-
-                                  return Padding(
-                                    padding: const EdgeInsets.only(top: 2),
-                                    child: Wrap(
-                                      spacing: 4,
-                                      runSpacing: 2,
-                                      children: tags.map((tag) {
-                                        return Container(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 6, vertical: 2),
-                                          decoration: BoxDecoration(
-                                            color: AppColors.primaryPurple
-                                                .withValues(alpha: 0.1),
-                                            borderRadius:
-                                                BorderRadius.circular(4),
-                                          ),
-                                          child: Text(
-                                            tag,
-                                            style: const TextStyle(
-                                              color: AppColors.primaryPurple,
-                                              fontSize: 8,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                        );
-                                      }).toList(),
-                                    ),
-                                  );
-                                },
+                            // Serviço e Profissional
+                            Text(
+                              "$serviceDisplay • $professionalNome",
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Colors.grey.shade600,
+                                fontSize: 11,
                               ),
-                             const SizedBox(height: 2),
-                             Text(
-                               serviceDisplay,
-                               style: TextStyle(
-                                   color: Colors.grey.shade600, fontSize: 13, fontWeight: FontWeight.w500),
-                               overflow: TextOverflow.ellipsis,
-                             ),
-                             const SizedBox(height: 2),
-                             Row(
-                               children: [
-                                 Icon(Icons.person_outline, size: 10, color: Colors.grey.shade400),
-                                 const SizedBox(width: 4),
-                                 Expanded(
-                                   child: Text(
-                                     professionalNome,
-                                     style: TextStyle(
-                                         color: Colors.grey.shade500, fontSize: 11),
-                                     overflow: TextOverflow.ellipsis,
-                                   ),
-                                 ),
-                               ],
-                             ),
-                           ],
-                         ),
-                       ),
-
+                            ),
+                            const SizedBox(height: 6),
+                            // Tags de Status e Pagamento
+                            Wrap(
+                              spacing: 6,
+                              runSpacing: 4,
+                              children: [
+                                // Badge de Status do Agendamento
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: statusColor.withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    statusText,
+                                    style: TextStyle(
+                                      fontSize: 8,
+                                      fontWeight: FontWeight.w800,
+                                      color: statusColor,
+                                    ),
+                                  ),
+                                ),
+                                // Badge de Forma de Pagamento
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.primaryPurple.withValues(alpha: 0.05),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(color: AppColors.primaryPurple.withValues(alpha: 0.2)),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Icon(Icons.payments_outlined, size: 9, color: AppColors.primaryPurple),
+                                      const SizedBox(width: 3),
+                                      Text(
+                                        paymentMethod.toUpperCase(),
+                                        style: const TextStyle(
+                                          fontSize: 8, 
+                                          fontWeight: FontWeight.bold, 
+                                          color: AppColors.primaryPurple
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
                       // Valor e Status
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
+                          Builder(builder: (context) {
+                            final double originalPrice = double.tryParse(data['total_price']?.toString() ?? '0') ?? 0;
+                            final double discountAmt = double.tryParse(data['discount_amount']?.toString() ?? '0') ?? 0;
+                            final bool hasDiscount = discountAmt > 0.01 || originalPrice > total + 0.01;
+                            if (!hasDiscount) return const SizedBox.shrink();
+                            final double trueOriginal = originalPrice > total ? originalPrice : (total + discountAmt);
+                            return Text(
+                              NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(trueOriginal),
+                              style: const TextStyle(
+                                fontSize: 10,
+                                color: Colors.grey,
+                                decoration: TextDecoration.lineThrough,
+                              ),
+                            );
+                          }),
                           Text(
-                            "R\$ ${total.toStringAsFixed(2)}",
-                            style: const TextStyle(
-                                fontWeight: FontWeight.bold, fontSize: 14),
+                            NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(total),
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                           ),
                           const SizedBox(height: 4),
                           Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 3),
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                             decoration: BoxDecoration(
-                              color: statusColor.withValues(alpha: 0.1),
+                              color: payColor.withValues(alpha: 0.1),
                               borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text(
-                              statusText,
+                              payText,
                               style: TextStyle(
-                                fontSize: 9,
-                                fontWeight: FontWeight.w800,
-                                color: statusColor,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-
-                      // Botão de perfil do cliente
-                      const SizedBox(width: 8),
-                      GestureDetector(
-                        onTap: openClientProfile,
-                        child: Container(
-                          width: 34,
-                          height: 34,
-                          decoration: BoxDecoration(
-                            color:
-                                AppColors.primaryPurple.withValues(alpha: 0.1),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Center(
-                            child: Text(
-                              clientInitial,
-                              style: const TextStyle(
-                                fontSize: 14,
+                                color: payColor,
                                 fontWeight: FontWeight.bold,
-                                color: AppColors.primaryPurple,
+                                fontSize: 9,
                               ),
                             ),
                           ),
-                        ),
+                          if (hasOnlinePayment) ...[
+                            const SizedBox(height: 6),
+                            InkWell(
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => TransactionDetailsPage(
+                                      appointmentData: data,
+                                    ),
+                                  ),
+                                );
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: AppColors.primaryPurple,
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.receipt_long_outlined, size: 10, color: Colors.white),
+                                    SizedBox(width: 4),
+                                    Text(
+                                      "PAGTO",
+                                      style: TextStyle(
+                                        fontSize: 8,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                     ],
                   ),
@@ -2922,5 +3231,45 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
     );
   }
 
-  // Deleção agora ocorre na tela de detalhes (AppointmentDetailsPage).
+  Widget _paymentMethodChip({
+    required String label,
+    required IconData icon,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color: isSelected ? AppColors.primaryPurple : Colors.grey.shade50,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: isSelected ? AppColors.primaryPurple : Colors.grey.shade200,
+            ),
+          ),
+          child: Column(
+            children: [
+              Icon(
+                icon,
+                size: 18,
+                color: isSelected ? Colors.white : Colors.grey,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: isSelected ? Colors.white : Colors.grey,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

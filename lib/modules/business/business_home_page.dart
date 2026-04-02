@@ -65,18 +65,6 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   String? shopImageUrl;
 
   bool _isLoading = true;
-  // --- MOBILE AGENDA STATE ---
-  List<Map<String, dynamic>> _mobileAppointments = [];
-  Map<String, dynamic>? _mobileLastDoc;
-  Map<String, dynamic>? _mobileFirstDoc;
-  bool _mobileHasMore = true;
-  bool _mobileLoading = false;
-  final ScrollController _mobileScrollController = ScrollController();
-  final int _mobilePerPage = 20;
-  bool _mobileInitialized = false;
-  bool _mobilePastHasMore = true;
-  GlobalKey? _mobileTodayHeaderKey;
-
   int _selectedYear =
       DateTime.now().year; // Comea com o ano atual para economizar
   // Lista inicial apenas com o ano atual, ser populada dinamicamente se necessrio
@@ -98,6 +86,9 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   // Cached futures para evitar re-fetch em cada rebuild
   Future<List<Map<String, dynamic>>>? _dashboardFuture;
   Future<List<Map<String, dynamic>>>? _birthdayFuture;
+  Future<List<Map<String, dynamic>>>? _employeesFuture;
+  List<Map<String, dynamic>> _dashboardCache = [];
+  sb.RealtimeChannel? _appointmentsChannel;
   int _lastDashboardYear = -999; // Sentinel para detectar mudança de ano
 
   @override
@@ -109,7 +100,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
   @override
   void dispose() {
-    _mobileScrollController.dispose();
+    _appointmentsChannel?.unsubscribe();
     super.dispose();
   }
 
@@ -119,175 +110,48 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     debugPrint("Notificações foreground (via Supabase/Local) podem ser configuradas aqui.");
   }
 
-  // --- MOBILE APPOINTMENTS (infinite scroll, chronological) ---
-  Future<void> _initMobileAppointmentsOnce() async {
-    if (_mobileInitialized) return;
-    _mobileInitialized = true;
-    _mobileScrollController.addListener(() {
-      // load more future when near bottom
-      if (_mobileScrollController.position.pixels >=
-          _mobileScrollController.position.maxScrollExtent * 0.9) {
-        _loadMoreMobileAppointments();
-      }
-      // load more past when near top
-      if (_mobileScrollController.position.pixels <= 200) {
-        _loadMorePastAppointments();
-      }
-    });
-    await _loadMobileAppointmentsInitial();
-  }
-
-  Future<void> _loadMobileAppointmentsInitial() async {
-    if (_mobileLoading || shopId == null) return;
-    setState(() {
-      _mobileLoading = true;
-      _mobileAppointments = [];
-      _mobileLastDoc = null;
-      _mobileHasMore = true;
-      _mobilePastHasMore = true;
-    });
-    try {
-      // Default initial behavior: start from today (most relevant) and show future appointments ascending.
-      final now = DateTime.now();
-      final startOfToday = DateTime(now.year, now.month, now.day, 0, 0, 0);
-      // fetch a reasonable window around today to populate multiple days (avoid single-day-only view)
-      final windowStart = startOfToday.subtract(const Duration(days: 7));
-      final windowEnd = startOfToday.add(const Duration(days: 14));
-
-      final List<dynamic> windowSnap = await sb.Supabase.instance.client
-          .from('appointments')
-          .select()
-          .eq('shop_id', shopId!)
-          .gte('scheduled_at', windowStart.toIso8601String())
-          .lte('scheduled_at', windowEnd.toIso8601String())
-          .order('scheduled_at', ascending: true)
-          .limit(100);
-      final combined = List<Map<String, dynamic>>.from(windowSnap);
-
-      // Estimate hasMore flags based on edges
-      _mobileHasMore =
-          combined.isNotEmpty && (combined.length >= 100) ? true : true;
-      _mobilePastHasMore = true;
-
-      if (mounted) {
-        setState(() {
-          _mobileAppointments = combined;
-          if (combined.isNotEmpty) {
-            _mobileFirstDoc = combined.first;
-            _mobileLastDoc = combined.last;
-          }
-          // prepare a key for today's header to scroll to it after build
-          _mobileTodayHeaderKey = GlobalKey();
-        });
-
-        // ensure today's header visible
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          try {
-            if (_mobileTodayHeaderKey?.currentContext != null) {
-              Scrollable.ensureVisible(_mobileTodayHeaderKey!.currentContext!,
-                  duration: const Duration(milliseconds: 300), alignment: 0.1);
-            }
-          } catch (e) {
-            // ignore
-          }
-        });
-      }
-    } catch (e) {
-      debugPrint("Erro carregar mobile appointments: $e");
-    } finally {
-      if (mounted) setState(() => _mobileLoading = false);
-    }
-  }
-
-  Future<void> _loadMorePastAppointments() async {
-    if (_mobileLoading ||
-        !_mobilePastHasMore ||
-        shopId == null ||
-        _mobileFirstDoc == null) {
-      return;
-    }
-    setState(() {
-      _mobileLoading = true;
-    });
-    try {
-      final firstDate = _mobileFirstDoc!['scheduled_at'] as String;
-      final List<dynamic> snap = await sb.Supabase.instance.client
-          .from('appointments')
-          .select()
-          .eq('shop_id', shopId!)
-          .lt('scheduled_at', firstDate)
-          .order('scheduled_at', ascending: false)
-          .limit(_mobilePerPage);
-      if (mounted) {
-        final newDocs = List<Map<String, dynamic>>.from(snap).reversed.toList();
-        setState(() {
-          _mobileAppointments = [...newDocs, ..._mobileAppointments];
-          if (newDocs.isNotEmpty) _mobileFirstDoc = newDocs.first;
-          if (snap.length < _mobilePerPage) _mobilePastHasMore = false;
-        });
-      }
-    } catch (e) {
-      debugPrint("Erro carregar mais past mobile appointments: $e");
-    } finally {
-      if (mounted) setState(() => _mobileLoading = false);
-    }
-  }
-
-  Future<void> _loadMoreMobileAppointments() async {
-    if (_mobileLoading ||
-        !_mobileHasMore ||
-        shopId == null ||
-        _mobileLastDoc == null) {
-      return;
-    }
-    setState(() {
-      _mobileLoading = true;
-    });
-    try {
-      final lastDate = _mobileLastDoc!['scheduled_at'] as String;
-      final List<dynamic> snap = await sb.Supabase.instance.client
-          .from('appointments')
-          .select()
-          .eq('shop_id', shopId!)
-          .gt('scheduled_at', lastDate)
-          .order('scheduled_at', ascending: true)
-          .limit(_mobilePerPage);
-      if (mounted) {
-        final newDocs = List<Map<String, dynamic>>.from(snap);
-        setState(() {
-          if (newDocs.isNotEmpty) {
-            _mobileLastDoc = newDocs.last;
-            _mobileAppointments.addAll(newDocs);
-          }
-          if (snap.length < _mobilePerPage) _mobileHasMore = false;
-        });
-      }
-    } catch (e) {
-      debugPrint("Erro carregar mais mobile appointments: $e");
-    } finally {
-      if (mounted) setState(() => _mobileLoading = false);
-    }
-  }
-
   Future<void> _checkBusinessAndLoad() async {
     try {
       final user = sb.Supabase.instance.client.auth.currentUser;
-      final sessionUserId = await SessionService.getUserId();
       
-      // PRIORIDADE: Supabase Auth (Sempre o mais confiável)
-      // Fallback: SessionService (Caso haja persistência local desejada, mas secundária)
-      final effectiveUid = user?.id ?? sessionUserId;
+      // Obtém userId e cachedShopId em paralelo para economizar tempo inicial
+      final resultsLocal = await Future.wait([
+        SessionService.getUserId(),
+        SessionService.getShopId(),
+      ]);
+      
+      final String? sessionUserId = resultsLocal[0];
+      final String? cachedShopId = resultsLocal[1];
+      final String? effectiveUid = user?.id ?? sessionUserId;
 
       if (effectiveUid == null) {
         _forceLogout();
         return;
       }
 
-      Map<String, dynamic>? userData = await sb.Supabase.instance.client
-          .from('users')
-          .select()
-          .eq('id', effectiveUid)
-          .maybeSingle();
+      // DISPARO PARALELO: Perfil do usuário e Dados da Loja (se shopId estiver em cache)
+      final List<Future<dynamic>> queries = [
+        sb.Supabase.instance.client
+            .from('users')
+            .select()
+            .eq('id', effectiveUid)
+            .maybeSingle(),
+      ];
+
+      // Se temos o shopId em cache, já puxamos os dados da loja agora
+      if (cachedShopId != null && cachedShopId.isNotEmpty) {
+        queries.add(
+          sb.Supabase.instance.client
+              .from('shops')
+              .select('*, config')
+              .eq('id', cachedShopId)
+              .maybeSingle(),
+        );
+      }
+
+      final results = await Future.wait(queries);
+      Map<String, dynamic>? userData = results[0];
+      Map<String, dynamic>? shopData = results.length > 1 ? results[1] : null;
 
       // Fallback para metadados (como feito no login_page) para contornar Race Condition/RLS recém-aplicado
       if (userData == null && user?.userMetadata != null && user!.userMetadata!.containsKey('role')) {
@@ -298,11 +162,12 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         _forceLogout();
         return;
       }
+      
       final String role = userData['role'] ?? 'cliente';
       final bool isAdmin = (role == 'admin');
       
-      // Trust the user document first, then session (consistently with recent backend changes)
-      String currentShopId = userData['shop_id'] ?? await SessionService.getShopId() ?? "";
+      // Trust the user document first, then session
+      String currentShopId = userData['shop_id'] ?? cachedShopId ?? "";
 
       if (role != 'dono' && role != 'business' && !isAdmin) {
         _forceLogout();
@@ -314,14 +179,21 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         return;
       }
 
-      // Tenta buscar anos disponveis (opcional, para popular o dropdown)
-      // Para economizar, podemos manter fixo ou fazer uma query leve de agregao futuramente
-      // Por enquanto, vou gerar de 2024 at o ano atual + 1
+      // Caso o shopId do banco seja diferente do cache, carregamos os dados da loja correta de forma sequencial (raro)
+      if (currentShopId.isNotEmpty && currentShopId != cachedShopId) {
+        shopData = await sb.Supabase.instance.client
+            .from('shops')
+            .select('*, config')
+            .eq('id', currentShopId)
+            .maybeSingle();
+      }
+
+      // Tenta buscar anos disponíveis
       final currentYear = DateTime.now().year;
       _availableYears = List.generate(5, (index) => (currentYear - 2) + index);
 
-      // Save the identified shopId to session to ensure all sub-pages can access it
-      if (currentShopId.isNotEmpty) {
+      // Save the identified shopId to session
+      if (currentShopId.isNotEmpty && currentShopId != cachedShopId) {
         await SessionService.saveShopId(currentShopId);
       }
 
@@ -332,23 +204,26 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           userEmail = user?.email ?? "";
           userPhotoUrl = user?.userMetadata?['avatar_url'] as String?;
           
-          // Note: _currentFeatures will be updated via the StreamBuilder on shops collection below
+          if (shopData != null) {
+            _updateFeaturesFromData(shopData);
+          }
           
           // Check admin status across different possible schemas
           final roles = userData['roles'] as List?;
-          final role = userData['role'] as String?;
+          final roleStr = userData['role'] as String?;
           final isAdminDev = userData['is_admin_dev'] == true;
           
-          _isAdmin = role == 'admin' || 
+          _isAdmin = roleStr == 'admin' || 
                       (roles?.contains('admin') ?? false) || 
                       isAdminDev;
-                      
+                       
           _isLoading = false;
         });
 
-        // Verificar restrições do plano
-        _checkPlanRestrictions();
-        // 🔔 Inicializar notificações push (com proteção de erros para Web)
+        // Inicia canal Realtime para invalidar o dashboard automaticamente
+        _startAppointmentsRealtime();
+
+        // 🔔 Inicializar notificações push
         try {
           NotificationService.registerToken(effectiveUid);
           NotificationService.initialize().then((_) {
@@ -398,23 +273,29 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     }
   }
 
-  Future<void> _checkPlanRestrictions() async {
-    // This method is now effectively handled by the StreamBuilder in the build method
-    // to ensure instantaneous updates when plan changes.
-    if (shopId != null) {
-      final data = await sb.Supabase.instance.client
-          .from('shops')
-          .select()
-          .eq('id', shopId!)
-          .maybeSingle();
-      if (data != null) {
-        if (mounted) {
-          setState(() {
-            _updateFeaturesFromData(data);
-          });
-        }
-      }
-    }
+  void _startAppointmentsRealtime() {
+    if (shopId == null) return;
+    _appointmentsChannel = sb.Supabase.instance.client
+        .channel('home_appointments_$shopId')
+        .onPostgresChanges(
+          event: sb.PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'appointments',
+          filter: sb.PostgresChangeFilter(
+            type: sb.PostgresChangeFilterType.eq,
+            column: 'shop_id',
+            value: shopId!,
+          ),
+          callback: (payload) {
+            if (mounted) {
+              setState(() {
+                _dashboardFuture = null;
+                _employeesFuture = null;
+              });
+            }
+          },
+        )
+        .subscribe();
   }
 
   void _updateFeaturesFromData(Map<String, dynamic>? data) {
@@ -1297,10 +1178,6 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         setState(() {
           _selectedIndex = newSelected;
         });
-        // initialize agenda list only when navigating to Agenda tab
-        if (newSelected == 1) {
-          _initMobileAppointmentsOnce();
-        }
       },
       selectedItemColor: AppColors.primaryPurple,
       unselectedItemColor: Colors.grey,
@@ -1655,7 +1532,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     try {
       final result = await sb.Supabase.instance.client
           .from('appointments')
-          .select()
+          .select('id, scheduled_at, status, total_value, service_value, product_value, professional_id, client_id, service_name, client_name')
           .eq('shop_id', shopId!)
           .gte('scheduled_at', startData.toIso8601String())
           .lte('scheduled_at', endData.toIso8601String())
@@ -1671,6 +1548,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     setState(() {
       _dashboardFuture = null;
       _birthdayFuture = null;
+      _employeesFuture = null;
     });
   }
 
@@ -1709,6 +1587,13 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         }
 
         if (snapshot.connectionState == ConnectionState.waiting) {
+          if (_dashboardCache.isNotEmpty) {
+            return _buildDashboardContent(
+              docs: _dashboardCache,
+              isDesktop: isDesktop,
+              isRefreshing: true,
+            );
+          }
           return const Center(
             child: CircularProgressIndicator(
               color: AppColors.primaryPurple,
@@ -1716,127 +1601,144 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           );
         }
 
-        final docs = snapshot.data ?? [];
-
-        debugPrint(
-            "📊 [DASHBOARD] ${docs.length} agendamentos carregados para $shopId (${_selectedYear == -1 ? 'todos' : _selectedYear}).");
-
-        // --- LÓGICA DE CÁLCULO (Mantida, mas operando sobre o subset filtrado) ---
-
-        bool isAllYears = _selectedYear == -1;
-        double faturamentoTotal = 0;
-        int totalAtendimentos = 0;
-        double faturamentoMaoDeObra = 0;
-        double faturamentoProdutos = 0;
-
-        List<double> dataMoney = [];
-        List<double> dataQty = [];
-        List<String> chartLabels = [];
-
-        // Inicializa estrutura de dados
-        chartLabels = [
-          'Jan',
-          'Fev',
-          'Mar',
-          'Abr',
-          'Mai',
-          'Jun',
-          'Jul',
-          'Ago',
-          'Set',
-          'Out',
-          'Nov',
-          'Dez'
-        ];
-        dataMoney = List.filled(12, 0.0);
-        dataQty = List.filled(12, 0.0);
-
-        for (var data in docs) {
-          final dateStr = data['scheduled_at'] as String?;
-          if (dateStr == null) continue;
-
-          DateTime date = DateTime.tryParse(dateStr) ?? DateTime.now();
-
-          // Filtra status concludo
-          if ((data['status'] ?? 'agendado') == 'concluido') {
-            double total = double.tryParse(data['total_value']?.toString() ?? '0') ?? 0.0;
-            // TODO: Supabase schema não tem campos separados para mão de obra e produtos.
-            // Quando esses campos forem adicionados, usar 'service_value' e 'product_value'.
-            double maoObra = double.tryParse(data['service_value']?.toString() ?? '0') ?? 0.0;
-            double produtos = double.tryParse(data['product_value']?.toString() ?? '0') ?? 0.0;
-
-            if (maoObra == 0 && produtos == 0) maoObra = total;
-
-            // Se for visualizao mensal (ano selecionado)
-            if (!isAllYears) {
-              dataMoney[date.month - 1] += total;
-              dataQty[date.month - 1] += 1;
-            }
-
-            faturamentoTotal += total;
-            faturamentoMaoDeObra += maoObra;
-            faturamentoProdutos += produtos;
-            totalAtendimentos++;
-          }
+        if (snapshot.hasData) {
+          _dashboardCache = snapshot.data!;
         }
+        final docs = snapshot.data ?? _dashboardCache;
 
-        // Se for "Todos os anos", ajustamos o grfico para ser por Ano, no por Ms
-        if (isAllYears) {
-          // Lgica simplificada para multiplos anos (recalculando baseada nos docs recebidos)
-          Map<int, double> yearMoney = {};
-          Map<int, double> yearQty = {};
-          for (var data in docs) {
-            // Supabase usa 'scheduled_at'; fallback para campo legado 'scheduled_at'
-            final dateStr = data['scheduled_at'] as String?;
-            if (dateStr == null) continue;
-            DateTime date = DateTime.tryParse(dateStr) ?? DateTime.now();
-            if ((data['status'] ?? 'agendado') == 'concluido') {
-              double total =
-                  double.tryParse(data['total_value']?.toString() ?? '0') ?? 0;
-              yearMoney[date.year] = (yearMoney[date.year] ?? 0) + total;
-              yearQty[date.year] = (yearQty[date.year] ?? 0) + 1;
-            }
-          }
-          chartLabels = yearMoney.keys.map((e) => e.toString()).toList();
-          chartLabels.sort();
-          // ✅ FIX: usar ?? 0 ao invés de ! para evitar null crash
-          dataMoney =
-              chartLabels.map((key) => yearMoney[int.parse(key)] ?? 0.0).toList();
-          dataQty = chartLabels.map((key) => yearQty[int.parse(key)] ?? 0.0).toList();
-        }
-
-        double ticketMedio =
-            totalAtendimentos > 0 ? faturamentoTotal / totalAtendimentos : 0;
-
-        if (isDesktop) {
-          return _buildDesktopDashboard(
-            isAllYears: isAllYears,
-            faturamentoTotal: faturamentoTotal,
-            totalAtendimentos: totalAtendimentos,
-            ticketMedio: ticketMedio,
-            dataMoney: dataMoney,
-            dataQty: dataQty,
-            chartLabels: chartLabels,
-            faturamentoMaoDeObra: faturamentoMaoDeObra,
-            faturamentoProdutos: faturamentoProdutos,
-            appointmentDocs: docs,
-          );
-        } else {
-          return _buildMobileDashboard(
-            isAllYears: isAllYears,
-            faturamentoTotal: faturamentoTotal,
-            totalAtendimentos: totalAtendimentos,
-            ticketMedio: ticketMedio,
-            dataMoney: dataMoney,
-            dataQty: dataQty,
-            chartLabels: chartLabels,
-            faturamentoMaoDeObra: faturamentoMaoDeObra,
-            faturamentoProdutos: faturamentoProdutos,
-            appointmentDocs: docs,
-          );
-        }
+        return _buildDashboardContent(
+          docs: docs,
+          isDesktop: isDesktop,
+          isRefreshing: false,
+        );
       },
     );
+  }
+
+  Widget _buildDashboardContent({
+    required List<Map<String, dynamic>> docs,
+    required bool isDesktop,
+    bool isRefreshing = false,
+  }) {
+    debugPrint(
+        "📊 [DASHBOARD] ${docs.length} agendamentos carregados para $shopId (${_selectedYear == -1 ? 'todos' : _selectedYear}).");
+
+    // --- LÓGICA DE CÁLCULO (Mantida, mas operando sobre o subset filtrado) ---
+
+    bool isAllYears = _selectedYear == -1;
+    double faturamentoTotal = 0;
+    int totalAtendimentos = 0;
+    double faturamentoMaoDeObra = 0;
+    double faturamentoProdutos = 0;
+
+    List<double> dataMoney = [];
+    List<double> dataQty = [];
+    List<String> chartLabels = [];
+
+    // Inicializa estrutura de dados
+    chartLabels = [
+      'Jan',
+      'Fev',
+      'Mar',
+      'Abr',
+      'Mai',
+      'Jun',
+      'Jul',
+      'Ago',
+      'Set',
+      'Out',
+      'Nov',
+      'Dez'
+    ];
+    dataMoney = List.filled(12, 0.0);
+    dataQty = List.filled(12, 0.0);
+
+    for (var data in docs) {
+      final dateStr = data['scheduled_at'] as String?;
+      if (dateStr == null) continue;
+
+      DateTime date = DateTime.tryParse(dateStr) ?? DateTime.now();
+
+      // Filtra status concludo
+      if ((data['status'] ?? 'agendado') == 'concluido') {
+        double total = double.tryParse(data['total_value']?.toString() ?? '0') ?? 0.0;
+        // TODO: Supabase schema não tem campos separados para mão de obra e produtos.
+        // Quando esses campos forem adicionados, usar 'service_value' e 'product_value'.
+        double maoObra = double.tryParse(data['service_value']?.toString() ?? '0') ?? 0.0;
+        double produtos = double.tryParse(data['product_value']?.toString() ?? '0') ?? 0.0;
+
+        if (maoObra == 0 && produtos == 0) maoObra = total;
+
+        // Se for visualizao mensal (ano selecionado)
+        if (!isAllYears) {
+          dataMoney[date.month - 1] += total;
+          dataQty[date.month - 1] += 1;
+        }
+
+        faturamentoTotal += total;
+        faturamentoMaoDeObra += maoObra;
+        faturamentoProdutos += produtos;
+        totalAtendimentos++;
+      }
+    }
+
+    // Se for "Todos os anos", ajustamos o grfico para ser por Ano, no por Ms
+    if (isAllYears) {
+      // Lgica simplificada para multiplos anos (recalculando baseada nos docs recebidos)
+      Map<int, double> yearMoney = {};
+      Map<int, double> yearQty = {};
+      for (var data in docs) {
+        // Supabase usa 'scheduled_at'; fallback para campo legado 'scheduled_at'
+        final dateStr = data['scheduled_at'] as String?;
+        if (dateStr == null) continue;
+        DateTime date = DateTime.tryParse(dateStr) ?? DateTime.now();
+        if ((data['status'] ?? 'agendado') == 'concluido') {
+          double total =
+              double.tryParse(data['total_value']?.toString() ?? '0') ?? 0;
+          yearMoney[date.year] = (yearMoney[date.year] ?? 0) + total;
+          yearQty[date.year] = (yearQty[date.year] ?? 0) + 1;
+        }
+      }
+      chartLabels = yearMoney.keys.map((e) => e.toString()).toList();
+      chartLabels.sort();
+      // ✅ FIX: usar ?? 0 ao invés de ! para evitar null crash
+      dataMoney =
+          chartLabels.map((key) => yearMoney[int.parse(key)] ?? 0.0).toList();
+      dataQty = chartLabels.map((key) => yearQty[int.parse(key)] ?? 0.0).toList();
+    }
+
+    double ticketMedio =
+        totalAtendimentos > 0 ? faturamentoTotal / totalAtendimentos : 0;
+
+    if (isDesktop) {
+      return _buildDesktopDashboard(
+        isAllYears: isAllYears,
+        faturamentoTotal: faturamentoTotal,
+        totalAtendimentos: totalAtendimentos,
+        ticketMedio: ticketMedio,
+        dataMoney: dataMoney,
+        dataQty: dataQty,
+        chartLabels: chartLabels,
+        faturamentoMaoDeObra: faturamentoMaoDeObra,
+        faturamentoProdutos: faturamentoProdutos,
+        appointmentDocs: docs,
+        isRefreshing: isRefreshing,
+      );
+    } else {
+      return _buildMobileDashboard(
+        isAllYears: isAllYears,
+        faturamentoTotal: faturamentoTotal,
+        totalAtendimentos: totalAtendimentos,
+        ticketMedio: ticketMedio,
+        dataMoney: dataMoney,
+        dataQty: dataQty,
+        chartLabels: chartLabels,
+        faturamentoMaoDeObra: faturamentoMaoDeObra,
+        faturamentoProdutos: faturamentoProdutos,
+        appointmentDocs: docs,
+        isRefreshing: isRefreshing,
+      );
+    }
   }
 
   // ... (RESTANTE DOS WIDGETS DE UI - _buildDesktopDashboard, _buildMobileDashboard, ETC. PERMANECEM IGUAIS PARA NO QUEBRAR O DESIGN)
@@ -1852,9 +1754,16 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     required double faturamentoMaoDeObra,
     required double faturamentoProdutos,
     List<Map<String, dynamic>>? appointmentDocs,
+    bool isRefreshing = false,
   }) {
     return Column(
       children: [
+        if (isRefreshing)
+          const LinearProgressIndicator(
+            color: AppColors.primaryPurple,
+            backgroundColor: Colors.transparent,
+            minHeight: 2,
+          ),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
@@ -1970,11 +1879,12 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       producaoPorProf[pid] = (producaoPorProf[pid] ?? 0) + valor;
     }
 
+    _employeesFuture ??= sb.Supabase.instance.client
+        .from('employees')
+        .select('id, name, commission_percent')
+        .eq('shop_id', shopId);
     return FutureBuilder<List<Map<String, dynamic>>>(
-      future: sb.Supabase.instance.client
-          .from('employees')
-          .select()
-          .eq('shop_id', shopId),
+      future: _employeesFuture,
       builder: (context, snap) {
         if (snap.hasError) {
           debugPrint('❌ [DASHBOARD] Erro ao buscar funcionários: ${snap.error}');
@@ -2203,6 +2113,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     required double faturamentoMaoDeObra,
     required double faturamentoProdutos,
     List<Map<String, dynamic>>? appointmentDocs,
+    bool isRefreshing = false,
   }) {
     final now = DateTime.now();
     final hoje = appointmentDocs == null
@@ -2228,6 +2139,12 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (isRefreshing)
+              const LinearProgressIndicator(
+                color: AppColors.primaryPurple,
+                backgroundColor: Colors.transparent,
+                minHeight: 2,
+              ),
             // -- Hero Header com gradiente ------------------------------------
             Container(
               width: double.infinity,
@@ -3239,7 +3156,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       final appts = await sb.Supabase.instance.client
           .from('appointments')
           .select('client_id')
-          .eq('shop_id', shopId!);
+          .eq('shop_id', shopId!)
+          .limit(200);
       
       final clientIds = (appts as List)
           .map((a) => a['client_id']?.toString())

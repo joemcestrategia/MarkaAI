@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 import '../../modules/business/trial_service.dart';
 import '../../modules/business/trial_activation_page.dart';
@@ -82,14 +82,14 @@ class _TrialBannerWidgetState extends State<TrialBannerWidget> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      "Experimente 90 Dias Grátis!",
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                        color: AppColors.primaryPurple,
+                      const Text(
+                        "Experimente 1 Mês Grátis!",
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                          color: AppColors.primaryPurple,
+                        ),
                       ),
-                    ),
                     const SizedBox(height: 4),
                     const Text(
                       "Libere todos os recursos pagos sem usar cartão de crédito.",

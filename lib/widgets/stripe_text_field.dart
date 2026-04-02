@@ -13,6 +13,7 @@ class StripeTextField extends StatelessWidget {
   final String? Function(String?)? validator;
   final Iterable<String>? autofillHints;
   final TextInputAction? textInputAction;
+  final FocusNode? focusNode;
 
   const StripeTextField({
     super.key,
@@ -26,6 +27,7 @@ class StripeTextField extends StatelessWidget {
     this.validator,
     this.autofillHints,
     this.textInputAction,
+    this.focusNode,
   });
 
   @override
@@ -45,6 +47,7 @@ class StripeTextField extends StatelessWidget {
         const SizedBox(height: 8),
         TextFormField(
           controller: controller,
+          focusNode: focusNode,
           keyboardType: keyboardType,
           inputFormatters: inputFormatters,
           onChanged: onChanged,

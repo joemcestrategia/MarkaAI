@@ -10,14 +10,28 @@ serve(async (req) => {
   try {
     const supabaseAdmin = createSupabaseAdminClient()
 
-    // Obter o userId enviado no body pelo Flutter
-    let userId: string | null = null
-    try {
-      const body = await req.json()
-      userId = body?.userId ?? null
-    } catch (_) {
-      // body vazio ou inválido
+    // ─── Verificar autenticação via JWT ───────────────────────────────────────
+    const authHeader = req.headers.get('Authorization')
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return new Response(
+        JSON.stringify({ error: 'Não autorizado.' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
     }
+
+    const token = authHeader.replace('Bearer ', '')
+    const { data: { user: callerUser }, error: callerError } = await supabaseAdmin.auth.getUser(token)
+
+    if (callerError || !callerUser) {
+      return new Response(
+        JSON.stringify({ error: 'Sessão inválida ou expirada.' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    // Obter o userId enviado no body pelo Flutter
+    const body = await req.json().catch(() => ({}))
+    const userId = body?.userId as string | null
 
     if (!userId) {
       return new Response(
@@ -26,93 +40,66 @@ serve(async (req) => {
       )
     }
 
-    // Validar que o usuário existe no Supabase Auth (segurança via Service Role)
-    const { data: authUserData, error: authLookupError } = await supabaseAdmin.auth.admin.getUserById(userId)
-    if (authLookupError || !authUserData?.user) {
+    // ─── Verificar que o chamador é o próprio usuário ou um admin ─────────────
+    const isAdmin =
+      callerUser.user_metadata?.role === 'admin' ||
+      callerUser.app_metadata?.role === 'admin' ||
+      callerUser.user_metadata?.is_admin_dev === true
+
+    if (callerUser.id !== userId && !isAdmin) {
       return new Response(
-        JSON.stringify({ error: 'Usuário não encontrado no sistema de autenticação' }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: 'Acesso não autorizado.' }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
-    console.log(`[PASS_TRACK] Iniciando exclusão para userId: ${userId}`)
-    let currentStep = 'Início'
+    console.log(`[deleteUserAccount] Iniciando exclusão para userId: ${userId}`)
 
-    // Helper para forçar timeout em promessas
-    const withTimeout = <T>(promise: Promise<T>, ms: number, stepName: string): Promise<T> => {
-      return Promise.race([
-        promise,
-        new Promise<T>((_, reject) =>
-          setTimeout(() => reject(new Error(`Timeout de ${ms}ms no passo [${stepName}]`)), ms)
-        )
-      ]);
-    };
-
-    // Helper para deletar com tolerância a tabela vazia (sem registros)
-    const safeDelete = async (table: string, column: string, value: string, stepName: string) => {
-      currentStep = stepName
-      console.log(`[PASS_TRACK] → ${stepName}`)
-      const { error } = (await withTimeout(
-        supabaseAdmin.from(table).delete().eq(column, value),
-        12000,
-        stepName
-      )) as any
-      if (error) {
-        // Ignoramos "no rows" pois é esperado em contas sem dados
-        const msg = error.message ?? ''
-        if (!msg.includes('no rows') && !msg.includes('0 rows')) {
-          throw new Error(`Erro em [${stepName}]: ${msg}`)
-        }
-      }
-    }
-
-    // 1. Buscar lojas de qual o usuário é dono
-    currentStep = 'Buscar Lojas'
-    console.log(`[PASS_TRACK] → Buscando lojas...`)
-    const { data: shops, error: shopsError } = (await withTimeout(
-      supabaseAdmin.from('shops').select('id').eq('owner_id', userId),
-      12000,
-      currentStep
-    )) as any
+    // ─── 1. Buscar lojas do usuário ───────────────────────────────────────────
+    const { data: shops, error: shopsError } = await supabaseAdmin
+      .from('shops')
+      .select('id')
+      .eq('owner_id', userId)
 
     if (shopsError) {
       throw new Error(`Erro ao buscar lojas: ${shopsError.message}`)
     }
 
-    // 2. Apagar dados dependentes das lojas
+    // ─── 2. Apagar dados das lojas em paralelo ────────────────────────────────
     if (shops && shops.length > 0) {
-      console.log(`[PASS_TRACK] Encontradas ${shops.length} loja(s). Limpando...`)
-      for (const shop of shops) {
+      console.log(`[deleteUserAccount] ${shops.length} loja(s) encontrada(s). Limpando...`)
+      await Promise.all(shops.map(async (shop) => {
         const shopId = shop.id
-        await safeDelete('appointments', 'shop_id', shopId, `Apagar Agendamentos da Loja ${shopId}`)
-        await safeDelete('services', 'shop_id', shopId, `Apagar Serviços da Loja ${shopId}`)
-        await safeDelete('employees', 'shop_id', shopId, `Apagar Funcionários da Loja ${shopId}`)
-        await safeDelete('products', 'shop_id', shopId, `Apagar Produtos da Loja ${shopId}`)
-        await safeDelete('shops', 'id', shopId, `Apagar Loja ${shopId}`)
-      }
-    } else {
-      console.log(`[PASS_TRACK] Nenhuma loja vinculada.`)
+        // Apagar dependências da loja em paralelo
+        await Promise.all([
+          supabaseAdmin.from('appointments').delete().eq('shop_id', shopId),
+          supabaseAdmin.from('services').delete().eq('shop_id', shopId),
+          supabaseAdmin.from('employees').delete().eq('shop_id', shopId),
+          supabaseAdmin.from('products').delete().eq('shop_id', shopId),
+          supabaseAdmin.from('coupons').delete().eq('shop_id', shopId),
+        ])
+        // Apagar a loja após limpar suas dependências
+        await supabaseAdmin.from('shops').delete().eq('id', shopId)
+      }))
     }
 
-    // 3. Apagar dados do usuário como Cliente
-    await safeDelete('appointments', 'client_id', userId, 'Apagar Agendamentos do Cliente')
+    // ─── 3. Apagar dados do usuário como Cliente (em paralelo) ───────────────
+    await Promise.all([
+      supabaseAdmin.from('appointments').delete().eq('client_id', userId),
+      supabaseAdmin.from('coupon_usage').delete().eq('user_id', userId),
+      supabaseAdmin.from('favorites').delete().eq('user_id', userId),
+    ])
 
-    // 4. Apagar perfil na tabela users
-    await safeDelete('users', 'id', userId, 'Apagar Perfil do Usuário')
+    // ─── 4. Apagar perfil na tabela users ────────────────────────────────────
+    await supabaseAdmin.from('users').delete().eq('id', userId)
 
-    // 5. Apagar do Supabase Auth (deve ser o último passo)
-    currentStep = 'Apagar do Supabase Auth'
-    console.log(`[PASS_TRACK] → Apagando do Auth...`)
-    const { error: deleteAuthError } = (await withTimeout(
-      supabaseAdmin.auth.admin.deleteUser(userId),
-      15000,
-      currentStep
-    )) as any
+    // ─── 5. Apagar do Supabase Auth (cascata: shop_clients, shop_views, affiliates) ─
+    const { error: deleteAuthError } = await supabaseAdmin.auth.admin.deleteUser(userId)
     if (deleteAuthError) {
       throw new Error(`Erro ao excluir do Auth: ${deleteAuthError.message}`)
     }
 
-    console.log(`[PASS_TRACK] ✅ Conta ${userId} excluída com sucesso!`)
+    console.log(`[deleteUserAccount] ✅ Conta ${userId} excluída com sucesso!`)
 
     return new Response(
       JSON.stringify({ success: true, message: 'Conta excluída com sucesso' }),
@@ -120,7 +107,7 @@ serve(async (req) => {
     )
 
   } catch (error) {
-    console.error(`[ERRO] Passo que falhou: ${error instanceof Error ? error.message : String(error)}`)
+    console.error(`[deleteUserAccount] Erro:`, error instanceof Error ? error.message : String(error))
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : 'Erro interno ao excluir conta' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

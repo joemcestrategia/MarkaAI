@@ -666,8 +666,8 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
 
   Widget _buildCompactCard(Map<String, dynamic> data, int index) {
     List<dynamic> fotos = data['photos_urls'] ?? [];
-    String nome = data['name'] ?? "";
-    bool ativo = data['is_active'] ?? true;
+    String nome = data['name'] ?? data['nome'] ?? "";
+    bool ativo = data['is_active'] ?? data['ativo'] ?? true;
 
     return Container(
       decoration: BoxDecoration(
@@ -710,10 +710,10 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
                 const SizedBox(height: 6),
                 Row(
                   children: [
-                    _buildTag(Icons.access_time, "${data['duration_min']} min",
+                    _buildTag(Icons.access_time, "${data['duration_min'] ?? data['tempo_min']} min",
                         Colors.blue),
                     const SizedBox(width: 8),
-                    _buildTag(Icons.attach_money, "R\$ ${data['price']}",
+                    _buildTag(Icons.attach_money, "R\$ ${data['price'] ?? data['preco']}",
                         Colors.green),
                   ],
                 ),

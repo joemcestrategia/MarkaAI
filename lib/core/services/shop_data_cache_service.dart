@@ -7,8 +7,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 class ShopDataCacheService {
   static final ShopDataCacheService _instance = ShopDataCacheService._internal();
   factory ShopDataCacheService() => _instance;
-  ShopDataCacheService._internal() {
-    loadFromPersistent();
+  ShopDataCacheService._internal();
+
+  static Future<void> init() async {
+    await _instance.loadFromPersistent();
   }
 
   final Map<String, dynamic> _cache = {};
@@ -93,8 +95,8 @@ class ShopDataCacheService {
         .toList();
 
     filtered.sort((a, b) {
-      final nameA = (a['name'] ?? '').toString().toLowerCase();
-      final nameB = (b['name'] ?? '').toString().toLowerCase();
+      final nameA = (a['name'] ?? a['nome'] ?? '').toString().toLowerCase();
+      final nameB = (b['name'] ?? b['nome'] ?? '').toString().toLowerCase();
       return nameA.compareTo(nameB);
     });
 
@@ -136,10 +138,21 @@ class ShopDataCacheService {
     final cached = getCached(key);
     if (cached != null) return List<Map<String, dynamic>>.from(cached['list']);
 
+    // Remove espaços das bordas para maior precisão
+    final cleanCity = city.trim();
+    // Remove acentos para garantir que encontramos tanto Cidades com acento quanto sem
+    final normCity = cleanCity.replaceAll(RegExp(r'[ÀÁÂÃÄÅàáâãäå]'), 'a')
+                         .replaceAll(RegExp(r'[ÈÉÊËèéêë]'), 'e')
+                         .replaceAll(RegExp(r'[ÌÍÎÏìíîï]'), 'i')
+                         .replaceAll(RegExp(r'[ÒÓÔÕÖØòóôõöø]'), 'o')
+                         .replaceAll(RegExp(r'[ÙÚÛÜùúûü]'), 'u')
+                         .replaceAll(RegExp(r'[Çç]'), 'c')
+                         .replaceAll(RegExp(r'[Ññ]'), 'n');
+
     final data = await Supabase.instance.client
         .from('shops')
         .select()
-        .eq('city', city);
+        .or('city.ilike.%$cleanCity%,city.ilike.%$normCity%');
 
     setCache(key, {'list': data}, ttlConfig); // Usa TTL de config (30 min)
     return List<Map<String, dynamic>>.from(data);

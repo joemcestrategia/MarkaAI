@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
+import 'package:http/http.dart' as http;
 import 'package:flutter_typeahead/flutter_typeahead.dart';
 import '../../core/utils/string_utils.dart';
 import '../../core/theme/app_colors.dart';
@@ -85,11 +87,9 @@ class CidadePrefs {
     String normalize(String s) =>
         StringUtils.removeDiacritics(s).toLowerCase().trim();
     final normCidade = normalize(cidade.cidade);
-    final normEstado = normalize(cidade.estado);
 
-    // Remove se já existia uma entrada similar (evita "São Paulo" vs "Sao Paulo")
-    list.removeWhere((c) =>
-        normalize(c.cidade) == normCidade && normalize(c.estado) == normEstado);
+    // Remove se já existia entrada com o mesmo nome de cidade (ignora estado para evitar duplicatas)
+    list.removeWhere((c) => normalize(c.cidade) == normCidade);
 
     // Adiciona no início
     list.insert(0, cidade);
@@ -324,33 +324,43 @@ class _SeletorDeCidadeModalState extends State<SeletorDeCidadeModal> {
         timeLimit: const Duration(seconds: 10),
       );
 
-      // 3. Reverse geocode para obter cidade e estado
-      final placemarks = await placemarkFromCoordinates(
-        position.latitude,
-        position.longitude,
-        localeIdentifier: 'pt_BR',
-      );
+      // 3. Reverse geocode — Nominatim no web, geocoding nativo no mobile
+      String rawCity = '';
+      String rawState = '';
 
-      if (placemarks.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                content: Text('Não foi possível identificar sua cidade.'),
-                backgroundColor: Colors.orange),
+      if (kIsWeb) {
+        try {
+          final uri = Uri.parse(
+            'https://nominatim.openstreetmap.org/reverse'
+            '?lat=${position.latitude}&lon=${position.longitude}'
+            '&format=json&accept-language=pt-BR',
           );
+          final resp = await http.get(uri, headers: {'User-Agent': 'MarkaAI/1.0'});
+          if (resp.statusCode == 200) {
+            final json = jsonDecode(resp.body) as Map<String, dynamic>;
+            final addr = json['address'] as Map<String, dynamic>?;
+            rawCity = (addr?['city'] ?? addr?['town'] ?? addr?['village'] ??
+                    addr?['municipality'] ?? '').toString().trim();
+            rawState = (addr?['state_code'] ?? addr?['state'] ?? '').toString().trim();
+          }
+        } catch (_) {}
+      } else {
+        final placemarks = await placemarkFromCoordinates(
+          position.latitude,
+          position.longitude,
+          localeIdentifier: 'pt_BR',
+        );
+        if (placemarks.isNotEmpty) {
+          final place = placemarks.first;
+          rawCity = (place.subAdministrativeArea ??
+                  place.locality ??
+                  place.administrativeArea ??
+                  '').trim();
+          rawState = (place.administrativeArea ?? '').trim();
         }
-        return;
       }
 
-      final place = placemarks.first;
-      final cidade = (place.subAdministrativeArea ??
-              place.locality ??
-              place.administrativeArea ??
-              '')
-          .trim();
-      final estado = (place.administrativeArea ?? '').trim();
-
-      if (cidade.isEmpty) {
+      if (rawCity.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -361,10 +371,24 @@ class _SeletorDeCidadeModalState extends State<SeletorDeCidadeModal> {
         return;
       }
 
-      // 4. Salva e confirma automaticamente
+      // 4. Valida cidade contra lista de municípios brasileiros
+      final suggestions = await SeletorDeCidadeModal.getCitySuggestions(rawCity);
+      final String cidadeFinal;
+      final String estadoFinal;
+
+      if (suggestions.isNotEmpty) {
+        cidadeFinal = suggestions.first.cidade;
+        estadoFinal = suggestions.first.estado;
+      } else {
+        cidadeFinal = rawCity;
+        estadoFinal = rawState.length > 2
+            ? rawState.substring(0, 2).toUpperCase()
+            : rawState.toUpperCase();
+      }
+
       final cs = CidadeSelecionada(
-        cidade: cidade,
-        estado: estado,
+        cidade: cidadeFinal,
+        estado: estadoFinal,
         definidoEm: DateTime.now(),
       );
       await CidadePrefs.salvar(cs);
@@ -748,7 +772,9 @@ class _SeletorDeCidadePageState extends State<SeletorDeCidadePage> {
           .select('city, state');
       final Map<String, int> counts = {};
       for (final item in snap) {
-        final cidade = (item['city'] ?? item['cidade'] ?? '').toString().trim().toLowerCase();
+        // Normaliza removendo acentos para matching consistente
+        final cidade = StringUtils.removeDiacritics(
+            (item['city'] ?? item['cidade'] ?? '').toString().trim()).toLowerCase();
         if (cidade.isNotEmpty) {
           counts[cidade] = (counts[cidade] ?? 0) + 1;
         }
@@ -782,10 +808,15 @@ class _SeletorDeCidadePageState extends State<SeletorDeCidadePage> {
         ..sort((a, b) => b.value.compareTo(a.value));
       if (mounted) {
         setState(() {
-          _sugestoes = comLojas
-              .map((e) => CidadeOpcao(
-                  cidade: _capitalize(e.key), estado: '', count: e.value))
-              .toList();
+          _sugestoes = comLojas.map((e) {
+            // Busca cidade e estado corretos em kMunicipiosBrasil pelo nome normalizado
+            final municipio = kMunicipiosBrasil.firstWhere(
+              (m) => StringUtils.removeDiacritics(m.$1).toLowerCase() == e.key,
+              orElse: () => (_capitalize(e.key), ''),
+            );
+            return CidadeOpcao(
+                cidade: municipio.$1, estado: municipio.$2, count: e.value);
+          }).toList();
           _firstLoad = false;
           _loading = false;
         });
@@ -799,7 +830,7 @@ class _SeletorDeCidadePageState extends State<SeletorDeCidadePage> {
     final matches = kMunicipiosBrasil
         .where((e) => StringUtils.removeDiacritics(e.$1).toLowerCase().contains(q))
         .map((e) {
-          final count = _shopCountByCity[e.$1.toLowerCase()] ?? 0;
+          final count = _shopCountByCity[StringUtils.removeDiacritics(e.$1).toLowerCase()] ?? 0;
           return CidadeOpcao(cidade: e.$1, estado: e.$2, count: count);
         }).toList();
 
@@ -888,34 +919,67 @@ class _SeletorDeCidadePageState extends State<SeletorDeCidadePage> {
         desiredAccuracy: LocationAccuracy.high,
         timeLimit: const Duration(seconds: 10),
       );
-      final placemarks = await placemarkFromCoordinates(
-          position.latitude, position.longitude,
-          localeIdentifier: 'pt_BR');
-      if (placemarks.isEmpty) {
+
+      // Reverse geocode — Nominatim no web, geocoding nativo no mobile
+      String rawCity = '';
+      String rawState = '';
+
+      if (kIsWeb) {
+        try {
+          final uri = Uri.parse(
+            'https://nominatim.openstreetmap.org/reverse'
+            '?lat=${position.latitude}&lon=${position.longitude}'
+            '&format=json&accept-language=pt-BR',
+          );
+          final resp = await http.get(uri, headers: {'User-Agent': 'MarkaAI/1.0'});
+          if (resp.statusCode == 200) {
+            final json = jsonDecode(resp.body) as Map<String, dynamic>;
+            final addr = json['address'] as Map<String, dynamic>?;
+            rawCity = (addr?['city'] ?? addr?['town'] ?? addr?['village'] ??
+                    addr?['municipality'] ?? '').toString().trim();
+            rawState = (addr?['state_code'] ?? addr?['state'] ?? '').toString().trim();
+          }
+        } catch (_) {}
+      } else {
+        final placemarks = await placemarkFromCoordinates(
+            position.latitude, position.longitude,
+            localeIdentifier: 'pt_BR');
+        if (placemarks.isNotEmpty) {
+          final place = placemarks.first;
+          rawCity = (place.subAdministrativeArea ??
+                  place.locality ??
+                  place.administrativeArea ??
+                  '').trim();
+          rawState = (place.administrativeArea ?? '').trim();
+        }
+      }
+
+      if (rawCity.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text('Não foi possível identificar sua cidade.'),
+              content: Text('Cidade não identificada pela localização.'),
               backgroundColor: Colors.orange));
         }
         return;
       }
-      final place = placemarks.first;
-      final cidade = (place.subAdministrativeArea ??
-              place.locality ??
-              place.administrativeArea ??
-              '')
-          .trim();
-      final estado = (place.administrativeArea ?? '').trim();
-      if (cidade.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text('Cidade não identificada.'),
-              backgroundColor: Colors.orange));
-        }
-        return;
+
+      // Valida cidade contra lista de municípios brasileiros
+      final suggestions = await SeletorDeCidadeModal.getCitySuggestions(rawCity);
+      final String cidadeFinal;
+      final String estadoFinal;
+
+      if (suggestions.isNotEmpty) {
+        cidadeFinal = suggestions.first.cidade;
+        estadoFinal = suggestions.first.estado;
+      } else {
+        cidadeFinal = rawCity;
+        estadoFinal = rawState.length > 2
+            ? rawState.substring(0, 2).toUpperCase()
+            : rawState.toUpperCase();
       }
+
       final cs = CidadeSelecionada(
-          cidade: cidade, estado: estado, definidoEm: DateTime.now());
+          cidade: cidadeFinal, estado: estadoFinal, definidoEm: DateTime.now());
       await CidadePrefs.salvar(cs);
       if (mounted) {
         Navigator.pop(context);

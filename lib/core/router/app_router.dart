@@ -17,6 +17,7 @@ import '../../modules/admin/admin_dashboard_page.dart';
 import '../../modules/admin/admin_setup_page.dart';
 import '../../core/services/session_service.dart';
 import '../../core/services/auth_service.dart';
+import '../widgets/splash_loading_widget.dart';
 
 class AppRouter {
   static Route<dynamic> generateRoute(RouteSettings settings) {
@@ -51,29 +52,6 @@ class AppRouter {
     if (querySlug != null && querySlug.isNotEmpty) {
       return MaterialPageRoute(
         builder: (_) => PublicShopPage(slug: querySlug),
-        settings: settings,
-      );
-    }
-
-    // Tratamento estrito do Firebase Link Action caso seja pego apenas aqui
-    if (uri.path == '/__/') {
-      final mode = uri.queryParameters['mode'];
-      final oobCode = uri.queryParameters['oobCode'];
-      if (mode == 'resetPassword' && oobCode != null) {
-        return MaterialPageRoute(
-          builder: (_) => ResetPasswordPage(oobCode: oobCode),
-          settings: settings,
-        );
-      }
-    }
-
-    // Capture Firebase Action Link (Password Reset)
-    final mode = uri.queryParameters['mode'];
-    final oobCode = uri.queryParameters['oobCode'];
-
-    if (mode == 'resetPassword' && oobCode != null && oobCode.isNotEmpty) {
-      return MaterialPageRoute(
-        builder: (_) => ResetPasswordPage(oobCode: oobCode),
         settings: settings,
       );
     }
@@ -256,6 +234,15 @@ class _AuthGateState extends State<AuthGate> {
           }
         }
       });
+    } else {
+      // Mobile: fallback para evitar congelamento eterno em debug (F5) quando
+      // o stream de auth do Supabase demora ou não emite o evento inicial.
+      _fallbackTimer = Timer(const Duration(seconds: 8), () {
+        if (mounted && !_timeoutReached) {
+          setState(() => _timeoutReached = true);
+          debugPrint('AuthGate: Mobile timeout atingido — forçando navegação.');
+        }
+      });
     }
   }
 
@@ -274,7 +261,15 @@ class _AuthGateState extends State<AuthGate> {
       builder: (context, snapshot) {
         // Ainda carregando — aguarda o SDK processar
         if (!snapshot.hasData) {
-          return const _SplashLoading();
+          if (_timeoutReached) {
+            // Stream nunca emitiu (comum em debug/F5): usa sessão atual diretamente
+            final session = supabase.auth.currentSession;
+            if (session != null) {
+              return AuthRedirect(user: session.user);
+            }
+            return const LoginPage();
+          }
+          return const SplashLoadingWidget();
         }
 
         final event = snapshot.data!.event;
@@ -294,7 +289,7 @@ class _AuthGateState extends State<AuthGate> {
           // Mas caso o timeout do fallback já tenha estourado, seguimos em frente
           if (!_timeoutReached) {
             debugPrint('AuthGate: Aguardando processamento da sessão inicial (event=AuthChangeEvent.initialSession)...');
-            return const _SplashLoading();
+            return const SplashLoadingWidget();
           }
         }
         
@@ -323,18 +318,7 @@ class _AuthGateState extends State<AuthGate> {
   }
 }
 
-class _SplashLoading extends StatelessWidget {
-  const _SplashLoading();
-  @override
-  Widget build(BuildContext context) {
-    return const Scaffold(
-      backgroundColor: Color(0xFF0A0A0F),
-      body: Center(
-        child: CircularProgressIndicator(color: Color(0xFF7C3AED)),
-      ),
-    );
-  }
-}
+
 
 // Auth Redirect - gerencia redirecionamento baseado no tipo de usuário sem causar loops
 class AuthRedirect extends StatefulWidget {
@@ -349,6 +333,7 @@ class AuthRedirect extends StatefulWidget {
 class _AuthRedirectState extends State<AuthRedirect> {
   Widget? _targetPage;
   bool _error = false;
+  bool _isNetworkError = false;
   String _errorMessage = '';
 
   bool _resolved = false;
@@ -362,7 +347,7 @@ class _AuthRedirectState extends State<AuthRedirect> {
     }
     Future.delayed(const Duration(seconds: 10), () {
       if (mounted && _targetPage == null && !_error) {
-        _setError('Timeout: operação demorou mais de 10s. Verifique o console.');
+        _setError('Timeout: operação demorou mais de 10s. Verifique o console.', isNetwork: false);
       }
     });
   }
@@ -404,12 +389,12 @@ class _AuthRedirectState extends State<AuthRedirect> {
         debugPrint(
             'AuthRedirect: ERRO - Campo "role" ausente para userId=${widget.user.id}. '
             'Doc completo: $doc');
-        _setError('Tipo de usuário não definido. Entre em contato com o suporte.');
+        _setError('Tipo de usuário não definido. Entre em contato com o suporte.', isNetwork: false);
         return;
       }
 
-      // Salva na sessão local
-      await SessionService.saveLogin(
+      // Salva na sessão local (background)
+      SessionService.saveLogin(
         userId: widget.user.id,
         userType: tipo,
         // Usar shop_id do banco (snake_case)
@@ -435,16 +420,37 @@ class _AuthRedirectState extends State<AuthRedirect> {
       debugPrint('AuthRedirect ERRO: $e');
       debugPrint('AuthRedirect STACK: $stack');
       if (mounted) {
-        _setError('Erro: $e');
+        final errStr = e.toString();
+        final isNetwork = errStr.contains('SocketException') ||
+            errStr.contains('Failed host lookup') ||
+            errStr.contains('NetworkException') ||
+            errStr.contains('Connection refused') ||
+            errStr.contains('ClientException');
+        _setError(
+          isNetwork
+              ? 'Sem conexão com a internet. Verifique sua rede e tente novamente.'
+              : 'Erro ao carregar perfil: $e',
+          isNetwork: isNetwork,
+        );
       }
     }
   }
 
-  void _setError(String message) {
+  void _setError(String message, {required bool isNetwork}) {
     setState(() {
       _error = true;
+      _isNetworkError = isNetwork;
       _errorMessage = message;
     });
+  }
+
+  void _retry() {
+    setState(() {
+      _error = false;
+      _isNetworkError = false;
+      _errorMessage = '';
+    });
+    _resolve();
   }
 
   @override
@@ -452,7 +458,47 @@ class _AuthRedirectState extends State<AuthRedirect> {
     if (_targetPage != null) return _targetPage!;
 
     if (_error) {
-      // ✅ FIX: Mostra LoginPage mas exibe snackbar informativo ao invés de tela cinza
+      if (_isNetworkError) {
+        return Scaffold(
+          backgroundColor: Colors.white,
+          body: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.wifi_off_rounded, size: 72, color: Colors.grey),
+                  const SizedBox(height: 24),
+                  const Text(
+                    'Sem conexão',
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF111827)),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    _errorMessage,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 15, color: Colors.black54),
+                  ),
+                  const SizedBox(height: 32),
+                  ElevatedButton.icon(
+                    onPressed: _retry,
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: const Text('Tentar novamente'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primaryPurple,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      }
+
+      // Erros não-rede: mostra LoginPage com snackbar
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _errorMessage.isNotEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -467,13 +513,7 @@ class _AuthRedirectState extends State<AuthRedirect> {
       return const LoginPage();
     }
 
-    // ✅ FIX: Fundo branco (não cinza) durante o carregamento
-    return const Scaffold(
-      backgroundColor: Colors.white,
-      body: Center(
-        child: CircularProgressIndicator(color: AppColors.primaryPurple),
-      ),
-    );
+    return const SplashLoadingWidget();
   }
 }
 
@@ -678,7 +718,7 @@ class _PasswordRecoveryGateState extends State<_PasswordRecoveryGate> {
     }
 
     // Ainda carregando
-    if (!_ready) return const _SplashLoading();
+    if (!_ready) return const SplashLoadingWidget();
 
     // Nenhum token de recovery encontrado → login
     return const LoginPage();

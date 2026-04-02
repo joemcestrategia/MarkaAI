@@ -374,8 +374,8 @@ class _PublicShopPageState extends State<PublicShopPage> {
                   // Aplicar filtro de categoria manualmente
                   if (_selectedCategoryId != null) {
                     services = services.where((sData) {
-                      final ids = sData['categoryIds'] != null 
-                          ? List<String>.from(sData['categoryIds']) 
+                      final ids = sData['category_ids'] != null 
+                          ? List<String>.from(sData['category_ids']) 
                           : (sData['categoryId'] != null ? [sData['categoryId'].toString()] : []);
                       return ids.contains(_selectedCategoryId);
                     }).toList();
@@ -792,7 +792,7 @@ Widget _buildMiniMap(Map<String, dynamic> data) {
                     children: [
                       // Usando imagem estática do Google (Se houver chave no futuro, ou placeholder visual)
                       CachedNetworkImage(
-                        imageUrl: "https://maps.googleapis.com/maps/api/staticmap?center=${Uri.encodeComponent(fullAddress)}&zoom=15&size=600x300&scale=2&maptype=roadmap&markers=color:red%7C${Uri.encodeComponent(fullAddress)}&key=${ApiKeys.geminiApiKey}",
+                        imageUrl: "https://maps.googleapis.com/maps/api/staticmap?center=${Uri.encodeComponent(fullAddress)}&zoom=15&size=600x300&scale=2&maptype=roadmap&markers=color:red%7C${Uri.encodeComponent(fullAddress)}&key=${ApiKeys.mapsApiKey}",
                         fit: BoxFit.cover,
                         errorWidget: (c, u, e) => Container(
                           color: AppColors.softGrey,
@@ -856,7 +856,7 @@ String _formatFullAddressStatic(Map<String, dynamic> data) {
   final neighborhood = data['neighborhood']?.toString() ?? '';
   final city = data['city']?.toString() ?? data['cidade']?.toString() ?? '';
   final state = data['state']?.toString() ?? data['estado']?.toString() ?? '';
-  final address = data['address']?.toString() ?? '';
+  final address = data['address']?.toString() ?? data['endereco']?.toString() ?? '';
 
   String full = '';
   if (street.isNotEmpty) {

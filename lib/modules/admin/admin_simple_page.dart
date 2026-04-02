@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'package:intl/intl.dart';
 import '../../core/theme/app_colors.dart';
 import 'categories_page.dart';
+import 'admin_banners_page.dart';
 import '../../core/services/shop_data_cache_service.dart';
 
 class AdminSimplePage extends StatefulWidget {
@@ -60,7 +61,7 @@ class _AdminSimplePageState extends State<AdminSimplePage> {
     }
 
     return DefaultTabController(
-      length: 8,
+      length: 9,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Painel Admin'),
@@ -83,6 +84,7 @@ class _AdminSimplePageState extends State<AdminSimplePage> {
             Tab(text: 'Agendamentos'),
             Tab(text: 'Feriados'),
             Tab(text: 'Planos'),
+            Tab(text: 'Banners'),
           ]),
         ),
         body: TabBarView(children: [
@@ -94,6 +96,7 @@ class _AdminSimplePageState extends State<AdminSimplePage> {
           _appointmentsTab(),
           _holidaysTab(),
           _plansLinkTab(),
+          const AdminBannersPage(),
         ]),
       ),
     );

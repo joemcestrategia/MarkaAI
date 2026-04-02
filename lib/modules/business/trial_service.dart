@@ -98,11 +98,13 @@ class TrialService {
     }
   }
 
-  /// Ativa o Trial para o plano selecionado. Não pode ser desfeito.
-  static Future<bool> activateTrial(String planId) async {
+  /// Ativa o Trial para o plano selecionado (agora fixo no Plus). Não pode ser desfeito.
+  static Future<bool> activateTrial([String? _]) async {
     try {
       final shopId = await SessionService.getShopId();
       if (shopId == null) return false;
+
+      const planId = 'plus'; // Único plano disponível para teste agora
 
       final supabase = Supabase.instance.client;
       final data = await supabase

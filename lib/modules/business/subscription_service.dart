@@ -573,6 +573,13 @@ class SubscriptionService {
 
       PremiumDialogs.showLoading(context, "Preparando seu novo ambiente...");
 
+      // Garante que o JWT está válido antes de chamar a Edge Function do Stripe
+      try {
+        await sb.Supabase.instance.client.auth.refreshSession();
+      } catch (refreshErr) {
+        debugPrint('_iniciarPagamentoAssinatura: refresh session falhou ($refreshErr)');
+      }
+
       final success = await StripeService.instance.setupSubscriptionPayment(
         planId: planId,
         shopId: shopId,
@@ -727,6 +734,14 @@ class SubscriptionService {
   }) async {
     try {
       final supabase = sb.Supabase.instance.client;
+
+      // Garante que o JWT está atualizado antes de chamar a Edge Function
+      try {
+        await supabase.auth.refreshSession();
+      } catch (refreshErr) {
+        debugPrint('upgradeSubscription: refresh session falhou ($refreshErr), tentando mesmo assim.');
+      }
+
       final response = await supabase.functions.invoke('upgrade-subscription', body: {
         'shop_id': shopId,
         'new_plan_id': newPlanId,
@@ -754,11 +769,11 @@ class SubscriptionService {
     } catch (e) {
       debugPrint('upgradeSubscription error: $e');
       if (context.mounted) {
+        final msg = (e.toString().contains('401') || e.toString().contains('Invalid JWT'))
+            ? 'Sua sessão expirou. Por favor, saia do aplicativo e faça login novamente para continuar.'
+            : 'Erro no upgrade: $e';
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Erro no upgrade: $e'),
-            backgroundColor: Colors.red,
-          ),
+          SnackBar(content: Text(msg), backgroundColor: Colors.red),
         );
       }
       return false;

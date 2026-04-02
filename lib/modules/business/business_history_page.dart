@@ -366,6 +366,25 @@ class BusinessHistoryPage extends StatelessWidget {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
+                    if ((payload['coupon_applied'] == true || payload['birthday_discount_applied'] == true) && 
+                        payload['total_price'] != null)
+                      Builder(
+                        builder: (context) {
+                          final double original = double.tryParse(payload['total_price'].toString()) ?? 0;
+                          final double discountValue = original - val;
+                          if (discountValue > 0.01) {
+                            return Text(
+                              "${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(original)} (- ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(discountValue)})",
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.grey.shade500,
+                                decoration: TextDecoration.lineThrough,
+                              ),
+                            );
+                          }
+                          return const SizedBox.shrink();
+                        }
+                      ),
                     Text(
                       NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$')
                           .format(val),
@@ -380,6 +399,22 @@ class BusinessHistoryPage extends StatelessWidget {
                             : null,
                       ),
                     ),
+                    if (payload['coupon_applied'] == true)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          "Cupom: ${payload['coupon_code'] ?? 'ATIVO'}",
+                          style: const TextStyle(color: Colors.blue, fontSize: 8, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    if (payload['birthday_discount_applied'] == true)
+                      const Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          "Aniversário",
+                          style: TextStyle(color: Colors.pink, fontSize: 8, fontWeight: FontWeight.bold),
+                        ),
+                      ),
                   ],
                 )
               ],

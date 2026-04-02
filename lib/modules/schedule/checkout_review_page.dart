@@ -38,6 +38,12 @@ class _CheckoutReviewPageState extends State<CheckoutReviewPage> {
     setState(() => _isProcessing = true);
 
     try {
+      // Forçar refresh do JWT para evitar erro 401 na Edge Function
+      final sessionResult = await Supabase.instance.client.auth.refreshSession();
+      if (sessionResult.session == null) {
+        throw Exception('Sua sessão expirou. Faça login novamente para continuar.');
+      }
+
       final user = Supabase.instance.client.auth.currentUser;
       if (user == null) throw Exception('Usuário não autenticado');
 
@@ -76,11 +82,32 @@ class _CheckoutReviewPageState extends State<CheckoutReviewPage> {
       int.parse(widget.time.split(':')[1]),
     );
 
+    // Fetch user profile for phone and photo
+    String? clientPhone;
+    String? clientPhoto = user.userMetadata?['avatar_url']?.toString() ?? user.userMetadata?['picture']?.toString();
+    try {
+      final userDoc = await Supabase.instance.client
+          .from('users')
+          .select('phone, photo_url')
+          .eq('id', user.id)
+          .maybeSingle();
+      if (userDoc != null) {
+        clientPhone = userDoc['phone']?.toString();
+        if (clientPhone != null && clientPhone.trim().isEmpty) clientPhone = null;
+        final dbPhoto = userDoc['photo_url']?.toString();
+        if ((clientPhoto == null || clientPhoto.isEmpty) && dbPhoto != null && dbPhoto.isNotEmpty) {
+          clientPhoto = dbPhoto;
+        }
+      }
+    } catch (_) {}
+
     await Supabase.instance.client.from('appointments').insert({
       'shop_id': widget.shopId,
       'client_id': user.id,
       'client_name': user.userMetadata?['full_name'] ?? user.email ?? 'Cliente',
       'client_email': user.email ?? 'cliente@markaai.com.br',
+      'client_phone': clientPhone,
+      'client_photo': clientPhoto,
       'service_id': widget.serviceDoc['id'],
       'service_name': widget.serviceDoc['name'] ?? 'Serviço',
       'professional_id': widget.professionalDoc['id'],

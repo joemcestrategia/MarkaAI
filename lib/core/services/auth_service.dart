@@ -76,7 +76,7 @@ class AuthService {
     try {
       final response = await _supabase.auth.signInWithPassword(
         email: email.trim(),
-        password: password.trim(),
+        password: password,
       );
       return response;
     } on sb.AuthException catch (e) {
@@ -132,7 +132,7 @@ class AuthService {
     try {
       final response = await _supabase.auth.signUp(
         email: email.trim(),
-        password: password.trim(),
+        password: password,
         data: {
           'name': name,
           'role': role,
@@ -251,17 +251,14 @@ class AuthService {
       throw Exception('Este e-mail já está em uso.');
     }
     
-    if (e.message.toLowerCase().contains('invalid login credentials')) {
-      throw Exception('E-mail ou senha incorretos.');
+    if (e.message.toLowerCase().contains('invalid login credentials') ||
+        e.message.toLowerCase().contains('user not found')) {
+      throw Exception('E-mail ou senha inválidos.');
     }
 
     if (e.message.toLowerCase().contains('session expired') || 
         e.message.toLowerCase().contains('refresh_token_not_found')) {
       throw Exception('Sessão expirada. Por favor, faça login novamente.');
-    }
-
-    if (e.message.toLowerCase().contains('user not found')) {
-      throw Exception('Usuário não encontrado.');
     }
 
     throw Exception(e.message);

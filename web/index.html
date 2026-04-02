@@ -5,6 +5,7 @@
   <base href="$FLUTTER_BASE_HREF">
 
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
 
   <meta name="description" content="MarkaAI.app - Gestão Inteligente de Agendamentos.">
@@ -22,74 +23,78 @@
   <title>MarkaAI.app</title>
   <link rel="manifest" href="manifest.json">
 
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/croppie/2.6.5/croppie.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/croppie/2.6.5/croppie.css" media="print" onload="this.media='all'">
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/croppie/2.6.5/croppie.min.js"></script>
 </head>
 
 <body>
-  <!-- Splash screen -->
+  <!-- Splash screen: Anti-Gravidade Minimalista -->
   <style>
     #splash {
       position: fixed;
       inset: 0;
-      background: linear-gradient(180deg, #5B2DB6, #4A1F8A);
+      /* Gradiente radial combinando as duas identidades Roxas */
+      background: radial-gradient(circle at center, #6A1B9A 0%, #2D264B 100%);
       display: flex;
       align-items: center;
       justify-content: center;
       flex-direction: column;
       z-index: 9999;
-      color: #fff;
     }
 
     #splash .logo {
-      width: 220px;
-      max-width: 70%;
-      filter: brightness(0) invert(1);
-      margin-bottom: 28px;
+      width: 140px;
+      height: 140px;
+      object-fit: cover;
+      margin-bottom: 32px;
+      border-radius: 50%;
+      /* Flutuação leve e anti-gravidade */
+      animation: float 2s ease-in-out infinite alternate;
     }
 
-    .dots {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      justify-content: center;
-      margin-top: 8px;
+    @keyframes float {
+      0% { transform: translateY(-8px); }
+      100% { transform: translateY(8px); }
     }
 
-    .dot {
-      width: 14px;
-      height: 6px;
-      background: rgba(255, 255, 255, 0.9);
-      border-radius: 4px;
-      transform-origin: center;
-      animation: bounce 1s infinite;
+    /* Texto MarkaAI */
+    .brand-text {
+      color: white;
+      font-size: 36px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      text-shadow: 0 2px 6px rgba(0, 0, 0, 0.26);
+      font-family: system-ui, -apple-system, sans-serif;
+      margin-top: 24px;
+      margin-bottom: 64px;
     }
 
-    .dot:nth-child(2) {
-      animation-delay: 0.12s;
-      opacity: 0.9
+    /* Linear loading simplificado que combina com SplashLoadingWidget */
+    .linear-loader {
+      width: 150px;
+      height: 4px;
+      background-color: rgba(255, 255, 255, 0.24);
+      border-radius: 10px;
+      overflow: hidden;
+      position: relative;
     }
 
-    .dot:nth-child(3) {
-      animation-delay: 0.24s;
-      opacity: 0.8
+    .linear-loader::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: 40%;
+      background-color: #ffffff;
+      border-radius: 10px;
+      animation: shiftProgress 1.5s ease-in-out infinite;
     }
 
-    @keyframes bounce {
-      0% {
-        transform: translateX(-6px) scaleX(0.9);
-        opacity: 0.6
-      }
-
-      50% {
-        transform: translateX(6px) scaleX(1.05);
-        opacity: 1
-      }
-
-      100% {
-        transform: translateX(-6px) scaleX(0.9);
-        opacity: 0.6
-      }
+    @keyframes shiftProgress {
+      0% { left: -40%; width: 40%; }
+      50% { left: 40%; width: 60%; }
+      100% { left: 100%; width: 40%; }
     }
 
     /* Ensure flutter content sits above splash when removed */
@@ -100,16 +105,16 @@
   </style>
 
   <div id="splash" aria-hidden="true">
-    <img class="logo" src="assets/assets/images/logo_purple.png" alt="MarkaAI">
-    <div class="dots" role="status" aria-label="Carregando">
-      <div class="dot"></div>
-      <div class="dot"></div>
-      <div class="dot"></div>
+    <div style="text-align: center; display: flex; flex-direction: column; align-items: center;">
+      <img class="logo" src="assets/assets/images/icon.png" alt="MarkaAI" style="margin-bottom: 0;">
+      <div class="brand-text">MarkaAI</div>
     </div>
+    <!-- Simple loading line -->
+    <div class="linear-loader" role="status" aria-label="Carregando"></div>
   </div>
 
   <!-- Stripe Web SDK (Obrigatório para flutter_stripe_web) -->
-  <script src="https://js.stripe.com/v3/"></script>
+  <script src="https://js.stripe.com/v3/" defer></script>
 
   <script>
     // Previne múltiplas abas no hot reload

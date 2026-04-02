@@ -7,6 +7,8 @@ class BookingSuccessPage extends StatelessWidget {
   final String time;
   final String professionalName;
   final bool isPaid; // Se foi pago online ou não
+  final String? title;
+  final String? subtitle;
 
   const BookingSuccessPage({
     super.key,
@@ -15,6 +17,8 @@ class BookingSuccessPage extends StatelessWidget {
     required this.time,
     required this.professionalName,
     required this.isPaid,
+    this.title,
+    this.subtitle,
   });
 
   @override
@@ -49,9 +53,9 @@ class BookingSuccessPage extends StatelessWidget {
                 },
               ),
               const SizedBox(height: 30),
-              const Text(
-                "Agendamento Confirmado!",
-                style: TextStyle(
+              Text(
+                title ?? "Agendamento Confirmado!",
+                style: const TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.bold,
                     color: Colors.black87),
@@ -59,7 +63,7 @@ class BookingSuccessPage extends StatelessWidget {
               ),
               const SizedBox(height: 10),
               Text(
-                "Seu horário foi reservado com sucesso.\n${isPaid ? 'O pagamento já foi processado.' : 'Realize o pagamento no local.'}",
+                subtitle ?? "Seu horário foi reservado com sucesso.\n${isPaid ? 'O pagamento já foi processado.' : 'Realize o pagamento no local.'}",
                 style: const TextStyle(fontSize: 16, color: Colors.grey),
                 textAlign: TextAlign.center,
               ),

@@ -112,11 +112,19 @@ class _PrivacySettingsPageState extends State<PrivacySettingsPage> {
     }
 
     try {
+      // Forçar refresh do token para garantir JWT válido antes de invocar a função
+      final sessionResult = await Supabase.instance.client.auth.refreshSession();
+      if (sessionResult.session == null) {
+        throw Exception('Sessão expirada. Faça login novamente para excluir a conta.');
+      }
+      final freshToken = sessionResult.session!.accessToken;
+
       // Timeout de 60s para evitar loading infinito caso a função trave
       final response = await Supabase.instance.client.functions
           .invoke(
             'deleteUserAccount',
             body: {'userId': currentUser.id},
+            headers: {'Authorization': 'Bearer $freshToken'},
           )
           .timeout(
             const Duration(seconds: 60),
@@ -126,7 +134,12 @@ class _PrivacySettingsPageState extends State<PrivacySettingsPage> {
       // O Flutter SDK NÃO lança exceção em status 4xx/5xx — verificamos manualmente
       final responseData = response.data;
       if (responseData is Map && responseData.containsKey('error')) {
-        throw Exception(responseData['error']);
+        // Tratar erro 401 com mensagem amigável
+        final errMsg = responseData['error'] as String? ?? '';
+        if (errMsg.contains('Sessão') || errMsg.contains('inválida') || errMsg.contains('expirada')) {
+          throw Exception('Sua sessão expirou. Faça login novamente e tente excluir a conta.');
+        }
+        throw Exception(errMsg);
       }
 
       await Supabase.instance.client.auth.signOut();

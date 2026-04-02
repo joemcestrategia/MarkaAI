@@ -76,6 +76,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   double _vipAvgInterval = 30.0; // Padrão: 30 dias de intervalo médio
   double _sumidoMaxDays = 45.0; // Padrão: 45 dias sem agendar
 
+  // Mercado Pago connection status
+  bool _isMpConnected = false;
+
   // Google Business
   Map<String, dynamic>? _googleBusiness;
 
@@ -110,12 +113,19 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
 
         final doc = await sb.Supabase.instance.client
             .from('shops')
-            .select('config, google_business')
+            .select('config, google_business, mercadopago, mp_access_token')
             .eq('id', shopId!)
             .maybeSingle();
         if (doc != null) {
           final data = doc;
           _googleBusiness = data['google_business'] as Map<String, dynamic>?;
+          final mpData = data['mercadopago'] as Map<String, dynamic>? ?? {};
+          final mpToken = mpData['access_token']?.toString() ??
+              data['mp_access_token']?.toString() ?? '';
+          final connectedFlag = mpData['connected'];
+          _isMpConnected = connectedFlag is bool
+              ? connectedFlag
+              : mpToken.length > 20;
           if (data.containsKey('config')) {
             final config = data['config'] as Map<String, dynamic>;
             if (mounted) {
@@ -211,11 +221,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           ? _cancelValue.round()
           : (_cancelValue.round() * 24);
 
-      // Payment validation for Free Plan
+      // Payment validation: Free Plan or MP not connected
       final canUseOnline = _currentFeatures.mercadoPagoIntegration;
 
-      if (!canUseOnline) {
-        // Free plan: force cash only
+      if (!canUseOnline || !_isMpConnected) {
+        // Free plan or MP not connected: force online methods off
         _cartaoOnline = false;
         _debitoPresencial = false;
         _requireDeposit = false;
@@ -891,6 +901,48 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     UpgradeModal.show(context, featureName: featureName, requiredPlan: requiredPlan.name.toUpperCase());
   }
 
+  void _showConnectMpDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.account_balance_wallet, color: Color(0xFF009EE3)),
+            SizedBox(width: 8),
+            Text("Mercado Pago necessário"),
+          ],
+        ),
+        content: const Text(
+          "Para ativar pagamentos online (PIX e Cartão), você precisa conectar sua conta do Mercado Pago primeiro.\n\nAcesse Integrações → Pagamentos para conectar.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Fechar"),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => PaymentSettingsPage(onClose: () => Navigator.pop(context)),
+                ),
+              ).then((_) => _loadSettings());
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF009EE3),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text("Conectar agora"),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildHelpPanel({bool isDesktop = false}) {
     return Container(
       color: isDesktop ? Colors.white : Colors.transparent,
@@ -1103,50 +1155,62 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
 
                       // Cartão Online
                       Opacity(
-                        opacity: allowCreditCard ? 1.0 : 0.6,
+                        opacity: (allowCreditCard && _isMpConnected) ? 1.0 : 0.6,
                         child: _buildSwitchTile(
                           "Cartão de Crédito/Débito (Online)",
-                          "Necessário plugar Mercado Pago na aba Integrações",
-                          allowCreditCard ? _cartaoOnline : false,
-                          allowCreditCard
-                              ? (v) {
-                                  int active = (v ? 1 : 0) +
-                                      (_debitoPresencial ? 1 : 0) +
-                                      (_pagarPessoalmente ? 1 : 0);
-                                  if (!v && active == 0) {
-                                    _showSnack(
-                                        "Você precisa ter ao menos um método de pagamento ativo.",
-                                        isError: true);
-                                    return;
-                                  }
-                                  setState(() => _cartaoOnline = v);
-                                }
-                              : (v) => _showUpgradeDialog('Pagamento Via Cartão de Crédito', PlanKey.plus),
+                          !allowCreditCard
+                              ? "Disponível nos planos pagos"
+                              : !_isMpConnected
+                                  ? "Conecte o Mercado Pago em Integrações para ativar"
+                                  : "Necessário Mercado Pago conectado",
+                          (allowCreditCard && _isMpConnected) ? _cartaoOnline : false,
+                          !allowCreditCard
+                              ? (v) => _showUpgradeDialog('Pagamento Via Cartão de Crédito', PlanKey.plus)
+                              : !_isMpConnected
+                                  ? (v) => _showConnectMpDialog()
+                                  : (v) {
+                                      int active = (v ? 1 : 0) +
+                                          (_debitoPresencial ? 1 : 0) +
+                                          (_pagarPessoalmente ? 1 : 0);
+                                      if (!v && active == 0) {
+                                        _showSnack(
+                                            "Você precisa ter ao menos um método de pagamento ativo.",
+                                            isError: true);
+                                        return;
+                                      }
+                                      setState(() => _cartaoOnline = v);
+                                    },
                           trailing: !allowCreditCard ? _buildPremiumBadge() : null,
                         ),
                       ),
 
                       // Pix Online
                       Opacity(
-                        opacity: allowPix ? 1.0 : 0.6,
+                        opacity: (allowPix && _isMpConnected) ? 1.0 : 0.6,
                         child: _buildSwitchTile(
                           "Pix",
-                          "Pagamento instantâneo via QR Code (requer Mercado Pago)",
-                          allowPix ? _debitoPresencial : false,
-                          allowPix
-                              ? (v) {
-                                  int active = (_cartaoOnline ? 1 : 0) +
-                                      (v ? 1 : 0) +
-                                      (_pagarPessoalmente ? 1 : 0);
-                                  if (!v && active == 0) {
-                                    _showSnack(
-                                        "Você precisa ter ao menos um método de pagamento ativo.",
-                                        isError: true);
-                                    return;
-                                  }
-                                  setState(() => _debitoPresencial = v);
-                                }
-                              : (v) => _showUpgradeDialog('Pagamento Via Pix Automático', PlanKey.starter),
+                          !allowPix
+                              ? "Disponível nos planos pagos"
+                              : !_isMpConnected
+                                  ? "Conecte o Mercado Pago em Integrações para ativar"
+                                  : "Pagamento instantâneo via QR Code",
+                          (allowPix && _isMpConnected) ? _debitoPresencial : false,
+                          !allowPix
+                              ? (v) => _showUpgradeDialog('Pagamento Via Pix Automático', PlanKey.starter)
+                              : !_isMpConnected
+                                  ? (v) => _showConnectMpDialog()
+                                  : (v) {
+                                      int active = (_cartaoOnline ? 1 : 0) +
+                                          (v ? 1 : 0) +
+                                          (_pagarPessoalmente ? 1 : 0);
+                                      if (!v && active == 0) {
+                                        _showSnack(
+                                            "Você precisa ter ao menos um método de pagamento ativo.",
+                                            isError: true);
+                                        return;
+                                      }
+                                      setState(() => _debitoPresencial = v);
+                                    },
                           trailing: !allowPix ? _buildPremiumBadge() : null,
                         ),
                       ),

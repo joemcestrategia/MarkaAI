@@ -1,6 +1,6 @@
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
 import { corsHeaders } from '../_shared/cors.ts'
-import { createSupabaseClient } from '../_shared/supabase.ts'
+import { createSupabaseAdminClient } from '../_shared/supabase.ts'
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -8,10 +8,17 @@ serve(async (req) => {
   }
 
   try {
-    const supabase = createSupabaseClient(req)
+    // Extract and validate JWT via admin.auth.getUser(token) — most reliable pattern for Edge Functions
+    const authHeader = req.headers.get('Authorization')
+    const token = authHeader?.replace('Bearer ', '')
+    if (!token) {
+      return new Response(JSON.stringify({ error: 'Token de autenticação ausente.' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    }
 
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    const supabaseAdmin = createSupabaseAdminClient()
+    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token)
     if (authError || !user) {
+      console.error('Auth error:', authError?.message)
       return new Response(JSON.stringify({ error: 'Autenticação necessária.' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 
@@ -24,14 +31,17 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: 'Parâmetros obrigatórios ausentes.' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 
-    const parsedAmount = parseFloat(amount)
-    if (!parsedAmount || isNaN(parsedAmount) || parsedAmount <= 0) {
+    const rawAmount = parseFloat(amount)
+    if (!rawAmount || isNaN(rawAmount) || rawAmount <= 0) {
       return new Response(JSON.stringify({ error: 'Valor inválido.' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
+    // MP rejects transaction_amount with more than 2 decimal places
+    const parsedAmount = Math.round(rawAmount * 100) / 100
 
-    // Fetch the access_token securely from Supabase
-    const { data: shopDoc, error: shopError } = await supabase.from('shops').select('mercadopago').eq('id', shop_id).single()
+    // Admin client already created above — reuse for shop data query (bypasses RLS)
+    const { data: shopDoc, error: shopError } = await supabaseAdmin.from('shops').select('mercadopago').eq('id', shop_id).single()
     if (shopError || !shopDoc) {
+      console.error('Shop query error:', shopError?.message)
       return new Response(JSON.stringify({ error: 'Loja não encontrada.' }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 
@@ -42,7 +52,7 @@ serve(async (req) => {
 
     const idempotencyKey = `card-${user.id}-${Date.now()}`
     const paymentData: any = {
-      transaction_amount: parsedAmount,
+      transaction_amount: parsedAmount, // already rounded to 2dp
       token: card_token,
       description: description || 'Pagamento App',
       installments: parseInt(installments) || 1,

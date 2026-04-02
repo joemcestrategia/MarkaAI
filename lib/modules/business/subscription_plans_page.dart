@@ -77,7 +77,7 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('🎉 Trial ativado! Aproveite 3 meses grátis.'),
+          content: Text('🎉 Trial ativado! Aproveite 1 mês grátis.'),
           backgroundColor: Color(0xFF0891B2),
         ),
       );
@@ -211,7 +211,7 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
                           fontSize: 18),
                     ),
                     Text(
-                      'Ganhe 3 meses de Start, Plus ou Pro inteiramente grátis.',
+                      'Ganhe 1 mês de Plus inteiramente grátis.',
                       style: TextStyle(color: Colors.white70, fontSize: 13),
                     ),
                   ],
@@ -493,13 +493,13 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
                               fontSize: 14)),
                     ),
                   )
-                else if (_canUseTrial) ...[
-                  // ── Trial disponível: trial é a opção principal ──
+                else if (_canUseTrial && plan == SubscriptionPlan.plus) ...[
+                  // ── Trial disponível apenas para o Plus ──
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
                       icon: const Icon(Icons.card_giftcard, size: 18),
-                      label: const Text('TESTAR 3 MESES GRÁTIS',
+                      label: const Text('TESTAR 1 MÊS GRÁTIS',
                           style: TextStyle(
                               fontWeight: FontWeight.bold, fontSize: 14)),
                       onPressed: () async {
@@ -540,7 +540,7 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
                     ),
                   ),
                 ] else ...[
-                  // ── Trial já usado: só compra ────────────────────
+                  // ── Trial já usado ou plano não elegível: só compra ────────────────────
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(

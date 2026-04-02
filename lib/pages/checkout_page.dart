@@ -17,6 +17,7 @@ import '../core/widgets/loading_page.dart';
 import '../modules/clients/my_appointments_page.dart';
 import '../modules/clients/client_home_page.dart';
 import '../core/widgets/intentional_friction_modal.dart';
+import '../core/widgets/coupon_invalid_modal.dart';
 
 class CheckoutPage extends StatefulWidget {
   final String shopId;
@@ -81,11 +82,14 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
   bool aceitaCartao = false;
   bool aceitaDinheiro = true;
   String? shopAccessToken;
+  String? _shopPublicKey;
 
   // Novos campos para VIP e Aniversário
   bool _isBirthdayMonth = false;
   bool _isProblematic = false;
   String? _userPhone;
+  String? _userEmail;
+  String? _userPhotoUrl;
   double _birthdayDiscountPercent = 0.0;
   bool _birthdayDiscountEnabled = false;
   bool _isVip = false;
@@ -191,10 +195,11 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
       debugPrint('💳 [Checkout] Taxa de cartão carregada: $cardTax%');
 
       // Pre-calcula as flags da loja antes de disparar o VIP check
+      // isValidToken: MP must be connected for online methods to be available
       final bool baseAceitaPix =
-          planAllowsOnline && (config['pagamento_pix'] ?? false);
+          planAllowsOnline && isValidToken && (config['pagamento_pix'] ?? false);
       final bool baseAceitaCartao =
-          planAllowsOnline && (config['pagamento_cartao'] ?? false);
+          planAllowsOnline && isValidToken && (config['pagamento_cartao'] ?? false);
       bool baseAceitaDinheiro = config['pagamento_dinheiro'] ?? true;
       final bool baseExigeSinal = config['exigir_sinal'] ?? false;
       final bool trustedOnly = config['trusted_only_pay_in_person'] ?? false;
@@ -236,7 +241,13 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
         if (userDoc != null) {
           _userPhone = userDoc['phone']?.toString();
           if (_userPhone != null && _userPhone!.trim().isEmpty) _userPhone = null;
+          _userPhotoUrl = userDoc['photo_url']?.toString();
+          if (_userPhotoUrl != null && _userPhotoUrl!.trim().isEmpty) _userPhotoUrl = null;
         }
+        // Foto do Google vinda dos metadados de auth (prioridade)
+        final authPhoto = user.userMetadata?['avatar_url']?.toString() ?? user.userMetadata?['picture']?.toString();
+        if (authPhoto != null && authPhoto.isNotEmpty) _userPhotoUrl = authPhoto;
+        _userEmail = user.email;
       }
 
       if (mounted) {
@@ -246,6 +257,7 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
 
         setState(() {
           shopAccessToken = token;
+          _shopPublicKey = mpData['public_key']?.toString() ?? data['mp_public_key']?.toString();
           aceitaPix = baseAceitaPix;
           aceitaCartao = baseAceitaCartao;
           aceitaDinheiro = baseAceitaDinheiro;
@@ -430,11 +442,10 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
       }
     } else {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(result.message ?? "Cupom inválido."),
-            backgroundColor: Colors.red,
-          ),
+        showCouponInvalidModal(
+          context: context,
+          message: result.message,
+          couponCode: code.isNotEmpty ? code : null,
         );
       }
     }
@@ -562,12 +573,14 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
                     _storedCardData = result;
                     _currentStep = 2;
                   });
+                  _showConfirmationModal();
                 }
               } else if (sheetResult is Map<String, dynamic>) {
                 setState(() {
                   _storedCardData = sheetResult;
                   _currentStep = 2;
                 });
+                _showConfirmationModal();
               }
             } else {
               final result = await _pushCheckoutTransparente(valorParaCobrar);
@@ -576,6 +589,7 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
                   _storedCardData = result;
                   _currentStep = 2;
                 });
+                _showConfirmationModal();
               }
             }
           } catch (e) {
@@ -681,8 +695,14 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
                             detalhePagamento = "Pagamento instantâneo";
                           } else {
                             tituloPagamento = "Cartão de Crédito";
-                            detalhePagamento =
-                                "Processamento seguro via Mercado Pago";
+                            if (_storedCardData != null) {
+                              final inst = (_storedCardData!['installments'] as num?)?.toInt() ?? 1;
+                              final v = ((_storedCardData!['valor'] ?? valorFinalComJuros) as num).toDouble();
+                              final perInst = v / inst;
+                              detalhePagamento = "${inst}x de R\$ ${perInst.toStringAsFixed(2).replaceAll('.', ',')}";
+                            } else {
+                              detalhePagamento = "Processamento seguro via Mercado Pago";
+                            }
                           }
                         }
                         return _summaryItem(Icons.payment, "Forma de Pagamento",
@@ -1026,6 +1046,95 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
     }
   }
 
+  bool _isCvvError(String? msg, String? statusDetail) {
+    final m = msg?.toLowerCase() ?? '';
+    final s = statusDetail?.toLowerCase() ?? '';
+    return s.contains('security_code') ||
+        s == 'cc_rejected_bad_filled_security_code' ||
+        m.contains('security_code') ||
+        m.contains('cvv') ||
+        m.contains('cvc');
+  }
+
+  void _showCvvRetryDialog({
+    required String errorMsg,
+    required bool isSavedCard,
+    VoidCallback? onEditCard,
+    Future<void> Function(String cvv)? onRetryCvv,
+  }) {
+    final cvvController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.credit_card_off_outlined, color: Colors.orange),
+            SizedBox(width: 8),
+            Expanded(child: Text('Código de segurança inválido', style: TextStyle(fontSize: 16))),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              isSavedCard
+                  ? 'O código de segurança (CVV/CVC) do cartão foi recusado. Alguns cartões têm código dinâmico que muda periodicamente. Digite o código atual:'
+                  : 'O código de segurança (CVV/CVC) foi recusado. Volte e verifique os dados do cartão.',
+              style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+            ),
+            if (isSavedCard) ...[  
+              const SizedBox(height: 16),
+              TextField(
+                controller: cvvController,
+                keyboardType: TextInputType.number,
+                maxLength: 4,
+                obscureText: true,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  labelText: 'Novo CVV / CVC',
+                  counterText: '',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.lock_outline),
+                ),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar'),
+          ),
+          if (isSavedCard)
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primaryPurple,
+                  foregroundColor: Colors.white),
+              onPressed: () async {
+                if (cvvController.text.length < 3) return;
+                Navigator.pop(ctx);
+                await onRetryCvv?.call(cvvController.text);
+              },
+              child: const Text('Tentar com este CVV'),
+            )
+          else
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primaryPurple,
+                  foregroundColor: Colors.white),
+              onPressed: () {
+                Navigator.pop(ctx);
+                onEditCard?.call();
+              },
+              child: const Text('Editar cartão'),
+            ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _processarPagamentoComCartaoArmazenado({
     required double valor,
     required String cardToken,
@@ -1037,6 +1146,7 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
   }) async {
     setState(() => _isLoading = true);
     try {
+      try { await Supabase.instance.client.auth.refreshSession(); } catch (_) {}
       final result = await MercadoPagoService.criarPagamentoCartao(
         shopId: widget.shopId,
         cardToken: cardToken,
@@ -1050,6 +1160,22 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
       );
 
       if (result['success'] == true && result['paymentId'] != null) {
+        // Salvar cartão no vault do MP se o cliente solicitou
+        if (_storedCardData?['saveCard'] == true) {
+          try {
+            final user = Supabase.instance.client.auth.currentUser;
+            await MercadoPagoService.salvarCartao(
+              shopId: widget.shopId,
+              cardToken: cardToken,
+              userEmail: user?.email ?? email,
+              paymentMethodId: paymentMethodId,
+              lastFour: _storedCardData?['lastFour']?.toString(),
+            );
+            debugPrint('✅ Cartão salvo no vault com sucesso.');
+          } catch (e) {
+            debugPrint('⚠️ Cartão não foi salvo (não crítico): $e');
+          }
+        }
         await _saveBooking(
           metodo: "Cartão de Crédito",
           status: "confirmado",
@@ -1057,7 +1183,17 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
           paymentId: result['paymentId'].toString(),
         );
       } else {
-        _showError(result['error']?.toString() ?? 'Pagamento recusado');
+        final errMsg = result['error']?.toString() ?? 'Pagamento recusado';
+        final statusDetail = result['status_detail']?.toString();
+        if (_isCvvError(errMsg, statusDetail)) {
+          _showCvvRetryDialog(
+            errorMsg: errMsg,
+            isSavedCard: false,
+            onEditCard: () => setState(() { _storedCardData = null; _currentStep = 1; }),
+          );
+        } else {
+          _showError(errMsg);
+        }
       }
     } catch (e) {
       _showError('Erro ao processar pagamento: $e');
@@ -1077,38 +1213,75 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
   }) async {
     setState(() => _isLoading = true);
     try {
-      if (shopAccessToken == null) {
+      if (_shopPublicKey == null) {
         _showError('Esta loja não configurou os meios de pagamento online ainda.');
         return;
       }
 
-      final result = await MercadoPagoService.cobrarCartaoSalvo(
-        accessToken: shopAccessToken!,
-        customerId: customerId,
+      // Gera novo token usando cardId + CVV (sem precisar do número completo)
+      final newToken = await MercadoPagoService.getTokenFromSavedCard(
+        publicKey: _shopPublicKey!,
         cardId: cardId,
-        amount: valor,
-        installments: installments,
-        emailCliente: email,
-        description: "Reserva: ${widget.serviceDoc['name'] ?? 'Serviço'}",
         securityCode: securityCode,
       );
 
-      final status = result['status']?.toString();
-      if (status == 'approved') {
+      final result = await MercadoPagoService.criarPagamentoCartao(
+        shopId: widget.shopId,
+        cardToken: newToken,
+        amount: valor,
+        installments: installments,
+        email: email,
+        description: "Reserva: ${widget.serviceDoc['name'] ?? 'Serviço'}",
+        paymentMethodId: paymentMethodId,
+      );
+
+      if (result['success'] == true && result['paymentId'] != null) {
         await _saveBooking(
           metodo: "Cartão Salvo",
           status: "confirmado",
           valorPago: valor,
-          paymentId: result['id']?.toString() ?? '',
+          paymentId: result['paymentId'].toString(),
         );
-      } else if (status == 'pending' || status == 'in_process') {
-        _showError(
-            'Seu pagamento está em análise. Tente novamente mais tarde.');
       } else {
-        _showError(result['status_detail']?.toString() ?? 'Pagamento recusado.');
+        final errMsg = result['error']?.toString() ?? 'Pagamento recusado.';
+        final statusDetail = result['status_detail']?.toString();
+        if (_isCvvError(errMsg, statusDetail)) {
+          _showCvvRetryDialog(
+            errorMsg: errMsg,
+            isSavedCard: true,
+            onRetryCvv: (newCvv) => _processarPagamentoCartaoSalvo(
+              valor: valor,
+              cardId: cardId,
+              customerId: customerId,
+              securityCode: newCvv,
+              installments: installments,
+              email: email,
+              paymentMethodId: paymentMethodId,
+            ),
+          );
+        } else {
+          _showError(errMsg);
+        }
       }
     } catch (e) {
-      _showError('Erro ao processar pagamento com cartão salvo: $e');
+      final errStr = e.toString();
+      if (_isCvvError(errStr, null)) {
+        _showCvvRetryDialog(
+          errorMsg: errStr,
+          isSavedCard: true,
+          onRetryCvv: (newCvv) => _processarPagamentoCartaoSalvo(
+            valor: valor,
+            cardId: cardId,
+            customerId: customerId,
+            securityCode: newCvv,
+            installments: installments,
+            email: email,
+            paymentMethodId: paymentMethodId,
+          ),
+        );
+      } else {
+        _showError('Erro ao processar cartão salvo: $e');
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -1799,20 +1972,19 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
     // We only show the "magic" if the gift was accepted
     bool isActuallyDiscounted = (_birthdayGiftAccepted || _couponApplied) && v < baseSemAniversario;
 
-    // Calcule o preço "cheio" para o riscado (Old Price)
-    // Se for cartão, o "preço antigo" deve incluir a taxa se houver desconto, 
-    // ou ser o preço base (sem taxa) se não houver desconto (para destacar o acréscimo)
     double precoAntigo = baseSemAniversario;
     bool mostrarRiscado = isActuallyDiscounted;
 
+    // Se for cartão, o preço base sobe. Queremos mostrar:
+    // R$ 100,00 (riscado) -> R$ 105,00 (se for apenas taxa)
+    // R$ 100,00 (riscado) -> R$ 90,00 (se houver desconto maior que a taxa)
     if (_selectedMethod == 'card' && (_selectedPaymentType == 'total' || _selectedPaymentType == 'sinal')) {
-      if (isActuallyDiscounted) {
-        // Mostra (Original + Taxa) vs (Desconto + Taxa)
-        precoAntigo = baseSemAniversario * (1 + (_cardTaxPercent / 100.0));
-      } else {
-        // Mostra (Original sem Taxa) vs (Original + Taxa)
+      mostrarRiscado = true; // Sempre mostra o antigo no cartão para evidenciar a variação
+      if (!isActuallyDiscounted) {
         precoAntigo = baseSemAniversario;
-        mostrarRiscado = true; // Sempre mostra o antigo no cartão para evidenciar a taxa
+      } else {
+        // Se houver desconto + taxa, o antigo é o base original sem nada
+        precoAntigo = baseSemAniversario;
       }
     }
 
@@ -1923,6 +2095,9 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
               fullscreenDialog: true));
     }
     try {
+      try {
+        await Supabase.instance.client.auth.refreshSession();
+      } catch (_) {}
       final user = Supabase.instance.client.auth.currentUser!;
       final result = await MercadoPagoService.gerarPix(
         shopId: widget.shopId,
@@ -1978,8 +2153,8 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
         if (status == 'approved') {
           timer.cancel();
           if (mounted) {
-            Navigator.pop(context);
-            Navigator.pop(context);
+            // Fecha a PixPaymentPage (modal de QR Code) se ainda estiver aberta
+            if (Navigator.canPop(context)) Navigator.pop(context);
             _saveBooking(
                 metodo: "Pix",
                 status: "confirmado",
@@ -2024,9 +2199,8 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
           onPaid: () {
             // Cancelar o polling automático se o manual confirmou
             _timerPolling?.cancel();
-            // Ao confirmar que pagou, fecha a tela e salva o agendamento
+            // Fecha a PixPaymentPage e salva o agendamento
             Navigator.pop(c);
-            Navigator.pop(context);
             _saveBooking(
                 metodo: "Pix",
                 status: "confirmado",
@@ -2186,12 +2360,16 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
         'shop_id': widget.shopId,
         'client_id': user.id,
         'client_name': user.userMetadata?['full_name'] ?? user.email ?? 'Cliente',
+        'client_email': _userEmail ?? user.email,
+        'client_phone': _userPhone,
+        'client_photo': _userPhotoUrl,
         'service_name': widget.serviceNameOverride ?? widget.serviceDoc['name'],
         'professional_id': widget.professionalDoc['id'],
         'professional_name': profData['name'] ?? 'Profissional',
         'service_id': widget.serviceDoc['id'],
         'total_price': valorTotal,
-        'valor_com_desconto': totalWithTax,
+        'valor_com_desconto': totalDiscounted, // Valor após CUPOM/NIVER (usado para mostrar o risquinho)
+        'total_payable': totalWithTax, // Valor final que o cliente deve pagar (incluindo taxas)
         'paid_amount': valorPago,
         'remaining_amount': (totalWithTax - valorPago).toDouble(),
         'duration_min': duration,
@@ -2199,7 +2377,9 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
         'end_at': endDate.toIso8601String(),
         'status': status,
         'payment_method': metodo,
+        'payment_status': valorPago > 0.01 ? 'pago' : 'pendente',
         'payment_id': paymentId,
+        'discount_amount': valorTotal - totalDiscounted,
         'birthday_discount_applied': _birthdayGiftAccepted,
         'birthday_discount_percent': _birthdayGiftAccepted ? _birthdayDiscountPercent : 0,
         'coupon_applied': _couponApplied,
@@ -2299,7 +2479,7 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
       } catch (_) {}
       _showError("Erro salvar: $e");
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
     return null;
   }

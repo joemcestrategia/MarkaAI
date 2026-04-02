@@ -190,22 +190,40 @@ class MercadoPagoService {
     try {
       debugPrint("⚡ [Service] Chamando Supabase Function: criar-pagamento");
 
-      final response = await _supabase.functions.invoke('criar-pagamento', body: {
-        'shop_id': shopId,
-        'card_token': cardToken,
-        'amount': amount,
-        'installments': installments,
-        'email': email,
-        'payer_email': email,
-        'description': description,
-        'cpf': cpf,
-        'payer_cpf': cpf,
-        'payment_method_id': paymentMethodId,
-        'issuer_id': issuerId,
-      });
+      // Refresh session e obtém token fresco para enviar explicitamente no header
+      try {
+        await _supabase.auth.refreshSession();
+      } catch (e) {
+        debugPrint("⚠️ Falha ao renovar sessão: $e");
+      }
+      final session = _supabase.auth.currentSession;
+      if (session == null) {
+        throw Exception('Sessão expirada. Faça login novamente para continuar.');
+      }
+
+      final response = await _supabase.functions.invoke(
+        'criar-pagamento',
+        headers: {'Authorization': 'Bearer ${session.accessToken}'},
+        body: {
+          'shop_id': shopId,
+          'card_token': cardToken,
+          'amount': amount,
+          'installments': installments,
+          'email': email,
+          'payer_email': email,
+          'description': description,
+          'cpf': cpf,
+          'payer_cpf': cpf,
+          'payment_method_id': paymentMethodId,
+          'issuer_id': issuerId,
+        },
+      );
+
+      debugPrint("📡 criar-pagamento status: ${response.status} | data: ${response.data}");
 
       if (response.status != 200) {
-        throw Exception(response.data['message'] ?? 'Erro ao processar pagamento com cartão.');
+        final errorMsg = response.data?['error'] ?? response.data?['message'] ?? 'Erro ao processar pagamento com cartão.';
+        throw Exception(errorMsg.toString());
       }
 
       return Map<String, dynamic>.from(response.data);
@@ -312,6 +330,103 @@ class MercadoPagoService {
       return null;
     } catch (e) {
       return null;
+    }
+  }
+  // ===========================================================================
+  // 9. SALVAR CARTÃO NO VAULT DO MERCADO PAGO (VIA EDGE FUNCTION)
+  // ===========================================================================
+  static Future<Map<String, dynamic>> salvarCartao({
+    required String shopId,
+    required String cardToken,
+    required String userEmail,
+    String? paymentMethodId,
+    String? lastFour,
+  }) async {
+    try {
+      debugPrint("⚡ [Service] Chamando Supabase Function: save-card");
+      try {
+        await _supabase.auth.refreshSession();
+      } catch (_) {}
+      final session = _supabase.auth.currentSession;
+      if (session == null) throw Exception('Sessão expirada.');
+
+      final response = await _supabase.functions.invoke(
+        'save-card',
+        headers: {'Authorization': 'Bearer ${session.accessToken}'},
+        body: {
+          'shop_id': shopId,
+          'card_token': cardToken,
+          'user_email': userEmail,
+          'payment_method_id': paymentMethodId,
+          'last_four': lastFour,
+        },
+      );
+
+      if (response.status != 200) {
+        final errMsg = response.data?['error'] ?? 'Erro ao salvar cartão.';
+        throw Exception(errMsg.toString());
+      }
+      return Map<String, dynamic>.from(response.data);
+    } on FunctionException catch (e) {
+      debugPrint("❌ Erro save-card Function: ${e.status} - ${e.details}");
+      throw Exception(e.details?.toString() ?? 'Erro ao salvar cartão no servidor.');
+    } catch (e) {
+      debugPrint("❌ Erro salvarCartao: $e");
+      rethrow;
+    }
+  }
+
+  // ===========================================================================
+  // 10. GERAR TOKEN DE CARTÃO SALVO (DIRETO API MP — só precisa do CVV)
+  // ===========================================================================
+  static Future<String> getTokenFromSavedCard({
+    required String publicKey,
+    required String cardId,
+    required String securityCode,
+  }) async {
+    try {
+      final url = 'https://api.mercadopago.com/v1/card_tokens?public_key=$publicKey';
+      final response = await http.post(
+        Uri.parse(url),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'card_id': cardId, 'security_code': securityCode}),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final data = jsonDecode(response.body);
+        final tokenId = data['id']?.toString() ?? '';
+        if (tokenId.isEmpty) throw Exception('Token inválido retornado pela API.');
+        return tokenId;
+      } else {
+        final data = jsonDecode(response.body);
+        throw Exception(data['message'] ?? 'Erro ao gerar token do cartão salvo.');
+      }
+    } catch (e) {
+      debugPrint("❌ Erro getTokenFromSavedCard: $e");
+      rethrow;
+    }
+  }
+
+  // ===========================================================================
+  // 11. REEMBOLSO: SOLICITAR ESTORNO (VIA EDGE FUNCTION)
+  // ===========================================================================
+  static Future<bool> reembolsarPagamento({
+    required String shopId,
+    required String paymentId,
+  }) async {
+    try {
+      final response = await Supabase.instance.client.functions.invoke(
+        'refund-payment',
+        body: {
+          'shop_id': shopId,
+          'payment_id': paymentId,
+        },
+      );
+
+      return response.status == 200 || response.status == 201;
+    } catch (e) {
+      debugPrint("❌ Erro reembolsarPagamento: $e");
+      return false;
     }
   }
 }
