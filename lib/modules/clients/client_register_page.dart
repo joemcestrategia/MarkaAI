@@ -60,7 +60,8 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
       _verificarTelefoneExistente();
       _loadExistingUserData();
       _checkBirthdayLock();
-    } else {
+    } else if (!widget.isBusinessAdding) {
+      // Não carrega dados do usuário logado quando a loja está adicionando um cliente
       _checkCurrentSession();
     }
   }

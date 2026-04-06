@@ -69,7 +69,7 @@ class ServiceDetailsPage extends StatelessWidget {
                       // GALERIA (Agora rola junto para não ocupar espaço fixo em tela pequena)
                       if (fotos.isNotEmpty)
                         SizedBox(
-                          height: 350,
+                          height: 480, // Aumentado de 350 para 480 para melhor visualização
                           width: double.infinity,
                           child: PageView.builder(
                             itemCount: fotos.length,

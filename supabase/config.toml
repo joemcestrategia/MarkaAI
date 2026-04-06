@@ -18,3 +18,9 @@ verify_jwt = false
 
 [functions.appointmentTriggers]
 verify_jwt = false
+
+[functions.appointmentReminders]
+verify_jwt = false
+
+[functions.sendPushNotification]
+verify_jwt = false

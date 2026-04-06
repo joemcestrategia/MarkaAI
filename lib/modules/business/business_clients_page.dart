@@ -32,7 +32,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
   // 0 = Clientes, 1 = Visitantes (Leads)
   int _selectedTabIndex = 0;
 
-  // Filtro de Tags: "Todos", "VIP", "Sumido", "Problematico", "Favoritou", "Visitou"
+  // Filtro de Tags: "Todos", "VIP", "Sumido", "Problematico", "Novo"
   String _selectedTagFilter = "Todos";
 
   // --- CONTROLE DA COLUNA 3 (PC) ---
@@ -42,6 +42,9 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
 
   // --- CACHE LOCAL ---
   Map<String, List<Map<String, dynamic>>>? _cachedData;
+  
+  // --- Contador de visitantes para o badge ---
+  int _visitorsCount = 0;
 
   PlanFeatures _currentFeatures = planFeaturesConfig[PlanKey.free]!;
 
@@ -160,14 +163,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => Scaffold(
-            appBar: AppBar(
-                title: const Text("Novo Cliente"),
-                backgroundColor: AppColors.primaryPurple,
-                foregroundColor: Colors.white,
-                elevation: 0),
-            body: const ClientRegisterPage(isBusinessAdding: true),
-          ),
+          builder: (context) => const ClientRegisterPage(isBusinessAdding: true),
         ),
       );
     } else {
@@ -235,31 +231,11 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
 
     final supabase = sb.Supabase.instance.client;
 
-    final appointmentsAndUsersStream = supabase
+    final appointmentsStream = supabase
         .from('appointments')
         .stream(primaryKey: ['id'])
         .eq('shop_id', shopId!)
-        .order('scheduled_at', ascending: false)
-        .asyncMap((appointments) async {
-      final clientIds = appointments
-          .map((a) => (a['client_id'] ?? a['clientId'])?.toString())
-          .where((id) => id != null && id.isNotEmpty)
-          .toSet()
-          .toList();
-
-      List<dynamic> users = [];
-      if (clientIds.isNotEmpty) {
-        users = await supabase
-            .from('users')
-            .select('id, name, phone, email, photo_url, created_at')
-            .inFilter('id', clientIds);
-      }
-
-      return {
-        'appointments': appointments,
-        'users': users,
-      };
-    });
+        .order('scheduled_at', ascending: false);
 
     final shopStream = supabase
         .from('shops')
@@ -285,24 +261,68 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
         .eq('shop_id', shopId!);
 
     return Rx.combineLatest6(
-      appointmentsAndUsersStream,
+      appointmentsStream,
       shopStream,
       featuresStream,
       favoritesStream,
       shopClientsStream,
       shopViewsStream,
-      (appData, shopList, features, favorites, shopClients, shopViews) {
-        return {
-          'appointments': appData['appointments'],
-          'users': appData['users'],
-          'shop': shopList.isNotEmpty ? shopList.first : {},
-          'features': features,
-          'favorites': favorites,
-          'shopClients': shopClients,
-          'shopViews': shopViews,
-        };
+      (appointments, shopList, features, favorites, shopClients, shopViews) => {
+        'appointments': appointments,
+        'shop': shopList.isNotEmpty ? shopList.first : {},
+        'features': features,
+        'favorites': favorites,
+        'shopClients': shopClients,
+        'shopViews': shopViews,
       },
-    );
+    ).asyncMap((data) async {
+      final appointments = data['appointments'] as List;
+      final favorites = data['favorites'] as List;
+      final shopViews = data['shopViews'] as List;
+
+      // Busca todos os usuários: de agendamentos, favoritos e visualizações
+      final allUserIds = <String>{};
+      for (final a in appointments) {
+        final id = (a['client_id'] ?? a['clientId'])?.toString();
+        if (id != null && id.isNotEmpty) allUserIds.add(id);
+      }
+      for (final f in favorites) {
+        final id = (f['user_id'] ?? f['userId'])?.toString();
+        if (id != null && id.isNotEmpty) allUserIds.add(id);
+      }
+      for (final v in shopViews) {
+        final id = (v['user_id'] ?? v['userId'])?.toString();
+        if (id != null && id.isNotEmpty) allUserIds.add(id);
+      }
+
+      List<dynamic> users = [];
+      if (allUserIds.isNotEmpty) {
+        try {
+          // Use SECURITY DEFINER RPC to bypass RLS on public.users
+          // (direct SELECT on public.users may be blocked for cross-user lookups)
+          final rpcResult = await supabase.rpc(
+            'get_visitor_profiles',
+            params: {'user_ids': allUserIds.toList()},
+          );
+          users = rpcResult as List<dynamic>? ?? [];
+        } catch (_) {
+          // Fallback to direct select if RPC not yet deployed
+          try {
+            users = await supabase
+                .from('users')
+                .select('id, name, phone, email, photo_url, created_at, birth_date, city, state, street, neighborhood, number, zip_code')
+                .inFilter('id', allUserIds.toList());
+          } catch (_) {
+            users = await supabase
+                .from('users')
+                .select('id, name, phone, email, photo_url, created_at, birth_date')
+                .inFilter('id', allUserIds.toList());
+          }
+        }
+      }
+
+      return {...data, 'users': users};
+    });
   }
 
   @override
@@ -443,7 +463,9 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
               children: [
                 _buildTabButton(0, "Clientes", Icons.people_outline),
                 const SizedBox(width: 15),
-                _buildTabButton(1, "Visitantes", Icons.visibility_outlined, isLocked: !_currentFeatures.automationClientSawNoBook),
+                _buildTabButton(1, "Visitantes", Icons.visibility_outlined, 
+                    isLocked: !_currentFeatures.visitorsAnalytics, 
+                    count: _visitorsCount),
               ],
             ),
           ),
@@ -463,10 +485,6 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                 _buildTagFilterChip("VIP", icon: Icons.star, color: Colors.amber, isLocked: !_currentFeatures.clientFilter),
                 const SizedBox(width: 8),
                 _buildTagFilterChip("Novo", icon: Icons.new_releases, color: Colors.green, isLocked: !_currentFeatures.clientFilter),
-                const SizedBox(width: 8),
-                _buildTagFilterChip("Favoritou", icon: Icons.favorite, color: Colors.red, isLocked: !_currentFeatures.clientFilter),
-                const SizedBox(width: 8),
-                _buildTagFilterChip("Visitou", icon: Icons.visibility, color: Colors.blue, isLocked: !_currentFeatures.clientFilter),
                 const SizedBox(width: 8),
                 _buildTagFilterChip("Sumido",
                     icon: Icons.timer_off_outlined, color: Colors.grey, isLocked: !_currentFeatures.clientFilter),
@@ -516,6 +534,18 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                         shopClientsDocs,
                         shopViewsDocs);
 
+                    // Extrair contadores
+                    final int visitorsCount = _cachedData!['visitors']!.length;
+                    
+                    // Atualizar contador apenas quando mudar (evita loop infinito de rebuild)
+                    if (_visitorsCount != visitorsCount) {
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (mounted) {
+                          setState(() => _visitorsCount = visitorsCount);
+                        }
+                      });
+                    }
+
                     List<Map<String, dynamic>> targetList;
                     if (_selectedTabIndex == 0) {
                       targetList = _cachedData!['clients']!;
@@ -547,12 +577,6 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                       }
                       if (_selectedTagFilter == "Novo") {
                         return tags.contains('novo') || classification == 'novo';
-                      }
-                      if (_selectedTagFilter == "Favoritou") {
-                        return client['isFavorite'] == true || tags.contains('favoritou');
-                      }
-                      if (_selectedTagFilter == "Visitou") {
-                        return client['isVisitor'] == true || tags.contains('visitou');
                       }
                       if (_selectedTagFilter == "Sumido") {
                         return tags.contains('sumido') || classification == 'sumido';
@@ -647,6 +671,12 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
           'primeiraVisita': dataVisita,
           'ultimaVisita': dataVisita,
           'email': user?['email'] ?? "",
+          'city': user?['city'] ?? "",
+          'state': user?['state'] ?? "",
+          'street': user?['street'] ?? "",
+          'neighborhood': user?['neighborhood'] ?? "",
+          'number': user?['number'] ?? "",
+          'zipCode': user?['zip_code'] ?? "",
           'isFavorite': favoritedIds.contains(userId),
           'isVisitor': visitorIds.containsKey(userId),
           'lastViewed': visitorIds[userId],
@@ -705,6 +735,12 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
           'primeiraVisita': visitorIds[uid] ?? now,
           'ultimaVisita': visitorIds[uid] ?? now,
           'email': user?['email'] ?? "",
+          'city': user?['city'] ?? "",
+          'state': user?['state'] ?? "",
+          'street': user?['street'] ?? "",
+          'neighborhood': user?['neighborhood'] ?? "",
+          'number': user?['number'] ?? "",
+          'zipCode': user?['zip_code'] ?? "",
           'isFavorite': favoritedIds.contains(uid),
           'isVisitor': visitorIds.containsKey(uid),
           'lastViewed': visitorIds[uid],
@@ -752,9 +788,12 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
         tags.addAll(manualTags);
       }
 
+      // Remove classificações da lista para garantir exclusividade antes de reinjetar a correta
+      final presetClasses = ['vip', 'novo', 'problematico', 'problemático', 'sumido'];
+      tags.removeWhere((t) => presetClasses.contains(t.toLowerCase()));
+
       if (classification.isNotEmpty) tags.add(classification);
-      if (c['isFavorite'] == true) tags.add('favoritou');
-      if (c['isVisitor'] == true) tags.add('visitou');
+      // Tags "favoritou" e "visitou" removidas - o coração e ícone de olho já mostram isso visualmente
 
       c['classification'] = classification;
       c['tags'] = tags.toSet().toList(); // Remove duplicatas
@@ -790,10 +829,11 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
       if (c['origem'] == 'manual') {
         if (c['telefone'] != "Não informado") mainClients.add(c);
       } else {
-        // Se tem agendamento ou favoritou, vai para a aba principal
-        if (c['agendamentosCount'] > 0 || c['isFavorite'] == true) {
+        // Clientes são apenas quem tem agendamentos
+        // Visitantes são quem só visualizou ou favoritou, mas não agendou
+        if (c['agendamentosCount'] > 0) {
           mainClients.add(c);
-        } else if (c['isVisitor'] == true) {
+        } else {
           visitorLeads.add(c);
         }
       }
@@ -844,58 +884,85 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
   }
 
 
-  Widget _buildTabButton(int index, String label, IconData icon, {bool isLocked = false}) {
+  Widget _buildTabButton(int index, String label, IconData icon, {bool isLocked = false, int? count}) {
     bool isSelected = _selectedTabIndex == index;
-    return InkWell(
-      onTap: () {
-        if (isLocked) {
-          UpgradeModal.show(
-            context,
-            featureName: "Aba de Visitantes",
-            requiredPlan: "Plus",
-          );
-          return;
-        }
-        setState(() {
-          _selectedTabIndex = index;
-          _selectedTagFilter = "Todos"; // Reseta filtro ao mudar aba
-        });
-      },
-      borderRadius: BorderRadius.circular(20),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        decoration: BoxDecoration(
-          color: isLocked
-              ? Colors.grey[200]
-              : (isSelected
-                  ? (index == 0
-                      ? AppColors.primaryPurple
-                      : Colors.blue)
-                  : Colors.grey[100]),
+    final showBadge = count != null && count > 0;
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        InkWell(
+          onTap: () {
+            if (isLocked) {
+              UpgradeModal.show(
+                context,
+                featureName: "Aba de Visitantes",
+                requiredPlan: "Plus",
+              );
+              return;
+            }
+            setState(() {
+              _selectedTabIndex = index;
+              _selectedTagFilter = "Todos";
+            });
+          },
           borderRadius: BorderRadius.circular(20),
-          border: isSelected
-              ? Border.all(color: Colors.transparent)
-              : Border.all(color: Colors.grey[300]!),
-        ),
-        child: Row(
-          children: [
-            Icon(isLocked ? Icons.lock : icon,
-                size: 16,
-                color: isSelected
-                    ? Colors.white
-                    : (isLocked ? Colors.grey : Colors.grey[600])),
-            const SizedBox(width: 8),
-            Text(label,
-                style: TextStyle(
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            decoration: BoxDecoration(
+              color: isLocked
+                  ? Colors.grey[200]
+                  : (isSelected
+                      ? (index == 0 ? AppColors.primaryPurple : Colors.blue)
+                      : Colors.grey[100]),
+              borderRadius: BorderRadius.circular(20),
+              border: isSelected
+                  ? Border.all(color: Colors.transparent)
+                  : Border.all(color: Colors.grey[300]!),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(isLocked ? Icons.lock : icon,
+                    size: 16,
                     color: isSelected
                         ? Colors.white
-                        : (isLocked ? Colors.grey : Colors.grey[600]),
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13)),
-          ],
+                        : (isLocked ? Colors.grey : Colors.grey[600])),
+                const SizedBox(width: 8),
+                Text(label,
+                    style: TextStyle(
+                        color: isSelected
+                            ? Colors.white
+                            : (isLocked ? Colors.grey : Colors.grey[600]),
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13)),
+              ],
+            ),
+          ),
         ),
-      ),
+        if (showBadge)
+          Positioned(
+            right: -8,
+            top: -8,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.red,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.white, width: 1.5),
+              ),
+              child: Text(
+                count > 99 ? '99+' : count.toString(),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -954,7 +1021,14 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (client['telefone'] != "Não informado")
-              Text(client['telefone'], style: const TextStyle(fontSize: 12)),
+              Text(client['telefone'], style: const TextStyle(fontSize: 12))
+            else if ((client['email'] ?? '').toString().isNotEmpty)
+              Text(client['email'], style: TextStyle(fontSize: 11, color: Colors.grey[700])),
+            if ((client['city'] ?? '').toString().isNotEmpty)
+              Text(
+                '${client['city']}${(client['state'] ?? '').toString().isNotEmpty ? ', ${client['state']}' : ''}',
+                style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+              ),
             const SizedBox(height: 2),
             Text(
                 "${client['visitas']} visitas • Total: ${currency.format(client['totalGasto'])}",
@@ -975,7 +1049,6 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Botão WhatsApp
             if (client['telefone'] != "Não informado")
               IconButton(
                 icon: const FaIcon(
@@ -985,6 +1058,15 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                 ),
                 tooltip: 'Chamar no WhatsApp',
                 onPressed: () => _launchWhatsApp(client['telefone']),
+              )
+            else if ((client['email'] ?? '').toString().isNotEmpty)
+              IconButton(
+                icon: const Icon(Icons.email_outlined, color: Colors.blueGrey, size: 22),
+                tooltip: 'Enviar e-mail',
+                onPressed: () async {
+                  final uri = Uri.parse('mailto:${client['email']}');
+                  if (await canLaunchUrl(uri)) launchUrl(uri);
+                },
               ),
             const Icon(Icons.chevron_right, size: 18, color: Colors.grey),
           ],

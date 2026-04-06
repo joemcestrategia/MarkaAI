@@ -91,6 +91,7 @@ class PlanFeaturesService {
       holidaysManagement: base.holidaysManagement,
       customHolidays: base.customHolidays,
       customLink: base.customLink,
+      visitorsAnalytics: base.visitorsAnalytics,
     );
   }
 

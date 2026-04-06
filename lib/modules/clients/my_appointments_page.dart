@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/mercado_pago_service.dart';
+import '../../core/widgets/loading_page.dart';
 import '../schedule/checkout_transparente_page.dart';
 import '../schedule/booking_page.dart';
 import '../schedule/booking_success_page.dart';
@@ -343,18 +344,17 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
 
     if (!mounted) return;
 
-    // Cache navigator before async work — allows safely dismissing the loading dialog
-    // even if the widget becomes unmounted during the async operation.
     final navigator = Navigator.of(context, rootNavigator: true);
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
+    navigator.push(
+      MaterialPageRoute(
+        builder: (_) => const AppLoadingPage(message: 'Gerando QR Code...'),
+        fullscreenDialog: true,
+      ),
     );
 
     try {
       if (shopId == null) {
-        navigator.pop();
+        if (navigator.canPop()) navigator.pop();
         _showError('Erro ao processar pagamento: loja não configurada');
         return;
       }
@@ -364,7 +364,7 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
       // o token pode estar inválido, causando erro 401 "invalid JWT" na Edge Function.
       final sessionOk = await _ensureFreshSession();
       if (!sessionOk) {
-        navigator.pop();
+        if (navigator.canPop()) navigator.pop();
         _showError(
             'Sessão expirada. Por favor, saia e entre novamente para realizar o pagamento.');
         return;
@@ -396,7 +396,7 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
         debugPrint('Erro ao salvar paymentId no restante: $e');
       }
 
-      navigator.pop(); // fechar loading
+      if (navigator.canPop()) navigator.pop(); // fechar loading
 
       // Inicia polling de status
       _startPixMonitoring(appointment, paymentId, amount);
@@ -438,7 +438,7 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
       _isPixPageOpen = false;
       _timerPolling?.cancel(); // Cancel polling when user closes PIX page without paying
     } catch (e) {
-      navigator.pop(); // fechar loading
+      if (navigator.canPop()) navigator.pop(); // fechar loading
       _showError("Erro ao gerar PIX: $e");
     }
   }
@@ -1262,13 +1262,13 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
                           .maybeSingle();
 
                       if (!mounted) return;
-                      Navigator.pop(context); // close loading
+                      Navigator.of(context, rootNavigator: true).pop(); // close loading
 
                       if (shopDoc != null) {
                         final slug = shopDoc['slug'];
                         if (slug != null && slug.toString().isNotEmpty) {
-                          Navigator.push(
-                            context,
+                          if (!mounted) return;
+                          Navigator.of(context, rootNavigator: true).push(
                             MaterialPageRoute(
                               builder: (_) => PublicShopPage(
                                 slug: slug,
@@ -1287,8 +1287,8 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
                         _showError('Loja não encontrada.');
                       }
                     } catch (e) {
-                      if (mounted && Navigator.canPop(context)) {
-                        Navigator.pop(context);
+                      if (mounted) {
+                        Navigator.of(context, rootNavigator: true).pop();
                       }
                       _showError('Erro ao carregar loja: $e');
                     }
@@ -1323,7 +1323,7 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
       final serviceData = await supabase.from('services').select().eq('id', serviceId).maybeSingle();
 
       if (!mounted) return;
-      Navigator.pop(context); // close loading
+      Navigator.of(context, rootNavigator: true).pop(); // close loading
 
       if (shopData == null || profData == null || serviceData == null) {
         String missing = '';
@@ -1340,8 +1340,7 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
       final minAdvanceHours =
           shopConfig['limite_minimo_agendamento_horas'] ?? 7;
 
-      Navigator.push(
-        context,
+      Navigator.of(context, rootNavigator: true).push(
         MaterialPageRoute(
           builder: (_) => BookingTimePage(
             shop: shopData,
@@ -1357,7 +1356,7 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
       );
     } catch (e) {
       if (mounted) {
-        Navigator.pop(context); // fechar loading
+        Navigator.of(context, rootNavigator: true).pop(); // fechar loading
         _showError('Erro ao carregar dados para reagendar: $e');
       }
     }

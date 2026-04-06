@@ -20,7 +20,8 @@ class BusinessSchedulePage extends StatefulWidget {
   State<BusinessSchedulePage> createState() => _BusinessSchedulePageState();
 }
 
-class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
+class _BusinessSchedulePageState extends State<BusinessSchedulePage>
+    with AutomaticKeepAliveClientMixin {
   // --- CALENDÁRIO ---
   DateTime _focusedDay = DateTime.now();
   DateTime _selectedDay = DateTime.now();
@@ -45,6 +46,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
   final Duration _cacheTTL =
       const Duration(minutes: 5); // tempo antes de validar novamente
   Timer? _cacheRefreshTimer;
+  Timer? _realtimeDebounceTimer;
   bool _isLoading = false;
   bool _hasMore = true;
   bool _hasMorePast =
@@ -67,13 +69,22 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
 
   late final Stream<List<Map<String, dynamic>>> _employeesStream;
 
+  // --- RECEITA CACHEADA (substitui streams ilimitados) ---
+  double _weeklyRevenue = 0.0;
+  double _monthlyRevenue = 0.0;
+  sb.RealtimeChannel? _scheduleRealtimeChannel;
+  final Set<String> _loadedMonths = {};
+
+  @override
+  bool get wantKeepAlive => true;
+
   @override
   void initState() {
     super.initState();
     // por padrão, começar a lista a partir de hoje sem carregar passado
     _startFromSelectedDay = true;
     _startFromDate = DateTime.now();
-    
+
     // Inicializa a janela da semana atual para garantir que o filtro funcione desde o início
     final startOfWeek = _startFromDate!.subtract(Duration(days: _startFromDate!.weekday - 1));
     final endOfWeek = startOfWeek.add(const Duration(days: 6));
@@ -107,6 +118,8 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
       if (!mounted) return;
       _refreshStaleCacheEntries();
     });
+    _loadRevenueStats();
+    _startRealtimeSubscription();
   }
 
   Future<void> _loadShopConfig() async {
@@ -125,6 +138,8 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
 
   // Carregar eventos do mês para marcar no calendário
   Future<void> _loadMonthEvents() async {
+    final monthKey = '${_focusedDay.year}-${_focusedDay.month}';
+    if (_loadedMonths.contains(monthKey)) return;
     // Load a wider window (previous, current and next month) to ensure calendar markers are present
     final startOfMonth = DateTime(_focusedDay.year, _focusedDay.month, 1)
         .subtract(const Duration(days: 35));
@@ -162,6 +177,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
 
           _events.addAll(events);
         });
+        _loadedMonths.add(monthKey);
       }
     } catch (e) {
       debugPrint('Erro ao carregar eventos: $e');
@@ -1969,6 +1985,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     return LayoutBuilder(
       builder: (context, constraints) {
         bool isDesktop = constraints.maxWidth > 900;
@@ -2449,6 +2466,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
             }
             _loadMonthEvents();
             _loadAppointmentsForMonth(focusedDay);
+            _loadRevenueStats();
           },
           calendarBuilders: CalendarBuilders(
             markerBuilder: (context, day, events) {
@@ -2541,119 +2559,106 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
   }
 
   Widget _buildStatsSection() {
-    final startWeek = _startFromDate ?? DateTime.now();
-    // Usa _focusedDay para o mês exibido atualmente
-    final startMonth = _focusedDay;
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
       color: Colors.transparent,
-      child: StreamBuilder<double>(
-        stream: _weeklyRevenueStream(startWeek),
-        builder: (context, snapWeek) {
-          final valWeek = snapWeek.data ?? 0.0;
-          return StreamBuilder<double>(
-            stream: _monthlyRevenueStream(startMonth),
-            builder: (context, snapMonth) {
-              final valMonth = snapMonth.data ?? 0.0;
-              return Column(
-                crossAxisAlignment:
-                    CrossAxisAlignment.start, // Alinhado à esquerda
-                children: [
-                  Text(
-                    "Faturamento da semana: ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(valWeek)}",
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 16),
-                    textAlign: TextAlign.left,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    "Faturamento do mês: ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(valMonth)}",
-                    style: const TextStyle(
-                        fontWeight: FontWeight.normal, fontSize: 14),
-                    textAlign: TextAlign.left,
-                  ),
-                ],
-              );
-            },
-          );
-        },
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            "Faturamento da semana: ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(_weeklyRevenue)}",
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            textAlign: TextAlign.left,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            "Faturamento do mês: ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(_monthlyRevenue)}",
+            style: const TextStyle(fontWeight: FontWeight.normal, fontSize: 14),
+            textAlign: TextAlign.left,
+          ),
+        ],
       ),
     );
   }
 
-  // Stream do faturamento do mês base
-  Stream<double> _monthlyRevenueStream(DateTime dateInMonth) {
-    final start = DateTime(dateInMonth.year, dateInMonth.month, 1, 0, 0, 0);
-    final end = DateTime(dateInMonth.year, dateInMonth.month + 1, 1, 0, 0, 0)
+  // Busca faturamento semanal e mensal com queries filtradas por data
+  Future<void> _loadRevenueStats() async {
+    if (widget.shopId.isEmpty) return;
+    final weekBase = _startFromDate ?? DateTime.now();
+    final weekStart = DateTime(weekBase.year, weekBase.month, weekBase.day);
+    final weekEnd = weekStart
+        .add(const Duration(days: 7))
         .subtract(const Duration(seconds: 1));
-    return sb.Supabase.instance.client
-        .from('appointments')
-        .stream(primaryKey: ['id'])
-        .eq('shop_id', widget.shopId)
-        .map((dataList) {
-      double sum = 0.0;
-      for (var data in dataList) {
-        final dateStr = data['scheduled_at'] as String?;
-        if (dateStr == null) continue;
-        final date = DateTime.parse(dateStr);
-        if (date.isBefore(start) || date.isAfter(end)) continue;
-
-        final status = (data['status'] ?? '').toString().toLowerCase();
-        if (status == 'cancelado') continue;
-
-        // ✅ Usando as colunas reais do banco de dados
-        String vt = data['total_value']?.toString() ?? 
-                    data['total_price']?.toString() ?? 
-                    data['valor_total']?.toString() ?? 
-                    data['valor_com_desconto']?.toString() ?? '';
-        String v = data['labor_value']?.toString() ?? 
-                   data['price']?.toString() ?? 
-                   data['valor']?.toString() ?? 
-                   data['preco']?.toString() ?? '0';
-        
-        String finalStr = vt.trim().isNotEmpty ? vt : v;
-        sum += double.tryParse(finalStr.replaceAll(',', '.')) ?? 0.0;
+    final monthStart = DateTime(_focusedDay.year, _focusedDay.month, 1);
+    final monthEnd = DateTime(_focusedDay.year, _focusedDay.month + 1, 1)
+        .subtract(const Duration(seconds: 1));
+    try {
+      final weeklyFuture = sb.Supabase.instance.client
+          .from('appointments')
+          .select('total_value, labor_value, status')
+          .eq('shop_id', widget.shopId)
+          .gte('scheduled_at', weekStart.toUtc().toIso8601String())
+          .lte('scheduled_at', weekEnd.toUtc().toIso8601String());
+      final monthlyFuture = sb.Supabase.instance.client
+          .from('appointments')
+          .select('total_value, labor_value, status')
+          .eq('shop_id', widget.shopId)
+          .gte('scheduled_at', monthStart.toUtc().toIso8601String())
+          .lte('scheduled_at', monthEnd.toUtc().toIso8601String());
+      final results = await Future.wait([weeklyFuture, monthlyFuture]);
+      double wSum = 0.0;
+      for (final d in results[0] as List) {
+        if ((d['status'] ?? '').toString() == 'cancelado') continue;
+        final val = d['total_value'] ?? d['labor_value'] ?? 0;
+        wSum += double.tryParse(val.toString().replaceAll(',', '.')) ?? 0.0;
       }
-      return sum;
-    });
+      double mSum = 0.0;
+      for (final d in results[1] as List) {
+        if ((d['status'] ?? '').toString() == 'cancelado') continue;
+        final val = d['total_value'] ?? d['labor_value'] ?? 0;
+        mSum += double.tryParse(val.toString().replaceAll(',', '.')) ?? 0.0;
+      }
+      if (mounted) {
+        setState(() {
+          _weeklyRevenue = wSum;
+          _monthlyRevenue = mSum;
+        });
+      }
+    } catch (e) {
+      debugPrint('Erro ao carregar receita: $e');
+    }
   }
 
-  // Stream do faturamento da semana com base em startDate (7 dias)
-  Stream<double> _weeklyRevenueStream(DateTime startDate) {
-    final start =
-        DateTime(startDate.year, startDate.month, startDate.day, 0, 0, 0);
-    final end =
-        start.add(const Duration(days: 7)).subtract(const Duration(seconds: 1));
-    return sb.Supabase.instance.client
-        .from('appointments')
-        .stream(primaryKey: ['id'])
-        .eq('shop_id', widget.shopId)
-        .map((dataList) {
-      double sum = 0.0;
-      for (var data in dataList) {
-        final dateStr = data['scheduled_at'] as String?;
-        if (dateStr == null) continue;
-        final date = DateTime.parse(dateStr);
-        if (date.isBefore(start) || date.isAfter(end)) continue;
-
-        final status = (data['status'] ?? '').toString().toLowerCase();
-        if (status == 'cancelado') continue;
-
-        // ✅ Usando as colunas reais do banco de dados
-        String vt = data['total_value']?.toString() ?? 
-                    data['total_price']?.toString() ?? 
-                    data['valor_total']?.toString() ?? 
-                    data['valor_com_desconto']?.toString() ?? '';
-        String v = data['labor_value']?.toString() ?? 
-                   data['price']?.toString() ?? 
-                   data['valor']?.toString() ?? 
-                   data['preco']?.toString() ?? '0';
-        
-        String finalStr = vt.trim().isNotEmpty ? vt : v;
-        sum += double.tryParse(finalStr.replaceAll(',', '.')) ?? 0.0;
-      }
-      return sum;
-    });
+  // Canal Realtime: atualiza apenas o necessário quando há alterações
+  void _startRealtimeSubscription() {
+    if (widget.shopId.isEmpty) return;
+    _scheduleRealtimeChannel = sb.Supabase.instance.client
+        .channel('schedule_appts_${widget.shopId}')
+        .onPostgresChanges(
+          event: sb.PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'appointments',
+          filter: sb.PostgresChangeFilter(
+            type: sb.PostgresChangeFilterType.eq,
+            column: 'shop_id',
+            value: widget.shopId,
+          ),
+          callback: (payload) {
+            if (!mounted) return;
+            _realtimeDebounceTimer?.cancel();
+            _realtimeDebounceTimer = Timer(const Duration(milliseconds: 800), () {
+              if (!mounted) return;
+              final monthKey = '${_focusedDay.year}-${_focusedDay.month}';
+              _loadedMonths.remove(monthKey);
+              _loadRevenueStats();
+              _fetchWeekFromServer(
+                _startFromDate ?? DateTime.now(),
+                _weekEndDate ?? DateTime.now().add(const Duration(days: 6)),
+              );
+            });
+          },
+        )
+        .subscribe();
   }
 
   // --- CALCULADORAS ---
@@ -2727,28 +2732,32 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
         if (now.difference(ts) > _cacheTTL) staleIds.add(id);
       });
       if (staleIds.isEmpty) return;
-      // limit refresh batch to avoid many reads
       final batch = staleIds.take(20).toList();
-      for (var id in batch) {
-        try {
-          final doc = await sb.Supabase.instance.client
-              .from('appointments')
-              .select()
-              .eq('id', id)
-              .maybeSingle();
-          if (doc != null) {
-            // update cache with fresh data
-            _addToCache(doc);
-          } else {
-            // remove missing doc from cache and from visible list
-            _docCache.remove(id);
-            _cacheAccess.remove(id);
-            _appointments.removeWhere((d) => d['id'].toString() == id);
-          }
-        } catch (_) {
-          // ignore single failures
+      // Single batch query — replaces N+1 sequential requests
+      final docs = await sb.Supabase.instance.client
+          .from('appointments')
+          .select()
+          .filter('id', 'in', '(${batch.join(',')})');  
+      if (!mounted) return;
+      final foundIds = <String>{
+        for (final doc in docs) doc['id'].toString()
+      };
+      final removedIds = batch.where((id) => !foundIds.contains(id)).toList();
+      setState(() {
+        for (final doc in docs) {
+          final id = doc['id'].toString();
+          _docCache[id] = doc;
+          _cacheAccess[id] = DateTime.now();
+          final idx = _appointments.indexWhere((a) => a['id'].toString() == id);
+          if (idx != -1) _appointments[idx] = doc;
         }
-      }
+        for (final id in removedIds) {
+          _docCache.remove(id);
+          _cacheAccess.remove(id);
+          _appointments.removeWhere((a) => a['id'].toString() == id);
+        }
+        _pruneCacheIfNeeded();
+      });
     } catch (e) {
       debugPrint('Erro ao refresh cache: $e');
     }
@@ -2756,7 +2765,9 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
 
   @override
   void dispose() {
+    _scheduleRealtimeChannel?.unsubscribe();
     _cacheRefreshTimer?.cancel();
+    _realtimeDebounceTimer?.cancel();
     _scrollController.dispose();
     super.dispose();
   }
@@ -2775,7 +2786,8 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage> {
           .eq('shop_id', widget.shopId)
           .gte('scheduled_at', start.toUtc().toIso8601String())
           .lte('scheduled_at', end.toUtc().toIso8601String())
-          .order('scheduled_at', ascending: true);
+          .order('scheduled_at', ascending: true)
+          .limit(200);
 
       if (!mounted) return;
       setState(() {

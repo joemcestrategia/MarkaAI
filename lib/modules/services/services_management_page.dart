@@ -84,7 +84,7 @@ class ServiceDetailsPage extends StatelessWidget {
                       if (fotos.isNotEmpty)
                         SizedBox(
                           height:
-                              200, // Aumentei um pouco para ficar mais bonito
+                              480, // Aumentado de 200 para 480 para melhor visualização
                           width: double.infinity,
                           child: PageView.builder(
                             itemCount: fotos.length,

@@ -120,6 +120,20 @@ class _CheckoutReviewPageState extends State<CheckoutReviewPage> {
     });
 
     if (mounted) {
+      final durationMin =
+          int.tryParse(widget.serviceDoc['duration_min']?.toString() ?? '60') ?? 60;
+      final shopInfo = await Supabase.instance.client
+          .from('shops')
+          .select('name, address, address_number, city')
+          .eq('id', widget.shopId)
+          .maybeSingle();
+      final sName = shopInfo?['name']?.toString() ?? '';
+      final addrParts = [
+        shopInfo?['address'],
+        shopInfo?['address_number'] != null ? 'nº ${shopInfo!['address_number']}' : null,
+        shopInfo?['city'],
+      ].where((e) => e != null && e.toString().isNotEmpty).join(', ');
+      if (!mounted) return;
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(
@@ -129,6 +143,9 @@ class _CheckoutReviewPageState extends State<CheckoutReviewPage> {
             date: DateFormat('dd/MM/yyyy').format(widget.date),
             time: widget.time,
             isPaid: true,
+            shopName: sName,
+            shopAddress: addrParts,
+            durationMin: durationMin,
           ),
         ),
         (route) => false,

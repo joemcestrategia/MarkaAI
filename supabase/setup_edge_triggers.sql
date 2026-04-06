@@ -28,14 +28,17 @@ returns trigger as $$
 begin
   perform net.http_post(
     url := 'https://uhccgcojwqvkfyzrmebv.supabase.co/functions/v1/appointmentTriggers',
-    headers := jsonb_build_object('Content-Type', 'application/json'),
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'apikey', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVoY2NnY29qd3F2a2Z5enJtZWJ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM5NjYwNDgsImV4cCI6MjA4OTU0MjA0OH0.bK3UsISxVqw5gJktnBkMwmh7Swb17eV-UgD2Ia9e_PA'
+    ),
     body := jsonb_build_object(
       'type', TG_OP,
       'table', TG_TABLE_NAME,
       'record', row_to_json(NEW),
       'old_record', (case when TG_OP = 'UPDATE' then row_to_json(OLD) else null end)
     ),
-    timeout_milliseconds := 5000
+    timeout_milliseconds := 10000
   );
   return new;
 end;

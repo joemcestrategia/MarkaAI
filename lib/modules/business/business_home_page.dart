@@ -316,8 +316,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       _restrictedIndices.add(7);
     }
 
-    // Financeiro (Índice 5)
-    if (!_currentFeatures.financialTab || !_currentFeatures.financialDashboard) {
+    // Financeiro (Índice 5) — aberto para Plus (básico) e Pro (avançado)
+    if (!_currentFeatures.financialTab) {
       _restrictedIndices.add(5);
     }
 

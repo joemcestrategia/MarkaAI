@@ -2457,6 +2457,13 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
             (_) => false,
           );
         } else {
+          final shopD = widget.shopData;
+          final sName = shopD['name']?.toString() ?? '';
+          final addrParts = [
+            shopD['address'],
+            shopD['address_number'] != null ? 'nº ${shopD['address_number']}' : null,
+            shopD['city'],
+          ].where((e) => e != null && e.toString().isNotEmpty).join(', ');
           Navigator.pushAndRemoveUntil(
             context,
             MaterialPageRoute(
@@ -2466,6 +2473,9 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
                 date: dateStr,
                 time: timeStr,
                 isPaid: paidFlag,
+                shopName: sName,
+                shopAddress: addrParts,
+                durationMin: duration,
               ),
             ),
             (r) => r.isFirst,
@@ -2494,60 +2504,157 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
 
   Future<void> _showConflictDialog() async {
     if (!mounted) return;
-    await showDialog(
+    await showModalBottomSheet(
       context: context,
-      builder: (ctx) {
-        return Dialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          child: Padding(
-            padding: const EdgeInsets.all(18),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.event_busy, size: 48, color: Colors.orange),
-                const SizedBox(height: 12),
-                const Text('Agendamento ativo',
-                    style:
-                        TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                const Text(
-                  'Você já possui um agendamento ativo nesta loja. Aguarde a conclusão antes de agendar novamente.',
-                  textAlign: TextAlign.center,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        padding: EdgeInsets.fromLTRB(
+            24, 0, 24, MediaQuery.of(ctx).padding.bottom + 24),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 12),
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(4),
                 ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                        child: OutlinedButton(
-                            onPressed: () => Navigator.pop(ctx),
-                            child: const Text('Fechar'))),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primaryPurple),
-                        onPressed: () {
-                          Navigator.pop(ctx);
-                          // open My Appointments (if logged)
-                          try {
-                            Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                    builder: (_) =>
-                                        const MyAppointmentsPage()));
-                          } catch (_) {}
-                        },
-                        child: const Text('Ver Agendamentos'),
-                      ),
-                    ),
-                  ],
-                )
-              ],
+              ),
             ),
-          ),
-        );
-      },
+            const SizedBox(height: 24),
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.event_busy_rounded,
+                  size: 38, color: Colors.orange.shade700),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Agendamento já em aberto',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey[900],
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.orange.shade200),
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.info_outline,
+                          size: 18, color: Colors.orange.shade700),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Esta loja não permite múltiplos agendamentos simultâneos.',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.orange.shade800,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Você já possui um agendamento ativo ou pendente nesta loja. '
+                    'Para agendar novamente, aguarde a conclusão do seu atendimento '
+                    'atual, ou cancele-o se não for mais comparecer.',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.grey[700],
+                      height: 1.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 0),
+              child: Row(
+                children: [
+                  const Icon(Icons.lightbulb_outline,
+                      size: 14, color: Colors.grey),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Dica: acesse "Meus Agendamentos" para ver ou cancelar agendamentos ativos.',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.calendar_today_outlined, size: 18),
+                label: const Text('Ver Meus Agendamentos',
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 15)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primaryPurple,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  elevation: 0,
+                ),
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  try {
+                    Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => const MyAppointmentsPage()));
+                  } catch (_) {}
+                },
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              height: 44,
+              child: TextButton(
+                style: TextButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  foregroundColor: Colors.grey[700],
+                ),
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Fechar',
+                    style: TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.w500)),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

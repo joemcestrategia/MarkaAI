@@ -154,11 +154,10 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
       if (_manualTags.contains(label)) {
         _manualTags.remove(label);
       } else {
-        // Regra de exclusividade: VIP e Problemático não podem coexistir
-        if (label == 'VIP') {
-          _manualTags.remove('Problemático');
-        } else if (label == 'Problemático') {
-          _manualTags.remove('VIP');
+        // Regra de exclusividade: apenas uma classificação por vez
+        final presets = ['VIP', 'Sumido', 'Problemático', 'Novo'];
+        if (presets.contains(label)) {
+          _manualTags.removeWhere((t) => presets.contains(t));
         }
 
         _manualTags.add(label);
@@ -565,6 +564,23 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
                                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                               ),
                             ),
+                          )
+                        else if ((widget.clientData['email'] ?? '').toString().isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.email_outlined, size: 13, color: Colors.blueGrey),
+                                const SizedBox(width: 4),
+                                Flexible(
+                                  child: Text(
+                                    widget.clientData['email'],
+                                    style: const TextStyle(fontSize: 11, color: Colors.blueGrey),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         if (isManual)
                           Container(
@@ -684,6 +700,62 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
               ],
             ),
           ),
+
+        // ── ENDEREÇO (se disponível) ──────────────────────────────────
+        Builder(builder: (context) {
+          final city = widget.clientData['city']?.toString() ?? '';
+          final state = widget.clientData['state']?.toString() ?? '';
+          final street = widget.clientData['street']?.toString() ?? '';
+          final number = widget.clientData['number']?.toString() ?? '';
+          final neighborhood = widget.clientData['neighborhood']?.toString() ?? '';
+          final zipCode = widget.clientData['zipCode']?.toString() ?? '';
+
+          if (city.isEmpty && street.isEmpty) return const SizedBox.shrink();
+
+          String line1 = '';
+          if (street.isNotEmpty) {
+            line1 = street;
+            if (number.isNotEmpty) line1 += ', $number';
+            if (neighborhood.isNotEmpty) line1 += ' - $neighborhood';
+          }
+          String line2 = '';
+          if (city.isNotEmpty) {
+            line2 = city;
+            if (state.isNotEmpty) line2 += ', $state';
+            if (zipCode.isNotEmpty) line2 += ' - CEP $zipCode';
+          }
+
+          return Container(
+            margin: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.grey.withValues(alpha: 0.05),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.grey.withValues(alpha: 0.15)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.location_on_outlined, size: 16, color: Colors.grey[500]),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (line1.isNotEmpty)
+                        Text(line1,
+                            style: const TextStyle(
+                                fontSize: 12, color: Colors.black87)),
+                      if (line2.isNotEmpty)
+                        Text(line2,
+                            style: TextStyle(
+                                fontSize: 11, color: Colors.grey[600])),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
 
         // ── KPI BAR ───────────────────────────────────────────────────
         StreamBuilder<List<Map<String, dynamic>>>(

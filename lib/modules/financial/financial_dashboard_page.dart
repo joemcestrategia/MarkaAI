@@ -738,15 +738,6 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
       builder: (context, planSnapshot) {
         if (planSnapshot.hasData) {
           _currentFeatures = planSnapshot.data!;
-          if (!_currentFeatures.financialDashboard) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) {
-                UpgradeModal.show(context,
-                    featureName: 'Dashboard Financeiro', requiredPlan: 'Plus');
-                Navigator.pop(context);
-              }
-            });
-          }
         }
 
         return Scaffold(
@@ -779,36 +770,42 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
                         _sectionTitle('Desempenho de Vendas'),
                         _buildSalesPerformance(isMobile),
                         const SizedBox(height: 24),
-                        _sectionTitle('Eficiência Operacional'),
-                        _buildOperationalEfficiency(isMobile),
-                        const SizedBox(height: 24),
-                        _sectionTitle('Eficiência da Equipe'),
-                        _buildProfessionalEfficiency(isMobile),
-                        const SizedBox(height: 24),
+                        if (_currentFeatures.financialDashboard) ...[  
+                          _sectionTitle('Eficiência Operacional'),
+                          _buildOperationalEfficiency(isMobile),
+                          const SizedBox(height: 24),
+                          _sectionTitle('Eficiência da Equipe'),
+                          _buildProfessionalEfficiency(isMobile),
+                          const SizedBox(height: 24),
+                        ] else
+                          _buildProAnalyticsTeaser(),
                       ],
                     ),
                   ),
                 ),
 
-                // ── Gráfico Principal ────────────────
-                SliverPadding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  sliver: SliverToBoxAdapter(child: _buildMainChart()),
-                ),
-
-                // ── Gráfico Valor/Hora por Período ───
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                  sliver: SliverToBoxAdapter(child: _buildHourlyRateChart()),
-                ),
-
-                // ── Linha de Insights ────────────────
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-                  sliver: SliverToBoxAdapter(
-                    child: _buildInsightsRow(isMobile),
+                // ── Seções avançadas (Pro only) ──────
+                if (_currentFeatures.financialDashboard) ...[  
+                  // ── Gráfico Principal ────────────────
+                  SliverPadding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    sliver: SliverToBoxAdapter(child: _buildMainChart()),
                   ),
-                ),
+
+                  // ── Gráfico Valor/Hora por Período ───
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                    sliver: SliverToBoxAdapter(child: _buildHourlyRateChart()),
+                  ),
+
+                  // ── Linha de Insights ────────────────
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+                    sliver: SliverToBoxAdapter(
+                      child: _buildInsightsRow(isMobile),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -2264,6 +2261,57 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
       ),
     );
   }
+
+  Widget _buildProAnalyticsTeaser() {
+    return GestureDetector(
+      onTap: () => UpgradeModal.show(context,
+          featureName: 'Análises Avançadas', requiredPlan: 'Pro'),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [const Color(0xFFB45309).withValues(alpha: 0.08), const Color(0xFFF59E0B).withValues(alpha: 0.08)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFF59E0B).withValues(alpha: 0.35)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF59E0B).withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.lock_outline_rounded, color: Color(0xFFB45309), size: 22),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Análises Avançadas — Plano Pro',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF92400E)),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Eficiência operacional, performance da equipe, gráficos de receita e insights detalhados.',
+                    style: TextStyle(fontSize: 12, color: Colors.brown.shade600),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Icon(Icons.chevron_right_rounded, color: Color(0xFFB45309)),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -2441,6 +2489,7 @@ class _MetricCard extends StatelessWidget {
       ),
     );
   }
+
 }
 
 class _DashboardContainer extends StatelessWidget {

@@ -52,6 +52,9 @@ class PlanFeatures {
   final bool customHolidays;
   final bool customLink;
 
+  // Analytics
+  final bool visitorsAnalytics;
+
   const PlanFeatures({
     required this.onlineBooking,
     required this.canDisableOnlineBooking,
@@ -81,6 +84,7 @@ class PlanFeatures {
     required this.holidaysManagement,
     required this.customHolidays,
     required this.customLink,
+    required this.visitorsAnalytics,
   });
 }
 
@@ -114,6 +118,7 @@ const Map<PlanKey, PlanFeatures> planFeaturesConfig = {
     holidaysManagement: false,
     customHolidays: false,
     customLink: true,
+    visitorsAnalytics: false,
   ),
   PlanKey.starter: PlanFeatures(
     onlineBooking: true,
@@ -144,6 +149,7 @@ const Map<PlanKey, PlanFeatures> planFeaturesConfig = {
     holidaysManagement: false,
     customHolidays: false,
     customLink: true,
+    visitorsAnalytics: false,
   ),
   PlanKey.plus: PlanFeatures(
     onlineBooking: true,
@@ -152,7 +158,6 @@ const Map<PlanKey, PlanFeatures> planFeaturesConfig = {
     clientChoosesProfessional: true,
     agendaOptimization: true,
     financialTab: true,
-    financialDashboard: true,
     mercadoPagoIntegration: true,
     payments: ['in_person', 'pix', 'credit_card', 'debit_card'],
     requireDeposit: true,
@@ -172,8 +177,10 @@ const Map<PlanKey, PlanFeatures> planFeaturesConfig = {
     automaticPriceAdjustment: true,
     commissionView: true,
     holidaysManagement: true,
-    customHolidays: false,
+    customHolidays: true,
     customLink: true,
+    financialDashboard: false,
+    visitorsAnalytics: true,
   ),
   PlanKey.pro: PlanFeatures(
     onlineBooking: true,
@@ -204,5 +211,6 @@ const Map<PlanKey, PlanFeatures> planFeaturesConfig = {
     holidaysManagement: true,
     customHolidays: true,
     customLink: true,
+    visitorsAnalytics: true,
   ),
 };

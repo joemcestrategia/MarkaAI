@@ -161,28 +161,6 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
     final instagram = data['instagram']?.toString() ?? '';
     final tiktok = data['tiktok']?.toString() ?? '';
     final youtube = data['youtube']?.toString() ?? '';
-    final street = data['street']?.toString() ?? '';
-    final number = data['number']?.toString() ?? '';
-    final neighborhood = data['neighborhood']?.toString() ?? '';
-    final city = data['city']?.toString() ?? '';
-    final state = data['state'] ?? '';
-    final address = data['address']?.toString() ?? '';
-
-    String fullAddress = '';
-    if (street.isNotEmpty) {
-      fullAddress = street;
-      if (number.isNotEmpty) fullAddress += ', $number';
-      if (neighborhood.isNotEmpty) fullAddress += ' - $neighborhood';
-      if (city.isNotEmpty) fullAddress += ', $city';
-      if (state.isNotEmpty) fullAddress += ' - $state';
-    } else {
-      fullAddress = address;
-      if (city.isNotEmpty) fullAddress += ', $city';
-      if (state.isNotEmpty) fullAddress += ' - $state';
-    }
-
-    final hasAddress = fullAddress.trim().isNotEmpty;
-
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FA),
       body: CustomScrollView(
@@ -343,45 +321,12 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Space reserved - primary header is inside the cover
-                  // Redes Sociais e Mapas em linha única
+                  // Redes Sociais — linha cheia, cor padronizada
                   if (whatsapp.isNotEmpty ||
                       instagram.isNotEmpty ||
                       tiktok.isNotEmpty ||
-                      youtube.isNotEmpty ||
-                      hasAddress)
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          if (whatsapp.isNotEmpty)
-                            _buildSocialIcon(
-                              onPressed: () => _launchWhatsApp(whatsapp),
-                              icon: FontAwesomeIcons.whatsapp,
-                              color: const Color(0xFF25D366),
-                            ),
-                          if (instagram.isNotEmpty)
-                            _buildSocialIcon(
-                              onPressed: () => _launchInstagram(instagram),
-                              icon: FontAwesomeIcons.instagram,
-                              color: const Color(0xFFE1306C),
-                            ),
-                          if (tiktok.isNotEmpty)
-                            _buildSocialIcon(
-                              onPressed: () => _launchTikTok(tiktok),
-                              icon: FontAwesomeIcons.tiktok,
-                              color: Colors.black,
-                            ),
-                          if (youtube.isNotEmpty)
-                            _buildSocialIcon(
-                              onPressed: () => _launchYouTube(youtube),
-                              icon: FontAwesomeIcons.youtube,
-                              color: const Color(0xFFFF0000),
-                            ),
-                          // Removido ícone de GPS individual para usar o Mini-Mapa novo
-                        ],
-                      ),
-                    ),
+                      youtube.isNotEmpty)
+                    _buildSocialRow(whatsapp, instagram, tiktok, youtube),
                 ],
               ),
             ),
@@ -831,27 +776,64 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
     );
   }
 
-  Widget _buildSocialIcon({
+  Widget _buildSocialRow(String whatsapp, String instagram, String tiktok, String youtube) {
+    final chips = <Widget>[];
+    if (whatsapp.isNotEmpty)
+      chips.add(_buildSocialChip(onPressed: () => _launchWhatsApp(whatsapp), icon: FontAwesomeIcons.whatsapp, label: 'WhatsApp'));
+    if (instagram.isNotEmpty)
+      chips.add(_buildSocialChip(onPressed: () => _launchInstagram(instagram), icon: FontAwesomeIcons.instagram, label: 'Instagram'));
+    if (tiktok.isNotEmpty)
+      chips.add(_buildSocialChip(onPressed: () => _launchTikTok(tiktok), icon: FontAwesomeIcons.tiktok, label: 'TikTok'));
+    if (youtube.isNotEmpty)
+      chips.add(_buildSocialChip(onPressed: () => _launchYouTube(youtube), icon: FontAwesomeIcons.youtube, label: 'YouTube'));
+    if (chips.isEmpty) return const SizedBox.shrink();
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      physics: const BouncingScrollPhysics(),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: chips
+            .expand((chip) => [chip, const SizedBox(width: 8)])
+            .toList()
+          ..removeLast(),
+      ),
+    );
+  }
+
+  Widget _buildSocialChip({
     required VoidCallback onPressed,
     required IconData icon,
-    required Color color,
+    required String label,
   }) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 12),
-      child: InkWell(
-        onTap: onPressed,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          width: 50,
-          height: 50,
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: color.withValues(alpha: 0.2), width: 1.5),
+    return InkWell(
+      onTap: onPressed,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        height: 50,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        decoration: BoxDecoration(
+          color: AppColors.primaryPurple.withValues(alpha: 0.07),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: AppColors.primaryPurple.withValues(alpha: 0.20),
+            width: 1.2,
           ),
-          child: Center(
-            child: FaIcon(icon, color: color, size: 24),
-          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            FaIcon(icon, color: AppColors.primaryPurple, size: 17),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: AppColors.primaryPurple,
+              ),
+            ),
+          ],
         ),
       ),
     );

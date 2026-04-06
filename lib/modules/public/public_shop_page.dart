@@ -252,38 +252,33 @@ class _PublicShopPageState extends State<PublicShopPage> {
                         const SizedBox(height: 16),
                       ],
 
-                      // Redes Sociais - Estilo Novo
-                      SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Row(
-                          children: [
-                            if (whatsapp.isNotEmpty)
-                              _buildSocialIconBox(
-                                icon: FontAwesomeIcons.whatsapp,
-                                color: const Color(0xFF25D366),
-                                onTap: () => _launchWhatsApp(whatsapp),
-                              ),
-                            if (instagram.isNotEmpty)
-                              _buildSocialIconBox(
-                                icon: FontAwesomeIcons.instagram,
-                                color: const Color(0xFFE1306C),
-                                onTap: () => _launchInstagram(instagram),
-                              ),
-                            if (data['tiktok'] != null && data['tiktok'].toString().isNotEmpty)
-                              _buildSocialIconBox(
-                                icon: FontAwesomeIcons.tiktok,
-                                color: Colors.black,
-                                onTap: () => _launchTikTok(data['tiktok']),
-                              ),
-                            if (data['youtube'] != null && data['youtube'].toString().isNotEmpty)
-                              _buildSocialIconBox(
-                                icon: FontAwesomeIcons.youtube,
-                                color: const Color(0xFFFF0000),
-                                onTap: () => _launchYouTube(data['youtube']),
-                              ),
-                          ],
-                        ),
-                      ),
+                      // Redes Sociais — linha cheia, cor padronizada
+                      Builder(builder: (context) {
+                        final tiktok = data['tiktok']?.toString() ?? '';
+                        final yt = data['youtube']?.toString() ?? '';
+                        final chips = <Widget>[];
+                        if (whatsapp.isNotEmpty)
+                          chips.add(_buildSocialChipItem(icon: FontAwesomeIcons.whatsapp, label: 'WhatsApp', onTap: () => _launchWhatsApp(whatsapp)));
+                        if (instagram.isNotEmpty)
+                          chips.add(_buildSocialChipItem(icon: FontAwesomeIcons.instagram, label: 'Instagram', onTap: () => _launchInstagram(instagram)));
+                        if (tiktok.isNotEmpty)
+                          chips.add(_buildSocialChipItem(icon: FontAwesomeIcons.tiktok, label: 'TikTok', onTap: () => _launchTikTok(tiktok)));
+                        if (yt.isNotEmpty)
+                          chips.add(_buildSocialChipItem(icon: FontAwesomeIcons.youtube, label: 'YouTube', onTap: () => _launchYouTube(yt)));
+                        if (chips.isEmpty) return const SizedBox.shrink();
+                        return SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          physics: const BouncingScrollPhysics(),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: chips
+                                .expand((chip) => [chip, const SizedBox(width: 8)])
+                                .toList()
+                              ..removeLast(),
+                          ),
+                        );
+                      }),
+
                       const SizedBox(height: 20),
                       
                       const Divider(height: 1),
@@ -651,24 +646,37 @@ class _StickyCategoryDelegate extends SliverPersistentHeaderDelegate {
   }
 }
 
-// Helper para ícones sociais coloridos em caixas (Estilo ShopProfile)
-Widget _buildSocialIconBox({required IconData icon, required Color color, required VoidCallback onTap}) {
-  return Padding(
-    padding: const EdgeInsets.only(right: 12),
-    child: InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        width: 50,
-        height: 50,
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: color.withValues(alpha: 0.2), width: 1.5),
+// Chip padronizado para redes sociais (linha cheia, cor da marca)
+Widget _buildSocialChipItem({required IconData icon, required String label, required VoidCallback onTap}) {
+  return InkWell(
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(12),
+    child: Container(
+      height: 50,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: AppColors.primaryPurple.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: AppColors.primaryPurple.withValues(alpha: 0.20),
+          width: 1.2,
         ),
-        child: Center(
-          child: FaIcon(icon, color: color, size: 24),
-        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          FaIcon(icon, color: AppColors.primaryPurple, size: 17),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: AppColors.primaryPurple,
+            ),
+          ),
+        ],
       ),
     ),
   );

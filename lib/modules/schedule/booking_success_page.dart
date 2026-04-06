@@ -1,4 +1,5 @@
 ﻿import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../core/theme/app_colors.dart';
 
 class BookingSuccessPage extends StatelessWidget {
@@ -6,9 +7,12 @@ class BookingSuccessPage extends StatelessWidget {
   final String date;
   final String time;
   final String professionalName;
-  final bool isPaid; // Se foi pago online ou não
+  final bool isPaid;
   final String? title;
   final String? subtitle;
+  final String? shopName;
+  final String? shopAddress;
+  final int? durationMin;
 
   const BookingSuccessPage({
     super.key,
@@ -19,6 +23,9 @@ class BookingSuccessPage extends StatelessWidget {
     required this.isPaid,
     this.title,
     this.subtitle,
+    this.shopName,
+    this.shopAddress,
+    this.durationMin,
   });
 
   @override
@@ -90,12 +97,31 @@ class BookingSuccessPage extends StatelessWidget {
 
               const Spacer(),
 
+              // ── Salvar na Agenda ─────────────────────────────────────────
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: OutlinedButton.icon(
+                  onPressed: _openCalendar,
+                  icon: const Icon(Icons.calendar_month_outlined, size: 20),
+                  label: const Text('Salvar na Agenda'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.primaryPurple,
+                    side: BorderSide(color: AppColors.primaryPurple, width: 1.5),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(15)),
+                    textStyle: const TextStyle(
+                        fontWeight: FontWeight.w600, fontSize: 15),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+
               SizedBox(
                 width: double.infinity,
                 height: 55,
                 child: ElevatedButton(
                   onPressed: () {
-                    // Volta para a Home e limpa a pilha de navegação
                     Navigator.of(context).popUntil((route) => route.isFirst);
                   },
                   style: ElevatedButton.styleFrom(
@@ -115,6 +141,52 @@ class BookingSuccessPage extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  // ── Calendar helpers ────────────────────────────────────────────────────
+
+  /// Parses "DD/MM/YYYY" + "HH:MM" into a DateTime (UTC for Google Calendar).
+  DateTime? _parseDateTime() {
+    try {
+      final parts = date.split('/');
+      final timeParts = time.split(':');
+      if (parts.length != 3 || timeParts.length != 2) return null;
+      return DateTime(
+        int.parse(parts[2]),
+        int.parse(parts[1]),
+        int.parse(parts[0]),
+        int.parse(timeParts[0]),
+        int.parse(timeParts[1]),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _gcalDate(DateTime dt) {
+    String p(int n) => n.toString().padLeft(2, '0');
+    return '${dt.year}${p(dt.month)}${p(dt.day)}T${p(dt.hour)}${p(dt.minute)}00';
+  }
+
+  void _openCalendar() {
+    final start = _parseDateTime();
+    if (start == null) return;
+    final end = start.add(Duration(minutes: durationMin ?? 60));
+    final salon = shopName ?? '';
+    final eventTitle = Uri.encodeComponent(
+        '$serviceName${salon.isNotEmpty ? ' — $salon' : ''}');
+    final details = Uri.encodeComponent(
+        'Profissional: $professionalName${salon.isNotEmpty ? '\nSalão: $salon' : ''}');
+    final location =
+        Uri.encodeComponent(shopAddress ?? salon);
+    final dates = '${_gcalDate(start)}/${_gcalDate(end)}';
+    final url =
+        'https://calendar.google.com/calendar/render?action=TEMPLATE'
+        '&text=$eventTitle'
+        '&dates=$dates'
+        '&details=$details'
+        '&location=$location';
+    launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
   }
 
   Widget _buildRow(IconData icon, String text) {

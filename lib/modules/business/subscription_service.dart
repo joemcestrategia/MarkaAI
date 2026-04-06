@@ -29,7 +29,7 @@ class SubscriptionService {
       'maxServicePhotos': 1,
       'advancedScheduling': false,
       'features': ['scheduling'],
-      'description': 'Ideal para conhecer a plataforma.',
+      'description': 'Experimente sem custo. Ideal para quem está começando.',
     },
     SubscriptionPlan.start: {
       'name': 'Start',
@@ -45,7 +45,7 @@ class SubscriptionService {
       'maxServicePhotos': 3,
       'advancedScheduling': false,
       'features': ['Agendamento Online', 'Pagamento via PIX', 'Visualizar Comissões'],
-      'description': 'Perfeito para autônomos que estão começando.',
+      'description': 'Receba via PIX, exija sinal e organize melhor a agenda.',
     },
     SubscriptionPlan.plus: {
       'name': 'Plus',
@@ -67,7 +67,7 @@ class SubscriptionService {
         'Classificação de Clientes (VIP)',
         'Automações de Marketing'
       ],
-      'description': 'Gestão completa com automações e estoque.',
+      'description': 'Controle total: financeiro, estoque, feriados e visitantes.',
     },
     SubscriptionPlan.pro: {
       'name': 'Pro',
@@ -83,7 +83,7 @@ class SubscriptionService {
       'maxServicePhotos': 5,
       'advancedScheduling': true,
       'features': ['Painel Financeiro Completo (DRE/Caixa)', 'Todas as funções liberadas'],
-      'description': 'Recursos ilimitados para o seu negócio.',
+      'description': 'Análises avançadas, 5 profissionais e suporte VIP dedicado.',
     },
   };
 

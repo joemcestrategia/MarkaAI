@@ -369,27 +369,37 @@ class _AuthRedirectState extends State<AuthRedirect> {
       if (!mounted) return;
 
       if (doc == null) {
-        debugPrint('AuthRedirect: Perfil não encontrado ou incompleto para ${widget.user.email} — redirecionando temporariamente para login.');
-        
+        debugPrint('AuthRedirect: Perfil não encontrado para ${widget.user.email} — ativando fluxo de cadastro via LoginPage.');
+
         if (mounted) {
+          // BUG 1 FIX: Retorna LoginPage sem parâmetros extras.
+          // O initState do LoginPage detecta o usuário já autenticado (Google OAuth)
+          // e chama _routeUser(user), que ao encontrar doc==null ativa _isRegistering=true,
+          // mostrando o formulário de cadastro automaticamente.
           setState(() {
-            _targetPage = const LoginPage(
-            contextMessage: 'Por favor, edite seu perfil para continuar.',
-            );
+            _targetPage = const LoginPage();
           });
         }
         return;
       }
 
       final tipo = doc['role']?.toString();
-      debugPrint('AuthRedirect: Perfil encontrado. role="$tipo", shop_id="${doc['shop_id']}"');
+      final phone = doc['phone']?.toString();
+      debugPrint('AuthRedirect: Perfil encontrado. role="$tipo", phone="${phone != null ? "***" : "null"}", shop_id="${doc['shop_id']}"');
 
-      // O campo 'role' é obrigatório para saber para onde redirecionar
-      if (tipo == null || tipo.isEmpty) {
-        debugPrint(
-            'AuthRedirect: ERRO - Campo "role" ausente para userId=${widget.user.id}. '
-            'Doc completo: $doc');
-        _setError('Tipo de usuário não definido. Entre em contato com o suporte.', isNetwork: false);
+      // Verifica se o perfil está COMPLETO (role e phone preenchidos).
+      // Usuários que entraram via Google OAuth têm linha criada pelo trigger
+      // mas com phone=null e role='cliente' (padrão). Eles precisam completar o cadastro.
+      final bool profileIncomplete = tipo == null || tipo.trim().isEmpty ||
+                                     phone == null || phone.trim().isEmpty;
+
+      if (profileIncomplete) {
+        debugPrint('AuthRedirect: Perfil incompleto para ${widget.user.email} (phone ou role vazio) — ativando fluxo de cadastro.');
+        if (mounted) {
+          // LoginPage.initState() detecta o usuário autenticado e chama _routeUser(),
+          // que verifica phone/role e ativa _isRegistering=true automaticamente.
+          setState(() => _targetPage = const LoginPage());
+        }
         return;
       }
 

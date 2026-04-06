@@ -308,7 +308,9 @@ class _ClientHomePageState extends State<ClientHomePage> {
             _userId = user.id;
             _userName = data?['name'] ?? data?['nome'] ?? "Cliente";
             _userEmail = user.email ?? "";
-            _userPhotoUrl = data?['photo_url'];
+            _userPhotoUrl = data?['photo_url'] as String? ??
+                user.userMetadata?['avatar_url'] as String? ??
+                user.userMetadata?['picture'] as String?;
             _userTipo = data?['tipo'] ?? data?['role'] ?? 'cliente';
             // Restaurar última localização salva
             final lastLoc = data?['last_location'] as Map<String, dynamic>?;
@@ -370,7 +372,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
       backgroundColor: Colors.transparent,
       builder: (ctx) => Container(
         padding: EdgeInsets.fromLTRB(
-            24, 16, 24, MediaQuery.of(ctx).viewInsets.bottom + 24),
+            24, 16, 24, MediaQuery.of(ctx).viewInsets.bottom + MediaQuery.of(ctx).padding.bottom + 24),
         decoration: const BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -1197,12 +1199,25 @@ class _ClientHomePageState extends State<ClientHomePage> {
                         CircleAvatar(
                           radius: 18,
                           backgroundColor: Colors.grey[200],
-                          backgroundImage: _userPhotoUrl != null
-                              ? CachedNetworkImageProvider(_userPhotoUrl!)
-                              : null,
-                          child: _userPhotoUrl == null
-                              ? const Icon(Icons.person, color: Colors.grey)
-                              : null,
+                          child: _userPhotoUrl != null
+                              ? ClipOval(
+                                  child: CachedNetworkImage(
+                                    imageUrl: _userPhotoUrl!,
+                                    width: 36,
+                                    height: 36,
+                                    fit: BoxFit.cover,
+                                    placeholder: (_, __) => const Icon(
+                                        Icons.person,
+                                        color: Colors.grey,
+                                        size: 20),
+                                    errorWidget: (_, __, ___) => const Icon(
+                                        Icons.person,
+                                        color: Colors.grey,
+                                        size: 20),
+                                  ),
+                                )
+                              : const Icon(Icons.person,
+                                  color: Colors.grey, size: 20),
                         ),
                         const SizedBox(width: 4),
                         Icon(Icons.keyboard_arrow_down,
@@ -2348,7 +2363,7 @@ class _BoostBannerCarousel extends StatefulWidget {
 }
 
 class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
-  final PageController _pageCtrl = PageController(viewportFraction: 0.92);
+  final PageController _pageCtrl = PageController(viewportFraction: 1.0);
   int _currentPage = 0;
   Timer? _autoScrollTimer;
   List<Map<String, dynamic>> _slides = [];
@@ -2478,30 +2493,7 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
     final logo = (d['logo_url'] ?? d['logoUrl'] ?? '').toString();
     return GestureDetector(
       onTap: () => widget.onShopTap(d),
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 6),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(18),
-          gradient: const LinearGradient(
-            colors: [Color(0xFF6A1B9A), Color(0xFF4A148C)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFF6A1B9A).withValues(alpha: 0.25),
-              blurRadius: 14,
-              offset: const Offset(0, 6),
-            ),
-            BoxShadow(
-              color: const Color(0xFFFFD700).withValues(alpha: 0.08),
-              blurRadius: 20,
-            ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(18),
-          child: Stack(fit: StackFit.expand, children: [
+      child: Stack(fit: StackFit.expand, children: [
             if (img.isNotEmpty)
               CachedNetworkImage(
                 imageUrl: img,
@@ -2611,8 +2603,6 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
               ),
             ),
           ]),
-        ),
-      ),
     );
   }
 
@@ -2631,26 +2621,7 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
           }
         }
       },
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 6),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(18),
-          gradient: const LinearGradient(
-            colors: [Color(0xFF6A1B9A), Color(0xFF9C27B0)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFF6A1B9A).withValues(alpha: 0.3),
-              blurRadius: 14,
-              offset: const Offset(0, 6),
-            ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(18),
-          child: Stack(fit: StackFit.expand, children: [
+      child: Stack(fit: StackFit.expand, children: [
             // Imagem de fundo (quando fornecida via admin)
             if (imgUrl.isNotEmpty)
               CachedNetworkImage(
@@ -2727,8 +2698,6 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
               ),
             ),
           ]),
-        ),
-      ),
     );
   }
 
@@ -2740,19 +2709,33 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
     return Column(
       children: [
         const SizedBox(height: 8),
-        SizedBox(
+        Container(
           height: 135,
-          child: PageView.builder(
-            controller: _pageCtrl,
-            itemCount: _slides.length,
-            onPageChanged: (p) => setState(() => _currentPage = p),
-            itemBuilder: (ctx, i) {
-              final slide = _slides[i];
-              if (slide['_slide_type'] == 'marka') {
-                return _buildMarkaBannerSlide(slide);
-              }
-              return _buildShopSlide(slide);
-            },
+          margin: const EdgeInsets.symmetric(horizontal: 20),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF6A1B9A).withValues(alpha: 0.3),
+                blurRadius: 14,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(18),
+            child: PageView.builder(
+              controller: _pageCtrl,
+              itemCount: _slides.length,
+              onPageChanged: (p) => setState(() => _currentPage = p),
+              itemBuilder: (ctx, i) {
+                final slide = _slides[i];
+                if (slide['_slide_type'] == 'marka') {
+                  return _buildMarkaBannerSlide(slide);
+                }
+                return _buildShopSlide(slide);
+              },
+            ),
           ),
         ),
         if (_slides.length > 1) ...[

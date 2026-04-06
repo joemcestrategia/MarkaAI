@@ -384,9 +384,20 @@ class _LoginPageState extends State<LoginPage>
         updateData['birth_date'] = DateParsingUtils.toIso8601(_birthCtrl.text);
       }
 
-      await supabase.from('users').upsert(updateData);
+      // FIX RLS 42501: O trigger handle_new_user (SECURITY DEFINER) já inseriu
+      // o perfil completo via metadata durante o signUp().
+      // O upsert direto só é possível quando há sessão ativa (auth.uid() != null).
+      // Se email confirmation estiver ligado, não há sessão neste momento e o 
+      // trigger já cuidou de tudo — não tentamos o upsert para evitar o erro 42501.
+      final hasActiveSession = supabase.auth.currentSession != null;
 
-      if (_selectedRole == 'dono') {
+      if (hasActiveSession) {
+        await supabase.from('users').upsert(updateData);
+      } else {
+        debugPrint('[SIGNUP] Sem sessão ativa (email confirmation pendente) — trigger já inseriu o perfil.');
+      }
+
+      if (_selectedRole == 'dono' && hasActiveSession) {
         final shopData = {
           'id': uid,
           'name': _bizCtrl.text.trim(),
