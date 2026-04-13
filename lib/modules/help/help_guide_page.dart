@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
+import '../support/support_tickets_page.dart';
 
 class HelpGuidePage extends StatelessWidget {
   const HelpGuidePage({super.key});
@@ -307,12 +308,10 @@ class _FaqTab extends StatelessWidget {
       },
     ];
 
-    return ListView.builder(
+    return ListView(
       padding: const EdgeInsets.all(16),
-      itemCount: faqs.length,
-      itemBuilder: (context, index) {
-        final faq = faqs[index];
-        return ExpansionTile(
+      children: [
+        ...faqs.map((faq) => ExpansionTile(
           title: Text(faq['q'] as String,
               style:
                   const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
@@ -323,8 +322,49 @@ class _FaqTab extends StatelessWidget {
                   style: TextStyle(color: Colors.grey[700])),
             ),
           ],
-        );
-      },
+        )),
+        const SizedBox(height: 24),
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade50,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: Colors.grey.shade200),
+          ),
+          child: Column(
+            children: [
+              Icon(Icons.support_agent_rounded, size: 36, color: Colors.grey[400]),
+              const SizedBox(height: 10),
+              const Text(
+                'Não encontrou o que procurava?',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Se o problema persistir, abra um chamado e nossa equipe vai te ajudar.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.grey[500], fontSize: 13),
+              ),
+              const SizedBox(height: 14),
+              Builder(
+                builder: (ctx) => OutlinedButton.icon(
+                  onPressed: () => Navigator.push(
+                    ctx,
+                    MaterialPageRoute(builder: (_) => const SupportTicketsPage()),
+                  ),
+                  icon: const Icon(Icons.confirmation_number_outlined, size: 18),
+                  label: const Text('Abrir Chamado de Suporte'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+      ],
     );
   }
 }

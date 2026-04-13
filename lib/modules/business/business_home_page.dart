@@ -44,6 +44,7 @@ import 'price_adjustment_page.dart';
 import '../../pages/privacy_settings_page.dart';
 import 'holidays_page.dart';
 // import '../clients/client_affiliate_page.dart'; // Removido: sistema de afiliados desativado
+import '../fiscal/nfse_dashboard_screen.dart';
 
 class BusinessHomePage extends StatefulWidget {
   const BusinessHomePage({super.key});
@@ -553,7 +554,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       case 9: return const PriceAdjustmentPage();
       case 10: return const PrivacySettingsPage();
       case 11: return HolidaysPage(shopId: shopId ?? "");
-      // case 12: return const ClientAffiliatePage(); // Removido
+      case 12: return const NfseDashboardScreen();
       default: return _buildHomeDashboard(isDesktop: isDesktop);
     }
   }
@@ -659,6 +660,9 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                     ],
                   ),
                 ),
+
+                _buildDesktopMenuItem(
+                    12, Icons.receipt_long_rounded, "Fiscal NFS-e"),
 
                 _buildDesktopMenuItem(
                     9, Icons.trending_up_rounded, "Reajuste de Valores"),
@@ -961,6 +965,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                         _buildTabletNavIcon(8, Icons.settings, "Config"),
                         _buildTabletNavIcon(11, Icons.beach_access_rounded, "Folgas",
                             badge: _pendingHolidaysCount),
+                        _buildTabletNavIcon(12, Icons.receipt_long_rounded, "NFS-e"),
                       ],
                     ),
                   ),
@@ -1288,6 +1293,11 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                     : null,
                 ),
                 _buildDrawerItem(
+                  icon: Icons.receipt_long_rounded,
+                  title: "Fiscal NFS-e",
+                  index: 12,
+                ),
+                _buildDrawerItem(
                   icon: Icons.local_offer_outlined,
                   title: "Meus Cupons",
                   index: -1,
@@ -1532,7 +1542,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     try {
       final result = await sb.Supabase.instance.client
           .from('appointments')
-          .select('id, scheduled_at, status, total_value, service_value, product_value, professional_id, client_id, service_name, client_name')
+          .select('id, scheduled_at, status, total_value, total_price, total_payable, service_value, product_value, professional_id, client_id, service_name, client_name')
           .eq('shop_id', shopId!)
           .gte('scheduled_at', startData.toIso8601String())
           .lte('scheduled_at', endData.toIso8601String())
@@ -1570,8 +1580,10 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       endData = DateTime(_selectedYear, 12, 31, 23, 59, 59);
     }
 
-    // Cache: só cria nova future se o ano mudou ou se foi invalidada (pull-to-refresh)
-    if (_dashboardFuture == null || _lastDashboardYear != _selectedYear) {
+    // Cache: só cria nova future se o ano mudou, foi invalidada, ou shopId acabou de carregar
+    // IMPORTANTE: não cachear quando shopId ainda é null (evita race condition)
+    final shopIdReady = shopId != null && shopId!.isNotEmpty;
+    if (shopIdReady && (_dashboardFuture == null || _lastDashboardYear != _selectedYear)) {
       _lastDashboardYear = _selectedYear;
       _dashboardFuture = _fetchDashboardAppointments(startData, endData);
     }
@@ -1659,9 +1671,18 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
       DateTime date = DateTime.tryParse(dateStr) ?? DateTime.now();
 
-      // Filtra status concludo
-      if ((data['status'] ?? 'agendado') == 'concluido') {
-        double total = double.tryParse(data['total_value']?.toString() ?? '0') ?? 0.0;
+      final apptStatus = (data['status'] ?? '').toString().toLowerCase();
+      final bool isDone = apptStatus == 'concluido' || apptStatus == 'finalizado' ||
+          apptStatus == 'pago' || apptStatus == 'confirmado' ||
+          apptStatus == 'agendado' || apptStatus == 'pendente' ||
+          apptStatus == 'completed' || apptStatus == 'efetuado';
+      if (isDone) {
+        // Usa primeiro valor não-zero: total_payable → total_price → total_value
+        double total = 0.0;
+        for (final k in ['total_payable', 'total_price', 'total_value']) {
+          final v = double.tryParse(data[k]?.toString() ?? '');
+          if (v != null && v > 0) { total = v; break; }
+        }
         // TODO: Supabase schema não tem campos separados para mão de obra e produtos.
         // Quando esses campos forem adicionados, usar 'service_value' e 'product_value'.
         double maoObra = double.tryParse(data['service_value']?.toString() ?? '0') ?? 0.0;
@@ -1692,9 +1713,16 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         final dateStr = data['scheduled_at'] as String?;
         if (dateStr == null) continue;
         DateTime date = DateTime.tryParse(dateStr) ?? DateTime.now();
-        if ((data['status'] ?? 'agendado') == 'concluido') {
-          double total =
-              double.tryParse(data['total_value']?.toString() ?? '0') ?? 0;
+        final yrStatus = (data['status'] ?? '').toString().toLowerCase();
+        if (yrStatus == 'concluido' || yrStatus == 'finalizado' ||
+            yrStatus == 'pago' || yrStatus == 'confirmado' ||
+            yrStatus == 'agendado' || yrStatus == 'pendente' ||
+            yrStatus == 'completed' || yrStatus == 'efetuado') {
+          double total = 0.0;
+          for (final k in ['total_payable', 'total_price', 'total_value']) {
+            final v = double.tryParse(data[k]?.toString() ?? '');
+            if (v != null && v > 0) { total = v; break; }
+          }
           yearMoney[date.year] = (yearMoney[date.year] ?? 0) + total;
           yearQty[date.year] = (yearQty[date.year] ?? 0) + 1;
         }
@@ -1875,7 +1903,11 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     for (var data in concluidos) {
       final pid = data['professional_id']?.toString() ?? '';
       if (pid.isEmpty) continue;
-      final valor = double.tryParse(data['total_value']?.toString() ?? '0') ?? 0;
+      double valor = 0.0;
+      for (final k in ['total_payable', 'total_price', 'total_value']) {
+        final v = double.tryParse(data[k]?.toString() ?? '');
+        if (v != null && v > 0) { valor = v; break; }
+      }
       producaoPorProf[pid] = (producaoPorProf[pid] ?? 0) + valor;
     }
 
@@ -3356,6 +3388,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         return "Privacidade";
       case 11:
         return "Gestão de Folgas";
+      case 12:
+        return "Fiscal NFS-e";
       default:
         return "";
     }

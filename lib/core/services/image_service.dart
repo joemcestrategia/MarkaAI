@@ -52,7 +52,7 @@ class ImageService {
         maxWidth = 400;
         maxHeight = 400;
         targetQuality = 0.85;
-        maxSizeBytes = 80 * 1024; // 80 KB
+        maxSizeBytes = 150 * 1024; // 150 KB (increased from 80 KB — iPhone HEIC photos need more room)
         shouldCrop = true;
         break;
       case ImageContext.service:
@@ -115,7 +115,7 @@ class ImageService {
     Uint8List? compressedBytes;
     int finalSize = 0;
 
-    while (currentQuality >= 0.40) {
+    while (currentQuality >= 0.20) {
       final compressed = await FlutterImageCompress.compressWithList(
         processedBytes,
         minWidth: maxWidth,

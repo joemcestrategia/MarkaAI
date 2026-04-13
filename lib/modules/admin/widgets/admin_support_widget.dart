@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:io' if (dart.library.html) 'package:flutter_application_1/core/utils/io_stub.dart' as io;
 import 'package:path_provider/path_provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class AdminSupportWidget extends StatelessWidget {
   const AdminSupportWidget({super.key});
@@ -19,6 +20,10 @@ class AdminSupportWidget extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // --- Painel de Tickets ---
+            _buildTicketsBanner(context),
+            const SizedBox(height: 32),
+
             const Text(
               'Ações Rápidas de Suporte',
               style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white),
@@ -124,6 +129,83 @@ class AdminSupportWidget extends StatelessWidget {
     );
   }
   
+  static const String _supportAppUrl = 'https://markaai-suporte.netlify.app';
+
+  Widget _buildTicketsBanner(BuildContext context) {
+    return InkWell(
+      onTap: () => _openSupportApp(context, admin: true),
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(28),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF4F8EF7), Color(0xFF7C5CFC)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF4F8EF7).withValues(alpha: 0.3),
+              blurRadius: 20,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Icon(Icons.confirmation_number_rounded, color: Colors.white, size: 32),
+            ),
+            const SizedBox(width: 20),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Painel de Tickets',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: -0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Gerenciar tickets de suporte, SLA, relatórios e fila de atendimento.',
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.85), fontSize: 13),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.open_in_new_rounded, color: Colors.white, size: 24),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openSupportApp(BuildContext context, {bool admin = false}) async {
+    final path = admin ? '/admin/support' : '/app/suporte';
+    final url = Uri.parse('$_supportAppUrl$path');
+    try {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Não foi possível abrir: $url')),
+        );
+      }
+    }
+  }
+
   Widget _buildActionCard(BuildContext context, String title, IconData icon, Color color, VoidCallback onTap) {
     return InkWell(
       onTap: onTap,
