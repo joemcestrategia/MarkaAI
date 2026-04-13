@@ -3,7 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:io' if (dart.library.html) 'package:flutter_application_1/core/utils/io_stub.dart' as io;
 import 'package:path_provider/path_provider.dart';
-import 'package:url_launcher/url_launcher.dart';
+import '../../support/admin_tickets_page.dart';
 
 class AdminSupportWidget extends StatelessWidget {
   const AdminSupportWidget({super.key});
@@ -129,11 +129,9 @@ class AdminSupportWidget extends StatelessWidget {
     );
   }
   
-  static const String _supportAppUrl = 'https://markaai-suporte.netlify.app';
-
   Widget _buildTicketsBanner(BuildContext context) {
     return InkWell(
-      onTap: () => _openSupportApp(context, admin: true),
+      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminTicketsPage())),
       borderRadius: BorderRadius.circular(20),
       child: Container(
         width: double.infinity,
@@ -185,25 +183,11 @@ class AdminSupportWidget extends StatelessWidget {
                 ],
               ),
             ),
-            const Icon(Icons.open_in_new_rounded, color: Colors.white, size: 24),
+            const Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 24),
           ],
         ),
       ),
     );
-  }
-
-  Future<void> _openSupportApp(BuildContext context, {bool admin = false}) async {
-    final path = admin ? '/admin/support' : '/app/suporte';
-    final url = Uri.parse('$_supportAppUrl$path');
-    try {
-      await launchUrl(url, mode: LaunchMode.externalApplication);
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Não foi possível abrir: $url')),
-        );
-      }
-    }
   }
 
   Widget _buildActionCard(BuildContext context, String title, IconData icon, Color color, VoidCallback onTap) {
