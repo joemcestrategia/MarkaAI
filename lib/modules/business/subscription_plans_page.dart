@@ -441,6 +441,8 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
                   _buildFeatureItem('Análises financeiras avançadas (gráficos e insights)', isCheck: true, accentColor: accentColor),
                   _buildFeatureItem('Eficiência operacional e desempenho da equipe', isCheck: true, accentColor: accentColor),
                   _buildFeatureItem('Comparativo de receita por período e serviço', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Emissão de Nota Fiscal Eletrônica (NFS-e)', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Obrigatoriedade de CPF para agendamentos', isCheck: true, accentColor: accentColor),
                   _buildFeatureItem('Suporte VIP direto via WhatsApp', isCheck: true, accentColor: accentColor),
                 ],
                 const SizedBox(height: 16),

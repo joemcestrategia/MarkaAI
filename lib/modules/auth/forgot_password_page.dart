@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 import '../../core/services/auth_service.dart';
+import '../../core/services/auth_error_handler.dart';
 import '../../core/theme/app_colors.dart';
+import '../../widgets/app_info_modal.dart';
 
 class ForgotPasswordPage extends StatefulWidget {
   const ForgotPasswordPage({super.key});
@@ -46,10 +49,19 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       await AuthService().sendPasswordReset(email);
       if (mounted) setState(() => _emailSent = true);
     } catch (e) {
-      final msg = e.toString().replaceFirst('Exception: ', '');
-      _showError(msg.isNotEmpty ? msg : 'Ocorreu um erro inesperado.');
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+
+      final errorCode = e is sb.AuthException ? AuthService().mapSupabaseError(e) : e.toString();
+      final errorData = AuthErrorHandler.handle(errorCode);
+      
+      AppInfoModal.show(
+        context,
+        title: errorData.title,
+        message: errorData.message,
+        icon: errorData.icon,
+        type: AppInfoType.error,
+      );
     }
   }
 

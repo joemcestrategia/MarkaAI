@@ -70,6 +70,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   double _birthdayPixDiscountPercent = 10.0;
   double _vipExtraDays = 0.0; // Padrão: 0 dias extras
   bool _restrictProblematicClients = false;
+  bool _requireCpf = false;
 
   // Configurações de Automação de Tags (VIP/Sumido)
   double _vipMinVisits = 15.0; // Padrão: 15 visitas
@@ -191,6 +192,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     (config['vip_extra_booking_days'] ?? 0).toDouble();
                 _restrictProblematicClients =
                     config['restrict_problematic_clients'] ?? false;
+                _requireCpf = config['require_cpf'] ?? false;
 
                 // Automação de Tags
                 _vipMinVisits = (config['vip_min_visits'] ?? 15).toDouble();
@@ -279,6 +281,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           'vip_min_visits': _vipMinVisits.round(),
           'vip_avg_interval': _vipAvgInterval.round(),
           'sumido_max_days': _sumidoMaxDays.round(),
+          'require_cpf': _requireCpf,
           'atualizado_em': DateTime.now().toIso8601String(),
         },
         'notification_settings': {
@@ -628,13 +631,25 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           child: _buildSwitchTile(
                             "Escolha de Profissional",
                             "Exibir lista de equipe no agendamento",
-                            _currentFeatures.clientChoosesProfessional ? _clientChoosesProfessional : false, // Fixed logical bug from old code (true -> false to enforce off)
+                            _currentFeatures.clientChoosesProfessional ? _clientChoosesProfessional : false,
                             _currentFeatures.clientChoosesProfessional
                                 ? (v) => setState(
                                     () => _clientChoosesProfessional = v)
                                 : (v) => _showUpgradeDialog('Escolha de Profissional', PlanKey.starter),
                             trailing: !_currentFeatures.clientChoosesProfessional ? _buildPremiumBadge() : null,
                           ),
+                        ),
+                        const Divider(height: 1),
+
+                        // CPF OBRIGATÓRIO
+                        _buildSwitchTile(
+                          "Exigir CPF do Cliente",
+                          "O cliente só poderá agendar se preencher o CPF no perfil.",
+                          _requireCpf,
+                          _currentFeatures.requireCpfForBooking
+                              ? (v) => setState(() => _requireCpf = v)
+                              : (v) => _showUpgradeDialog('CPF Obrigatório', PlanKey.pro),
+                          trailing: !_currentFeatures.requireCpfForBooking ? _buildPremiumBadge() : null,
                         ),
                       ]),
 

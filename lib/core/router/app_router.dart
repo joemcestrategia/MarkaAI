@@ -8,6 +8,7 @@ import '../../modules/public/public_shop_page.dart';
 import '../../modules/business/business_home_page.dart';
 import '../../modules/clients/client_home_page.dart';
 import '../../modules/auth/reset_password_page.dart';
+import '../../modules/auth/email_confirmation_page.dart';
 import '../../core/theme/app_colors.dart';
 import '../../modules/inventory/inventory_home_page.dart';
 import '../../modules/business/subscription_plans_page.dart';
@@ -52,6 +53,14 @@ class AppRouter {
     if (querySlug != null && querySlug.isNotEmpty) {
       return MaterialPageRoute(
         builder: (_) => PublicShopPage(slug: querySlug),
+        settings: settings,
+      );
+    }
+
+    // ── Rota de Confirmação de E-mail
+    if (cleanPath == 'confirm-email') {
+      return MaterialPageRoute(
+        builder: (_) => const EmailConfirmationPage(),
         settings: settings,
       );
     }
@@ -275,8 +284,19 @@ class _AuthGateState extends State<AuthGate> {
         final event = snapshot.data!.event;
         final session = snapshot.data!.session;
 
-        // Limpa o ?code= da URL após o login (SIGNED_IN) no Web
-        if (event == sb.AuthChangeEvent.signedIn && kIsWeb) {
+        // Detecta confirmação de email ANTES de qualquer manipulação de URL.
+        // Inclui fragment (#access_token=...) do fluxo implícito do Supabase.
+        // IMPORTANTE: deve ser calculado antes do replaceState abaixo.
+        final bool isConfirmingEmail = kIsWeb && (
+          Uri.base.queryParameters.containsKey('code') ||
+          Uri.base.path.contains('confirm-email') ||
+          Uri.base.queryParameters.containsKey('access_token') ||
+          Uri.base.fragment.contains('access_token')
+        );
+
+        // Limpa o ?code= da URL após o login (SIGNED_IN) no Web,
+        // mas apenas para logins normais — não durante confirmação de email.
+        if (event == sb.AuthChangeEvent.signedIn && kIsWeb && !isConfirmingEmail) {
           html.window.history.replaceState(null, '', '/');
         }
 
@@ -304,6 +324,16 @@ class _AuthGateState extends State<AuthGate> {
           // Limpa a URL do navegador
           if (kIsWeb) html.window.history.replaceState(null, '', '/reset-password');
           return const ResetPasswordPage(oobCode: '');
+        }
+
+        if (event == sb.AuthChangeEvent.signedIn && 
+            session != null && 
+            session.user.emailConfirmedAt != null && 
+            isConfirmingEmail) {
+          debugPrint('AuthGate: Email confirmado detectado -> EmailConfirmationPage');
+          // Limpa a URL do navegador
+          if (kIsWeb) html.window.history.replaceState(null, '', '/confirm-email');
+          return const EmailConfirmationPage();
         }
 
         // Sem sessão e já passou do initial ou não tem code na URL, ou superou Timeout = deslogado
@@ -403,11 +433,19 @@ class _AuthRedirectState extends State<AuthRedirect> {
         return;
       }
 
+      // Para donos/business sem loja: cria a loja a partir dos metadados do signUp.
+      // Isso é necessário quando email confirmation está ativo — a sessão não existia
+      // no momento do signUp, então o Flutter não pôde criar o registro da loja.
+      // Esta chamada é idempotente (não faz nada se a loja já existir).
+      if ((tipo == 'dono' || tipo == 'business') && doc['shop_id'] == null) {
+        await _ensureShopExists(widget.user);
+      }
+
       // Salva na sessão local (background)
       SessionService.saveLogin(
         userId: widget.user.id,
         userType: tipo,
-        // Usar shop_id do banco (snake_case)
+        // Usar shop_id do banco (snake_case); fallback para uid (convenção para donos)
         shopId: (tipo == 'dono' || tipo == 'business' || tipo == 'admin')
             ? (doc['shop_id']?.toString() ?? widget.user.id)
             : null,
@@ -461,6 +499,55 @@ class _AuthRedirectState extends State<AuthRedirect> {
       _errorMessage = '';
     });
     _resolve();
+  }
+
+  /// Cria o registro da loja para donos que se cadastraram com email confirmation ativo.
+  /// Nessa situação a sessão não existia no signUp, então o Flutter não pôde criar
+  /// a loja. Este método usa os metadados salvos no signUp() para recriá-la.
+  /// É idempotente: não faz nada se a loja já existir.
+  Future<void> _ensureShopExists(sb.User user) async {
+    try {
+      final supabase = sb.Supabase.instance.client;
+      final uid = user.id;
+
+      final existing = await supabase
+          .from('shops')
+          .select('id')
+          .eq('id', uid)
+          .maybeSingle();
+      if (existing != null) return;
+
+      final meta = user.userMetadata ?? {};
+      final street = meta['street']?.toString() ?? '';
+      final number = meta['number']?.toString() ?? '';
+      final address = street.isNotEmpty
+          ? '$street, $number'.trim().replaceAll(RegExp(r',\s*$'), '')
+          : '';
+
+      final shopData = {
+        'id': uid,
+        'name': (meta['business_name']?.toString().isNotEmpty == true
+                ? meta['business_name']
+                : meta['name'])
+            ?.toString() ?? '',
+        'phone': meta['phone']?.toString() ?? '',
+        'city': meta['city']?.toString() ?? '',
+        'state': meta['state']?.toString() ?? '',
+        'zip_code': meta['zip_code']?.toString() ?? '',
+        'address': address,
+        'neighborhood': meta['neighborhood']?.toString() ?? '',
+        'owner_id': uid,
+        'verified': false,
+        'plan_id': 'free',
+      };
+
+      await supabase.from('shops').upsert(shopData);
+      await supabase.from('users').update({'shop_id': uid}).eq('id', uid);
+
+      debugPrint('[AuthRedirect] Loja criada para dono=$uid via metadados do signUp.');
+    } catch (e) {
+      debugPrint('[AuthRedirect] Aviso: falha em _ensureShopExists: $e');
+    }
   }
 
   @override

@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../core/services/auth_service.dart';
+import '../../core/services/auth_error_handler.dart';
 import '../../core/theme/app_colors.dart';
+import '../../widgets/app_info_modal.dart';
 
 class ResetPasswordPage extends StatefulWidget {
   final String oobCode;
@@ -38,18 +41,6 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
     );
   }
 
-  void _showSuccess(String msg) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: Colors.green,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
-    );
-  }
-
   Future<void> _handleConfirmReset() async {
     final pass = _passCtrl.text.trim();
     final confirm = _passConfirmCtrl.text.trim();
@@ -78,20 +69,32 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
         UserAttributes(password: pass),
       );
 
-      _showSuccess("Senha redefinida com sucesso! Redirecionando...");
-
-      // Espera um pouco e redireciona pro fluxo inicial de login
       if (mounted) {
-        await Future.delayed(const Duration(seconds: 2));
-        if (mounted) {
-          Navigator.of(context)
-              .pushNamedAndRemoveUntil('/login', (route) => false);
-        }
+        AppInfoModal.show(
+          context,
+          title: "Senha Alterada!",
+          message: "Sua nova senha foi salva com sucesso. Você será redirecionado para o login.",
+          icon: Icons.check_circle_outline,
+          type: AppInfoType.success,
+          onConfirm: () {
+            Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
+          },
+        );
       }
-    } on AuthException catch (e) {
-      _showError("Erro: ${e.message}");
     } catch (e) {
-      _showError("Ocorreu um erro inesperado.");
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+
+      final errorCode = e is AuthException ? AuthService().mapSupabaseError(e) : e.toString();
+      final errorData = AuthErrorHandler.handle(errorCode);
+      
+      AppInfoModal.show(
+        context,
+        title: errorData.title,
+        message: errorData.message,
+        icon: errorData.icon,
+        type: AppInfoType.error,
+      );
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);

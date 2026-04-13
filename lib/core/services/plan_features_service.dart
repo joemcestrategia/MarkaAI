@@ -92,6 +92,8 @@ class PlanFeaturesService {
       customHolidays: base.customHolidays,
       customLink: base.customLink,
       visitorsAnalytics: base.visitorsAnalytics,
+      nfseEmission: false, // BLOQUEADO (Pro Only)
+      requireCpfForBooking: false, // BLOQUEADO (Pro Only)
     );
   }
 

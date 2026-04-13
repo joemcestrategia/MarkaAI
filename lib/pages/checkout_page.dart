@@ -96,7 +96,8 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
   bool _trustedOnlyPayLocal = false;
   bool _birthdayGiftAccepted = false;
   double _cardTaxPercent = 0.0;
-
+  String? _userCpf;
+ 
   // Cupons
   final _couponController = TextEditingController();
   bool _couponApplied = false;
@@ -241,6 +242,8 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
         if (userDoc != null) {
           _userPhone = userDoc['phone']?.toString();
           if (_userPhone != null && _userPhone!.trim().isEmpty) _userPhone = null;
+          _userCpf = userDoc['cpf']?.toString();
+          if (_userCpf != null && _userCpf!.trim().isEmpty) _userCpf = null;
           _userPhotoUrl = userDoc['photo_url']?.toString();
           if (_userPhotoUrl != null && _userPhotoUrl!.trim().isEmpty) _userPhotoUrl = null;
         }
@@ -273,6 +276,7 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
           _isProblematic = isProblematic;
           _isVip = isVip;
           _userPhone = _userPhone;
+          _userCpf = _userCpf;
           _trustedOnlyPayLocal = trustedOnly;
           _cardTaxPercent = cardTax;
 
@@ -482,6 +486,13 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
     // 2. Bloqueia sem Telefone
     if (_userPhone == null || _userPhone!.isEmpty) {
       _showMissingPhoneDialog();
+      return;
+    }
+ 
+    // 3. Bloqueia sem CPF (se a loja exigir)
+    final bool requireCpf = (widget.shopConfig['require_cpf'] == true);
+    if (requireCpf && (_userCpf == null || _userCpf!.trim().isEmpty)) {
+      _showMissingCpfDialog();
       return;
     }
 
@@ -2674,6 +2685,43 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
         ),
         content: const Text(
             "Para realizar um agendamento, você precisa ter um telefone cadastrado em seu perfil.\n\nPor favor, atualize seus dados antes de continuar."),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("CANCELAR", style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.pop(context, 'edit_profile');
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primaryPurple,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text("EDITAR PERFIL"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showMissingCpfDialog() {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.badge, color: Colors.orange),
+            SizedBox(width: 10),
+            Text("CPF Obrigatório"),
+          ],
+        ),
+        content: const Text(
+            "Esta loja exige que o CPF esteja preenchido no seu perfil para realizar agendamentos.\n\nPor favor, atualize seus dados antes de continuar."),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),

@@ -1,0 +1,985 @@
+﻿­ƒÜÇ Iniciando teste de conex├úo para Itabirito...
+
+­ƒôí Status HTTP: 200
+­ƒôä Resposta Completa da Prefeitura:
+<definitions xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/" 
+			xmlns:xsd="http://www.w3.org/2001/XMLSchema" 
+			xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+			xmlns:SOAP-ENC="http://schemas.xmlsoap.org/soap/encoding/" 
+			xmlns:tns="net.atende" 
+			xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/" 
+			xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/" 
+			xmlns="http://schemas.xmlsoap.org/wsdl/"
+			targetNamespace="net.atende">
+	<types>
+	<xsd:schema targetNamespace="net.atende">
+		<xsd:import namespace="http://schemas.xmlsoap.org/soap/encoding/"/>
+		<xsd:import namespace="http://schemas.xmlsoap.org/wsdl/"/>
+		
+		<xsd:complexType name="GerarNfseEnvio">
+			<xsd:all>
+				<xsd:element name="Rps" type="tns:tcDeclaracaoPrestacaoServico" minOccurs="1" maxOccurs="1"/>
+			</xsd:all>
+		</xsd:complexType>
+		
+		<xsd:complexType name="EnviarLoteRpsEnvio">
+			<xsd:sequence>
+				<xsd:element name="LoteRps" type="tns:tcLoteRps" minOccurs="1" maxOccurs="1" />
+			</xsd:sequence>
+		</xsd:complexType>
+		
+		<xsd:complexType name="EnviarLoteRpsSincronoEnvio">
+			<xsd:sequence>
+				<xsd:element name="LoteRps" type="tns:tcLoteRps" minOccurs="1" maxOccurs="1" />
+			</xsd:sequence>
+		</xsd:complexType>
+			
+		<xsd:complexType name="ConsultarLoteRpsEnvio">
+			<xsd:sequence>
+				<xsd:element name="Prestador" type="tns:tcIdentificacaoPessoaEmpresa" minOccurs="1" maxOccurs="1" />
+				<xsd:element name="Protocolo" type="xsd:string" minOccurs="1" maxOccurs="1" />
+			</xsd:sequence>
+		</xsd:complexType>
+		
+		<xsd:complexType name="CancelarNfseEnvio">
+			<xsd:sequence>
+				<xsd:element name="Pedido" type="tns:tcPedidoCancelamento" minOccurs="1" maxOccurs="1" />			
+			</xsd:sequence>
+		</xsd:complexType>
+		
+		<xsd:complexType name="SubstituirNfseEnvio">
+			<xsd:sequence>
+				<xsd:element name="SubstituicaoNfse" minOccurs="1" maxOccurs="1">
+					<xsd:complexType>
+						<xsd:sequence>
+							<xsd:element name="Pedido" type="tns:tcPedidoCancelamento" minOccurs="1" maxOccurs="1" />
+							<xsd:element name="Rps" type="tns:tcDeclaracaoPrestacaoServico" minOccurs="1" maxOccurs="1" />
+						</xsd:sequence>
+					</xsd:complexType>
+				</xsd:element>
+			</xsd:sequence>
+		</xsd:complexType>
+		
+		<xsd:complexType name="ConsultarNfseServicoPrestadoEnvio">
+			<xsd:sequence>
+				<xsd:element name="Prestador" type="tns:tcIdentificacaoPessoaEmpresa" minOccurs="1" maxOccurs="1" />
+				<xsd:choice>
+					<xsd:element name="NumeroNfse" type="xsd:string" minOccurs="1" maxOccurs="1" />
+					<xsd:element name="PeriodoEmissao"  minOccurs="1" maxOccurs="1">
+						<xsd:complexType>
+							<xsd:sequence>
+								<xsd:element name="DataInicial" type="xsd:string" minOccurs="1" maxOccurs="1" />
+								<xsd:element name="DataFinal" type="xsd:string" minOccurs="1" maxOccurs="1" />
+							</xsd:sequence>
+						</xsd:complexType>
+					</xsd:element>
+					<xsd:element name="PeriodoCompetencia" minOccurs="1" maxOccurs="1">
+						<xsd:complexType>
+							<xsd:sequence>
+								<xsd:element name="DataInicial" type="xsd:string" minOccurs="1" maxOccurs="1" />
+								<xsd:element name="DataFinal" type="xsd:string" minOccurs="1" maxOccurs="1" />
+							</xsd:sequence>
+						</xsd:complexType>
+					</xsd:element>
+				</xsd:choice>
+				<xsd:element name="Tomador" type="tns:tcIdentificacaoPessoaEmpresa" minOccurs="0" maxOccurs="1" />
+				<xsd:element name="Intermediario" type="tns:tcIdentificacaoPessoaEmpresa" minOccurs="0" maxOccurs="1" />
+				<xsd:element name="Pagina" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+			</xsd:sequence>
+		</xsd:complexType>
+		
+		<xsd:complexType name="ConsultarNfseFaixaEnvio">
+			<xsd:sequence>
+				<xsd:element name="Prestador" type="tns:tcIdentificacaoPessoaEmpresa" minOccurs="1" maxOccurs="1" />
+				<xsd:element name="Faixa" minOccurs="1" maxOccurs="1">
+					<xsd:complexType>
+						<xsd:sequence>
+							<xsd:element name="NumeroNfseInicial" type="xsd:string" minOccurs="1" maxOccurs="1" />
+							<xsd:element name="NumeroNfseFinal" type="xsd:string" minOccurs="1" maxOccurs="1" />
+						</xsd:sequence>
+					</xsd:complexType>
+				</xsd:element>
+				<xsd:element name="Pagina" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+			</xsd:sequence>
+		</xsd:complexType>
+					
+					<xsd:complexType name="ConsultarNfseRpsEnvio">
+							<xsd:sequence>
+									<xsd:element name="Prestador" type="tns:tcIdentificacaoPessoaEmpresa" minOccurs="1" maxOccurs="1" />
+									<xsd:element name="IdentificacaoRps" type="tns:tcIdentificacaoRps" minOccurs="1" maxOccurs="1" />
+							</xsd:sequence>
+					</xsd:complexType>
+		
+		<xsd:complexType name="tcValoresNfse">
+			<xsd:all>
+				<xsd:element name="BaseCalculo" type="xsd:string" minOccurs="1"/>
+				<xsd:element name="Aliquota" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="ValorIss" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="ValorLiquidoNfse" type="xsd:string" minOccurs="1"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="tcEndereco">
+			<xsd:sequence>
+				<xsd:element name="Endereco" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="Numero" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="Complemento" type="xsd:string" minOccurs="0" maxOccurs="1"/>
+				<xsd:element name="Bairro" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="CodigoMunicipio" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="Uf" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="Cep" type="xsd:string" minOccurs="0"/>
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcContato">
+			<xsd:all>
+				<xsd:element name="Telefone" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="Email" type="xsd:string" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="tcDadosPrestador">
+			<xsd:all>
+				<xsd:element name="RazaoSocial" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="NomeFantasia" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="Endereco" type="tns:tcEndereco" minOccurs="0"/>
+				<xsd:element name="Contato" type="tns:tcContato" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="tcIdentificacaoOrgaoGerador">
+			<xsd:all>
+				<xsd:element name="CodigoMunicipio" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="Uf" type="xsd:string" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="tcIdentificacaoRps">
+			<xsd:sequence>
+				<xsd:element name="Numero" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="Serie" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="Tipo" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcInfRps">
+			<xsd:sequence>
+				<xsd:element name="IdentificacaoRps" type="tns:tcIdentificacaoRps" minOccurs="0" maxOccurs="1"/>
+				<xsd:element name="DataEmissao" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="Status" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="RpsSubstituido" type="tns:tcIdentificacaoRps" minOccurs="0" maxOccurs="1"/>
+			</xsd:sequence>
+		</xsd:complexType>
+        <xsd:simpleType name="tsCst">
+            <xsd:restriction base="xsd:integer" >
+				<xsd:enumeration value="01" />
+				<xsd:enumeration value="02" />
+				<xsd:enumeration value="03" />
+				<xsd:enumeration value="04" />
+				<xsd:enumeration value="05" />
+				<xsd:enumeration value="06" />
+				<xsd:enumeration value="07" />
+				<xsd:enumeration value="08" />
+				<xsd:enumeration value="09" />
+				<xsd:enumeration value="49" />
+				<xsd:enumeration value="50" />
+				<xsd:enumeration value="51" />
+				<xsd:enumeration value="52" />
+				<xsd:enumeration value="53" />
+				<xsd:enumeration value="54" />
+				<xsd:enumeration value="55" />
+				<xsd:enumeration value="56" />
+				<xsd:enumeration value="60" />
+				<xsd:enumeration value="61" />
+				<xsd:enumeration value="62" />
+				<xsd:enumeration value="63" />
+				<xsd:enumeration value="64" />
+				<xsd:enumeration value="65" />
+				<xsd:enumeration value="66" />
+				<xsd:enumeration value="67" />
+				<xsd:enumeration value="70" />
+				<xsd:enumeration value="71" />
+				<xsd:enumeration value="72" />
+				<xsd:enumeration value="73" />
+				<xsd:enumeration value="74" />
+				<xsd:enumeration value="75" />
+				<xsd:enumeration value="98" />
+				<xsd:enumeration value="99" />
+            </xsd:restriction>
+        </xsd:simpleType>
+        <xsd:complexType name="tcPisCofins">
+            <xsd:sequence>
+                <xsd:element name="Cst" type="xsd:string" minOccurs="1" maxOccurs="1" />
+                <xsd:element name="BaseCalculo" type="xsd:string" minOccurs="0" maxOccurs="1" />
+                <xsd:element name="AliquotaPis" type="xsd:string" minOccurs="0" maxOccurs="1" />
+                <xsd:element name="AliquotaCofins" type="xsd:string" minOccurs="0" maxOccurs="1" />
+            </xsd:sequence>
+        </xsd:complexType>
+		<xsd:complexType name="tcValoresDeclaracaoServico">
+			<xsd:sequence>
+				<xsd:element name="ValorServicos" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="ValorDeducoes" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="ValorPis" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="ValorCofins" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="ValorInss" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="ValorIr" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="ValorCsll" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="OutrasRetencoes" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="ValTotTributos" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="ValorIss" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="Aliquota" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="DescontoIncondicionado" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="DescontoCondicionado" type="xsd:string" minOccurs="0"/>
+                <xsd:element name="PisCofins" type="tns:tcPisCofins" minOccurs="0" maxOccurs="1" />
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcDadosServico">
+			<xsd:sequence>
+				<xsd:element name="Valores" type="tns:tcValoresDeclaracaoServico" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="IssRetido" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="ResponsavelRetencao" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="ItemListaServico" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="CodigoCnae" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="CodigoTributacaoMunicipio" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="CodigoNbs" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="Discriminacao" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="CodigoMunicipio" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="CodigoPais" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="ExigibilidadeISS" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="IdentifNaoExigibilidade" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="MunicipioIncidencia" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="NumeroProcesso" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="IBSCBS" type="tns:tcIBSCBS" minOccurs="0" maxOccurs="1" />
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcCpfCnpj">
+			<xsd:choice>
+				<xsd:element name="Cpf" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="Cnpj" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+			</xsd:choice>
+		</xsd:complexType>
+		<xsd:complexType name="tcIdentificacaoPessoaEmpresa">
+			<xsd:sequence>
+				<xsd:element name="CpfCnpj" type="tns:tcCpfCnpj" minOccurs="0" maxOccurs="1"/>
+				<xsd:element name="InscricaoMunicipal" type="xsd:string" minOccurs="0"/>
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcEnderecoExterior">
+			<xsd:sequence>
+				<xsd:element name="CodigoPais" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="EnderecoCompletoExterior" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcDadosTomador">
+			<xsd:sequence>
+				<xsd:element name="IdentificacaoTomador" type="tns:tcIdentificacaoPessoaEmpresa" minOccurs="0"/>
+				<xsd:element name="NifTomador" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="RazaoSocial" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="Endereco" type="tns:tcEndereco" minOccurs="0"/>
+				<xsd:element name="EnderecoExterior" type="tns:tcEnderecoExterior" minOccurs="0"/>
+				<xsd:element name="Contato" type="tns:tcContato" minOccurs="0"/>
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcDadosIntermediario">
+			<xsd:all>
+				<xsd:element name="IdentificacaoIntermediario" type="tns:tcIdentificacaoPessoaEmpresa" minOccurs="0"/>
+				<xsd:element name="RazaoSocial" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="CodigoMunicipio" type="xsd:string" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="tcDadosConstrucaoCivil">
+			<xsd:all>
+				<xsd:element name="CodigoObra" type="xsd:string" minOccurs="0" maxOccurs="1"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="tcEvento">
+			<xsd:all>
+				<xsd:element name="IdentificacaoEvento" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="DescricaoEvento" type="xsd:string" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="tcIdentificacaoNfseDeducao">
+			<xsd:all>
+				<xsd:element name="CodigoMunicipioGerador" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="NumeroNfse" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="CodigoVerificacao" type="xsd:string" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="tcIdentificacaoNfeDeducao">
+			<xsd:all>
+				<xsd:element name="NumeroNfe" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="UfNfe" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="ChaveAcessoNfe" type="xsd:string" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="tcOutroDocumentoDeducao">
+			<xsd:all>
+				<xsd:element name="IdentificacaoDocumento" type="xsd:string" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="tcIdentificacaoDocumentoDeducao">
+			<xsd:all>
+				<xsd:element name="IdentificacaoNfse" type="tns:tcIdentificacaoNfseDeducao" minOccurs="0"/>
+				<xsd:element name="IdentificacaoNfe" type="tns:tcIdentificacaoNfeDeducao" minOccurs="0"/>
+				<xsd:element name="OutroDocumento" type="tns:tcOutroDocumentoDeducao" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="tcIdentificacaoFornecedor">
+			<xsd:all>
+				<xsd:element name="CpfCnpj" type="tns:tcCpfCnpj" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="tcFornecedorExterior">
+			<xsd:all>
+				<xsd:element name="NifFornecedor" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="CodigoPais" type="xsd:string" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="tcDadosFornecedor">
+			<xsd:all>
+				<xsd:element name="IdentificacaoFornecedor" type="tns:tcIdentificacaoFornecedor" minOccurs="0"/>
+				<xsd:element name="FornecedorExterior" type="tns:tcFornecedorExterior" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="tcDadosDeducao">
+			<xsd:all>
+				<xsd:element name="TipoDeducao" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="DescricaoDeducao" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="IdentificacaoDocumentoDeducao" type="tns:tcIdentificacaoDocumentoDeducao" minOccurs="0"/>
+				<xsd:element name="DadosFornecedor" type="tns:tcDadosFornecedor" minOccurs="0"/>
+				<xsd:element name="DataEmissao" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="ValorDedutivel" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="ValorUtilizadoDeducao" type="xsd:string" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="tcInfDeclaracaoPrestacaoServico">
+			<xsd:sequence>
+				<xsd:element name="Rps" type="tns:tcInfRps" minOccurs="0" maxOccurs="1"/>
+				<xsd:element name="Competencia" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="Servico" type="tns:tcDadosServico" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="Prestador" type="tns:tcIdentificacaoPessoaEmpresa" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="TomadorServico" type="tns:tcDadosTomador" minOccurs="0" maxOccurs="1"/>
+				<xsd:element name="Intermediario" type="tns:tcDadosIntermediario" minOccurs="0" maxOccurs="1"/>
+				<xsd:element name="ConstrucaoCivil" type="tns:tcDadosConstrucaoCivil" minOccurs="0" maxOccurs="1"/>
+				<xsd:element name="RegimeEspecialTributacao" type="xsd:string" minOccurs="0" maxOccurs="1"/>
+				<xsd:element name="OptanteSimplesNacional" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="IncentivoFiscal" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="Evento" type="tns:tcEvento" minOccurs="0" maxOccurs="1"/>
+				<xsd:element name="InformacoesComplementares" type="xsd:string" minOccurs="0" maxOccurs="1"/>
+				<xsd:element name="Deducao" type="tns:tcDadosDeducao" minOccurs="0"/>
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcDeclaracaoPrestacaoServico">
+			<xsd:all>
+				<xsd:element name="InfDeclaracaoPrestacaoServico" type="tns:tcInfDeclaracaoPrestacaoServico" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="IBSCBS" type="tns:tcIBSCBS_DPS" minOccurs="0" maxOccurs="1"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="tcEndExt">
+			<xsd:sequence>
+				<xsd:element type="xsd:string" name="cEndPost" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="xCidade" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="xEstProvReg" minOccurs="1" maxOccurs="1" />
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcEnderecoImovel">
+			<xsd:sequence>
+				<xsd:choice>
+					<xsd:element type="xsd:string" name="CEP" minOccurs="1" maxOccurs="1" />
+					<xsd:element type="tns:tcEndExt" name="endExt" minOccurs="1" maxOccurs="1" />
+				</xsd:choice>
+				<xsd:element type="xsd:string" name="xLgr" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="nro" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="xCpl" minOccurs="0" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="xBairro" minOccurs="1" maxOccurs="1" />
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcImovel">
+			<xsd:sequence>
+				<xsd:element type="xsd:string" name="inscImobFisc" minOccurs="0" maxOccurs="1" />
+				<xsd:choice>
+					<xsd:element type="xsd:string" name="cCIB" minOccurs="1" maxOccurs="1" />
+					<xsd:element type="tns:tcEnderecoImovel" name="end" minOccurs="1" maxOccurs="1" />
+				</xsd:choice>
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcTribRegular">
+			<xsd:sequence>
+				<xsd:element type="xsd:string" name="CSTReg" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="cClassTribReg" minOccurs="1" maxOccurs="1" />
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcDiferimento">
+			<xsd:sequence>
+				<xsd:element type="xsd:string" name="pDifUF" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="pDifMun" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="pDifCBS" minOccurs="1" maxOccurs="1" />
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcgIBSCBS">
+			<xsd:sequence>
+				<xsd:element type="xsd:string" name="CST" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="cClassTrib" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="cCredPres" minOccurs="0" maxOccurs="1" />
+				<xsd:element type="tns:tcTribRegular" name="gTribRegular" minOccurs="0" maxOccurs="1" />
+				<xsd:element type="tns:tcDiferimento" name="gDif" minOccurs="0" maxOccurs="1" />
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcTrib">
+			<xsd:sequence>
+				<xsd:element type="tns:tcgIBSCBS" name="gIBSCBS" minOccurs="1" maxOccurs="1" />
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcGRefNFSe">
+			<xsd:sequence>
+				<xsd:element type="xsd:string" name="refNFSe" minOccurs="1" maxOccurs="99" />
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcValores_DPS">
+			<xsd:sequence>
+				<xsd:element type="tns:tcTrib" name="trib" minOccurs="1" maxOccurs="1" />
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcIBSCBS_DPS">
+			<xsd:sequence>
+				<xsd:element type="xsd:string" name="finNFSe" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="indFinal" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="cIndOp" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="tpOper" minOccurs="0" maxOccurs="1" />
+				<xsd:element type="tns:tcGRefNFSe" name="gRefNFSe" minOccurs="0" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="tpEnteGov" minOccurs="0" maxOccurs="1" />
+				<xsd:element type="tns:tcImovel" name="imovel" minOccurs="0" maxOccurs="1" />
+				<xsd:element type="tns:tcValores_DPS" name="valores" minOccurs="1" maxOccurs="1" />
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcValoresUf">
+			<xsd:sequence>
+				<xsd:element type="xsd:string" name="pIBSUF" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="pRedAliqUF" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="pAliqEfetUF" minOccurs="1" maxOccurs="1" />
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcValoresMun">
+			<xsd:sequence>
+				<xsd:element type="xsd:string" name="pIBSMun" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="pRedAliqMun" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="pAliqEfetMun" minOccurs="1" maxOccurs="1" />
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcValoresFed">
+			<xsd:sequence>
+				<xsd:element type="xsd:string" name="pCBS" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="pRedAliqCBS" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="pAliqEfetCBS" minOccurs="1" maxOccurs="1" />
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcValores">
+			<xsd:sequence>
+				<xsd:element type="xsd:string" name="vBC" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="tns:tcValoresUf" name="uf" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="tns:tcValoresMun" name="mun" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="tns:tcValoresFed" name="fed" minOccurs="1" maxOccurs="1">
+				</xsd:element>
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcgIBSCredPres">
+			<xsd:sequence>
+				<xsd:element type="xsd:string" name="pCredPresIBS" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="vCredPresIBS" minOccurs="1" maxOccurs="1" />
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcgIBSUFTot">
+			<xsd:sequence>
+				<xsd:element type="xsd:string" name="vDifUF" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="vIBSUF" minOccurs="1" maxOccurs="1" />
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcgIBSMunTot">
+			<xsd:sequence>
+				<xsd:element type="xsd:string" name="vDifMun" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="vIBSMun" minOccurs="1" maxOccurs="1" />
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcTotIBS">
+			<xsd:sequence>
+				<xsd:element type="xsd:string" name="vIBSTot" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="tns:tcgIBSCredPres" name="gIBSCredPres" minOccurs="0" maxOccurs="1" />
+				<xsd:element type="tns:tcgIBSUFTot" name="gIBSUFTot" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="tns:tcgIBSMunTot"  name="gIBSMunTot" minOccurs="1" maxOccurs="1" />
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcgCBSCredPres">
+			<xsd:sequence>
+				<xsd:element type="xsd:string" name="pCredPresCBS" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="vCredPresCBS" minOccurs="1" maxOccurs="1" />
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcTotCBS">
+			<xsd:sequence>
+				<xsd:element type="tns:tcgCBSCredPres" name="gCBSCredPres" minOccurs="0" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="vDifCBS" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="vCBS" minOccurs="1" maxOccurs="1" />
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcgTribRegular">
+			<xsd:sequence>
+				<xsd:element type="xsd:string" name="pAliqEfeRegIBSUF" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="vTribRegIBSUF" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="pAliqEfeRegIBSMun" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="vTribRegIBSMun" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="pAliqEfeRegCBS" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="vTribRegCBS" minOccurs="1" maxOccurs="1" />
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcgTribCompraGov"  >
+			<xsd:sequence>
+				<xsd:element type="xsd:string" name="pIBSUF" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="vIBSUF" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="pIBSMun" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="vIBSMun" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="pCBS" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="xsd:string" name="vCBS" minOccurs="1" maxOccurs="1" />
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcTotalizadores">
+			<xsd:sequence>
+				<xsd:element type="xsd:string" name="vTotNF" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="tns:tcgTribRegular" name="gTribRegular" minOccurs="0" maxOccurs="1" />
+				<xsd:element type="tns:tcgTribCompraGov"  name="gTribCompraGov" minOccurs="0" maxOccurs="1" />
+				<xsd:element type="tns:tcTotIBS" name="gIBS" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="tns:tcTotCBS" name="gCBS" minOccurs="1" maxOccurs="1" />
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcIBSCBS">
+			<xsd:sequence>
+				<xsd:element type="xsd:string" name="pRedutor" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="tns:tcValores" name="valores" minOccurs="1" maxOccurs="1" />
+				<xsd:element type="tns:tcTotalizadores" name="totCIBS" minOccurs="1" maxOccurs="1" />
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcInfNfse">
+			<xsd:all>
+				<xsd:element name="Numero" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="CodigoVerificacao" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="DataEmissao" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="NfseSubstituida" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="OutrasInformacoes" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="LinkAutenticidade" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="ValoresNfse" type="tns:tcValoresNfse" minOccurs="0"/>
+				<xsd:element name="DescricaoCodigoTributacaoMunicipio" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="ValorCredito" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="PrestadorServico" type="tns:tcDadosPrestador" minOccurs="0"/>
+				<xsd:element name="OrgaoGerador" type="tns:tcIdentificacaoOrgaoGerador" minOccurs="0"/>
+				<xsd:element name="DeclaracaoPrestacaoServico" type="tns:tcDeclaracaoPrestacaoServico" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="tcNfse">
+			<xsd:all>
+				<xsd:element name="InfNfse" type="tns:tcInfNfse" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="tcIdentificacaoNfse">
+			<xsd:sequence>
+				<xsd:element name="Numero" type="xsd:string" minOccurs="0" maxOccurs="1"/>
+				<xsd:element name="CpfCnpj" type="tns:tcCpfCnpj" minOccurs="0" maxOccurs="1"/>
+				<xsd:element name="InscricaoMunicipal" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="CodigoMunicipio" type="xsd:string" minOccurs="0" maxOccurs="1"/>
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcInfPedidoCancelamento">
+			<xsd:sequence>
+				<xsd:element name="IdentificacaoNfse" type="tns:tcIdentificacaoNfse" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="CodigoCancelamento" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcPedidoCancelamento">
+			<xsd:sequence>
+				<xsd:element name="InfPedidoCancelamento" type="tns:tcInfPedidoCancelamento" minOccurs="0" maxOccurs="1"/>
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcConfirmacaoCancelamento">
+			<xsd:all>
+				<xsd:element name="Pedido" type="tns:tcPedidoCancelamento" minOccurs="0"/>
+				<xsd:element name="DataHora" type="xsd:string" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="tcCancelamentoNfse">
+			<xsd:all>
+				<xsd:element name="Confirmacao" type="tns:tcConfirmacaoCancelamento" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="tcInfSubstituicaoNfse">
+			<xsd:all>
+				<xsd:element name="NfseSubstituidora" type="xsd:string" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="tcSubstituicaoNfse">
+			<xsd:all>
+				<xsd:element name="SubstituicaoNfse" type="tns:tcInfSubstituicaoNfse" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="tcCompNfse">
+			<xsd:all>
+				<xsd:element name="Nfse" type="tns:tcNfse" minOccurs="0"/>
+				<xsd:element name="NfseCancelamento" type="tns:tcCancelamentoNfse" minOccurs="0"/>
+				<xsd:element name="NfseSubstituicao" type="tns:tcSubstituicaoNfse" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="CompNfse">
+			<xsd:all>
+				<xsd:element name="Nfse" type="tns:tcNfse" minOccurs="0"/>
+				<xsd:element name="NfseCancelamento" type="tns:tcCancelamentoNfse" minOccurs="0"/>
+				<xsd:element name="NfseSubstituicao" type="tns:tcSubstituicaoNfse" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="MensagemRetorno">
+			<xsd:all>
+				<xsd:element name="Codigo" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="Mensagem" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="Correcao" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="NotaFiscal" type="xsd:string" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="listaTcMensagemRetorno">
+			<xsd:sequence>
+				<xsd:element name="MensagemRetorno" type="tns:MensagemRetorno" minOccurs="0" maxOccurs="unbounded"/>
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="ListaNfse">
+			<xsd:all>
+				<xsd:element name="CompNfse" type="tns:tcCompNfse" minOccurs="0"/>
+				<xsd:element name="ListaMensagemAlertaRetorno" type="tns:listaTcMensagemRetorno" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="GerarNfseResposta">
+			<xsd:all>
+				<xsd:element name="Aviso" type="xsd:string" minOccurs="0" maxOccurs="1"/>
+				<xsd:element name="ListaNfse" type="tns:ListaNfse" minOccurs="0"/>
+				<xsd:element name="ListaMensagemRetorno" type="tns:listaTcMensagemRetorno" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="EnviarLoteRpsResposta">
+			<xsd:all>
+				<xsd:element name="NumeroLote" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="DataRecebimento" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="Protocolo" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="ListaMensagemRetorno" type="tns:listaTcMensagemRetorno" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>			
+		<xsd:complexType name="ListaNfseMultipla">
+			<sequence>
+				<xsd:element name="CompNfse" type="tns:CompNfse" minOccurs="0" maxOccurs="unbounded"/>
+				<xsd:element name="ListaMensagemAlertaRetorno" type="tns:listaTcMensagemRetorno" minOccurs="0"/>					
+			</sequence>
+		</xsd:complexType>					
+		<xsd:complexType name="EnviarLoteRpsSincronoResposta">
+			<xsd:all>
+				<xsd:element name="NumeroLote" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="DataRecebimento" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="ListaNfse" type="tns:ListaNfseMultipla" minOccurs="0"/>
+				<xsd:element name="ListaMensagemRetorno" type="tns:listaTcMensagemRetorno" minOccurs="0"/>					
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="ConsultarLoteRpsResposta">
+			<xsd:all>
+				<xsd:element name="Situacao" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="ListaNfse" type="tns:ListaNfseMultipla" minOccurs="0"/>
+				<xsd:element name="ListaMensagemRetorno" type="tns:listaTcMensagemRetorno" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="tcRetCancelamento">
+			<xsd:all>
+				<xsd:element name="NfseCancelamento" type="tns:tcCancelamentoNfse" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="CancelarNfseResposta">
+			<xsd:all>
+				<xsd:element name="RetCancelamento" type="tns:tcRetCancelamento" minOccurs="0"/>
+				<xsd:element name="ListaMensagemRetorno" type="tns:listaTcMensagemRetorno" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="NfseSubstituida">
+			<xsd:sequence>
+				<xsd:element name="CompNfse" type="tns:tcCompNfse" nillable="false"/>
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="NfseSubstituidora">
+			<xsd:all>
+				<xsd:element name="CompNfse" type="tns:tcCompNfse" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="RetSubstituicao">
+			<xsd:all>
+				<xsd:element name="NfseSubstituida" type="tns:NfseSubstituida" minOccurs="0"/>
+				<xsd:element name="NfseSubstituidora" type="tns:NfseSubstituidora" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="SubstituirNfseResposta">
+			<xsd:all>
+				<xsd:element name="RetSubstituicao" type="tns:RetSubstituicao" minOccurs="0"/>
+				<xsd:element name="ListaMensagemRetorno" type="tns:listaTcMensagemRetorno" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="ListaNfseMultiplaWithPagina">
+			<xsd:sequence>
+				<xsd:element name="CompNfse" type="tns:tcCompNfse" minOccurs="0" maxOccurs="unbounded"/>
+				<xsd:element name="Pagina" type="xsd:string" minOccurs="0"/>
+			</xsd:sequence>					
+		</xsd:complexType>
+		<xsd:complexType name="ConsultarNfseServicoPrestadoResposta">
+			<xsd:all>
+				<xsd:element name="ListaNfse" type="tns:ListaNfseMultiplaWithPagina" minOccurs="0"/>
+				<xsd:element name="ListaMensagemRetorno" type="tns:listaTcMensagemRetorno" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="ConsultarNfseFaixaResposta">
+			<xsd:all>
+				<xsd:element name="ListaNfse" type="tns:ListaNfseMultiplaWithPagina" minOccurs="0"/>
+				<xsd:element name="ListaMensagemRetorno" type="tns:listaTcMensagemRetorno" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+					<xsd:complexType name="ConsultarNfseRpsResposta">
+							<xsd:all>
+									<xsd:element name="CompNfse" type="tns:tcCompNfse" minOccurs="0" />
+									<xsd:element name="ListaMensagemRetorno" type="tns:listaTcMensagemRetorno" minOccurs="0"/>
+							</xsd:all>
+					</xsd:complexType>
+		<xsd:complexType name="return">
+			<xsd:all>
+				<xsd:element name="GerarNfseResposta" type="tns:GerarNfseResposta" minOccurs="0"/>
+				<xsd:element name="EnviarLoteRpsResposta" type="tns:EnviarLoteRpsResposta" minOccurs="0"/>
+				<xsd:element name="EnviarLoteRpsSincronoResposta" type="tns:EnviarLoteRpsSincronoResposta" minOccurs="0"/>
+				<xsd:element name="ConsultarLoteRpsResposta" type="tns:ConsultarLoteRpsResposta" minOccurs="0"/>
+				<xsd:element name="CancelarNfseResposta" type="tns:CancelarNfseResposta" minOccurs="0"/>
+				<xsd:element name="SubstituirNfseResposta" type="tns:SubstituirNfseResposta" minOccurs="0"/>
+				<xsd:element name="ConsultarNfseServicoPrestadoResposta" type="tns:ConsultarNfseServicoPrestadoResposta" minOccurs="0"/>
+				<xsd:element name="ConsultarNfseFaixaResposta" type="tns:ConsultarNfseFaixaResposta" minOccurs="0"/>
+									<xsd:element name="ConsultarNfseRpsResposta" type="tns:ConsultarNfseRpsResposta" minOccurs="0" />
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="listaRps">
+			<xsd:sequence>
+				<xsd:element name="Rps" type="tns:tcDeclaracaoPrestacaoServico" minOccurs="0" maxOccurs="unbounded"/>
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="tcLoteRps">
+			<xsd:sequence>
+				<xsd:element name="NumeroLote" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="Prestador" type="tns:tcIdentificacaoPessoaEmpresa" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="QuantidadeRps" type="xsd:string" minOccurs="1" maxOccurs="1"/>
+				<xsd:element name="ListaRps" type="tns:listaRps" minOccurs="1" maxOccurs="1"/>
+			</xsd:sequence>
+		</xsd:complexType>
+		<xsd:complexType name="SubstituicaoNfse">
+			<xsd:all>
+				<xsd:element name="Pedido" type="tns:tcPedidoCancelamento" minOccurs="0"/>
+				<xsd:element name="Rps" type="tns:tcDeclaracaoPrestacaoServico" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="PeriodoEmissao">
+			<xsd:all>
+				<xsd:element name="DataInicial" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="DataFinal" type="xsd:string" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="PeriodoCompetencia">
+			<xsd:all>
+				<xsd:element name="DataInicial" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="DataFinal" type="xsd:string" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+		<xsd:complexType name="Faixa">
+			<xsd:all>
+				<xsd:element name="NumeroNfseInicial" type="xsd:string" minOccurs="0"/>
+				<xsd:element name="NumeroNfseFinal" type="xsd:string" minOccurs="0"/>
+			</xsd:all>
+		</xsd:complexType>
+	</xsd:schema>
+	</types>
+	<message name="GerarNfseEnvioRequest">
+	<part name="GerarNfseEnvio" type="tns:GerarNfseEnvio"/>
+	</message>
+	<message name="GerarNfseEnvioResponse">
+	<part name="GerarNfseResposta" type="tns:GerarNfseResposta"/>
+	</message>
+	<message name="EnviarLoteRpsEnvioRequest">
+	<part name="EnviarLoteRpsEnvio" type="tns:EnviarLoteRpsEnvio"/>
+	</message>
+	<message name="EnviarLoteRpsEnvioResponse">
+	<part name="EnviarLoteRpsResposta" type="tns:EnviarLoteRpsResposta"/>
+	</message>
+	<message name="EnviarLoteRpsSincronoEnvioRequest">
+	<part name="EnviarLoteRpsSincronoEnvio" type="tns:EnviarLoteRpsSincronoEnvio"/>
+	</message>
+	<message name="EnviarLoteRpsSincronoEnvioResponse">
+	<part name="EnviarLoteRpsSincronoResposta" type="tns:EnviarLoteRpsSincronoResposta"/>
+	</message>
+	<message name="ConsultarLoteRpsEnvioRequest">
+	<part name="ConsultarLoteRpsEnvio" type="tns:ConsultarLoteRpsEnvio"/>
+	</message>
+	<message name="ConsultarLoteRpsEnvioResponse">
+	<part name="ConsultarLoteRpsResposta" type="tns:ConsultarLoteRpsResposta"/>
+	</message>
+	<message name="CancelarNfseEnvioRequest">
+	<part name="CancelarNfseEnvio" type="tns:CancelarNfseEnvio"/>
+	</message>
+	<message name="CancelarNfseEnvioResponse">
+	<part name="CancelarNfseResposta" type="tns:CancelarNfseResposta"/>
+	</message>
+	<message name="SubstituirNfseEnvioRequest">
+	<part name="SubstituirNfseEnvio" type="tns:SubstituirNfseEnvio"/>
+	</message>
+	<message name="SubstituirNfseEnvioResponse">
+	<part name="SubstituirNfseResposta" type="tns:SubstituirNfseResposta"/>
+	</message>
+	<message name="ConsultarNfseServicoPrestadoEnvioRequest">
+	<part name="ConsultarNfseServicoPrestadoEnvio" type="tns:ConsultarNfseServicoPrestadoEnvio"/>
+	</message>
+	<message name="ConsultarNfseServicoPrestadoEnvioResponse">
+	<part name="ConsultarNfseServicoPrestadoResposta" type="tns:ConsultarNfseServicoPrestadoResposta"/>
+	</message>
+	<message name="ConsultarNfseFaixaEnvioRequest">
+	<part name="ConsultarNfseFaixaEnvio" type="tns:ConsultarNfseFaixaEnvio"/>
+	</message>
+	<message name="ConsultarNfseFaixaEnvioResponse">
+	<part name="ConsultarNfseFaixaResposta" type="tns:ConsultarNfseFaixaResposta"/>
+	</message>
+	<message name="ConsultarNfseRpsEnvioRequest">
+			<part name="ConsultarNfseRpsEnvio" type="tns:ConsultarNfseRpsEnvio" />
+	</message>
+	<message name="ConsultarNfseRpsEnvioResponse">
+			<part name="ConsultarNfseRpsResposta" type="tns:ConsultarNfseRpsResposta" />
+	</message>
+	<portType name="WNENotaFiscalEletronicaNfePortType">
+	<operation name="GerarNfseEnvio">
+		<documentation>Servico para geracao de NFS-e</documentation>
+		<input message="tns:GerarNfseEnvioRequest"/>
+		<output message="tns:GerarNfseEnvioResponse"/>
+	</operation>
+	<operation name="EnviarLoteRpsEnvio">
+		<documentation>Servico para geracao de NFS-e em lote</documentation>
+		<input message="tns:EnviarLoteRpsEnvioRequest"/>
+		<output message="tns:EnviarLoteRpsEnvioResponse"/>
+	</operation>
+	<operation name="EnviarLoteRpsSincronoEnvio">
+		<documentation>Servico para geracao de NFS-e em lote sincrono</documentation>
+		<input message="tns:EnviarLoteRpsSincronoEnvioRequest"/>
+		<output message="tns:EnviarLoteRpsSincronoEnvioResponse"/>
+	</operation>
+	<operation name="ConsultarLoteRpsEnvio">
+		<documentation>Servico para consulta de lote</documentation>
+		<input message="tns:ConsultarLoteRpsEnvioRequest"/>
+		<output message="tns:ConsultarLoteRpsEnvioResponse"/>
+	</operation>
+	<operation name="CancelarNfseEnvio">
+		<documentation>Servico para cancelamento de NFS-e</documentation>
+		<input message="tns:CancelarNfseEnvioRequest"/>
+		<output message="tns:CancelarNfseEnvioResponse"/>
+	</operation>
+	<operation name="SubstituirNfseEnvio">
+		<documentation>Servico para substituicao de NFS-e</documentation>
+		<input message="tns:SubstituirNfseEnvioRequest"/>
+		<output message="tns:SubstituirNfseEnvioResponse"/>
+	</operation>
+	<operation name="ConsultarNfseServicoPrestadoEnvio">
+		<documentation>Servico para consulta de NFS-e</documentation>
+		<input message="tns:ConsultarNfseServicoPrestadoEnvioRequest"/>
+		<output message="tns:ConsultarNfseServicoPrestadoEnvioResponse"/>
+	</operation>
+	<operation name="ConsultarNfseFaixaEnvio">
+		<documentation>Servico para consulta de NFS-e em faixa</documentation>
+		<input message="tns:ConsultarNfseFaixaEnvioRequest"/>
+		<output message="tns:ConsultarNfseFaixaEnvioResponse"/>
+	</operation>
+			<operation name="ConsultarNfseRpsEnvio">
+					<documentation>Servico para consulta de NFS-e por RPS</documentation>
+					<input message="tns:ConsultarNfseRpsEnvioRequest" />
+					<output message="tns:ConsultarNfseRpsEnvioResponse" />
+			</operation>
+	</portType>
+	<binding name="WNENotaFiscalEletronicaNfeBinding" type="tns:WNENotaFiscalEletronicaNfePortType">
+	<soap:binding style="document" transport="http://schemas.xmlsoap.org/soap/http"/>
+	<operation name="GerarNfseEnvio">
+		<soap:operation soapAction="net.atende#GerarNfseEnvio" style="document"/>
+		<input>
+			<soap:body use="literal" namespace="net.atende" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"/>
+		</input>
+		<output>
+			<soap:body use="literal" namespace="net.atende" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"/>
+		</output>
+	</operation>
+	<operation name="EnviarLoteRpsEnvio">
+		<soap:operation soapAction="net.atende#EnviarLoteRpsEnvio" style="document"/>
+		<input>
+			<soap:body use="literal" namespace="net.atende" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"/>
+		</input>
+		<output>
+			<soap:body use="literal" namespace="net.atende" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"/>
+		</output>
+	</operation>
+	<operation name="EnviarLoteRpsSincronoEnvio">
+		<soap:operation soapAction="net.atende#EnviarLoteRpsSincronoEnvio" style="document"/>
+		<input>
+			<soap:body use="literal" namespace="net.atende" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"/>
+		</input>
+		<output>
+			<soap:body use="literal" namespace="net.atende" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"/>
+		</output>
+	</operation>
+	<operation name="ConsultarLoteRpsEnvio">
+		<soap:operation soapAction="net.atende#ConsultarLoteRpsEnvio" style="document"/>
+		<input>
+			<soap:body use="literal" namespace="net.atende" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"/>
+		</input>
+		<output>
+			<soap:body use="literal" namespace="net.atende" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"/>
+		</output>
+	</operation>
+	<operation name="CancelarNfseEnvio">
+		<soap:operation soapAction="net.atende#CancelarNfseEnvio" style="document"/>
+		<input>
+			<soap:body use="literal" namespace="net.atende" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"/>
+		</input>
+		<output>
+			<soap:body use="literal" namespace="net.atende" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"/>
+		</output>
+	</operation>
+	<operation name="SubstituirNfseEnvio">
+		<soap:operation soapAction="net.atende#SubstituirNfseEnvio" style="document"/>
+		<input>
+			<soap:body use="literal" namespace="net.atende" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"/>
+		</input>
+		<output>
+			<soap:body use="literal" namespace="net.atende" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"/>
+		</output>
+	</operation>
+	<operation name="ConsultarNfseServicoPrestadoEnvio">
+		<soap:operation soapAction="net.atende#ConsultarNfseServicoPrestadoEnvio" style="document"/>
+		<input>
+			<soap:body use="literal" namespace="net.atende" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"/>
+		</input>
+		<output>
+			<soap:body use="literal" namespace="net.atende" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"/>
+		</output>
+	</operation>
+	<operation name="ConsultarNfseFaixaEnvio">
+		<soap:operation soapAction="net.atende#ConsultarNfseFaixaEnvio" style="document"/>
+		<input>
+			<soap:body use="literal" namespace="net.atende" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"/>
+		</input>
+		<output>
+			<soap:body use="literal" namespace="net.atende" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"/>
+		</output>
+	</operation>
+			<operation name="ConsultarNfseRpsEnvio">
+					<soap:operation soapAction="net.atende#ConsultarNfseRpsEnvio" style="document" />
+					<input>
+							<soap:body use="literal" namespace="net.atende" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+					</input>
+					<output>
+							<soap:body use="literal" namespace="net.atende" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+					</output>
+			</operation>
+	</binding>
+	<service name="WNENotaFiscalEletronicaNfe">
+	<port name="WNENotaFiscalEletronicaNfePort" binding="tns:WNENotaFiscalEletronicaNfeBinding">
+		<soap:address location="https://itabirito.atende.net/?pg=services&amp;service=WNENotaFiscalEletronicaNfe&amp;cidade=padrao"/>
+	</port>
+	</service>
+</definitions>
+
+ÔÜá´©Å A prefeitura respondeu, mas n├úo foi um sucesso claro. Analise o XML acima.

@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 import '../../core/services/plan_features_service.dart';
 import '../../core/constants/plan_features.dart';
 import '../../widgets/upgrade_modal.dart';
+import 'edit_client_page.dart';
 
 // Tags pré-definidas para classificação de clientes
 const _kPresetTags = [
@@ -52,6 +52,49 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _loadShopId();
+    _fetchFullClientData(); // Busca dados completos (CPF, Endereço, etc) ao iniciar
+  }
+
+  Future<void> _fetchFullClientData() async {
+    try {
+      // 1. Tenta buscar por ID (UUID)
+      var query = _supabase.from('users').select().eq('id', widget.clientId);
+      var doc = await query.maybeSingle();
+
+      // 2. Se não achou por ID (pode ser cliente manual), tenta buscar pelo telefone
+      if (doc == null) {
+        String? phone = widget.clientData['telefone'] ?? widget.clientData['phone'];
+        if (phone != null && phone.isNotEmpty) {
+          final cleanPhone = phone.replaceAll(RegExp(r'\D'), '');
+          if (cleanPhone.isNotEmpty) {
+            doc = await _supabase.from('users').select().eq('phone', cleanPhone).maybeSingle();
+          }
+        }
+      }
+
+      final data = doc;
+      if (data != null && mounted) {
+        setState(() {
+          // Mescla os dados encontrados no clientData local
+          widget.clientData['cpf'] = data['cpf'] ?? widget.clientData['cpf'];
+          widget.clientData['birthDate'] = data['birth_date'] ?? data['birthDate'] ?? widget.clientData['birthDate'];
+          widget.clientData['zipCode'] = data['zip_code'] ?? data['zipCode'] ?? widget.clientData['zipCode'];
+          widget.clientData['street'] = data['street'] ?? widget.clientData['street'];
+          widget.clientData['neighborhood'] = data['neighborhood'] ?? widget.clientData['neighborhood'];
+          widget.clientData['city'] = data['city'] ?? widget.clientData['city'];
+          widget.clientData['state'] = data['state'] ?? widget.clientData['state'];
+          widget.clientData['number'] = data['number'] ?? widget.clientData['number'];
+          
+          // Se o nome no banco for mais completo, atualiza também
+          if ((data['name']?.toString() ?? '').isNotEmpty) {
+             widget.clientData['nome'] = data['name'];
+             widget.clientData['name'] = data['name'];
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('Erro ao carregar perfil completo do cliente: $e');
+    }
   }
 
   @override
@@ -196,200 +239,32 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
     }
   }
 
-  String _toTitleCase(String text) {
-    if (text.isEmpty) return text;
-    return text.toLowerCase().split(' ').map((word) {
-      if (word.isEmpty) return word;
-      return word[0].toUpperCase() + word.substring(1);
-    }).join(' ');
-  }
-
   Future<void> _editClientDetails() async {
-    final TextEditingController nameEditController =
-        TextEditingController(text: widget.clientData['nome']);
-
-    // Máscara dinâmica para 10 ou 11 dígitos
-    String initialPhone = widget.clientData['telefone'] ?? '';
-    if (initialPhone == 'Não informado') initialPhone = '';
-    initialPhone = initialPhone.replaceAll(RegExp(r'\D'), '');
-
-    final phoneMask = MaskTextInputFormatter(
-      mask: initialPhone.length > 10 ? '(##) #####-####' : '(##) ####-####',
-      filter: {"#": RegExp(r'[0-9]')},
-      initialText: initialPhone,
+    final result = await Navigator.push<Map<String, dynamic>>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => EditClientPage(
+          clientData: widget.clientData,
+          clientId: widget.clientId,
+        ),
+      ),
     );
 
-    final TextEditingController phoneEditController =
-        TextEditingController(text: phoneMask.maskText(initialPhone));
-
-    final result = await showDialog<Map<String, String>>(
-      context: context,
-      builder: (context) => StatefulBuilder(builder: (context, setDialogState) {
-        return AlertDialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-          title: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: AppColors.primaryPurple.withValues(alpha: 0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.edit_rounded,
-                    color: AppColors.primaryPurple, size: 20),
-              ),
-              const SizedBox(width: 12),
-              const Text(
-                "Editar Cliente",
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-              ),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameEditController,
-                decoration: InputDecoration(
-                  labelText: "Nome Completo",
-                  prefixIcon: const Icon(Icons.person_outline_rounded,
-                      color: AppColors.primaryPurple),
-                  filled: true,
-                  fillColor: Colors.grey.shade50,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
-                textCapitalization: TextCapitalization.words,
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: phoneEditController,
-                onChanged: (v) {
-                  final unmasked = phoneMask.getUnmaskedText();
-                  if (unmasked.length <= 10 &&
-                      phoneMask.getMask() != '(##) ####-####') {
-                    setDialogState(() {
-                      phoneMask.updateMask(mask: '(##) ####-####');
-                    });
-                  } else if (unmasked.length > 10 &&
-                      phoneMask.getMask() != '(##) #####-####') {
-                    setDialogState(() {
-                      phoneMask.updateMask(mask: '(##) #####-####');
-                    });
-                  }
-                },
-                inputFormatters: [phoneMask],
-                decoration: InputDecoration(
-                  labelText: "Telefone/WhatsApp",
-                  prefixIcon: const Icon(Icons.phone_iphone_rounded,
-                      color: AppColors.primaryPurple),
-                  filled: true,
-                  fillColor: Colors.grey.shade50,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
-                keyboardType: TextInputType.phone,
-              ),
-            ],
-          ),
-          actionsPadding:
-              const EdgeInsets.only(right: 16, bottom: 16, left: 16),
-          actions: [
-            Row(
-              children: [
-                Expanded(
-                  child: TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    style: TextButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                    child: const Text("Cancelar",
-                        style: TextStyle(color: Colors.grey)),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () => Navigator.pop(context, {
-                      'nome': nameEditController.text,
-                      'telefone': phoneMask.getUnmaskedText(),
-                    }),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primaryPurple,
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: const Text("SALVAR",
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        );
-      }),
-    );
-
-    if (result != null) {
-      final String newName = _toTitleCase(result['nome']?.trim() ?? '');
-      final String newPhone =
-          result['telefone']?.trim().replaceAll(RegExp(r'[^0-9]'), '') ?? '';
-
-      final bool nameChanged =
-          newName.isNotEmpty && newName != widget.clientData['nome'];
-      final bool phoneChanged = newPhone != widget.clientData['telefone'];
-
-      if (nameChanged || phoneChanged) {
-        setState(() => _isLoading = true);
-        try {
-          Map<String, dynamic> updateData = {};
-          if (nameChanged) updateData['nome'] = newName;
-          if (phoneChanged) {
-            updateData['telefone'] = newPhone;
-          }
-
-          // 1. Atualiza no perfil do cliente (tabela shop_clients)
-          if (shopId != null) {
-            await _supabase.from('shop_clients').upsert({
-              'shop_id': shopId,
-              'user_id': widget.clientId,
-              ...updateData,
-              'last_updated': DateTime.now().toIso8601String(),
-            });
-          }
-
-          // 2. Atualiza no documento global do usuário (se necessário)
-          await _supabase
-              .from('users')
-              .update(updateData)
-              .eq('id', widget.clientId);
-
-          if (mounted) {
-            setState(() {
-              if (nameChanged) widget.clientData['nome'] = newName;
-              if (phoneChanged) widget.clientData['telefone'] = newPhone;
-              _isLoading = false;
-            });
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                content: Text("Cadastro atualizado com sucesso!")));
-          }
-        } catch (e) {
-          if (mounted) {
-            setState(() => _isLoading = false);
-            ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text("Erro ao atualizar cadastro: $e")));
-          }
-        }
-      }
+    if (result != null && mounted) {
+      setState(() {
+        // Atualiza os dados locais com o que voltou da página de edição
+        widget.clientData['nome'] = result['name'];
+        widget.clientData['name'] = result['name'];
+        widget.clientData['telefone'] = result['phone'];
+        widget.clientData['cpf'] = result['cpf'];
+        widget.clientData['birthDate'] = result['birth_date'];
+        widget.clientData['zipCode'] = result['zip_code'];
+        widget.clientData['street'] = result['street'];
+        widget.clientData['neighborhood'] = result['neighborhood'];
+        widget.clientData['city'] = result['city'];
+        widget.clientData['state'] = result['state'];
+        widget.clientData['number'] = result['number'];
+      });
     }
   }
 

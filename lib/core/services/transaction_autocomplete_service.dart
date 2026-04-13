@@ -181,8 +181,7 @@ class TransactionAutocompleteService {
           .lte('scheduled_at', endOfMonth.toIso8601String())
           .neq('status', 'cancelado')
           .count(CountOption.exact);
-      
-      workload[pro['id']] = res.count ?? 0;
+      workload[pro['id']] = res.count;
     }
 
     final sortedCandidates = List<Map<String, dynamic>>.from(candidates);

@@ -3,10 +3,20 @@ import '../../../core/theme/app_colors.dart';
 
 class RestrictedClientView extends StatelessWidget {
   final Future<void> Function() onRefresh;
+  final String title;
+  final String message;
+  final IconData icon;
+  final String actionLabel;
+  final VoidCallback? onCustomAction;
 
   const RestrictedClientView({
     super.key,
     required this.onRefresh,
+    this.title = "Sem Datas Disponíveis",
+    this.message = "Infelizmente, no momento não temos datas disponíveis para agendamento online nesta loja.",
+    this.icon = Icons.calendar_today_outlined,
+    this.actionLabel = "TENTAR NOVAMENTE",
+    this.onCustomAction,
   });
 
   @override
@@ -34,16 +44,16 @@ class RestrictedClientView extends StatelessWidget {
                   color: AppColors.primaryPurple.withValues(alpha: 0.05),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(
-                  Icons.calendar_today_outlined,
+                child: Icon(
+                  icon,
                   size: 80,
                   color: AppColors.primaryPurple,
                 ),
               ),
               const SizedBox(height: 48),
-              const Text(
-                "Sem Datas Disponíveis",
-                style: TextStyle(
+              Text(
+                title,
+                style: const TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.bold,
                   color: Colors.black87,
@@ -52,7 +62,7 @@ class RestrictedClientView extends StatelessWidget {
               ),
               const SizedBox(height: 16),
               Text(
-                "Infelizmente, no momento não temos datas disponíveis para agendamento online nesta loja.",
+                message,
                 style: TextStyle(
                   fontSize: 16,
                   color: Colors.grey[600],
@@ -61,6 +71,7 @@ class RestrictedClientView extends StatelessWidget {
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 32),
+
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
@@ -89,7 +100,7 @@ class RestrictedClientView extends StatelessWidget {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: onRefresh,
+                  onPressed: onCustomAction ?? onRefresh,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primaryPurple,
                     foregroundColor: Colors.white,
@@ -99,9 +110,9 @@ class RestrictedClientView extends StatelessWidget {
                     ),
                     elevation: 0,
                   ),
-                  child: const Text(
-                    "TENTAR NOVAMENTE",
-                    style: TextStyle(
+                  child: Text(
+                    actionLabel,
+                    style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
                     ),

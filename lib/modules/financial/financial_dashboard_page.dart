@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 import 'dart:math' as math;
 import 'package:intl/intl.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 import '../../core/services/session_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/plan_features_service.dart';
@@ -18,17 +22,23 @@ class _PeriodMetrics {
   final double receita;
   final double despesa;
   final double comissao;
+  final double custoServicos;
   final int atendimentos;
   final int cancelamentos;
+  final int reagendamentos;
   final double ticketMedio;
+  final int checkoutAntecipado;
 
   const _PeriodMetrics({
     this.receita = 0,
     this.despesa = 0,
     this.comissao = 0,
+    this.custoServicos = 0,
     this.atendimentos = 0,
     this.cancelamentos = 0,
+    this.reagendamentos = 0,
     this.ticketMedio = 0,
+    this.checkoutAntecipado = 0,
   });
 }
 
@@ -102,8 +112,18 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
   double _lucroLiquido = 0.0;
   int _totalAtendimentos = 0;
   int _totalCancelamentos = 0;
+  int _totalReagendamentos = 0;
   double _ticketMedio = 0.0;
-  double _margemLiquida = 0.0; // NOVO
+  double _totalCustoServicos = 0.0;
+  double _margemLiquida = 0.0;
+  String _shopName = '';
+
+  // ── Checkout antecipado (sinal) ──────────────
+  int _totalComCheckoutAntecipado = 0;
+  double _totalValorSinal = 0.0;
+
+  // ── Mapa de custos por serviço (nome → custo %) ──
+  Map<String, double> _serviceCostMap = {};
 
   // ── Eficiência Operacional ────────────────────
   int _horasTrabalhadasMin = 0;
@@ -179,7 +199,7 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
         final user = AuthService().currentUser;
         if (user != null) {
           final supabase = sb.Supabase.instance.client;
-            final doc = await supabase
+          final doc = await supabase
               .from('users')
               .select('shop_id')
               .eq('id', user.id)
@@ -190,10 +210,27 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
           }
         }
       }
+      // Carrega nome da loja para uso no PDF
+      if (_shopId != null && _shopId!.isNotEmpty) {
+        try {
+          final supabase = sb.Supabase.instance.client;
+          final shopDoc = await supabase
+              .from('shops')
+              .select('name, nome')
+              .eq('id', _shopId!)
+              .maybeSingle();
+          if (shopDoc != null && mounted) {
+            setState(() {
+              _shopName = (shopDoc['name'] ?? shopDoc['nome'] ?? '').toString();
+            });
+          }
+        } catch (_) {}
+      }
     } catch (e) {
       debugPrint('Erro crítico ao carregar shopId: $e');
     }
 
+    debugPrint('🏠 FINANCEIRO shopId carregado: $_shopId');
     if (mounted) {
       setState(() => _isLoading = false);
       if (_shopId != null) _refresh();
@@ -252,19 +289,24 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
     final goalId = "${_selectedYear}_$_selectedMonth";
     try {
       final supabase = sb.Supabase.instance.client;
-      final doc = await supabase
+      // Use limit(1) + order to handle potential duplicate rows gracefully
+      final rows = await supabase
           .from('financial_goals')
           .select()
           .eq('shop_id', _shopId!)
           .eq('goal_id', goalId)
-          .maybeSingle();
+          .order('updated_at', ascending: false)
+          .limit(1);
+      final doc = rows.isNotEmpty ? rows.first : null;
 
       if (doc != null) {
         final val = _toDouble(doc['value']);
         if (mounted) {
           setState(() {
             _metaMensal = val;
-            _metaController.text = val > 0 ? val.toStringAsFixed(0) : '';
+            _metaController.text = val > 0
+                ? NumberFormat('#,##0.00', 'pt_BR').format(val)
+                : '';
           });
         }
       } else {
@@ -291,10 +333,10 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
         for (int m = 1; m <= 12; m++) {
           final goalId = "${_selectedYear}_$m";
           goalsToUpsert.add({
-            'shopId': _shopId,
+            'shop_id': _shopId,
             'goal_id': goalId,
             'value': value,
-            'updatedAt': DateTime.now().toIso8601String(),
+            'updated_at': DateTime.now().toIso8601String(),
             'year': _selectedYear,
             'month': m,
           });
@@ -303,16 +345,18 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
         if (_selectedMonth == null) return;
         final goalId = "${_selectedYear}_$_selectedMonth";
         goalsToUpsert.add({
-          'shopId': _shopId,
+          'shop_id': _shopId,
           'goal_id': goalId,
           'value': value,
-          'updatedAt': DateTime.now().toIso8601String(),
+          'updated_at': DateTime.now().toIso8601String(),
           'year': _selectedYear,
           'month': _selectedMonth,
         });
       }
 
-      await supabase.from('financial_goals').upsert(goalsToUpsert);
+      await supabase
+          .from('financial_goals')
+          .upsert(goalsToUpsert, onConflict: 'shop_id,goal_id');
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -348,13 +392,14 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
       final (start, end) = _currentRange();
       final (prevStart, prevEnd) = _previousRange();
 
-      // Busca paralela do período atual e do anterior
+      // Busca paralela do período atual, anterior e serviços
       final results = await Future.wait([
         _fetchAppointments(start, end),
         _fetchTransactions(start, end),
         _fetchEmployees(),
         _fetchAppointments(prevStart, prevEnd),
         _fetchTransactions(prevStart, prevEnd),
+        _fetchServices(),
       ]);
 
       final currentAppts = results[0];
@@ -362,14 +407,33 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
       final employees = results[2];
       final prevAppts = results[3];
       final prevTrans = results[4];
+      final services = results[5];
 
-      // Busca a meta do mês no Firestore
+      // Monta mapa nome_serviço → cost_percent
+      final costMap = <String, double>{};
+      for (final s in services) {
+        final name = (s['name'] ?? s['nome'] ?? '').toString();
+        final cost = _toDouble(s['cost_percent']);
+        if (name.isNotEmpty) costMap[name] = cost;
+      }
+
       await _loadMonthlyGoal();
 
-      _calculateMetrics(currentAppts, currentTrans, employees);
-      _calculatePreviousPeriod(prevAppts, prevTrans);
-    } catch (e) {
-      debugPrint('Erro ao atualizar dashboard financeiro: $e');
+      debugPrint('📊 FINANCEIRO: shopId=$_shopId | $start → $end'
+          ' | appts=${currentAppts.length} | trans=${currentTrans.length}'
+          ' | emps=${employees.length}');
+
+      _calculateMetrics(currentAppts, currentTrans, employees, costMap);
+      _calculatePreviousPeriod(prevAppts, prevTrans, costMap);
+    } catch (e, st) {
+      debugPrint('❌ FINANCEIRO ERRO: $e\n$st');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Erro ao carregar dados: $e'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 10),
+        ));
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -394,8 +458,8 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
         .from('financial_transactions')
         .select()
         .eq('shop_id', _shopId!)
-        .gte('data', start.toIso8601String())
-        .lte('data', end.toIso8601String());
+        .gte('date', start.toIso8601String())
+        .lte('date', end.toIso8601String());
     return List<Map<String, dynamic>>.from(res);
   }
 
@@ -408,13 +472,29 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
     return List<Map<String, dynamic>>.from(res);
   }
 
+  Future<List<Map<String, dynamic>>> _fetchServices() async {
+    try {
+      final supabase = sb.Supabase.instance.client;
+      final res = await supabase
+          .from('services')
+          .select('id, name, nome, price, preco, cost_percent')
+          .eq('shop_id', _shopId!);
+      return List<Map<String, dynamic>>.from(res);
+    } catch (_) {
+      return [];
+    }
+  }
+
   // ─────────────────────────────────────────────
   // CÁLCULO DO PERÍODO ANTERIOR (para delta %)
   // ─────────────────────────────────────────────
   void _calculatePreviousPeriod(
-      List<Map<String, dynamic>> appts, List<Map<String, dynamic>> trans) {
-    double rev = 0, exp = 0, com = 0;
-    int completed = 0, cancelled = 0;
+    List<Map<String, dynamic>> appts,
+    List<Map<String, dynamic>> trans,
+    Map<String, double> costMap,
+  ) {
+    double rev = 0, exp = 0, com = 0, custoSvc = 0;
+    int completed = 0, cancelled = 0, rescheduled = 0, checkoutAntic = 0;
 
     for (var d in appts) {
       final status = (d['status'] ?? '').toString().toLowerCase();
@@ -424,9 +504,15 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
         rev += value;
         final comPct = _toDouble(d['commission_percent']);
         if (comPct > 0) com += value * comPct / 100;
+        final svcName = (d['service_name'] ?? '').toString();
+        final costPct = costMap[svcName] ?? 0;
+        if (costPct > 0) custoSvc += value * costPct / 100;
+        final sinal = _toDouble(d['valor_sinal']);
+        if (sinal > 0) checkoutAntic++;
       } else if (status == 'cancelado') {
         cancelled++;
       }
+      if (d['is_rescheduled'] == true) rescheduled++;
     }
     for (var d in trans) {
       final val = (d['valor'] as num?)?.toDouble() ?? 0;
@@ -437,9 +523,12 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
       receita: rev,
       despesa: exp,
       comissao: com,
+      custoServicos: custoSvc,
       atendimentos: completed,
       cancelamentos: cancelled,
+      reagendamentos: rescheduled,
       ticketMedio: completed > 0 ? rev / completed : 0,
+      checkoutAntecipado: checkoutAntic,
     );
   }
 
@@ -450,12 +539,17 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
     List<Map<String, dynamic>> appts,
     List<Map<String, dynamic>> trans,
     List<Map<String, dynamic>> emps,
+    Map<String, double> costMap,
   ) {
     double totalRevenue = 0;
     double totalExpense = 0;
     double totalCommission = 0;
+    double totalCustoServicos = 0;
     int completed = 0;
     int cancelled = 0;
+    int rescheduled = 0;
+    int checkoutAntic = 0;
+    double totalValorSinal = 0.0;
     int workedMinutes = 0;
 
     Map<String, double> payments = {'PIX': 0, 'Cartão': 0, 'Dinheiro': 0};
@@ -495,9 +589,20 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
         workedMinutes += duration;
         servicesMap[service] = (servicesMap[service] ?? 0) + value;
 
+        // Custo do serviço (percentual configurado)
+        final costPct = costMap[service] ?? 0;
+        if (costPct > 0) totalCustoServicos += value * costPct / 100;
+
+        // Checkout antecipado (sinal/adiantamento)
+        final sinal = _toDouble(data['valor_sinal']);
+        if (sinal > 0) {
+          checkoutAntic++;
+          totalValorSinal += sinal;
+        }
+
         if (empId != null) {
           if (!profEffMap.containsKey(empId)) {
-            final nome = data['professional_name'] ?? 'Profissional';
+            final nome = (data['professional_name'] ?? 'Profissional').toString();
             profEffMap[empId] = _ProfessionalEfficiency(id: empId, nome: nome);
           }
           profEffMap[empId]!..receita += value..minutosTrabalhados += duration;
@@ -509,8 +614,8 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
           final nome = empNames[empId] ?? 'Profissional';
           profissionaisMap[nome] = (profissionaisMap[nome] ?? 0) + value;
         } else if (empId != null) {
-          final nome = empNames[empId] ?? 'Profissional';
-          profissionaisMap[nome] = (profissionaisMap[nome] ?? 0) + value;
+          final nome = empNames[empId] ?? data['professional_name'] ?? 'Profissional';
+          profissionaisMap[nome.toString()] = (profissionaisMap[nome.toString()] ?? 0) + value;
         }
 
         final method =
@@ -531,13 +636,15 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
 
         final slotKey = _selectedMonth == null
             ? date.month
-            : ((date.day - 1) ~/ 7) + 1; 
+            : ((date.day - 1) ~/ 7) + 1;
         hourlySlots.putIfAbsent(slotKey, _HourlySlot.new)
           ..receita += value
           ..minutos += duration;
       } else if (status == 'cancelado') {
         cancelled++;
       }
+      // Reagendamentos: independe do status final
+      if (data['is_rescheduled'] == true) rescheduled++;
     }
 
     // ── Transações extras (despesas) ──────────────
@@ -627,12 +734,17 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
     _totalReceita = totalRevenue;
     _totalDespesa = totalExpense;
     _totalComissao = totalCommission;
+    _totalCustoServicos = totalCustoServicos;
     _lucroLiquido = totalRevenue - totalExpense - totalCommission;
     _margemLiquida =
         totalRevenue > 0 ? ((_lucroLiquido / totalRevenue) * 100) : 0.0;
     _totalAtendimentos = completed;
     _totalCancelamentos = cancelled;
+    _totalReagendamentos = rescheduled;
+    _totalComCheckoutAntecipado = checkoutAntic;
+    _totalValorSinal = totalValorSinal;
     _ticketMedio = ticketMedio;
+    _serviceCostMap = Map.from(costMap);
     _paymentMethods = Map.from(payments)
       ..removeWhere((_, v) => v == 0); // remove formas com R$ 0
 
@@ -678,13 +790,21 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
   double _toDouble(dynamic v) => double.tryParse(v?.toString() ?? '0') ?? 0.0;
 
   double _getAppointmentValue(Map<String, dynamic> data) {
-    return double.tryParse(data['total_value']?.toString() ??
-            data['total_price']?.toString() ??
-            data['valor_total']?.toString() ??
-            data['price']?.toString() ??
-            data['valor']?.toString() ??
-            "0") ??
-        0.0;
+    // Priority order: total_payable (final bill) → total_price (checkout) →
+    // total_value (owner-created) → fallbacks. Returns first non-zero value.
+    for (final key in [
+      'total_payable',
+      'total_price',
+      'total_value',
+      'valor_com_desconto',
+      'labor_value',
+      'price',
+      'valor',
+    ]) {
+      final d = double.tryParse(data[key]?.toString() ?? '');
+      if (d != null && d > 0) return d;
+    }
+    return 0.0;
   }
 
   bool _isCompleted(String status) =>
@@ -692,7 +812,10 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
       status == 'finalizado' ||
       status == 'pago' ||
       status == 'completed' ||
-      status == 'efetuado';
+      status == 'efetuado' ||
+      status == 'confirmado' || // pago online (PIX/cartão)
+      status == 'agendado'   || // agendamento criado, pagamento no local
+      status == 'pendente';     // agendamento criado pelo proprietário
 
   /// Retorna delta percentual entre [current] e [prev].
   /// Positivo = crescimento, negativo = queda.
@@ -757,6 +880,15 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
                     sliver: SliverToBoxAdapter(child: _buildGoalProgress()),
                   ),
 
+                // ── Diagnóstico: sem dados ────────────
+                if (!_isLoading && _totalAtendimentos == 0 && _totalReceita == 0)
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                    sliver: SliverToBoxAdapter(
+                      child: _buildNoDiagnosticBanner(),
+                    ),
+                  ),
+
                 // ── Resumo Financeiro ────────────────
                 SliverPadding(
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
@@ -769,6 +901,9 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
                         const SizedBox(height: 24),
                         _sectionTitle('Desempenho de Vendas'),
                         _buildSalesPerformance(isMobile),
+                        const SizedBox(height: 24),
+                        _sectionTitle('Formas de Pagamento'),
+                        _buildPaymentMethodCards(isMobile),
                         const SizedBox(height: 24),
                         if (_currentFeatures.financialDashboard) ...[  
                           _sectionTitle('Eficiência Operacional'),
@@ -800,12 +935,38 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
 
                   // ── Linha de Insights ────────────────
                   SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
                     sliver: SliverToBoxAdapter(
                       child: _buildInsightsRow(isMobile),
                     ),
                   ),
                 ],
+
+                // ── Botão Exportar PDF ──────────────────
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 24, 16, 40),
+                  sliver: SliverToBoxAdapter(
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: _exportToPdf,
+                        icon: const Icon(Icons.picture_as_pdf_outlined),
+                        label: const Text(
+                          'Exportar Relatório em PDF',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.primaryPurple,
+                          side: BorderSide(
+                              color: AppColors.primaryPurple.withValues(alpha: 0.5)),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -818,6 +979,53 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
           ),
         );
       },
+    );
+  }
+
+  // ─────────────────────────────────────────────
+  // DIAGNÓSTICO: SEM DADOS
+  // ─────────────────────────────────────────────
+  Widget _buildNoDiagnosticBanner() {
+    final (start, end) = _currentRange();
+    final shopIdShort = _shopId != null && _shopId!.length > 8
+        ? '${_shopId!.substring(0, 8)}…'
+        : (_shopId ?? 'null');
+    final period = _selectedMonth != null
+        ? '${_selectedMonth!.toString().padLeft(2, '0')}/$_selectedYear'
+        : '$_selectedYear';
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.orange.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.orange.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(Icons.info_outline, color: Colors.orange.shade700, size: 18),
+            const SizedBox(width: 8),
+            Text('Nenhum dado encontrado para $period',
+                style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.orange.shade800,
+                    fontSize: 13)),
+          ]),
+          const SizedBox(height: 6),
+          Text('Shop ID: $shopIdShort',
+              style: TextStyle(fontSize: 11, color: Colors.orange.shade700)),
+          Text(
+              'Período: ${DateFormat('dd/MM/yyyy').format(start)} → ${DateFormat('dd/MM/yyyy').format(end)}',
+              style: TextStyle(fontSize: 11, color: Colors.orange.shade700)),
+          const SizedBox(height: 8),
+          Text(
+            'Se você tem agendamentos neste período, verifique se o Shop ID '
+            'da sessão corresponde ao ID nos agendamentos.',
+            style: TextStyle(fontSize: 11, color: Colors.orange.shade800),
+          ),
+        ],
+      ),
     );
   }
 
@@ -981,8 +1189,10 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
   // ─────────────────────────────────────────────
   Widget _buildFinancialSummary(bool isMobile) {
     final prev = _prevPeriod;
+    final hasCosts = _totalCustoServicos > 0 || _serviceCostMap.isNotEmpty;
     return _buildOptimizedGrid(
       isMobile: isMobile,
+      crossAxisCount: isMobile ? 2 : (hasCosts ? 3 : 4),
       children: [
         _MetricCard(
           title: 'Faturamento',
@@ -997,7 +1207,7 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
           icon: Icons.money_off_outlined,
           color: Colors.red,
           delta: prev != null ? _delta(_totalDespesa, prev.despesa) : null,
-          invertDelta: true, // para despesas, subir é ruim
+          invertDelta: true,
         ),
         _MetricCard(
           title: 'Comissões',
@@ -1005,7 +1215,20 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
           icon: Icons.person_outline,
           color: Colors.orange,
           delta: prev != null ? _delta(_totalComissao, prev.comissao) : null,
+          invertDelta: true,
         ),
+        if (hasCosts)
+          _MetricCard(
+            title: 'Custo de Serviços',
+            value: _fmtCurrency(_totalCustoServicos),
+            icon: Icons.build_circle_outlined,
+            color: Colors.deepOrange,
+            subtitle: _totalReceita > 0
+                ? '${(_totalCustoServicos / _totalReceita * 100).toStringAsFixed(1)}% do faturamento'
+                : null,
+            delta: prev != null ? _delta(_totalCustoServicos, prev.custoServicos) : null,
+            invertDelta: true,
+          ),
         _MetricCard(
           title: 'Lucro Líquido',
           value: _fmtCurrency(_lucroLiquido),
@@ -1013,8 +1236,7 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
           color: _lucroLiquido >= 0 ? Colors.green : Colors.red,
           subtitle: 'Margem: ${_margemLiquida.toStringAsFixed(1)}%',
           delta: prev != null
-              ? _delta(
-                  _lucroLiquido, prev.receita - prev.despesa - prev.comissao)
+              ? _delta(_lucroLiquido, prev.receita - prev.despesa - prev.comissao)
               : null,
         ),
       ],
@@ -1026,9 +1248,10 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
   // ─────────────────────────────────────────────
   Widget _buildSalesPerformance(bool isMobile) {
     final prev = _prevPeriod;
-    final totalAppts = _totalAtendimentos + _totalCancelamentos;
-    final cancelRate =
-        totalAppts > 0 ? (_totalCancelamentos / totalAppts * 100) : 0.0;
+    final totalAll = _totalAtendimentos + _totalCancelamentos;
+    final cancelRate = totalAll > 0 ? (_totalCancelamentos / totalAll * 100) : 0.0;
+    final rescheduleRate = totalAll > 0 ? (_totalReagendamentos / (totalAll + _totalReagendamentos) * 100) : 0.0;
+    final checkoutRate = _totalAtendimentos > 0 ? (_totalComCheckoutAntecipado / _totalAtendimentos * 100) : 0.0;
 
     return _buildOptimizedGrid(
       isMobile: isMobile,
@@ -1038,9 +1261,9 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
           value: _totalAtendimentos.toString(),
           icon: Icons.event_available_outlined,
           color: Colors.purple,
+          subtitle: 'Concluídos no período',
           delta: prev != null
-              ? _delta(
-                  _totalAtendimentos.toDouble(), prev.atendimentos.toDouble())
+              ? _delta(_totalAtendimentos.toDouble(), prev.atendimentos.toDouble())
               : null,
         ),
         _MetricCard(
@@ -1048,6 +1271,7 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
           value: _fmtCurrency(_ticketMedio),
           icon: Icons.trending_up,
           color: Colors.teal,
+          subtitle: 'Média por atendimento',
           delta: prev != null ? _delta(_ticketMedio, prev.ticketMedio) : null,
         ),
         _MetricCard(
@@ -1055,16 +1279,116 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
           value: _totalCancelamentos.toString(),
           icon: Icons.event_busy_outlined,
           color: Colors.redAccent,
-          // NOVO: exibe taxa de cancelamento %
-          subtitle:
-              totalAppts > 0 ? 'Taxa: ${cancelRate.toStringAsFixed(1)}%' : null,
+          subtitle: totalAll > 0 ? 'Taxa: ${cancelRate.toStringAsFixed(1)}%' : null,
           delta: prev != null
-              ? _delta(
-                  _totalCancelamentos.toDouble(), prev.cancelamentos.toDouble())
+              ? _delta(_totalCancelamentos.toDouble(), prev.cancelamentos.toDouble())
               : null,
           invertDelta: true,
         ),
+        _MetricCard(
+          title: 'Reagendamentos',
+          value: _totalReagendamentos.toString(),
+          icon: Icons.event_repeat_outlined,
+          color: Colors.amber.shade700,
+          subtitle: totalAll > 0 ? 'Taxa: ${rescheduleRate.toStringAsFixed(1)}%' : null,
+          delta: prev != null
+              ? _delta(_totalReagendamentos.toDouble(), prev.reagendamentos.toDouble())
+              : null,
+        ),
+        _MetricCard(
+          title: 'Adiantamento (Checkout)',
+          value: '${checkoutRate.toStringAsFixed(1)}%',
+          icon: Icons.paid_outlined,
+          color: Colors.indigo,
+          subtitle: _totalValorSinal > 0
+              ? '$_totalComCheckoutAntecipado agend. • ${_fmtCurrency(_totalValorSinal)}'
+              : '$_totalComCheckoutAntecipado agend. pagaram sinal',
+          delta: prev != null
+              ? _delta(_totalComCheckoutAntecipado.toDouble(), prev.checkoutAntecipado.toDouble())
+              : null,
+        ),
       ],
+    );
+  }
+
+  // ─────────────────────────────────────────────
+  // SEÇÃO: PAGAMENTOS POR TIPO
+  // ─────────────────────────────────────────────
+  Widget _buildPaymentMethodCards(bool isMobile) {
+    if (_paymentMethods.isEmpty) return const SizedBox.shrink();
+
+    final methods = [
+      {'key': 'PIX',      'icon': Icons.qr_code_rounded,    'color': Colors.teal},
+      {'key': 'Cartão',   'icon': Icons.credit_card_rounded, 'color': Colors.blue},
+      {'key': 'Dinheiro', 'icon': Icons.payments_rounded,    'color': Colors.orange},
+    ];
+
+    final visible = methods.where((m) => _paymentMethods.containsKey(m['key'])).toList();
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        children: List.generate(visible.length, (i) {
+          final m = visible[i];
+          final key = m['key'] as String;
+          final value = _paymentMethods[key] ?? 0;
+          final pct = _totalReceita > 0 ? (value / _totalReceita * 100) : 0.0;
+          final color = m['color'] as Color;
+          return Column(
+            children: [
+              if (i > 0) Divider(height: 1, color: Colors.grey.shade100),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 36, height: 36,
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(m['icon'] as IconData, color: color, size: 18),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(key,
+                              style: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFF1A1F36))),
+                          Text('${pct.toStringAsFixed(1)}% do faturamento',
+                              style: TextStyle(
+                                  fontSize: 11, color: Colors.grey[500])),
+                        ],
+                      ),
+                    ),
+                    Text(
+                      _fmtCurrency(value),
+                      style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: color),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          );
+        }),
+      ),
     );
   }
 
@@ -1930,11 +2254,318 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
   }
 
   // ─────────────────────────────────────────────
+  // EXPORTAÇÃO PDF
+  // ─────────────────────────────────────────────
+  Future<void> _exportToPdf() async {
+    final currency = NumberFormat.simpleCurrency(locale: 'pt_BR');
+    String fmt(double v) => currency.format(v);
+
+    final periodLabel = _selectedMonth == null
+        ? 'Ano $_selectedYear'
+        : '${_months[_selectedMonth! - 1]} $_selectedYear';
+
+    final now = DateTime.now();
+    final generated = DateFormat('dd/MM/yyyy HH:mm').format(now);
+
+    final pdf = pw.Document();
+
+    // ── Paleta ────────────────────────────────────────────────────────────
+    const purple = PdfColor(0.42, 0.18, 0.82);
+    const grey50 = PdfColor(0.97, 0.97, 0.98);
+    const grey200 = PdfColor(0.88, 0.88, 0.90);
+    const grey600 = PdfColor(0.36, 0.36, 0.38);
+    const green = PdfColor(0.13, 0.69, 0.30);
+    const red = PdfColor(0.86, 0.21, 0.27);
+    const orange = PdfColor(1.0, 0.60, 0.0);
+
+    // ── Helper: linha de tabela ────────────────────────────────────────────
+    pw.Widget buildRow(String label, String value, {PdfColor? valueColor, bool bold = false}) {
+      return pw.Container(
+        padding: const pw.EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+        decoration: const pw.BoxDecoration(
+          border: pw.Border(bottom: pw.BorderSide(color: grey200, width: 0.5)),
+        ),
+        child: pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            pw.Text(label,
+                style: pw.TextStyle(
+                  fontSize: 10,
+                  color: grey600,
+                  fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
+                )),
+            pw.Text(value,
+                style: pw.TextStyle(
+                  fontSize: 10,
+                  color: valueColor ?? PdfColors.black,
+                  fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
+                )),
+          ],
+        ),
+      );
+    }
+
+    // ── Helper: bloco de seção ─────────────────────────────────────────────
+    pw.Widget buildSection(String title, List<pw.Widget> rows) {
+      return pw.Container(
+        margin: const pw.EdgeInsets.only(bottom: 16),
+        decoration: pw.BoxDecoration(
+          color: PdfColors.white,
+          border: pw.Border.all(color: grey200, width: 0.5),
+          borderRadius: const pw.BorderRadius.all(pw.Radius.circular(8)),
+        ),
+        child: pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            pw.Container(
+              width: double.infinity,
+              padding: const pw.EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: pw.BoxDecoration(
+                color: purple,
+                borderRadius: const pw.BorderRadius.only(
+                  topLeft: pw.Radius.circular(8),
+                  topRight: pw.Radius.circular(8),
+                ),
+              ),
+              child: pw.Text(title.toUpperCase(),
+                  style: pw.TextStyle(
+                    fontSize: 9,
+                    color: PdfColors.white,
+                    fontWeight: pw.FontWeight.bold,
+                    letterSpacing: 1.2,
+                  )),
+            ),
+            pw.Padding(
+              padding: const pw.EdgeInsets.symmetric(horizontal: 4),
+              child: pw.Column(children: rows),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // ── Helper: card métrica (2 colunas) ──────────────────────────────────
+    pw.Widget buildMetricCard(String title, String value, {String? subtitle}) {
+      return pw.Container(
+        padding: const pw.EdgeInsets.all(10),
+        decoration: pw.BoxDecoration(
+          color: grey50,
+          border: pw.Border.all(color: grey200, width: 0.5),
+          borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+        ),
+        child: pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            pw.Text(title,
+                style: pw.TextStyle(fontSize: 8, color: grey600)),
+            pw.SizedBox(height: 4),
+            pw.Text(value,
+                style: pw.TextStyle(
+                  fontSize: 13,
+                  fontWeight: pw.FontWeight.bold,
+                  color: PdfColors.black,
+                )),
+            if (subtitle != null) ...[
+              pw.SizedBox(height: 2),
+              pw.Text(subtitle,
+                  style: pw.TextStyle(fontSize: 7, color: grey600)),
+            ],
+          ],
+        ),
+      );
+    }
+
+    final workedHours = _horasTrabalhadasMin / 60.0;
+    final totalHours = _horasPotenciaisMin / 60.0;
+    final idleHours = math.max(0.0, totalHours - workedHours);
+
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.symmetric(horizontal: 32, vertical: 28),
+        header: (context) => pw.Container(
+          margin: const pw.EdgeInsets.only(bottom: 16),
+          padding: const pw.EdgeInsets.all(14),
+          decoration: pw.BoxDecoration(
+            gradient: const pw.LinearGradient(
+              colors: [purple, PdfColor(0.56, 0.27, 0.96)],
+            ),
+            borderRadius: const pw.BorderRadius.all(pw.Radius.circular(10)),
+          ),
+          child: pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            children: [
+              pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text(
+                    _shopName.isNotEmpty ? _shopName : 'Relatório Financeiro',
+                    style: pw.TextStyle(
+                      color: PdfColors.white,
+                      fontSize: 18,
+                      fontWeight: pw.FontWeight.bold,
+                    ),
+                  ),
+                  pw.SizedBox(height: 4),
+                  pw.Text(
+                    'Período: $periodLabel',
+                    style: const pw.TextStyle(color: PdfColors.white, fontSize: 11),
+                  ),
+                ],
+              ),
+              pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.end,
+                children: [
+                  pw.Text('Relatório Financeiro',
+                      style: pw.TextStyle(
+                        color: PdfColors.white,
+                        fontSize: 10,
+                        fontWeight: pw.FontWeight.bold,
+                      )),
+                  pw.SizedBox(height: 4),
+                  pw.Text('Gerado em: $generated',
+                      style: const pw.TextStyle(color: PdfColors.white, fontSize: 8)),
+                ],
+              ),
+            ],
+          ),
+        ),
+        build: (context) => [
+          // ── Resumo Financeiro ──────────────────────────────────────────
+          buildSection('Resumo Financeiro', [
+            buildRow('Faturamento Total', fmt(_totalReceita), valueColor: PdfColor(0.0, 0.45, 0.84), bold: true),
+            buildRow('Despesas', fmt(_totalDespesa), valueColor: red),
+            buildRow('Comissões', fmt(_totalComissao), valueColor: orange),
+            if (_totalCustoServicos > 0)
+              buildRow('Custo de Serviços', fmt(_totalCustoServicos), valueColor: PdfColor(0.9, 0.36, 0.14)),
+            buildRow(
+              'Lucro Líquido',
+              fmt(_lucroLiquido),
+              valueColor: _lucroLiquido >= 0 ? green : red,
+              bold: true,
+            ),
+            buildRow('Margem Líquida', '${_margemLiquida.toStringAsFixed(1)}%',
+                valueColor: _margemLiquida >= 0 ? green : red),
+            if (_metaMensal > 0) ...[
+              buildRow('Meta do Período', fmt(_metaMensal)),
+              buildRow(
+                'Atingimento da Meta',
+                '${math.min(100.0, _totalReceita / _metaMensal * 100).toStringAsFixed(1)}%',
+                valueColor: _totalReceita >= _metaMensal ? green : orange,
+              ),
+            ],
+          ]),
+
+          // ── Desempenho de Vendas ───────────────────────────────────────
+          buildSection('Desempenho de Vendas', [
+            buildRow('Agendamentos Concluídos', _totalAtendimentos.toString()),
+            buildRow('Ticket Médio', fmt(_ticketMedio)),
+            buildRow('Cancelamentos', _totalCancelamentos.toString(),
+                valueColor: _totalCancelamentos > 0 ? red : green),
+            buildRow('Reagendamentos', _totalReagendamentos.toString(),
+                valueColor: _totalReagendamentos > 0 ? orange : green),
+          ]),
+
+          // ── Eficiência Operacional ─────────────────────────────────────
+          buildSection('Eficiência Operacional', [
+            buildRow('Horas Disponíveis', '${totalHours.toStringAsFixed(1)}h'),
+            buildRow('Horas Trabalhadas', '${workedHours.toStringAsFixed(1)}h',
+                valueColor: PdfColor(0.13, 0.69, 0.30)),
+            buildRow('Horas Ociosas', '${idleHours.toStringAsFixed(1)}h',
+                valueColor: idleHours > totalHours * 0.5 ? red : orange),
+            buildRow('Taxa de Ocupação', '${_taxaOcupacao.toStringAsFixed(1)}%',
+                valueColor: _taxaOcupacao >= 80 ? green : _taxaOcupacao >= 50 ? orange : red,
+                bold: true),
+            buildRow('Receita por Hora', fmt(_valorPorHora)),
+            if (_faturamentoPotencial > 0)
+              buildRow('Faturamento Potencial (100% ocupação)', fmt(_faturamentoPotencial)),
+          ]),
+
+          // ── Eficiência da Equipe ───────────────────────────────────────
+          if (_professionalEfficiency.isNotEmpty)
+            buildSection(
+              'Eficiência da Equipe',
+              _professionalEfficiency.map((prof) {
+                final ph = prof.minutosTrabalhados / 60.0;
+                return buildRow(
+                  prof.nome,
+                  '${fmt(prof.receita)}  •  ${prof.taxaOcupacao.toStringAsFixed(0)}% ocup.  •  ${ph.toStringAsFixed(1)}h',
+                  valueColor: prof.taxaOcupacao >= 80 ? green : prof.taxaOcupacao >= 50 ? orange : grey600,
+                );
+              }).toList(),
+            ),
+
+          // ── Top Serviços ───────────────────────────────────────────────
+          if (_topServices.isNotEmpty)
+            buildSection(
+              'Serviços mais Rentáveis',
+              _topServices.entries.map((e) {
+                final pct = _totalReceita > 0 ? e.value / _totalReceita * 100 : 0.0;
+                return buildRow(e.key, '${fmt(e.value)}  (${pct.toStringAsFixed(1)}%)');
+              }).toList(),
+            ),
+
+          // ── Formas de Pagamento ────────────────────────────────────────
+          if (_paymentMethods.isNotEmpty)
+            buildSection(
+              'Formas de Pagamento',
+              _paymentMethods.entries.map((e) {
+                final pct = _totalReceita > 0 ? e.value / _totalReceita * 100 : 0.0;
+                return buildRow(e.key, '${fmt(e.value)}  (${pct.toStringAsFixed(1)}%)');
+              }).toList(),
+            ),
+
+          // ── Rodapé de métricas ─────────────────────────────────────────
+          pw.SizedBox(height: 8),
+          pw.Row(
+            children: [
+              pw.Expanded(child: buildMetricCard('Faturamento', fmt(_totalReceita))),
+              pw.SizedBox(width: 8),
+              pw.Expanded(child: buildMetricCard('Lucro', fmt(_lucroLiquido),
+                  subtitle: 'Margem ${_margemLiquida.toStringAsFixed(1)}%')),
+              pw.SizedBox(width: 8),
+              pw.Expanded(child: buildMetricCard('Ocupação', '${_taxaOcupacao.toStringAsFixed(1)}%',
+                  subtitle: '${workedHours.toStringAsFixed(1)}h trabalhadas')),
+              pw.SizedBox(width: 8),
+              pw.Expanded(child: buildMetricCard('Atendimentos', _totalAtendimentos.toString(),
+                  subtitle: 'Ticket: ${fmt(_ticketMedio)}')),
+            ],
+          ),
+        ],
+        footer: (context) => pw.Container(
+          margin: const pw.EdgeInsets.only(top: 8),
+          padding: const pw.EdgeInsets.only(top: 6),
+          decoration: const pw.BoxDecoration(
+            border: pw.Border(top: pw.BorderSide(color: grey200, width: 0.5)),
+          ),
+          child: pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            children: [
+              pw.Text('MarkaAI — Relatório Financeiro',
+                  style: pw.TextStyle(fontSize: 8, color: grey600)),
+              pw.Text('Pág. ${context.pageNumber}/${context.pagesCount}',
+                  style: pw.TextStyle(fontSize: 8, color: grey600)),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    final filename =
+        'financeiro_${periodLabel.replaceAll(' ', '_').toLowerCase()}.pdf';
+
+    await Printing.layoutPdf(
+      onLayout: (_) async => pdf.save(),
+      name: filename,
+    );
+  }
+
+  // ─────────────────────────────────────────────
   // DIALOG DE META
   // ─────────────────────────────────────────────
   void _showGoalDialog() {
     _metaController.text =
-        _metaMensal > 0 ? _metaMensal.toStringAsFixed(0) : '';
+        _metaMensal > 0 ? NumberFormat('#,##0.00', 'pt_BR').format(_metaMensal) : '';
     bool applyToYear = false;
 
     showDialog(
@@ -1976,8 +2607,8 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
               const SizedBox(height: 24),
               TextField(
                 controller: _metaController,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
+                keyboardType: TextInputType.number,
+                inputFormatters: [_BrlCurrencyFormatter()],
                 autofocus: true,
                 style: const TextStyle(
                     fontSize: 20,
@@ -2053,9 +2684,11 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
             const SizedBox(width: 4),
             ElevatedButton(
               onPressed: () {
-                final v = double.tryParse(
-                        _metaController.text.replaceAll(',', '.')) ??
-                    0.0;
+                // Parse Brazilian format: "1.500,00" → 1500.0
+                final raw = _metaController.text
+                    .replaceAll('.', '')
+                    .replaceAll(',', '.');
+                final v = double.tryParse(raw) ?? 0.0;
                 setState(() => _metaMensal = v);
                 _saveMonthlyGoal(v, applyToYear: applyToYear);
                 Navigator.pop(ctx);
@@ -2535,6 +3168,28 @@ class _DashboardContainer extends StatelessWidget {
           child,
         ],
       ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
+// FORMATADOR DE MOEDA BRASILEIRA (R$ X.XXX,XX)
+// ─────────────────────────────────────────────
+class _BrlCurrencyFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final digits = newValue.text.replaceAll(RegExp(r'\D'), '');
+    if (digits.isEmpty) return newValue.copyWith(text: '');
+
+    final cents = int.tryParse(digits) ?? 0;
+    final formatted = NumberFormat('#,##0.00', 'pt_BR').format(cents / 100);
+
+    return TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: formatted.length),
     );
   }
 }

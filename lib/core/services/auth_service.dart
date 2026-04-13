@@ -78,10 +78,17 @@ class AuthService {
         email: email.trim(),
         password: password,
       );
+      
+      // Verifica se o email foi confirmado
+      if (response.user != null && response.user!.emailConfirmedAt == null) {
+        // Faz logout para manter a sessão limpa
+        await _supabase.auth.signOut();
+        throw sb.AuthException('Email not confirmed');
+      }
+      
       return response;
     } on sb.AuthException catch (e) {
-      _handleAuthError(e);
-      rethrow;
+      throw sb.AuthException(mapSupabaseError(e));
     } catch (e) {
       debugPrint('[AuthService] Erro inesperado no login: $e');
       throw Exception('Erro de conexão ao tentar entrar.');
@@ -133,6 +140,7 @@ class AuthService {
       final response = await _supabase.auth.signUp(
         email: email.trim(),
         password: password,
+        emailRedirectTo: kIsWeb ? null : 'markaai://confirm-email',
         data: {
           'name': name,
           'role': role,
@@ -153,8 +161,7 @@ class AuthService {
       );
       return response;
     } on sb.AuthException catch (e) {
-      _handleAuthError(e);
-      rethrow;
+      throw sb.AuthException(mapSupabaseError(e));
     } catch (e) {
       debugPrint('[AuthService] Erro inesperado no cadastro: $e');
       throw Exception('Erro ao criar conta.');
@@ -177,32 +184,23 @@ class AuthService {
     }
   }
 
-  /// Envia e-mail de recuperação de senha via Edge Function (Resend).
-  /// Usa o mesmo provedor Resend das notificações de agendamento.
+  /// Envia e-mail de recuperação de senha via Supabase Auth.
   Future<void> sendPasswordReset(String email) async {
     try {
-      final response = await _supabase.functions.invoke(
-        'sendPasswordReset',
-        body: {'email': email.trim()},
+      final String redirectUrl = kIsWeb
+          ? (kDebugMode
+              ? 'http://localhost:3000/reset-password'
+              : '${Uri.base.origin}/reset-password')
+          : 'markaai://reset-password';
+          
+      await _supabase.auth.resetPasswordForEmail(
+        email.trim(),
+        redirectTo: redirectUrl,
       );
-
-      if (response.status != 200) {
-        final msg = (response.data is Map) ? response.data['error'] : null;
-        throw Exception(msg ?? 'Erro ao enviar e-mail.');
-      }
-    } on sb.FunctionException catch (e) {
-      // Trata erro técnico da Edge Function e tenta pegar a mensagem amigável
-      final details = e.details;
-      String? msg;
-      if (details is Map && details.containsKey('error')) {
-        msg = details['error'];
-      }
-      throw Exception(msg ?? 'Não foi possível completar a solicitação.');
+    } on sb.AuthException catch (e) {
+      throw sb.AuthException(mapSupabaseError(e));
     } catch (e) {
       debugPrint('[AuthService] Erro fatal em sendPasswordReset: $e');
-      if (e.toString().contains('Exception: ')) {
-        rethrow;
-      }
       throw Exception('Falha ao processar solicitação. Tente novamente.');
     }
   }
@@ -241,26 +239,41 @@ class AuthService {
     return metadata?[key]?.toString();
   }
 
+  /// Mapeamento de erros do Supabase para constantes amigáveis.
+  String mapSupabaseError(sb.AuthException e) {
+    // 1. Verifica pelo status code de Rate Limit
+    if (e.statusCode == '429' || e.message.toLowerCase().contains('rate limit')) {
+      return 'RATE_LIMIT';
+    }
+
+    final msg = e.message.toLowerCase();
+    
+    // 2. Verifica por mensagens específicas
+    if (msg.contains('email not confirmed')) {
+      return 'EMAIL_NOT_CONFIRMED';
+    }
+    if (msg.contains('invalid login credentials')) {
+      return 'INVALID_CREDENTIALS';
+    }
+    if (msg.contains('user not found')) {
+      return 'USER_NOT_FOUND';
+    }
+    if (msg.contains('user already registered') || msg.contains('user already exists')) {
+      return 'EMAIL_ALREADY_EXISTS';
+    }
+    if (msg.contains('password should be at least')) {
+      return 'WEAK_PASSWORD';
+    }
+    if (msg.contains('network') || msg.contains('connection')) {
+      return 'NETWORK_ERROR';
+    }
+    
+    return 'GENERIC_ERROR';
+  }
+
   /// Tratamento padronizado de erros de autenticação do Supabase.
   void _handleAuthError(sb.AuthException e) {
     debugPrint('[AuthService] Erro Auth: Code=${e.statusCode}, Msg=${e.message}');
-    
-    // Tratamento de casos específicos conforme pedido na FASE 4 (MarkaAI)
-    if (e.message.toLowerCase().contains('email already registered') || 
-        e.message.toLowerCase().contains('user already exists')) {
-      throw Exception('Este e-mail já está em uso.');
-    }
-    
-    if (e.message.toLowerCase().contains('invalid login credentials') ||
-        e.message.toLowerCase().contains('user not found')) {
-      throw Exception('E-mail ou senha inválidos.');
-    }
-
-    if (e.message.toLowerCase().contains('session expired') || 
-        e.message.toLowerCase().contains('refresh_token_not_found')) {
-      throw Exception('Sessão expirada. Por favor, faça login novamente.');
-    }
-
-    throw Exception(e.message);
+    throw Exception(mapSupabaseError(e));
   }
 }

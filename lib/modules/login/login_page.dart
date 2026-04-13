@@ -10,7 +10,9 @@ import '../clients/client_home_page.dart';
 import '../auth/forgot_password_page.dart';
 import '../../core/services/session_service.dart';
 import '../../core/services/auth_service.dart';
+import '../../core/services/auth_error_handler.dart';
 import '../../core/utils/date_parsing_utils.dart';
+import '../../widgets/app_info_modal.dart';
 
 // --- SERVIÇO AUXILIAR (MANTIDO) ---
 class ViaCepService {
@@ -52,6 +54,8 @@ class _LoginPageState extends State<LoginPage>
   // Estados
   bool _isLoading = false;
   bool _isRegistering = false;
+  bool _emailSent = false;
+  String _sentEmail = '';
   bool _obscurePassword = true;
   bool _obscurePasswordConfirm = true;
   bool _acceptedTerms = false;
@@ -351,11 +355,23 @@ class _LoginPageState extends State<LoginPage>
           birthDate: _selectedRole == 'cliente' ? DateParsingUtils.toIso8601(_birthCtrl.text) : null,
         );
         user = res.user;
+        
+        // Se o signUp retornou user mas não há sessão, significa que email confirmation está ativo
+        if (user != null && sb.Supabase.instance.client.auth.currentSession == null) {
+          if (mounted) {
+            setState(() {
+              _isLoading = false;
+              _emailSent = true;
+              _sentEmail = _emailCtrl.text.trim();
+            });
+          }
+          return;
+        }
       }
 
       // Null check explícito para evitar crash caso signUp falhe silenciosamente
       if (user == null) {
-        _showError("Falha ao criar a conta. Tente novamente.");
+        _showError("Não foi possível criar sua conta. Tente novamente.");
         setState(() => _isLoading = false);
         return;
       }
@@ -364,9 +380,8 @@ class _LoginPageState extends State<LoginPage>
       final supabase = sb.Supabase.instance.client;
       
       // GARANTIA: Atualiza a public.users explicitamente para todos os fluxos.
-      // Isso sobrepõe casos onde o Trigger do Supabase não copiou o 'role' ou 'phone' completo dos Metadados.
       Map<String, dynamic> updateData = {
-        'id': uid, // Garantia de PK para o upsert
+        'id': uid, 
         'name': _nameCtrl.text.trim(),
         'email': _emailCtrl.text.trim(),
         'phone': _phoneCtrl.text.replaceAll(RegExp(r'\D'), ''),
@@ -384,11 +399,6 @@ class _LoginPageState extends State<LoginPage>
         updateData['birth_date'] = DateParsingUtils.toIso8601(_birthCtrl.text);
       }
 
-      // FIX RLS 42501: O trigger handle_new_user (SECURITY DEFINER) já inseriu
-      // o perfil completo via metadata durante o signUp().
-      // O upsert direto só é possível quando há sessão ativa (auth.uid() != null).
-      // Se email confirmation estiver ligado, não há sessão neste momento e o 
-      // trigger já cuidou de tudo — não tentamos o upsert para evitar o erro 42501.
       final hasActiveSession = supabase.auth.currentSession != null;
 
       if (hasActiveSession) {
@@ -419,7 +429,27 @@ class _LoginPageState extends State<LoginPage>
       await _routeUser(user, isNewSignUp: true);
     } catch (e) {
       debugPrint('[SIGNUP-ERR] ${e.runtimeType}: $e');
-      _handleAuthError(e);
+      final msg = e.toString();
+      if (msg.contains('EMAIL_ALREADY_EXISTS')) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text("Este e-mail já está cadastrado. Deseja fazer login?"),
+              backgroundColor: AppColors.primaryPurple,
+              behavior: SnackBarBehavior.floating,
+              action: SnackBarAction(
+                label: "LOGIN",
+                textColor: Colors.white,
+                onPressed: () => setState(() => _isRegistering = false),
+              ),
+            ),
+          );
+        }
+      } else if (msg.contains('WEAK_PASSWORD')) {
+        _showError("Senha fraca. Tente uma com pelo menos 6 caracteres.");
+      } else {
+        _showError("Não foi possível criar sua conta. Tente novamente.");
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -440,18 +470,18 @@ class _LoginPageState extends State<LoginPage>
   }
 
   void _handleAuthError(dynamic e) {
-    String msg = "Erro na autenticação";
-    if (e is sb.AuthException) {
-      msg = e.message;
-      if (msg.contains('Invalid login credentials')) {
-        msg = "E-mail ou senha incorretos.";
-      } else if (msg.contains('User already registered')) {
-        msg = "Este e-mail já está em uso.";
-      }
-    } else {
-      msg = e.toString();
-    }
-    _showError(msg);
+    if (!mounted) return;
+    
+    final errorCode = e is sb.AuthException ? AuthService().mapSupabaseError(e) : e.toString();
+    final errorData = AuthErrorHandler.handle(errorCode);
+    
+    AppInfoModal.show(
+      context,
+      title: errorData.title,
+      message: errorData.message,
+      icon: errorData.icon,
+      type: AppInfoType.error,
+    );
   }
 
   void _showError(String msg) {
@@ -464,6 +494,46 @@ class _LoginPageState extends State<LoginPage>
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
+  }
+
+  void _showEmailNotConfirmedWarning(String email) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text(
+          'Sua conta ainda não foi confirmada. Acesse seu e-mail e clique no link de confirmação.',
+        ),
+        backgroundColor: Colors.orange.shade700,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        duration: const Duration(seconds: 8),
+        action: SnackBarAction(
+          label: 'Reenviar',
+          textColor: Colors.white,
+          onPressed: () => _resendConfirmationEmailTo(email),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _resendConfirmationEmailTo(String email) async {
+    try {
+      await sb.Supabase.instance.client.auth.resend(
+        type: sb.OtpType.signup,
+        email: email,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('E-mail de confirmação reenviado com sucesso!'),
+            backgroundColor: AppColors.primaryPurple,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) _showError('Não foi possível reenviar. Tente novamente mais tarde.');
+    }
   }
 
   @override
@@ -563,9 +633,11 @@ class _LoginPageState extends State<LoginPage>
                   padding: const EdgeInsets.all(30),
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 500),
-                    child: _isRegistering
-                        ? _buildRegistrationFlow()
-                        : _buildLoginForm(),
+                    child: _emailSent
+                      ? _buildEmailSentView()
+                      : _isRegistering
+                          ? _buildRegistrationFlow()
+                          : _buildLoginForm(),
                   ),
                 ),
               ),
@@ -669,7 +741,10 @@ class _LoginPageState extends State<LoginPage>
       return;
     }
 
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _sentEmail = ''; // Limpa estado anterior
+    });
 
     try {
       final authService = AuthService();
@@ -681,9 +756,122 @@ class _LoginPageState extends State<LoginPage>
         await _routeUser(res.user!);
       }
     } catch (e) {
-      _showError("E-mail ou senha inválidos.");
-      if (mounted) setState(() => _isLoading = false);
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+
+      final errorCode = e is sb.AuthException ? e.message : e.toString();
+      
+      if (errorCode == 'EMAIL_NOT_CONFIRMED') {
+        _showEmailNotConfirmedWarning(_emailCtrl.text.trim());
+      } else {
+        final errorData = AuthErrorHandler.handle(errorCode);
+        AppInfoModal.show(
+          context,
+          title: errorData.title,
+          message: errorData.message,
+          icon: errorData.icon,
+          type: AppInfoType.error,
+        );
+      }
     }
+  }
+
+  // --- TELA DE E-MAIL ENVIADO AGUARDANDO CONFIRMAÇÃO ---
+  Widget _buildEmailSentView() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Center(
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: AppColors.primaryPurple.withValues(alpha: 0.1),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.mark_email_read_outlined,
+              size: 64,
+              color: AppColors.primaryPurple,
+            ),
+          ),
+        ),
+        const SizedBox(height: 28),
+        const Text(
+          'Verifique seu e-mail',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 26,
+            fontWeight: FontWeight.bold,
+            color: Colors.black87,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          'Enviamos um e-mail de confirmação para:',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.grey[600], fontSize: 15),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          _sentEmail,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: Colors.black87,
+          ),
+        ),
+        const SizedBox(height: 20),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: Colors.blue[50],
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.blue[200]!),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.info_outline, color: Colors.blue[700], size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Acesse sua caixa de entrada e clique no link para ativar sua conta. Não se esqueça de verificar a pasta de spam.',
+                  style: TextStyle(fontSize: 13, color: Colors.blue[900]),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 32),
+        _PrimaryButton(
+          text: 'REENVIAR E-MAIL',
+          isLoading: _isLoading,
+          onPressed: () async {
+            setState(() => _isLoading = true);
+            await _resendConfirmationEmailTo(_sentEmail);
+            if (mounted) setState(() => _isLoading = false);
+          },
+        ),
+        const SizedBox(height: 16),
+        Center(
+          child: TextButton(
+            onPressed: () => setState(() {
+              _emailSent = false;
+              _isRegistering = false;
+              _currentStep = 0;
+            }),
+            child: const Text(
+              'Já confirmei, fazer login',
+              style: TextStyle(
+                color: AppColors.primaryPurple,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   // --- FLUXO DE REGISTRO EM ETAPAS ---

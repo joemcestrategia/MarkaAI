@@ -82,7 +82,12 @@ class SubscriptionService {
       'customLink': true,
       'maxServicePhotos': 5,
       'advancedScheduling': true,
-      'features': ['Painel Financeiro Completo (DRE/Caixa)', 'Todas as funções liberadas'],
+      'nfseEmission': true,
+      'features': [
+        'Emissão de Nota Fiscal Eletrônica (NFS-e)',
+        'Painel Financeiro Completo (DRE/Caixa)',
+        'Todas as funções liberadas'
+      ],
       'description': 'Análises avançadas, 5 profissionais e suporte VIP dedicado.',
     },
   };

@@ -55,6 +55,10 @@ class PlanFeatures {
   // Analytics
   final bool visitorsAnalytics;
 
+  // Fiscal e Segurança
+  final bool nfseEmission;
+  final bool requireCpfForBooking;
+
   const PlanFeatures({
     required this.onlineBooking,
     required this.canDisableOnlineBooking,
@@ -85,6 +89,8 @@ class PlanFeatures {
     required this.customHolidays,
     required this.customLink,
     required this.visitorsAnalytics,
+    required this.nfseEmission,
+    required this.requireCpfForBooking,
   });
 }
 
@@ -119,6 +125,8 @@ const Map<PlanKey, PlanFeatures> planFeaturesConfig = {
     customHolidays: false,
     customLink: true,
     visitorsAnalytics: false,
+    nfseEmission: false,
+    requireCpfForBooking: false,
   ),
   PlanKey.starter: PlanFeatures(
     onlineBooking: true,
@@ -150,6 +158,8 @@ const Map<PlanKey, PlanFeatures> planFeaturesConfig = {
     customHolidays: false,
     customLink: true,
     visitorsAnalytics: false,
+    nfseEmission: false,
+    requireCpfForBooking: false,
   ),
   PlanKey.plus: PlanFeatures(
     onlineBooking: true,
@@ -181,6 +191,8 @@ const Map<PlanKey, PlanFeatures> planFeaturesConfig = {
     customLink: true,
     financialDashboard: false,
     visitorsAnalytics: true,
+    nfseEmission: false,
+    requireCpfForBooking: false,
   ),
   PlanKey.pro: PlanFeatures(
     onlineBooking: true,
@@ -212,5 +224,7 @@ const Map<PlanKey, PlanFeatures> planFeaturesConfig = {
     customHolidays: true,
     customLink: true,
     visitorsAnalytics: true,
+    nfseEmission: true,
+    requireCpfForBooking: true,
   ),
 };

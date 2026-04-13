@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../../core/theme/app_colors.dart';
 import '../../pages/checkout_page.dart';
 import '../clients/rescheduling_success_page.dart';
+import '../clients/client_register_page.dart';
 
 import '../../core/utils/availability_utils.dart';
 import '../../core/services/client_verification_service.dart';
@@ -61,6 +62,7 @@ class _BookingPageState extends State<BookingPage> {
   late PlanFeatures _planFeatures;
 
   bool _isRestricted = false;
+  String? _restrictionReason;
   bool _loadingRestriction = true;
   Map<String, bool>? _clientStatus;
 
@@ -78,11 +80,18 @@ class _BookingPageState extends State<BookingPage> {
     if (user != null) {
       try {
         _clientStatus ??= await ClientVerificationService.getClientStatus(user.id, shopId);
+        
         final restrictProblematic = _shopConfig['restrict_problematic_clients'] ?? false;
-        if (_clientStatus!['isProblematic'] == true && restrictProblematic) {
+        final bool isProbRestricted = (_clientStatus!['isProblematic'] == true && restrictProblematic);
+        
+        final requireCpf = _shopConfig['require_cpf'] == true;
+        final bool isCpfRestricted = (_planFeatures.requireCpfForBooking && requireCpf && _clientStatus!['hasCpf'] == false);
+
+        if (isProbRestricted || isCpfRestricted) {
           if (mounted) {
             setState(() {
               _isRestricted = true;
+              _restrictionReason = isCpfRestricted ? 'cpf_missing' : 'problematic';
               _loadingRestriction = false;
             });
           }
@@ -399,10 +408,30 @@ class _BookingPageState extends State<BookingPage> {
     }
 
     if (_isRestricted) {
+      if (_restrictionReason == 'cpf_missing') {
+        return RestrictedClientView(
+          title: "Complete seu Perfil",
+          message: "Esta loja exige que o cliente tenha CPF cadastrado antes de prosseguir, para fins de emissão de Nota Fiscal.\n\nPor favor, atualize o seu perfil e tente novamente.",
+          icon: Icons.badge_outlined,
+          actionLabel: "ATUALIZAR PERFIL",
+          onCustomAction: () {
+            Navigator.of(context).pushNamed('/profile'); // ou rota correspondente do perfil
+          },
+          onRefresh: () async {
+            setState(() {
+              _isRestricted = false;
+              _restrictionReason = null;
+              _loadingRestriction = true;
+            });
+            await _checkRestriction();
+          },
+        );
+      }
       return RestrictedClientView(
         onRefresh: () async {
           setState(() {
             _isRestricted = false;
+            _restrictionReason = null;
             _loadingRestriction = true;
           });
           await _checkRestriction();
@@ -473,6 +502,7 @@ class _BookingTimePageState extends State<BookingTimePage> {
   bool _isVip = false;
   int _vipExtraDays = 0;
   bool _isRestricted = false;
+  String? _restrictionReason;
 
   // Cache de disponibilidade
   Map<DateTime, bool> _dayAvailability = {};
@@ -534,8 +564,7 @@ class _BookingTimePageState extends State<BookingTimePage> {
 
       // Agrupar appointments por dia
       Map<int, List<Map<String, int>>> groupedByDay = {};
-      for (var doc in snapshot) {
-        final data = doc as Map<String, dynamic>;
+      for (var data in snapshot) {
         final status = data['status']?.toString().toLowerCase() ?? '';
         if (status == 'cancelado' ||
             status == 'rejeitado' ||
@@ -636,26 +665,39 @@ class _BookingTimePageState extends State<BookingTimePage> {
   }
 
   Future<void> _checkRestriction() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    final planFeatures = PlanFeaturesService.getFeaturesForShop(widget.shop);
+    final requireCpf = widget.shopConfig['require_cpf'] == true;
+
     if (widget.clientStatus != null) {
       final restrictProblematic = widget.shopConfig['restrict_problematic_clients'] ?? false;
-      if (widget.clientStatus!['isProblematic'] == true && restrictProblematic) {
+      final isProbRestricted = (widget.clientStatus!['isProblematic'] == true && restrictProblematic);
+      final isCpfRestricted = (planFeatures.requireCpfForBooking && requireCpf && widget.clientStatus!['hasCpf'] == false);
+
+      if (isProbRestricted || isCpfRestricted) {
         if (mounted) {
           setState(() {
             _isRestricted = true;
+            _restrictionReason = isCpfRestricted ? 'cpf_missing' : 'problematic';
           });
         }
       }
       return;
     }
-    final user = Supabase.instance.client.auth.currentUser;
+    
     if (user != null) {
-      final status = widget.clientStatus ?? await ClientVerificationService.getClientStatus(
+      final status = await ClientVerificationService.getClientStatus(
           user.id, (widget.shop['id'] ?? '').toString());
       final restrictProblematic = widget.shopConfig['restrict_problematic_clients'] ?? false;
-      if (status['isProblematic'] == true && restrictProblematic) {
+      
+      final isProbRestricted = (status['isProblematic'] == true && restrictProblematic);
+      final isCpfRestricted = (planFeatures.requireCpfForBooking && requireCpf && status['hasCpf'] == false);
+
+      if (isProbRestricted || isCpfRestricted) {
         if (mounted) {
           setState(() {
             _isRestricted = true;
+            _restrictionReason = isCpfRestricted ? 'cpf_missing' : 'problematic';
           });
         }
       }
@@ -699,10 +741,29 @@ class _BookingTimePageState extends State<BookingTimePage> {
   @override
   Widget build(BuildContext context) {
     if (_isRestricted) {
+      if (_restrictionReason == 'cpf_missing') {
+        return RestrictedClientView(
+          title: "Complete seu Perfil",
+          message: "Esta loja exige que o cliente tenha CPF cadastrado antes de prosseguir, para fins de emissão de Nota Fiscal.\n\nPor favor, atualize o seu perfil e tente novamente.",
+          icon: Icons.badge_outlined,
+          actionLabel: "ATUALIZAR PERFIL",
+          onCustomAction: () {
+            Navigator.of(context).pushNamed('/profile');
+          },
+          onRefresh: () async {
+            setState(() {
+              _isRestricted = false;
+              _restrictionReason = null;
+            });
+            await _checkRestriction();
+          },
+        );
+      }
       return RestrictedClientView(
         onRefresh: () async {
           setState(() {
             _isRestricted = false;
+            _restrictionReason = null;
           });
           await _checkRestriction();
         },
@@ -1128,9 +1189,6 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                   )
                               // ── Modo cliente: fluxo original inalterado ──
                               : () async {
-                                  final shopId = (widget.shop['id'] ?? '').toString();
-                                  final shopData = widget.shop;
-
                                   final profData = widget.professionalDoc;
 
                                   String finalName = widget.serviceData['name'] ?? '';
@@ -1267,8 +1325,16 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                         'professional_id': widget.professionalDoc['id'],
                                         'professional_name': profData['name'] ?? profData['nome'] ?? 'Profissional',
                                         'duration_min': duration,
+                                        'is_rescheduled': true,
                                       })
                                       .eq('id', widget.appointmentId!);
+                                      // Increment reschedule_count via raw RPC (ignore error if column not exists yet)
+                                      try {
+                                        await Supabase.instance.client.rpc(
+                                          'increment_reschedule_count',
+                                          params: {'appointment_id': widget.appointmentId!},
+                                        );
+                                      } catch (_) {}
 
                                       if (!mounted) return;
                                       Navigator.of(context).pop(); // tira loading
@@ -1306,7 +1372,7 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                     final shopData = widget.shop;
                                     final profData = widget.professionalDoc;
 
-                                    Navigator.push(
+                                    final result = await Navigator.push(
                                       context,
                                       MaterialPageRoute(
                                         builder: (context) => CheckoutPage(
@@ -1324,6 +1390,19 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                         ),
                                       ),
                                     );
+ 
+                                    if (result == 'edit_profile' && mounted) {
+                                      final user = Supabase.instance.client.auth.currentUser;
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) => ClientRegisterPage(
+                                            user: user,
+                                            isBusinessAdding: false,
+                                          ),
+                                        ),
+                                      );
+                                    }
                                   }
                                 },
                       style: ElevatedButton.styleFrom(
@@ -1393,7 +1472,7 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
     }
 
     for (var d in querySnapshot) {
-      final data = d as Map<String, dynamic>;
+      final data = d;
       final status = (data['status'] ?? '').toString().toLowerCase();
 
       if (status == 'cancelado' ||
@@ -1609,24 +1688,24 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                     // Verifica se o slot está ocupado e pega os dados do agendamento
                     bool isOccupied = false;
                     Map<String, dynamic>? conflictObj;
-                    if (isOwnerMode) {
-                      for (final busy in busyIntervals) {
-                        if (slotMin < busy['end']! &&
-                            slotMin + duration > busy['start']!) {
-                          isOccupied = true;
-                          for (final entry in occupiedSlotData.entries) {
-                            int occupDuration =
-                                entry.value['computed_duration'] ?? 30;
-                            if (slotMin < entry.key + occupDuration &&
-                                slotMin + duration > entry.key) {
-                              conflictObj = entry.value;
-                              break;
+                            if (isOwnerMode) {
+                              for (final busy in busyIntervals) {
+                                if (slotMin < busy['end']! &&
+                                    slotMin + duration > busy['start']!) {
+                                  isOccupied = true;
+                                  for (final entry in occupiedSlotData.entries) {
+                                    int occupDuration =
+                                        entry.value['computed_duration'] ?? 30;
+                                    if (slotMin < entry.key + occupDuration &&
+                                        slotMin + duration > entry.key) {
+                                      conflictObj = entry.value;
+                                      break;
+                                    }
+                                  }
+                                  break;
+                                }
+                              }
                             }
-                          }
-                          break;
-                        }
-                      }
-                    }
 
                     // Cor do chip
                     Color backgroundColor;

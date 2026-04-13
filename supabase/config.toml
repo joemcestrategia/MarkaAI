@@ -24,3 +24,37 @@ verify_jwt = false
 
 [functions.sendPushNotification]
 verify_jwt = false
+
+[auth]
+site_url = "https://markaai.com.br"
+
+additional_redirect_urls = [
+  "markaai://confirm-email",
+  "markaai://login-callback",
+  "markaai://reset-password"
+]
+
+[auth.email]
+enable_confirmations = true
+
+[auth.email.template.confirmation]
+subject = "Confirme seu e-mail — MarkaAI"
+content_path = "./supabase/templates/confirm_signup.html"
+
+[auth.email.template.recovery]
+subject = "Redefinição de senha — MarkaAI"
+content_path = "./supabase/templates/reset_password.html"
+
+[auth.email.template.magic_link]
+subject = "Seu link de acesso — MarkaAI"
+content_path = "./supabase/templates/magic_link.html"
+
+[auth.email.template.email_change]
+subject = "Confirme seu novo e-mail — MarkaAI"
+content_path = "./supabase/templates/change_email.html"
+
+[functions.emitir-nfse]
+verify_jwt = false
+
+[functions.cancelar-nfse]
+verify_jwt = false

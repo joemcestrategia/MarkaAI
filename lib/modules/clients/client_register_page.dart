@@ -37,6 +37,7 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
   final _numberController = TextEditingController();
   final _districtController = TextEditingController();
   final _cityController = TextEditingController();
+  final _cpfController = TextEditingController();
 
   DateTime? _birthDate;
   XFile? _imageFile;
@@ -48,6 +49,8 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
       mask: '(##) #####-####', filter: {"#": RegExp(r'[0-9]')});
   final cepMask = MaskTextInputFormatter(
       mask: '#####-###', filter: {"#": RegExp(r'[0-9]')});
+  final cpfMask = MaskTextInputFormatter(
+      mask: '###.###.###-##', filter: {"#": RegExp(r'[0-9]')});
   final FocusNode _numberFocus = FocusNode();
 
   bool _isBirthdayLocked = false;
@@ -64,6 +67,19 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
       // Não carrega dados do usuário logado quando a loja está adicionando um cliente
       _checkCurrentSession();
     }
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _phoneController.dispose();
+    _cepController.dispose();
+    _addressController.dispose();
+    _numberController.dispose();
+    _districtController.dispose();
+    _cityController.dispose();
+    _cpfController.dispose();
+    super.dispose();
   }
 
   Future<void> _checkCurrentSession() async {
@@ -124,6 +140,7 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
             _numberController.text = doc['number'] ?? '';
             _districtController.text = doc['neighborhood'] ?? '';
             _cityController.text = doc['city'] ?? '';
+            _cpfController.text = doc['cpf'] ?? '';
             if (doc['birth_date'] != null) {
               _birthDate = DateTime.tryParse(doc['birth_date']);
             }
@@ -262,6 +279,7 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
         'neighborhood': _districtController.text.trim(),
         'city': cidade,
         'state': estado,
+        'cpf': _cpfController.text.replaceAll(RegExp(r'\D'), ''),
         'birth_date': _birthDate?.toIso8601String(),
         'updated_at': DateTime.now().toIso8601String(),
         'role': 'cliente',
@@ -410,6 +428,23 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
                           ? "Telefone incompleto"
                           : null;
                     }),
+                const SizedBox(height: 16),
+
+                TextFormField(
+                  controller: _cpfController,
+                  inputFormatters: [cpfMask],
+                  keyboardType: TextInputType.number,
+                  decoration: _deco("CPF", Icons.badge_outlined).copyWith(
+                    helperText: "Necessário para a emissão da sua nota fiscal (NFS-e).",
+                    helperStyle: const TextStyle(color: AppColors.primaryPurple, fontSize: 11),
+                  ),
+                  validator: (v) {
+                    if (v == null || v.isEmpty) return null; // Opcional no cadastro, mas valida se preencher
+                    final cleanId = v.replaceAll(RegExp(r'\D'), '');
+                    if (cleanId.length != 11) return "CPF incompleto";
+                    return null;
+                  },
+                ),
                 const SizedBox(height: 16),
 
                 InkWell(

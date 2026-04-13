@@ -46,7 +46,7 @@ class CouponService {
             isValid: false, message: 'Cupom inválido.');
       }
 
-      final couponData = response as Map<String, dynamic>;
+      final couponData = response;
       final couponId = couponData['id'].toString();
  
       // 2. Verifica se está ativo

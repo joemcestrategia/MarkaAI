@@ -18,6 +18,7 @@ RETURNS TABLE (
     neighborhood TEXT,
     number      TEXT,
     zip_code    TEXT,
+    cpf         TEXT,
     created_at  TIMESTAMPTZ
 )
 LANGUAGE sql
@@ -37,6 +38,7 @@ AS $$
         u.neighborhood,
         u.number,
         u.zip_code,
+        u.cpf,
         u.created_at
     FROM public.users u
     WHERE u.id = ANY(user_ids);

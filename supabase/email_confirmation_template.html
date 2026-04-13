@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Confirme seu cadastro - MarkaAI</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background-color: #f5f5f5;
+            margin: 0;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #6B46C1, #4B0082);
+            color: white;
+            padding: 40px 30px;
+            text-align: center;
+        }
+        
+        .header .logo {
+            margin-bottom: 20px;
+        }
+        
+        .header .logo img {
+            max-height: 120px;
+            display: block;
+            margin: 0 auto;
+        }
+        
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: 600;
+        }
+        
+        .header .subtitle {
+            margin: 10px 0 0 0;
+            font-size: 16px;
+            opacity: 0.9;
+        }
+        
+        .content {
+            padding: 40px 30px;
+            text-align: center;
+        }
+        
+        .welcome-icon {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #6B46C1, #4B0082);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 30px;
+            font-size: 40px;
+        }
+        
+        .content h2 {
+            color: #333;
+            font-size: 24px;
+            margin-bottom: 20px;
+            font-weight: 600;
+        }
+        
+        .content p {
+            color: #666;
+            font-size: 16px;
+            margin-bottom: 30px;
+            line-height: 1.6;
+        }
+        
+        .confirm-button {
+            display: inline-block;
+            background: linear-gradient(135deg, #6B46C1, #4B0082);
+            color: white;
+            text-decoration: none;
+            padding: 16px 40px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            margin: 30px 0;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        
+        .confirm-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(107, 70, 193, 0.3);
+        }
+        
+        .security-note {
+            background-color: #f8f9fa;
+            border-left: 4px solid #6B46C1;
+            padding: 20px;
+            margin: 30px 0;
+            text-align: left;
+            border-radius: 0 8px 8px 0;
+        }
+        
+        .security-note h3 {
+            color: #6B46C1;
+            margin: 0 0 10px 0;
+            font-size: 16px;
+            font-weight: 600;
+        }
+        
+        .security-note p {
+            color: #666;
+            margin: 0;
+            font-size: 14px;
+        }
+        
+        .footer {
+            background-color: #f8f9fa;
+            padding: 30px;
+            text-align: center;
+            border-top: 1px solid #e9ecef;
+        }
+        
+        .footer .logo {
+            margin-bottom: 20px;
+        }
+        
+        .footer .logo img {
+            max-height: 40px;
+            display: block;
+            margin: 0 auto;
+            opacity: 0.8;
+        }
+        
+        .footer p {
+            color: #666;
+            font-size: 14px;
+            margin: 5px 0;
+        }
+        
+        .footer .brand {
+            color: #6B46C1;
+            font-weight: 600;
+        }
+        
+        .alternative-link {
+            color: #6B46C1;
+            text-decoration: none;
+            word-break: break-all;
+        }
+        
+        @media (max-width: 600px) {
+            .container {
+                margin: 10px;
+                border-radius: 8px;
+            }
+            
+            .header {
+                padding: 30px 20px;
+            }
+            
+            .header h1 {
+                font-size: 24px;
+            }
+            
+            .content {
+                padding: 30px 20px;
+            }
+            
+            .confirm-button {
+                padding: 14px 30px;
+                font-size: 15px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">
+                <img src="https://uhccgcojwqvkfyzrmebv.supabase.co/storage/v1/object/public/Logo%20MarkaAI/logo_white.png" alt="MarkaAI" width="140" />
+            </div>
+        </div>
+        
+        <div class="content">
+            <div class="welcome-icon">
+                <span style="color: white;">&#x2713;</span>
+            </div>
+            
+            <h2>Bem-vindo(a) à MarkaAI!</h2>
+            
+            <p>
+                Obrigado por se cadastrar em nossa plataforma! Para ativar sua conta e começar a usar todos os nossos recursos, por favor, confirme seu endereço de e-mail clicando no botão abaixo:
+            </p>
+            
+            <a href="{{ .ConfirmationURL }}" class="confirm-button">
+                Confirmar meu E-mail
+            </a>
+            
+            <p>
+                Ou copie e cole este link no seu navegador:<br>
+                <a href="{{ .ConfirmationURL }}" class="alternative-link">
+                    {{ .ConfirmationURL }}
+                </a>
+            </p>
+            
+            <div class="security-note">
+                <h3>&#128274; Importante</h3>
+                <p>
+                    Este link de confirmação expira em 24 horas. Se você não solicitou este cadastro, por favor, ignore este e-mail ou entre em contato com nosso suporte.
+                </p>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <div class="logo">
+                <img src="https://uhccgcojwqvkfyzrmebv.supabase.co/storage/v1/object/public/Logo%20MarkaAI/logo_purple.png" alt="MarkaAI" width="120" />
+            </div>
+            <p>
+                Enviado por <span class="brand">MarkaAI</span> - Plataforma de Gestão Inteligente
+            </p>
+            <p>
+                © 2024 MarkaAI. Todos os direitos reservados.
+            </p>
+            <p>
+                Este é um e-mail automático, por favor, não responda a esta mensagem.
+            </p>
+        </div>
+    </div>
+</body>
+</html>

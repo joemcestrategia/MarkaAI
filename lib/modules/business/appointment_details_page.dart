@@ -935,22 +935,12 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          _selectedClientPhone != null &&
-                                  _selectedClientPhone!.isNotEmpty
-                              ? _selectedClientPhone!
-                              : "Telefone não informado",
-                          style: const TextStyle(fontSize: 11, color: Colors.grey),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      if (_selectedClientPhone != null &&
-                          _selectedClientPhone!.isNotEmpty &&
-                          _selectedClientPhone != 'Não informado') 
+                  const SizedBox(height: 6),
+                  if (_selectedClientPhone != null &&
+                      _selectedClientPhone!.isNotEmpty &&
+                      _selectedClientPhone != 'Não informado') 
+                    Row(
+                      children: [
                         ElevatedButton.icon(
                           onPressed: () async {
                             final phone = _selectedClientPhone!
@@ -971,8 +961,8 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                           ),
                         ),
-                    ],
-                  ),
+                      ],
+                    ),
                   if (_clientTags.isNotEmpty) ...[
                     const SizedBox(height: 4),
                     Wrap(

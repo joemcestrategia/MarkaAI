@@ -39,6 +39,24 @@
         android:scheme="markaai"
         android:host="login-callback"/>
 </intent-filter>
+<!-- Deep link para confirmação de e-mail -->
+<intent-filter>
+    <action android:name="android.intent.action.VIEW"/>
+    <category android:name="android.intent.category.DEFAULT"/>
+    <category android:name="android.intent.category.BROWSABLE"/>
+    <data
+        android:scheme="markaai"
+        android:host="confirm-email"/>
+</intent-filter>
+<!-- Deep link para reset de senha -->
+<intent-filter>
+    <action android:name="android.intent.action.VIEW"/>
+    <category android:name="android.intent.category.DEFAULT"/>
+    <category android:name="android.intent.category.BROWSABLE"/>
+    <data
+        android:scheme="markaai"
+        android:host="reset-password"/>
+</intent-filter>
 <!-- Deep link para callback Mercado Pago OAuth -->
 <intent-filter>
     <action android:name="android.intent.action.VIEW"/>

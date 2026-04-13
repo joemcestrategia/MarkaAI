@@ -280,11 +280,21 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
       final favorites = data['favorites'] as List;
       final shopViews = data['shopViews'] as List;
 
-      // Busca todos os usuários: de agendamentos, favoritos e visualizações
+      // Busca todos os usuários: de agendamentos (ID ou Telefone), favoritos e visualizações
       final allUserIds = <String>{};
+      final manualPhones = <String>{};
+
       for (final a in appointments) {
         final id = (a['client_id'] ?? a['clientId'])?.toString();
-        if (id != null && id.isNotEmpty) allUserIds.add(id);
+        if (id != null && id.isNotEmpty) {
+          allUserIds.add(id);
+        } else {
+          final phone = (a['client_phone'] ?? a['client_telefone'])?.toString();
+          if (phone != null && phone.isNotEmpty) {
+            final cleanPhone = phone.replaceAll(RegExp(r'\D'), '');
+            if (cleanPhone.isNotEmpty) manualPhones.add(cleanPhone);
+          }
+        }
       }
       for (final f in favorites) {
         final id = (f['user_id'] ?? f['userId'])?.toString();
@@ -296,29 +306,43 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
       }
 
       List<dynamic> users = [];
+
+      // 1. Busca usuários por UUID (RPC ou Select Direto)
       if (allUserIds.isNotEmpty) {
         try {
-          // Use SECURITY DEFINER RPC to bypass RLS on public.users
-          // (direct SELECT on public.users may be blocked for cross-user lookups)
           final rpcResult = await supabase.rpc(
             'get_visitor_profiles',
             params: {'user_ids': allUserIds.toList()},
           );
-          users = rpcResult as List<dynamic>? ?? [];
+          users = List<dynamic>.from(rpcResult as List? ?? []);
         } catch (_) {
-          // Fallback to direct select if RPC not yet deployed
           try {
-            users = await supabase
+            final directUsers = await supabase
                 .from('users')
-                .select('id, name, phone, email, photo_url, created_at, birth_date, city, state, street, neighborhood, number, zip_code')
+                .select('id, name, phone, email, photo_url, created_at, birth_date, city, state, street, neighborhood, number, zip_code, cpf')
                 .inFilter('id', allUserIds.toList());
-          } catch (_) {
-            users = await supabase
-                .from('users')
-                .select('id, name, phone, email, photo_url, created_at, birth_date')
-                .inFilter('id', allUserIds.toList());
-          }
+            users = List<dynamic>.from(directUsers);
+          } catch (_) {}
         }
+      }
+
+      // 2. Busca usuários por TELEFONE (Para clientes manuais que possuem perfil mas o agendamento não vinculou o ID)
+      if (manualPhones.isNotEmpty) {
+        try {
+          final phoneUsers = await supabase
+              .from('users')
+              .select('id, name, phone, email, photo_url, created_at, birth_date, city, state, street, neighborhood, number, zip_code, cpf')
+              .inFilter('phone', manualPhones.toList());
+          
+          if (phoneUsers.isNotEmpty) {
+            final Set<String> existingIds = users.map((u) => u['id'].toString()).toSet();
+            for (var u in phoneUsers) {
+              if (!existingIds.contains(u['id'].toString())) {
+                users.add(u);
+              }
+            }
+          }
+        } catch (_) {}
       }
 
       return {...data, 'users': users};
@@ -677,6 +701,8 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
           'neighborhood': user?['neighborhood'] ?? "",
           'number': user?['number'] ?? "",
           'zipCode': user?['zip_code'] ?? "",
+          'cpf': user?['cpf'] ?? "",
+          'birthDate': user?['birth_date'] ?? "",
           'isFavorite': favoritedIds.contains(userId),
           'isVisitor': visitorIds.containsKey(userId),
           'lastViewed': visitorIds[userId],
@@ -741,6 +767,8 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
           'neighborhood': user?['neighborhood'] ?? "",
           'number': user?['number'] ?? "",
           'zipCode': user?['zip_code'] ?? "",
+          'cpf': user?['cpf'] ?? "",
+          'birthDate': user?['birth_date'] ?? "",
           'isFavorite': favoritedIds.contains(uid),
           'isVisitor': visitorIds.containsKey(uid),
           'lastViewed': visitorIds[uid],

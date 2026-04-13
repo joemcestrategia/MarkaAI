@@ -19,7 +19,7 @@ class ClientVerificationService {
             .maybeSingle(),
         _supabase
             .from('users')
-            .select('is_vip, is_problematic')
+            .select()
             .eq('id', userId)
             .maybeSingle(),
         _supabase
@@ -39,6 +39,9 @@ class ClientVerificationService {
       // Flags manuais do dono da loja (persistidos em users)
       final bool manualVip = userDoc?['is_vip'] == true;
       final bool manualProblematic = userDoc?['is_problematic'] == true;
+      
+      final String cpfValue = (userDoc?['cpf'] ?? userDoc?['document_cpf'] ?? '').toString().trim();
+      final bool hasCpf = cpfValue.length >= 11;
 
       // 2. Cálculo de histórico (VIP automático e Sumido)
       final validAppointments = appointmentsList.where((appt) {
@@ -55,6 +58,7 @@ class ClientVerificationService {
           'isProblematic': manualProblematic,
           'isNovo': true,
           'isTrusted': manualVip || !manualProblematic,
+          'hasCpf': hasCpf,
         };
       }
 
@@ -77,7 +81,8 @@ class ClientVerificationService {
         'isSumido': isSumido,
         'isProblematic': manualProblematic,
         'isNovo': isNovo,
-        'isTrusted': !isSumido && !manualProblematic && (isVip || isNovo || visits > 1)
+        'isTrusted': !isSumido && !manualProblematic && (isVip || isNovo || visits > 1),
+        'hasCpf': hasCpf,
       };
     } catch (e) {
       debugPrint('Error in getClientStatus: $e');
@@ -86,7 +91,8 @@ class ClientVerificationService {
         'isSumido': false,
         'isProblematic': false,
         'isNovo': false,
-        'isTrusted': true
+        'isTrusted': true,
+        'hasCpf': false,
       };
     }
   }
