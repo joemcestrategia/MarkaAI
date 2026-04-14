@@ -25,7 +25,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
   // --- CALENDÁRIO ---
   DateTime _focusedDay = DateTime.now();
   DateTime _selectedDay = DateTime.now();
-  CalendarFormat _calendarFormat = CalendarFormat.month;
+  CalendarFormat _calendarFormat = CalendarFormat.week;
 
   // Eventos por dia (para pontinho laranja)
   Map<DateTime, List<String>> _events = {};
@@ -71,7 +71,6 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
 
   // --- RECEITA CACHEADA (substitui streams ilimitados) ---
   double _weeklyRevenue = 0.0;
-  double _monthlyRevenue = 0.0;
   sb.RealtimeChannel? _scheduleRealtimeChannel;
   final Set<String> _loadedMonths = {};
 
@@ -81,12 +80,11 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
   @override
   void initState() {
     super.initState();
-    // por padrão, começar a lista a partir de hoje sem carregar passado
+    // por padrão, começar a lista a partir da semana atual
     _startFromSelectedDay = true;
-    _startFromDate = DateTime.now();
-
-    // Inicializa a janela da semana atual para garantir que o filtro funcione desde o início
-    final startOfWeek = _startFromDate!.subtract(Duration(days: _startFromDate!.weekday - 1));
+    final now = DateTime.now();
+    final startOfWeek = now.subtract(Duration(days: now.weekday - 1));
+    _startFromDate = DateTime(startOfWeek.year, startOfWeek.month, startOfWeek.day);
     final endOfWeek = startOfWeek.add(const Duration(days: 6));
     _weekEndDate = DateTime(endOfWeek.year, endOfWeek.month, endOfWeek.day, 23, 59, 59);
 
@@ -442,12 +440,54 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
 
   // ðŸŽ¯ AÇÃO: IR PARA HOJE
   void _jumpToToday() {
+    final now = DateTime.now();
+    final startOfWeek = now.subtract(Duration(days: now.weekday - 1));
+    final endOfWeek = startOfWeek.add(const Duration(days: 6));
     setState(() {
-      _selectedDay = DateTime.now();
-      _focusedDay = DateTime.now();
-      _showOnlySelectedDay = true;
+      _selectedDay = now;
+      _focusedDay = now;
+      _showOnlySelectedDay = false;
+      _startFromSelectedDay = true;
+      _startFromDate = DateTime(startOfWeek.year, startOfWeek.month, startOfWeek.day);
+      _weekEndDate = DateTime(endOfWeek.year, endOfWeek.month, endOfWeek.day, 23, 59, 59);
     });
-    _loadAppointments();
+    _applyWeekFilterToCache();
+    _fetchWeekFromServer(_startFromDate!, _weekEndDate!);
+  }
+
+  // 📍 Scroll automático até o cabeçalho do dia selecionado
+  void _scrollToSelectedDay() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final dayKey = DateTime(_selectedDay.year, _selectedDay.month, _selectedDay.day);
+      final key = _dayKeys[dayKey];
+      if (key?.currentContext != null) {
+        Scrollable.ensureVisible(
+          key!.currentContext!,
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeInOut,
+          alignment: 0.0,
+        );
+      } else {
+        // Fallback: scroll para o topo se o dia não tem header
+        try {
+          _scrollController.animateTo(0.0,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut);
+        } catch (_) {}
+      }
+    });
+  }
+
+  // 💰 Recalcula faturamento semanal a partir dos agendamentos já carregados
+  void _updateWeeklyRevenueFromAppointments() {
+    double sum = 0;
+    for (final d in _appointments) {
+      if ((d['status'] ?? '').toString().toLowerCase() == 'cancelado') continue;
+      sum += _safeParseValue(d);
+    }
+    if (mounted) {
+      setState(() => _weeklyRevenue = sum);
+    }
   }
 
   // âœ ï¸  EDITAR AGENDAMENTO
@@ -1923,9 +1963,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                                           _selectedAppointment = {..._selectedAppointment!, ...appointmentData};
                                         }
                                         final idx = _appointments.indexWhere((a) => a['id']?.toString() == apptId);
-                                        if (idx != -1) {
-                                          _appointments[idx] = {..._appointments[idx], ...appointmentData};
-                                        }
+                                        if (idx != -1) _appointments[idx] = {..._appointments[idx], ...appointmentData};
                                         if (_docCache.containsKey(apptId)) {
                                           _docCache[apptId] = {..._docCache[apptId]!, ...appointmentData};
                                         }
@@ -2423,8 +2461,28 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
           calendarFormat: isMobile ? _calendarFormat : CalendarFormat.month,
           availableCalendarFormats: const {
             CalendarFormat.month: 'Mês',
-            CalendarFormat.twoWeeks: '2 Semanas',
             CalendarFormat.week: 'Semana'
+          },
+          onFormatChanged: (format) {
+            if (!isMobile) return;
+            setState(() => _calendarFormat = format);
+            if (format == CalendarFormat.month) {
+              _loadAppointmentsForMonth(_focusedDay);
+            } else {
+              final startOfWeek = _focusedDay.subtract(
+                  Duration(days: _focusedDay.weekday - 1));
+              final endOfWeek = startOfWeek.add(const Duration(days: 6));
+              setState(() {
+                _startFromSelectedDay = true;
+                _startFromDate = DateTime(
+                    startOfWeek.year, startOfWeek.month, startOfWeek.day);
+                _weekEndDate = DateTime(
+                    endOfWeek.year, endOfWeek.month, endOfWeek.day, 23, 59, 59);
+              });
+              _applyWeekFilterToCache();
+              _fetchWeekFromServer(_startFromDate!, _weekEndDate!);
+            }
+            _loadRevenueStats();
           },
           selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
           eventLoader: _getEventsForDay,
@@ -2441,22 +2499,13 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
               _startFromDate = DateTime(
                   startOfWeek.year, startOfWeek.month, startOfWeek.day);
               _weekEndDate =
-                  DateTime(endOfWeek.year, endOfWeek.month, endOfWeek.day);
+                  DateTime(endOfWeek.year, endOfWeek.month, endOfWeek.day, 23, 59, 59);
             });
-            // Aplicar filtro imediato aos dados em cache e rolar para topo.
+            // Aplicar filtro imediato aos dados em cache e rolar para o dia selecionado.
             _applyWeekFilterToCache();
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              try {
-                _scrollController.animateTo(0.0,
-                    duration: const Duration(milliseconds: 300),
-                    curve: Curves.easeInOut);
-              } catch (_) {}
-            });
+            _scrollToSelectedDay();
             // Buscar a semana no servidor em background e atualizar a lista quando retornar.
             _fetchWeekFromServer(_startFromDate!, _weekEndDate!);
-          },
-          onFormatChanged: (format) {
-            if (isMobile) setState(() => _calendarFormat = format);
           },
           onPageChanged: (focusedDay) {
             final oldYear = _focusedDay.year;
@@ -2465,7 +2514,25 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
               _fetchHolidays();
             }
             _loadMonthEvents();
-            _loadAppointmentsForMonth(focusedDay);
+
+            // No modo semana: atualizar janela e buscar dados da semana
+            final isMobileWeek = _calendarFormat == CalendarFormat.week;
+            if (isMobileWeek) {
+              final startOfWeek = focusedDay.subtract(
+                  Duration(days: focusedDay.weekday - 1));
+              final endOfWeek = startOfWeek.add(const Duration(days: 6));
+              setState(() {
+                _startFromSelectedDay = true;
+                _startFromDate = DateTime(
+                    startOfWeek.year, startOfWeek.month, startOfWeek.day);
+                _weekEndDate = DateTime(
+                    endOfWeek.year, endOfWeek.month, endOfWeek.day, 23, 59, 59);
+              });
+              _applyWeekFilterToCache();
+              _fetchWeekFromServer(_startFromDate!, _weekEndDate!);
+            } else {
+              _loadAppointmentsForMonth(focusedDay);
+            }
             _loadRevenueStats();
           },
           calendarBuilders: CalendarBuilders(
@@ -2538,22 +2605,6 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
           ),
         ),
         const SizedBox(height: 12),
-
-        // Removed Ativos/Histórico tabs — schedule shows active appointments by default.
-
-        if (_showOnlySelectedDay)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8.0),
-            child: TextButton.icon(
-              onPressed: () {
-                setState(() => _showOnlySelectedDay = false);
-                _loadAppointments();
-              },
-              icon: const Icon(Icons.list_alt, size: 16),
-              label: const Text("Ver mês inteiro"),
-              style: TextButton.styleFrom(foregroundColor: Colors.grey),
-            ),
-          )
       ],
     );
   }
@@ -2562,71 +2613,47 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
       color: Colors.transparent,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            "Faturamento da semana: ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(_weeklyRevenue)}",
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-            textAlign: TextAlign.left,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            "Faturamento do mês: ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(_monthlyRevenue)}",
-            style: const TextStyle(fontWeight: FontWeight.normal, fontSize: 14),
-            textAlign: TextAlign.left,
-          ),
-        ],
+      child: Text(
+        "Faturamento da semana: ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(_weeklyRevenue)}",
+        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+        textAlign: TextAlign.left,
       ),
     );
   }
 
-  // Busca faturamento semanal e mensal com queries filtradas por data
+  // Busca faturamento semanal com query filtrada por data
   Future<void> _loadRevenueStats() async {
     if (widget.shopId.isEmpty) return;
     final weekBase = _startFromDate ?? DateTime.now();
-    final weekStart = DateTime(weekBase.year, weekBase.month, weekBase.day);
-    final weekEnd = weekStart
-        .add(const Duration(days: 7))
-        .subtract(const Duration(seconds: 1));
-    final monthStart = DateTime(_focusedDay.year, _focusedDay.month, 1);
-    final monthEnd = DateTime(_focusedDay.year, _focusedDay.month + 1, 1)
-        .subtract(const Duration(seconds: 1));
+    final mondayOfWeek = weekBase.subtract(Duration(days: weekBase.weekday - 1));
+    final weekStart = DateTime(mondayOfWeek.year, mondayOfWeek.month, mondayOfWeek.day);
+    final weekEnd = DateTime(mondayOfWeek.year, mondayOfWeek.month, mondayOfWeek.day + 6, 23, 59, 59);
     try {
-      final weeklyFuture = sb.Supabase.instance.client
+      final selectCols = 'total_payable, total_price, total_value, valor_com_desconto, labor_value, status';
+      final snap = await sb.Supabase.instance.client
           .from('appointments')
-          .select('total_value, labor_value, status')
+          .select(selectCols)
           .eq('shop_id', widget.shopId)
           .gte('scheduled_at', weekStart.toUtc().toIso8601String())
           .lte('scheduled_at', weekEnd.toUtc().toIso8601String());
-      final monthlyFuture = sb.Supabase.instance.client
-          .from('appointments')
-          .select('total_value, labor_value, status')
-          .eq('shop_id', widget.shopId)
-          .gte('scheduled_at', monthStart.toUtc().toIso8601String())
-          .lte('scheduled_at', monthEnd.toUtc().toIso8601String());
-      final results = await Future.wait([weeklyFuture, monthlyFuture]);
       double wSum = 0.0;
-      for (final d in results[0] as List) {
-        if ((d['status'] ?? '').toString() == 'cancelado') continue;
-        final val = d['total_value'] ?? d['labor_value'] ?? 0;
-        wSum += double.tryParse(val.toString().replaceAll(',', '.')) ?? 0.0;
-      }
-      double mSum = 0.0;
-      for (final d in results[1] as List) {
-        if ((d['status'] ?? '').toString() == 'cancelado') continue;
-        final val = d['total_value'] ?? d['labor_value'] ?? 0;
-        mSum += double.tryParse(val.toString().replaceAll(',', '.')) ?? 0.0;
+      for (final d in snap as List) {
+        if ((d['status'] ?? '').toString().toLowerCase() == 'cancelado') continue;
+        wSum += _parseRevenueValue(d);
       }
       if (mounted) {
-        setState(() {
-          _weeklyRevenue = wSum;
-          _monthlyRevenue = mSum;
-        });
+        setState(() => _weeklyRevenue = wSum);
       }
     } catch (e) {
       debugPrint('Erro ao carregar receita: $e');
     }
+  }
+
+  double _parseRevenueValue(Map<String, dynamic> d) {
+    final val = d['total_payable'] ?? d['total_price'] ?? d['total_value'] ?? d['valor_com_desconto'] ?? d['labor_value'] ?? 0;
+    if (val is num) return val.toDouble();
+    if (val is String) return double.tryParse(val.replaceAll(',', '.')) ?? 0.0;
+    return 0.0;
   }
 
   // Canal Realtime: atualiza apenas o necessário quando há alterações
@@ -2819,6 +2846,10 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
           }
         }
       });
+      // Recalcular faturamento semanal a partir dos dados frescos
+      _updateWeeklyRevenueFromAppointments();
+      // Scroll automático até o dia selecionado
+      _scrollToSelectedDay();
     } catch (e) {
       debugPrint('Erro ao buscar semana: $e');
     }

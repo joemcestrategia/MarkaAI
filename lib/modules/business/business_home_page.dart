@@ -68,6 +68,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   bool _isLoading = true;
   int _selectedYear =
       DateTime.now().year; // Comea com o ano atual para economizar
+  int _selectedMonth = DateTime.now().month; // Mês atual como padrão
   // Lista inicial apenas com o ano atual, ser populada dinamicamente se necessrio
   List<int> _availableYears = [DateTime.now().year];
 
@@ -85,10 +86,12 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   int _pendingHolidaysCount = 0;
 
   // Cached futures para evitar re-fetch em cada rebuild
-  Future<List<Map<String, dynamic>>>? _dashboardFuture;
+  Future<List<Map<String, dynamic>>>? _statsFuture;
+  Future<List<Map<String, dynamic>>>? _todayFuture;
+  Future<List<Map<String, dynamic>>>? _commissionFuture;
   Future<List<Map<String, dynamic>>>? _birthdayFuture;
   Future<List<Map<String, dynamic>>>? _employeesFuture;
-  List<Map<String, dynamic>> _dashboardCache = [];
+  List<Map<String, dynamic>> _statsCache = [];
   sb.RealtimeChannel? _appointmentsChannel;
   int _lastDashboardYear = -999; // Sentinel para detectar mudança de ano
 
@@ -290,7 +293,9 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           callback: (payload) {
             if (mounted) {
               setState(() {
-                _dashboardFuture = null;
+                _statsFuture = null;
+                _todayFuture = null;
+                _commissionFuture = null;
                 _employeesFuture = null;
               });
             }
@@ -1533,208 +1538,172 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   }
 
   // ============================================================================
-  // DASHBOARD - OTIMIZADO E COM MONITOR DE CUSTO
+  // DASHBOARD - USA shop_monthly_stats (PRÉ-CALCULADO POR TRIGGER)
   // ============================================================================
 
-  Future<List<Map<String, dynamic>>> _fetchDashboardAppointments(
+  Future<List<Map<String, dynamic>>> _fetchDashboardStats(int year) async {
+    if (shopId == null || shopId!.isEmpty) return [];
+    try {
+      final query = sb.Supabase.instance.client
+          .from('shop_monthly_stats')
+          .select()
+          .eq('shop_id', shopId!);
+      final result = year == -1
+          ? await query.order('year').order('month')
+          : await query.eq('year', year).order('month');
+      return List<Map<String, dynamic>>.from(result);
+    } catch (e) {
+      debugPrint('❌ [DASHBOARD] Erro ao buscar stats: $e');
+      return [];
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchTodayAppointments() async {
+    if (shopId == null || shopId!.isEmpty) return [];
+    try {
+      final now = DateTime.now();
+      final start = DateTime(now.year, now.month, now.day);
+      final end = DateTime(now.year, now.month, now.day, 23, 59, 59);
+      final result = await sb.Supabase.instance.client
+          .from('appointments')
+          .select('id, scheduled_at, status, client_name, service_name')
+          .eq('shop_id', shopId!)
+          .gte('scheduled_at', start.toIso8601String())
+          .lte('scheduled_at', end.toIso8601String())
+          .order('scheduled_at', ascending: true);
+      return List<Map<String, dynamic>>.from(result);
+    } catch (e) {
+      debugPrint('❌ [DASHBOARD] Erro ao buscar agendamentos de hoje: $e');
+      return [];
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchCommissionAppointments(
       DateTime startData, DateTime endData) async {
     if (shopId == null || shopId!.isEmpty) return [];
     try {
       final result = await sb.Supabase.instance.client
           .from('appointments')
-          .select('id, scheduled_at, status, total_value, total_price, total_payable, service_value, product_value, professional_id, client_id, service_name, client_name')
+          .select('professional_id, status, total_payable, total_price, total_value, valor_com_desconto, labor_value')
           .eq('shop_id', shopId!)
           .gte('scheduled_at', startData.toIso8601String())
-          .lte('scheduled_at', endData.toIso8601String())
-          .order('scheduled_at', ascending: true);
+          .lte('scheduled_at', endData.toIso8601String());
       return List<Map<String, dynamic>>.from(result);
     } catch (e) {
-      debugPrint('❌ [DASHBOARD] Erro ao buscar agendamentos: $e');
+      debugPrint('❌ [DASHBOARD] Erro ao buscar dados de comissão: $e');
       return [];
     }
   }
 
   void _refreshDashboard() {
     setState(() {
-      _dashboardFuture = null;
+      _statsFuture = null;
+      _todayFuture = null;
+      _commissionFuture = null;
       _birthdayFuture = null;
       _employeesFuture = null;
     });
   }
 
   Widget _buildHomeDashboard({required bool isDesktop}) {
-    // 1. Definio do Intervalo de Tempo para Leitura (Range)
-    // Se selecionado "Todos" (-1), pegamos um range amplo, mas idealmente voc limitaria.
-    // Aqui vamos focar na otimizao do ano selecionado.
-
-    DateTime startData;
-    DateTime endData;
-
-    if (_selectedYear == -1) {
-      // CUIDADO: Ler tudo pode ser caro.
-      // Em produo, recomendo limitar aos ltimos 2 anos.
-      startData = DateTime(2023, 1, 1);
-      endData = DateTime(2030, 12, 31);
-    } else {
-      startData = DateTime(_selectedYear, 1, 1);
-      endData = DateTime(_selectedYear, 12, 31, 23, 59, 59);
-    }
-
-    // Cache: só cria nova future se o ano mudou, foi invalidada, ou shopId acabou de carregar
-    // IMPORTANTE: não cachear quando shopId ainda é null (evita race condition)
     final shopIdReady = shopId != null && shopId!.isNotEmpty;
-    if (shopIdReady && (_dashboardFuture == null || _lastDashboardYear != _selectedYear)) {
+    if (shopIdReady && (_statsFuture == null || _lastDashboardYear != _selectedYear)) {
       _lastDashboardYear = _selectedYear;
-      _dashboardFuture = _fetchDashboardAppointments(startData, endData);
+      _statsFuture = _fetchDashboardStats(_selectedYear);
+      _todayFuture = _fetchTodayAppointments();
+      if (_canViewCommissions) {
+        DateTime startData;
+        DateTime endData;
+        if (_selectedYear == -1) {
+          startData = DateTime(2023, 1, 1);
+          endData = DateTime(2030, 12, 31);
+        } else {
+          startData = DateTime(_selectedYear, 1, 1);
+          endData = DateTime(_selectedYear, 12, 31, 23, 59, 59);
+        }
+        _commissionFuture = _fetchCommissionAppointments(startData, endData);
+      }
     }
 
     return FutureBuilder<List<Map<String, dynamic>>>(
-      future: _dashboardFuture,
+      future: _statsFuture,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          debugPrint('❌ [DASHBOARD] Erro no future de agendamentos: ${snapshot.error}');
-          return Center(
-              child: Text(
-                  "Erro ao carregar dashboard: ${snapshot.error}"));
+          debugPrint('❌ [DASHBOARD] Erro no stats: ${snapshot.error}');
+          return Center(child: Text("Erro ao carregar dashboard: ${snapshot.error}"));
         }
-
         if (snapshot.connectionState == ConnectionState.waiting) {
-          if (_dashboardCache.isNotEmpty) {
+          if (_statsCache.isNotEmpty) {
             return _buildDashboardContent(
-              docs: _dashboardCache,
-              isDesktop: isDesktop,
-              isRefreshing: true,
-            );
+              stats: _statsCache, isDesktop: isDesktop, isRefreshing: true);
           }
-          return const Center(
-            child: CircularProgressIndicator(
-              color: AppColors.primaryPurple,
-            ),
-          );
+          return const Center(child: CircularProgressIndicator(color: AppColors.primaryPurple));
         }
-
         if (snapshot.hasData) {
-          _dashboardCache = snapshot.data!;
+          _statsCache = snapshot.data!;
         }
-        final docs = snapshot.data ?? _dashboardCache;
-
         return _buildDashboardContent(
-          docs: docs,
-          isDesktop: isDesktop,
-          isRefreshing: false,
-        );
+          stats: snapshot.data ?? _statsCache, isDesktop: isDesktop, isRefreshing: false);
       },
     );
   }
 
   Widget _buildDashboardContent({
-    required List<Map<String, dynamic>> docs,
+    required List<Map<String, dynamic>> stats,
     required bool isDesktop,
     bool isRefreshing = false,
   }) {
     debugPrint(
-        "📊 [DASHBOARD] ${docs.length} agendamentos carregados para $shopId (${_selectedYear == -1 ? 'todos' : _selectedYear}).");
-
-    // --- LÓGICA DE CÁLCULO (Mantida, mas operando sobre o subset filtrado) ---
+        "📊 [DASHBOARD] ${stats.length} linhas de stats para $shopId (${_selectedYear == -1 ? 'todos' : _selectedYear}).");
 
     bool isAllYears = _selectedYear == -1;
     double faturamentoTotal = 0;
     int totalAtendimentos = 0;
-    double faturamentoMaoDeObra = 0;
-    double faturamentoProdutos = 0;
 
-    List<double> dataMoney = [];
-    List<double> dataQty = [];
-    List<String> chartLabels = [];
-
-    // Inicializa estrutura de dados
-    chartLabels = [
-      'Jan',
-      'Fev',
-      'Mar',
-      'Abr',
-      'Mai',
-      'Jun',
-      'Jul',
-      'Ago',
-      'Set',
-      'Out',
-      'Nov',
-      'Dez'
+    List<double> dataMoney = List.filled(12, 0.0);
+    List<double> dataQty = List.filled(12, 0.0);
+    List<String> chartLabels = [
+      'Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun',
+      'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'
     ];
-    dataMoney = List.filled(12, 0.0);
-    dataQty = List.filled(12, 0.0);
 
-    for (var data in docs) {
-      final dateStr = data['scheduled_at'] as String?;
-      if (dateStr == null) continue;
+    Map<int, double> yearMoney = {};
+    Map<int, int> yearQty = {};
 
-      DateTime date = DateTime.tryParse(dateStr) ?? DateTime.now();
+    // Filtrar por mês se selecionado (e não estiver em "todos os anos")
+    final filteredStats = (!isAllYears && _selectedMonth > 0)
+        ? stats.where((r) => (r['month'] as num?)?.toInt() == _selectedMonth).toList()
+        : stats;
 
-      final apptStatus = (data['status'] ?? '').toString().toLowerCase();
-      final bool isDone = apptStatus == 'concluido' || apptStatus == 'finalizado' ||
-          apptStatus == 'pago' || apptStatus == 'confirmado' ||
-          apptStatus == 'agendado' || apptStatus == 'pendente' ||
-          apptStatus == 'completed' || apptStatus == 'efetuado';
-      if (isDone) {
-        // Usa primeiro valor não-zero: total_payable → total_price → total_value
-        double total = 0.0;
-        for (final k in ['total_payable', 'total_price', 'total_value']) {
-          final v = double.tryParse(data[k]?.toString() ?? '');
-          if (v != null && v > 0) { total = v; break; }
+    for (var row in filteredStats) {
+      final revenue = (row['revenue'] as num?)?.toDouble() ?? 0;
+      final count = (row['appointments_count'] as num?)?.toInt() ?? 0;
+      final month = (row['month'] as num?)?.toInt() ?? 1;
+      final year = (row['year'] as num?)?.toInt() ?? _selectedYear;
+
+      faturamentoTotal += revenue;
+      totalAtendimentos += count;
+
+      if (!isAllYears) {
+        if (month >= 1 && month <= 12) {
+          dataMoney[month - 1] = revenue;
+          dataQty[month - 1] = count.toDouble();
         }
-        // TODO: Supabase schema não tem campos separados para mão de obra e produtos.
-        // Quando esses campos forem adicionados, usar 'service_value' e 'product_value'.
-        double maoObra = double.tryParse(data['service_value']?.toString() ?? '0') ?? 0.0;
-        double produtos = double.tryParse(data['product_value']?.toString() ?? '0') ?? 0.0;
-
-        if (maoObra == 0 && produtos == 0) maoObra = total;
-
-        // Se for visualizao mensal (ano selecionado)
-        if (!isAllYears) {
-          dataMoney[date.month - 1] += total;
-          dataQty[date.month - 1] += 1;
-        }
-
-        faturamentoTotal += total;
-        faturamentoMaoDeObra += maoObra;
-        faturamentoProdutos += produtos;
-        totalAtendimentos++;
+      } else {
+        yearMoney[year] = (yearMoney[year] ?? 0) + revenue;
+        yearQty[year] = (yearQty[year] ?? 0) + count;
       }
     }
 
-    // Se for "Todos os anos", ajustamos o grfico para ser por Ano, no por Ms
-    if (isAllYears) {
-      // Lgica simplificada para multiplos anos (recalculando baseada nos docs recebidos)
-      Map<int, double> yearMoney = {};
-      Map<int, double> yearQty = {};
-      for (var data in docs) {
-        // Supabase usa 'scheduled_at'; fallback para campo legado 'scheduled_at'
-        final dateStr = data['scheduled_at'] as String?;
-        if (dateStr == null) continue;
-        DateTime date = DateTime.tryParse(dateStr) ?? DateTime.now();
-        final yrStatus = (data['status'] ?? '').toString().toLowerCase();
-        if (yrStatus == 'concluido' || yrStatus == 'finalizado' ||
-            yrStatus == 'pago' || yrStatus == 'confirmado' ||
-            yrStatus == 'agendado' || yrStatus == 'pendente' ||
-            yrStatus == 'completed' || yrStatus == 'efetuado') {
-          double total = 0.0;
-          for (final k in ['total_payable', 'total_price', 'total_value']) {
-            final v = double.tryParse(data[k]?.toString() ?? '');
-            if (v != null && v > 0) { total = v; break; }
-          }
-          yearMoney[date.year] = (yearMoney[date.year] ?? 0) + total;
-          yearQty[date.year] = (yearQty[date.year] ?? 0) + 1;
-        }
-      }
+    if (isAllYears && yearMoney.isNotEmpty) {
       chartLabels = yearMoney.keys.map((e) => e.toString()).toList();
       chartLabels.sort();
-      // ✅ FIX: usar ?? 0 ao invés de ! para evitar null crash
-      dataMoney =
-          chartLabels.map((key) => yearMoney[int.parse(key)] ?? 0.0).toList();
-      dataQty = chartLabels.map((key) => yearQty[int.parse(key)] ?? 0.0).toList();
+      dataMoney = chartLabels.map((key) => yearMoney[int.parse(key)] ?? 0.0).toList();
+      dataQty = chartLabels.map((key) => (yearQty[int.parse(key)] ?? 0).toDouble()).toList();
     }
 
+    double faturamentoMaoDeObra = faturamentoTotal;
+    double faturamentoProdutos = 0;
     double ticketMedio =
         totalAtendimentos > 0 ? faturamentoTotal / totalAtendimentos : 0;
 
@@ -1749,7 +1718,6 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         chartLabels: chartLabels,
         faturamentoMaoDeObra: faturamentoMaoDeObra,
         faturamentoProdutos: faturamentoProdutos,
-        appointmentDocs: docs,
         isRefreshing: isRefreshing,
       );
     } else {
@@ -1763,7 +1731,6 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         chartLabels: chartLabels,
         faturamentoMaoDeObra: faturamentoMaoDeObra,
         faturamentoProdutos: faturamentoProdutos,
-        appointmentDocs: docs,
         isRefreshing: isRefreshing,
       );
     }
@@ -1781,7 +1748,6 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     required List<String> chartLabels,
     required double faturamentoMaoDeObra,
     required double faturamentoProdutos,
-    List<Map<String, dynamic>>? appointmentDocs,
     bool isRefreshing = false,
   }) {
     return Column(
@@ -1813,7 +1779,13 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 ),
               ],
             ),
-            _buildYearDropdown(),
+            Row(
+              children: [
+                _buildMonthDropdown(),
+                const SizedBox(width: 8),
+                _buildYearDropdown(),
+              ],
+            ),
           ],
         ),
         const SizedBox(height: 20),
@@ -1880,52 +1852,44 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
               ],
             ),
           ),
-        if (shopId != null &&
-            appointmentDocs != null &&
-            appointmentDocs.isNotEmpty &&
-            _canViewCommissions) ...[
+        if (shopId != null && _canViewCommissions) ...[
           const SizedBox(height: 16),
-          _buildEquipeComissoesCard(shopId!, appointmentDocs),
+          _buildEquipeComissoesCard(shopId!),
         ],
       ],
     );
   }
 
-  Widget _buildEquipeComissoesCard(
-      String shopId, List<Map<String, dynamic>> appointmentDocs) {
-    // Calcular produo por profissional
-    final concluidos = appointmentDocs.where((data) {
-      return (data['status'] ?? '') == 'confirmado' ||
-          (data['status'] ?? '') == 'concluido';
-    }).toList();
-
-    Map<String, double> producaoPorProf = {};
-    for (var data in concluidos) {
-      final pid = data['professional_id']?.toString() ?? '';
-      if (pid.isEmpty) continue;
-      double valor = 0.0;
-      for (final k in ['total_payable', 'total_price', 'total_value']) {
-        final v = double.tryParse(data[k]?.toString() ?? '');
-        if (v != null && v > 0) { valor = v; break; }
-      }
-      producaoPorProf[pid] = (producaoPorProf[pid] ?? 0) + valor;
-    }
+  Widget _buildEquipeComissoesCard(String shopId) {
+    if (_commissionFuture == null) return const SizedBox.shrink();
 
     _employeesFuture ??= sb.Supabase.instance.client
         .from('employees')
         .select('id, name, commission_percent')
         .eq('shop_id', shopId);
-    return FutureBuilder<List<Map<String, dynamic>>>(
-      future: _employeesFuture,
+
+    return FutureBuilder<List<dynamic>>(
+      future: Future.wait([_commissionFuture!, _employeesFuture!]),
       builder: (context, snap) {
-        if (snap.hasError) {
-          debugPrint('❌ [DASHBOARD] Erro ao buscar funcionários: ${snap.error}');
-          return const SizedBox.shrink();
+        if (snap.hasError || !snap.hasData) return const SizedBox.shrink();
+        final appointmentDocs = snap.data![0] as List<Map<String, dynamic>>;
+        final employees = snap.data![1] as List<Map<String, dynamic>>;
+        if (employees.isEmpty) return const SizedBox.shrink();
+
+        // Calcular produção por profissional
+        Map<String, double> producaoPorProf = {};
+        for (var data in appointmentDocs) {
+          final status = (data['status'] ?? '').toString().toLowerCase();
+          if (status != 'confirmado' && status != 'concluido') continue;
+          final pid = data['professional_id']?.toString() ?? '';
+          if (pid.isEmpty) continue;
+          double valor = 0.0;
+          for (final k in ['total_payable', 'total_price', 'total_value', 'valor_com_desconto', 'labor_value']) {
+            final v = double.tryParse(data[k]?.toString() ?? '');
+            if (v != null && v > 0) { valor = v; break; }
+          }
+          producaoPorProf[pid] = (producaoPorProf[pid] ?? 0) + valor;
         }
-        if (!snap.hasData || snap.data!.isEmpty) {
-          return const SizedBox.shrink();
-        }
-        final employees = snap.data!;
         double totalComissao = 0;
         final List<Map<String, dynamic>> teamData = [];
 
@@ -2144,21 +2108,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     required List<String> chartLabels,
     required double faturamentoMaoDeObra,
     required double faturamentoProdutos,
-    List<Map<String, dynamic>>? appointmentDocs,
     bool isRefreshing = false,
   }) {
-    final now = DateTime.now();
-    final hoje = appointmentDocs == null
-        ? 0
-        : appointmentDocs.where((data) {
-            final dateStr = data['scheduled_at'] as String?;
-            if (dateStr == null) return false;
-            final dt = DateTime.tryParse(dateStr) ?? DateTime.now();
-            return dt.year == now.year &&
-                dt.month == now.month &&
-                dt.day == now.day;
-          }).length;
-
     final fmt = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
 
     return RefreshIndicator(
@@ -2223,7 +2174,13 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                         ],
                       ),
                     ),
-                    _buildYearDropdown(dark: true),
+                    Row(
+                      children: [
+                        _buildMonthDropdown(dark: true),
+                        const SizedBox(width: 8),
+                        _buildYearDropdown(dark: true),
+                      ],
+                    ),
                   ],
                 ),
                 const SizedBox(height: 20),
@@ -2290,7 +2247,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 const SizedBox(height: 12),
 
                 // -- Card Hoje ---------------------------------------------
-                _buildHojeCard(hoje, appointmentDocs),
+                _buildHojeSection(),
                 const SizedBox(height: 12),
 
                 if (_currentFeatures.financialTab) ...[
@@ -2306,12 +2263,9 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                   _buildMobileChart(dataMoney, dataQty, chartLabels, isAllYears),
                 ],
 
-                if (shopId != null &&
-                    appointmentDocs != null &&
-                    appointmentDocs.isNotEmpty &&
-                    _canViewCommissions) ...[
+                if (shopId != null && _canViewCommissions) ...[
                   const SizedBox(height: 12),
-                  _buildEquipeComissoesCard(shopId!, appointmentDocs),
+                  _buildEquipeComissoesCard(shopId!),
                 ],
                 const SizedBox(height: 24),
               ],
@@ -2405,21 +2359,22 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     );
   }
 
-  Widget _buildHojeCard(int hoje, List<Map<String, dynamic>>? appointmentDocs) {
-    final now = DateTime.now();
-    // Prximos agendamentos de hoje (somente agendado/confirmado)
-    final proximosHoje = appointmentDocs?.where((data) {
-          final dateStr = data['scheduled_at'] as String?;
-          if (dateStr == null) return false;
-          final dt = DateTime.tryParse(dateStr) ?? DateTime.now();
+  Widget _buildHojeSection() {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _todayFuture,
+      builder: (context, snap) {
+        final todayDocs = snap.data ?? [];
+        final hoje = todayDocs.length;
+        final proximosHoje = todayDocs.where((data) {
           final status = (data['status'] ?? '').toString();
-          return dt.year == now.year &&
-              dt.month == now.month &&
-              dt.day == now.day &&
-              (status == 'agendado' || status == 'confirmado');
-        }).toList() ??
-        [];
+          return status == 'agendado' || status == 'confirmado';
+        }).toList();
+        return _buildHojeCard(hoje, proximosHoje);
+      },
+    );
+  }
 
+  Widget _buildHojeCard(int hoje, List<Map<String, dynamic>> proximosHoje) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -2808,6 +2763,53 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildMonthDropdown({bool dark = false}) {
+    final months = [
+      'Todos', 'Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun',
+      'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'
+    ];
+    final isAllYears = _selectedYear == -1;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: dark ? Colors.white.withValues(alpha: 0.15) : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: dark
+              ? Colors.white.withValues(alpha: 0.4)
+              : AppColors.primaryPurple.withValues(alpha: 0.3),
+        ),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<int>(
+          value: isAllYears ? 0 : _selectedMonth,
+          icon: Icon(Icons.calendar_month,
+              color: dark ? Colors.white : AppColors.primaryPurple, size: 18),
+          dropdownColor: dark ? const Color(0xFF6C3CE2) : null,
+          isDense: true,
+          items: List.generate(13, (i) => DropdownMenuItem<int>(
+            value: i,
+            child: Text(
+              months[i],
+              style: TextStyle(
+                fontWeight: i == 0 ? FontWeight.bold : FontWeight.normal,
+                color: dark
+                    ? (i == 0 ? Colors.white : Colors.white70)
+                    : (i == 0 ? AppColors.primaryPurple : null),
+                fontSize: 13,
+              ),
+            ),
+          )),
+          onChanged: isAllYears ? null : (int? newValue) {
+            if (newValue != null) {
+              setState(() => _selectedMonth = newValue);
+            }
+          },
+        ),
       ),
     );
   }

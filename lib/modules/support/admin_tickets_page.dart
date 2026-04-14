@@ -4,7 +4,8 @@ import 'package:intl/intl.dart';
 import 'admin_ticket_detail_page.dart';
 
 class AdminTicketsPage extends StatefulWidget {
-  const AdminTicketsPage({super.key});
+  final bool embedded;
+  const AdminTicketsPage({super.key, this.embedded = false});
 
   @override
   State<AdminTicketsPage> createState() => _AdminTicketsPageState();
@@ -19,6 +20,7 @@ class _AdminTicketsPageState extends State<AdminTicketsPage> with SingleTickerPr
   String _statusFilter = 'all';
   String _priorityFilter = 'all';
   String _searchQuery = '';
+  String? _metricFilter;
 
   // Metrics
   int _openCount = 0;
@@ -93,6 +95,9 @@ class _AdminTicketsPageState extends State<AdminTicketsPage> with SingleTickerPr
       final data = await query;
       var tickets = List<Map<String, dynamic>>.from(data);
 
+      if (_metricFilter != null) {
+        tickets = tickets.where((t) => t['status'] == _metricFilter).toList();
+      }
       if (_priorityFilter != 'all') {
         tickets = tickets.where((t) => t['priority'] == _priorityFilter).toList();
       }
@@ -160,28 +165,23 @@ class _AdminTicketsPageState extends State<AdminTicketsPage> with SingleTickerPr
     switch (cat) {
       case 'scheduling': return 'Agendamentos';
       case 'payment': return 'Pagamentos';
+      case 'account': return 'Contas e Acesso';
+      case 'suggestion': return 'Sugestões';
       case 'whatsapp': return 'WhatsApp';
       case 'nfse': return 'NFS-e';
-      case 'account': return 'Conta';
-      case 'other': return 'Outro';
+      case 'other': return 'Outros';
       default: return cat;
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Theme(
-      data: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: const Color(0xFF0F1117),
-        cardColor: const Color(0xFF1A1D27),
-      ),
-      child: Scaffold(
-        backgroundColor: const Color(0xFF0F1117),
-        appBar: AppBar(
-          backgroundColor: const Color(0xFF0F1117),
-          title: const Text('Tickets de Suporte', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
-          iconTheme: const IconThemeData(color: Colors.white),
-          bottom: TabBar(
+    final body = Column(
+      children: [
+        // Tab bar (when embedded, we show it inline)
+        Material(
+          color: const Color(0xFF0F1117),
+          child: TabBar(
             controller: _tabController,
             indicatorColor: const Color(0xFF4F8EF7),
             labelColor: Colors.white,
@@ -193,131 +193,172 @@ class _AdminTicketsPageState extends State<AdminTicketsPage> with SingleTickerPr
             ],
           ),
         ),
-        body: Column(
-          children: [
-            // Metrics row
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: Row(
-                children: [
-                  _buildMetricChip('Abertos', _openCount, const Color(0xFF3B82F6)),
-                  const SizedBox(width: 8),
-                  _buildMetricChip('Em andamento', _inProgressCount, const Color(0xFFF59E0B)),
-                  const SizedBox(width: 8),
-                  _buildMetricChip('Aguardando', _waitingCount, const Color(0xFFEAB308)),
-                  const SizedBox(width: 8),
-                  _buildMetricChip('Resolvidos hoje', _resolvedTodayCount, const Color(0xFF22C55E)),
-                ],
-              ),
-            ),
+        Expanded(child: _buildBody()),
+      ],
+    );
 
-            // Search & filter
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      style: const TextStyle(color: Colors.white, fontSize: 14),
-                      decoration: InputDecoration(
-                        hintText: 'Buscar por título, nº ou nome...',
-                        hintStyle: TextStyle(color: Colors.grey[600], fontSize: 13),
-                        prefixIcon: Icon(Icons.search, color: Colors.grey[600], size: 20),
-                        filled: true,
-                        fillColor: const Color(0xFF1A1D27),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: BorderSide.none,
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(vertical: 10),
-                      ),
-                      onChanged: (v) {
-                        _searchQuery = v;
-                        _loadTickets();
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1A1D27),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<String>(
-                        value: _priorityFilter,
-                        dropdownColor: const Color(0xFF1A1D27),
-                        style: const TextStyle(color: Colors.white, fontSize: 13),
-                        items: const [
-                          DropdownMenuItem(value: 'all', child: Text('Prioridade')),
-                          DropdownMenuItem(value: 'critical', child: Text('Crítico')),
-                          DropdownMenuItem(value: 'high', child: Text('Alta')),
-                          DropdownMenuItem(value: 'medium', child: Text('Média')),
-                          DropdownMenuItem(value: 'low', child: Text('Baixa')),
-                        ],
-                        onChanged: (v) {
-                          if (v != null) {
-                            _priorityFilter = v;
-                            _loadTickets();
-                          }
-                        },
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            // Tickets list
-            Expanded(
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _tickets.isEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.inbox_rounded, size: 48, color: Colors.grey[700]),
-                              const SizedBox(height: 12),
-                              Text('Nenhum ticket encontrado.', style: TextStyle(color: Colors.grey[600])),
-                            ],
-                          ),
-                        )
-                      : RefreshIndicator(
-                          onRefresh: () async {
-                            await _loadTickets();
-                            await _loadMetrics();
-                          },
-                          child: ListView.builder(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            itemCount: _tickets.length,
-                            itemBuilder: (context, i) => _buildTicketRow(_tickets[i]),
-                          ),
-                        ),
-            ),
-          ],
+    if (widget.embedded) {
+      return Theme(
+        data: ThemeData.dark().copyWith(
+          scaffoldBackgroundColor: const Color(0xFF0F1117),
+          cardColor: const Color(0xFF1A1D27),
         ),
+        child: Container(color: const Color(0xFF0F1117), child: body),
+      );
+    }
+
+    return Theme(
+      data: ThemeData.dark().copyWith(
+        scaffoldBackgroundColor: const Color(0xFF0F1117),
+        cardColor: const Color(0xFF1A1D27),
+      ),
+      child: Scaffold(
+        backgroundColor: const Color(0xFF0F1117),
+        appBar: AppBar(
+          backgroundColor: const Color(0xFF0F1117),
+          title: const Text('Tickets de Suporte', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+          iconTheme: const IconThemeData(color: Colors.white),
+        ),
+        body: body,
       ),
     );
   }
 
-  Widget _buildMetricChip(String label, int count, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: color.withValues(alpha: 0.2)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text('$count', style: TextStyle(color: color, fontWeight: FontWeight.w900, fontSize: 18)),
-          const SizedBox(width: 6),
-          Text(label, style: TextStyle(color: color.withValues(alpha: 0.8), fontSize: 12)),
-        ],
+  Widget _buildBody() {
+    return Column(
+      children: [
+        // Metrics row
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: Row(
+            children: [
+              _buildMetricChip('Abertos', _openCount, const Color(0xFF3B82F6), 'open'),
+              const SizedBox(width: 8),
+              _buildMetricChip('Em andamento', _inProgressCount, const Color(0xFFF59E0B), 'in_progress'),
+              const SizedBox(width: 8),
+              _buildMetricChip('Aguardando', _waitingCount, const Color(0xFFEAB308), 'waiting_client'),
+              const SizedBox(width: 8),
+              _buildMetricChip('Resolvidos hoje', _resolvedTodayCount, const Color(0xFF22C55E), 'resolved'),
+            ],
+          ),
+        ),
+        // Search & filter
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                  decoration: InputDecoration(
+                    hintText: 'Buscar por título, nº ou nome...',
+                    hintStyle: TextStyle(color: Colors.grey[600], fontSize: 13),
+                    prefixIcon: Icon(Icons.search, color: Colors.grey[600], size: 20),
+                    filled: true,
+                    fillColor: const Color(0xFF1A1D27),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                  ),
+                  onChanged: (v) {
+                    _searchQuery = v;
+                    _loadTickets();
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1A1D27),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: _priorityFilter,
+                    dropdownColor: const Color(0xFF1A1D27),
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    items: const [
+                      DropdownMenuItem(value: 'all', child: Text('Prioridade')),
+                      DropdownMenuItem(value: 'critical', child: Text('Crítico')),
+                      DropdownMenuItem(value: 'high', child: Text('Alta')),
+                      DropdownMenuItem(value: 'medium', child: Text('Média')),
+                      DropdownMenuItem(value: 'low', child: Text('Baixa')),
+                    ],
+                    onChanged: (v) {
+                      if (v != null) {
+                        _priorityFilter = v;
+                        _loadTickets();
+                      }
+                    },
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        // Tickets list
+        Expanded(
+          child: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : _tickets.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.inbox_rounded, size: 48, color: Colors.grey[700]),
+                          const SizedBox(height: 12),
+                          Text('Nenhum ticket encontrado.', style: TextStyle(color: Colors.grey[600])),
+                        ],
+                      ),
+                    )
+                  : RefreshIndicator(
+                      onRefresh: () async {
+                        await _loadTickets();
+                        await _loadMetrics();
+                      },
+                      child: ListView.builder(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        itemCount: _tickets.length,
+                        itemBuilder: (context, i) => _buildTicketRow(_tickets[i]),
+                      ),
+                    ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMetricChip(String label, int count, Color color, String statusKey) {
+    final isSelected = _metricFilter == statusKey;
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _metricFilter = isSelected ? null : statusKey;
+        });
+        _loadTickets();
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: isSelected ? color.withValues(alpha: 0.25) : color.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isSelected ? color : color.withValues(alpha: 0.2),
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('$count', style: TextStyle(color: color, fontWeight: FontWeight.w900, fontSize: 18)),
+            const SizedBox(width: 6),
+            Text(label, style: TextStyle(color: color.withValues(alpha: isSelected ? 1.0 : 0.8), fontSize: 12, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
+          ],
+        ),
       ),
     );
   }

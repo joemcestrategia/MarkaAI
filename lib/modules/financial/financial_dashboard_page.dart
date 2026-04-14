@@ -13,7 +13,6 @@ import '../../core/services/plan_features_service.dart';
 import '../../core/constants/plan_features.dart';
 import '../../widgets/upgrade_modal.dart';
 import '../../core/services/auth_service.dart';
-import '../../core/services/shop_data_cache_service.dart';
 
 // ─────────────────────────────────────────────
 // MODELO DE DADOS DO PERÍODO (auxilia comparação)
@@ -969,13 +968,6 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
                 ),
               ],
             ),
-          ),
-          floatingActionButton: FloatingActionButton.extended(
-            onPressed: _showTransactionDialog,
-            backgroundColor: AppColors.primaryPurple,
-            foregroundColor: Colors.white,
-            icon: const Icon(Icons.add_chart_rounded),
-            label: const Text('Novo Lançamento', style: TextStyle(fontWeight: FontWeight.bold)),
           ),
         );
       },
@@ -2704,150 +2696,6 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
               ),
               child: const Text('SALVAR META',
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ─────────────────────────────────────────────
-  // DIALOG DE NOVO LANÇAMENTO (DESPESA/RECEITA)
-  // ─────────────────────────────────────────────
-  void _showTransactionDialog() {
-    final descController = TextEditingController();
-    final valueController = TextEditingController();
-    String tipo = 'despesa'; // padrão
-    DateTime data = DateTime.now();
-
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          backgroundColor: Colors.white,
-          surfaceTintColor: Colors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-          title: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: (tipo == 'despesa' ? Colors.red : Colors.green).withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  tipo == 'despesa' ? Icons.remove_circle_outline : Icons.add_circle_outline,
-                  color: tipo == 'despesa' ? Colors.red : Colors.green,
-                ),
-              ),
-              const SizedBox(width: 12),
-              const Text('Novo Lançamento', style: TextStyle(fontWeight: FontWeight.bold)),
-            ],
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Seletor de Tipo
-                SegmentedButton<String>(
-                  segments: const [
-                    ButtonSegment(value: 'despesa', label: Text('Despesa'), icon: Icon(Icons.trending_down, size: 16)),
-                    ButtonSegment(value: 'receita', label: Text('Receita Extra'), icon: Icon(Icons.trending_up, size: 16)),
-                  ],
-                  selected: {tipo},
-                  onSelectionChanged: (val) => setDialogState(() => tipo = val.first),
-                  style: SegmentedButton.styleFrom(
-                    selectedBackgroundColor: tipo == 'despesa' ? Colors.red[50] : Colors.green[50],
-                    selectedForegroundColor: tipo == 'despesa' ? Colors.red : Colors.green,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                TextField(
-                  controller: descController,
-                  decoration: InputDecoration(
-                    labelText: 'Descrição',
-                    hintText: 'Ex: Aluguel, Produtos, etc.',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    prefixIcon: const Icon(Icons.description_outlined),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: valueController,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  decoration: InputDecoration(
-                    labelText: 'Valor',
-                    prefixText: 'R\$ ',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    prefixIcon: const Icon(Icons.payments_outlined),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                // Seletor de Data
-                InkWell(
-                  onTap: () async {
-                    final picked = await showDatePicker(
-                      context: context,
-                      initialDate: data,
-                      firstDate: DateTime(2023),
-                      lastDate: DateTime(2100),
-                    );
-                    if (picked != null) setDialogState(() => data = picked);
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 15),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.grey[400]!),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.calendar_today_outlined, size: 20, color: Colors.grey),
-                        const SizedBox(width: 12),
-                        Text(DateFormat('dd/MM/yyyy').format(data)),
-                        const Spacer(),
-                        const Icon(Icons.arrow_drop_down),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('CANCELAR')),
-            ElevatedButton(
-              onPressed: () async {
-                final double v = double.tryParse(valueController.text.replaceAll(',', '.')) ?? 0.0;
-                if (v <= 0 || descController.text.isEmpty) return;
-
-                final finalValue = tipo == 'despesa' ? -v : v;
-
-                try {
-                  await sb.Supabase.instance.client.from('financial_transactions').insert({
-                    'shop_id': _shopId,
-                    'descricao': descController.text.trim(),
-                    'valor': finalValue,
-                    'tipo': tipo,
-                    'data': data.toIso8601String(),
-                    'created_at': DateTime.now().toIso8601String(),
-                  });
-                  if (_shopId != null) {
-                    ShopDataCacheService().invalidate(_shopId!, 'financial');
-                  }
-                  if (mounted) {
-                    Navigator.pop(ctx);
-                    _refresh();
-                  }
-                } catch (e) {
-                  debugPrint('Erro ao salvar lançamento: $e');
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: tipo == 'despesa' ? Colors.red : Colors.green,
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('SALVAR LANÇAMENTO'),
             ),
           ],
         ),

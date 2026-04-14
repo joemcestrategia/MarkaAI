@@ -93,10 +93,11 @@ class _SupportTicketsPageState extends State<SupportTicketsPage> {
     switch (cat) {
       case 'scheduling': return 'Agendamentos';
       case 'payment': return 'Pagamentos';
+      case 'account': return 'Contas e Acesso';
+      case 'suggestion': return 'Sugestões';
       case 'whatsapp': return 'WhatsApp';
       case 'nfse': return 'NFS-e';
-      case 'account': return 'Conta';
-      case 'other': return 'Outro';
+      case 'other': return 'Outros';
       default: return cat;
     }
   }

@@ -6,6 +6,7 @@ import 'widgets/admin_overview_widget.dart';
 import 'widgets/admin_users_widget.dart';
 import 'widgets/admin_shops_widget.dart';
 import 'widgets/admin_support_widget.dart';
+import '../support/admin_tickets_page.dart';
 
 class AdminDashboardPage extends StatefulWidget {
   const AdminDashboardPage({super.key});
@@ -232,6 +233,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 _buildMenuItem(1, Icons.people_outline_rounded, 'Usuários', textColor),
                 _buildMenuItem(2, Icons.storefront_outlined, 'Negócios', textColor),
                 _buildMenuItem(3, Icons.support_agent_rounded, 'Suporte', textColor),
+                _buildMenuItem(4, Icons.confirmation_number_rounded, 'Tickets', textColor),
                 const Spacer(),
                 Container(
                   margin: const EdgeInsets.all(16),
@@ -319,6 +321,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             BottomNavigationBarItem(icon: Icon(Icons.people_outline_rounded), label: 'Usuários'),
             BottomNavigationBarItem(icon: Icon(Icons.storefront_outlined), label: 'Lojas'),
             BottomNavigationBarItem(icon: Icon(Icons.support_agent_rounded), label: 'Suporte'),
+            BottomNavigationBarItem(icon: Icon(Icons.confirmation_number_rounded), label: 'Tickets'),
           ],
         ),
       ),
@@ -504,6 +507,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         return const AdminShopsWidget();
       case 3:
         return const AdminSupportWidget();
+      case 4:
+        return const AdminTicketsPage(embedded: true);
       default:
         return const Center(child: Text('Página não encontrada'));
     }
@@ -519,6 +524,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         return 'Gerenciar Negócios';
       case 3:
         return 'Ferramentas de Suporte';
+      case 4:
+        return 'Tickets de Suporte';
       default:
         return 'Admin Dashboard';
     }

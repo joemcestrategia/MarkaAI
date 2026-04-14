@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:image_picker/image_picker.dart';
 
 class SupportTicketDetailPage extends StatefulWidget {
   final String ticketId;
@@ -19,19 +20,75 @@ class _SupportTicketDetailPageState extends State<SupportTicketDetailPage> {
   List<Map<String, dynamic>> _messages = [];
   bool _loading = true;
   bool _sending = false;
+  bool _uploadingImage = false;
+  RealtimeChannel? _messagesChannel;
+  RealtimeChannel? _ticketChannel;
 
   @override
   void initState() {
     super.initState();
     _loadAll();
     _markRead();
+    _subscribeRealtime();
   }
 
   @override
   void dispose() {
+    _messagesChannel?.unsubscribe();
+    _ticketChannel?.unsubscribe();
     _replyController.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  void _subscribeRealtime() {
+    _messagesChannel = _supabase
+        .channel('client-ticket-messages-${widget.ticketId}')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'ticket_messages',
+          filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: 'ticket_id', value: widget.ticketId),
+          callback: (payload) {
+            _loadMessages();
+            _markRead();
+          },
+        )
+        .subscribe();
+
+    _ticketChannel = _supabase
+        .channel('client-ticket-status-${widget.ticketId}')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: 'support_tickets',
+          filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: 'id', value: widget.ticketId),
+          callback: (payload) {
+            _loadTicket();
+          },
+        )
+        .subscribe();
+  }
+
+  Future<void> _loadMessages() async {
+    try {
+      final data = await _supabase
+          .from('ticket_messages')
+          .select()
+          .eq('ticket_id', widget.ticketId)
+          .order('created_at', ascending: true);
+      if (mounted) {
+        setState(() => _messages = List<Map<String, dynamic>>.from(data));
+        _scrollToBottom();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _loadTicket() async {
+    try {
+      final data = await _supabase.from('support_tickets').select().eq('id', widget.ticketId).single();
+      if (mounted) setState(() => _ticket = data);
+    } catch (_) {}
   }
 
   Future<void> _loadAll() async {
@@ -115,6 +172,61 @@ class _SupportTicketDetailPageState extends State<SupportTicketDetailPage> {
       }
     } finally {
       if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  String _mimeFromExt(String ext) {
+    switch (ext) {
+      case 'jpg': case 'jpeg': return 'image/jpeg';
+      case 'png': return 'image/png';
+      case 'gif': return 'image/gif';
+      case 'webp': return 'image/webp';
+      case 'heic': return 'image/heic';
+      case 'heif': return 'image/heif';
+      default: return 'image/jpeg';
+    }
+  }
+
+  Future<void> _pickAndSendImage() async {
+    try {
+      final picker = ImagePicker();
+      final picked = await picker.pickImage(source: ImageSource.gallery, maxWidth: 1200, imageQuality: 80);
+      if (picked == null) return;
+
+      setState(() => _uploadingImage = true);
+      final bytes = await picked.readAsBytes();
+      final ext = picked.name.split('.').last.toLowerCase();
+      final mime = _mimeFromExt(ext);
+      final path = 'tickets/${widget.ticketId}/${DateTime.now().millisecondsSinceEpoch}_${picked.name}';
+
+      await _supabase.storage.from('ticket-attachments').uploadBinary(
+        path, bytes,
+        fileOptions: FileOptions(contentType: mime),
+      );
+      final url = _supabase.storage.from('ticket-attachments').getPublicUrl(path);
+
+      final user = _supabase.auth.currentUser;
+      final userData = await _supabase.from('users').select('name').eq('id', user?.id ?? '').maybeSingle();
+
+      await _supabase.from('ticket_messages').insert({
+        'ticket_id': widget.ticketId,
+        'author_id': user?.id,
+        'author_name': userData?['name'] ?? user?.email ?? 'Usuário',
+        'author_role': 'client',
+        'body': '',
+        'is_internal': false,
+        'attachments': [{'name': picked.name, 'url': url, 'type': mime}],
+      });
+
+      await _loadAll();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro ao enviar imagem: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _uploadingImage = false);
     }
   }
 
@@ -302,6 +414,13 @@ class _SupportTicketDetailPageState extends State<SupportTicketDetailPage> {
               child: SafeArea(
                 child: Row(
                   children: [
+                    IconButton(
+                      onPressed: _uploadingImage ? null : _pickAndSendImage,
+                      icon: _uploadingImage
+                          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                          : Icon(Icons.attach_file_rounded, color: Colors.grey[600]),
+                      tooltip: 'Enviar print',
+                    ),
                     Expanded(
                       child: TextField(
                         controller: _replyController,
@@ -352,6 +471,8 @@ class _SupportTicketDetailPageState extends State<SupportTicketDetailPage> {
     final isClient = msg['author_role'] == 'client';
     final createdAt = DateTime.tryParse(msg['created_at'] ?? '');
     final timeStr = createdAt != null ? DateFormat('dd/MM HH:mm').format(createdAt.toLocal()) : '';
+    final attachments = _parseAttachments(msg['attachments']);
+    final body = (msg['body'] ?? '').toString().trim();
 
     return Align(
       alignment: isClient ? Alignment.centerRight : Alignment.centerLeft,
@@ -379,10 +500,72 @@ class _SupportTicketDetailPageState extends State<SupportTicketDetailPage> {
                 color: isClient ? Theme.of(context).primaryColor : Colors.grey[700],
               ),
             ),
-            const SizedBox(height: 4),
-            Text(msg['body'] ?? '', style: const TextStyle(fontSize: 14, height: 1.4)),
+            if (body.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(body, style: const TextStyle(fontSize: 14, height: 1.4)),
+            ],
+            if (attachments.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              ...attachments.map((att) => _buildAttachmentPreview(att)),
+            ],
             const SizedBox(height: 4),
             Text(timeStr, style: TextStyle(fontSize: 10, color: Colors.grey[400])),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<Map<String, dynamic>> _parseAttachments(dynamic raw) {
+    if (raw == null) return [];
+    if (raw is List) return raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    return [];
+  }
+
+  Widget _buildAttachmentPreview(Map<String, dynamic> att) {
+    final url = att['url'] as String? ?? '';
+    final type = (att['type'] as String? ?? '').toLowerCase();
+    if (type.startsWith('image') && url.isNotEmpty) {
+      return GestureDetector(
+        onTap: () => _showFullImage(url),
+        child: Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Image.network(url, width: 200, fit: BoxFit.cover,
+              loadingBuilder: (_, child, progress) {
+                if (progress == null) return child;
+                return const SizedBox(width: 200, height: 100, child: Center(child: CircularProgressIndicator(strokeWidth: 2)));
+              },
+              errorBuilder: (_, __, ___) => Container(
+                width: 200, height: 60,
+                decoration: BoxDecoration(color: Colors.grey.shade200, borderRadius: BorderRadius.circular(8)),
+                child: const Center(child: Icon(Icons.broken_image, color: Colors.grey)),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    return const SizedBox.shrink();
+  }
+
+  void _showFullImage(String url) {
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        backgroundColor: Colors.black87,
+        insetPadding: const EdgeInsets.all(16),
+        child: Stack(
+          children: [
+            InteractiveViewer(child: Image.network(url)),
+            Positioned(
+              top: 8, right: 8,
+              child: IconButton(
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.close, color: Colors.white, size: 28),
+              ),
+            ),
           ],
         ),
       ),
