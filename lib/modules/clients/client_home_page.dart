@@ -26,7 +26,7 @@ import 'address_selector_page.dart';
 import 'client_search_page.dart';
 import 'client_register_page.dart';
 import '../../core/widgets/seletor_de_cidade.dart';
-import '../../core/utils/string_utils.dart';
+import 'package:markaai/core/utils/string_utils.dart';
 import '../../core/services/ad_service.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 
@@ -698,24 +698,26 @@ class _ClientHomePageState extends State<ClientHomePage> {
         });
     if (confirmed != true) return;
 
-    showDialog(
+      if (!mounted) return;
+      showDialog(
         context: context,
         barrierDismissible: false,
         builder: (ctx) => const Center(child: CircularProgressIndicator()));
     try {
-      // Forçar refresh do token para garantir JWT válido
+      // Forçar refresh do token para garantir JWT válido antes da chamada
       final sessionResult = await Supabase.instance.client.auth.refreshSession();
       if (sessionResult.session == null) {
         if (mounted) Navigator.pop(context);
         throw Exception('Sessão expirada. Faça login novamente para excluir a conta.');
       }
-      final freshToken = sessionResult.session!.accessToken;
 
+      // IMPORTANTE: NÃO passar o header Authorization manualmente.
+      // O SDK do Supabase já injeta o JWT atualizado da sessão automaticamente.
+      // Passar manualmente causa conflito de headers e resulta em erro 401.
       final response = await Supabase.instance.client.functions
           .invoke(
             'deleteUserAccount',
             body: {'userId': user.id},
-            headers: {'Authorization': 'Bearer $freshToken'},
           )
           .timeout(
             const Duration(seconds: 60),
@@ -851,6 +853,48 @@ class _ClientHomePageState extends State<ClientHomePage> {
       return;
     }
     if (!mounted) return;
+
+    // Verificar se a loja permite múltiplos agendamentos
+    final shopConfig = shop['config'] as Map<String, dynamic>? ?? {};
+    final permitirMultiplos = shopConfig['permitir_multiplos'] ?? true;
+    if (!permitirMultiplos) {
+      final now = DateTime.now();
+      final clientAppts = await Supabase.instance.client
+          .from('appointments')
+          .select('id, scheduled_at, status')
+          .eq('client_id', uid)
+          .eq('shop_id', shop['id'])
+          .not('status', 'in', '("cancelado","rejeitado","excluido","pendente_pix")')
+          .gte('scheduled_at', now.toIso8601String())
+          .limit(1);
+
+      if (clientAppts.isNotEmpty) {
+        if (mounted) {
+          final appt = clientAppts[0];
+          final data = DateTime.parse(appt['scheduled_at']);
+          final dataFmt = '${data.day.toString().padLeft(2, '0')}/${data.month.toString().padLeft(2, '0')}';
+          await showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Agendamento não permitido'),
+              content: Text(
+                'Esta loja não permite múltiplos agendamentos. Você já possui um agendamento ativo para $dataFmt.\n\n'
+                'Cancele o agendamento existente ou aguarde até a data para criar um novo.'
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+          );
+        }
+        return;
+      }
+    }
+
+    if (!mounted) return;
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -963,7 +1007,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
                   backgroundColor: Colors.white,
                   elevation: 10,
                   shadowColor: Colors.black12,
-                  indicatorColor: AppColors.primaryPurple.withOpacity(0.2),
+                  indicatorColor: AppColors.primaryPurple.withValues(alpha: 0.2),
                   destinations: const [
                     NavigationDestination(
                         icon: Icon(Icons.explore_outlined),
@@ -1082,7 +1126,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 2),
                       decoration: BoxDecoration(
-                        color: Colors.red.withOpacity(0.1),
+                        color: Colors.red.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Text('${shops.length}',
@@ -1240,7 +1284,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
                 borderRadius: BorderRadius.circular(30),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
+                    color: Colors.black.withValues(alpha: 0.05),
                     blurRadius: 10,
                     offset: const Offset(0, 4),
                   )
@@ -1612,7 +1656,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
       margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
       decoration: BoxDecoration(
         color: isSelected
-            ? AppColors.primaryPurple.withOpacity(0.1)
+            ? AppColors.primaryPurple.withValues(alpha: 0.1)
             : Colors.transparent,
         borderRadius: BorderRadius.circular(10),
       ),
@@ -1771,7 +1815,7 @@ class _ShopCardState extends State<_ShopCard> {
 
   @override
   Widget build(BuildContext context) {
-    final data = widget.shop as Map<String, dynamic>;
+    final data = widget.shop;
     final imgUrl = data['cover_url'] ?? data['image_url'] ?? data['imageUrl'] ?? "";
     final logoUrl = data['logo_url'] ?? data['logoUrl'] ?? "";
     final category = data['category'] ?? data['categoria'] ?? data['nicho'] ?? 'Outros';
@@ -1830,7 +1874,7 @@ class _ShopCardState extends State<_ShopCard> {
           borderRadius: BorderRadius.circular(12),
           boxShadow: [
             BoxShadow(
-                color: Colors.black.withOpacity(0.04),
+                color: Colors.black.withValues(alpha: 0.04),
                 blurRadius: 10,
                 offset: const Offset(0, 4))
           ],
@@ -1977,11 +2021,11 @@ class _ShopCardState extends State<_ShopCard> {
                       child: Container(
                         padding: const EdgeInsets.all(4),
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.9),
+                          color: Colors.white.withValues(alpha: 0.9),
                           shape: BoxShape.circle,
                           boxShadow: [
                             BoxShadow(
-                                color: Colors.black.withOpacity(0.1),
+                                color: Colors.black.withValues(alpha: 0.1),
                                 blurRadius: 4),
                           ],
                         ),
@@ -2089,7 +2133,7 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
   void _agendarViaWhatsApp() async {
     if (_shopDoc == null) return;
 
-    final shopData = _shopDoc! as Map<String, dynamic>;
+    final shopData = _shopDoc!;
     final phone = shopData['phone'] ?? shopData['whatsapp'] ?? shopData['telefone'];
     if (phone == null || phone.toString().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -2202,7 +2246,7 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
                                     const EdgeInsets.symmetric(horizontal: 4.0),
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
-                                  color: Colors.white.withOpacity(
+                                  color: Colors.white.withValues(alpha: 
                                       _currentImageIndex == entry.key
                                           ? 0.9
                                           : 0.4),
@@ -2284,7 +2328,7 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
                 color: Colors.white,
                 boxShadow: [
                   BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
+                      color: Colors.black.withValues(alpha: 0.1),
                       blurRadius: 10,
                       offset: const Offset(0, -5))
                 ],
@@ -2827,7 +2871,7 @@ class _NativeAdCardState extends State<_NativeAdCard> {
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 8,
             offset: const Offset(0, 3),
           ),

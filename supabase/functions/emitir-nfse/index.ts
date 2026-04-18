@@ -17,7 +17,7 @@ async function emitirItabirito(supabase: any, cfg: any, apptData: any, emissaoId
   const basicAuth = btoa(`${prestadorCnpj}:${pass}`)
 
   // 1. Validação de Dados (Motor de Checklist)
-  const checklist = []
+  const checklist: any[] = []
   const erros: string[] = []
 
   const validar = (campo: string, valor: any, msgErro: string) => {

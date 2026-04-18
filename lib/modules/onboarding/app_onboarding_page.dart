@@ -1,4 +1,4 @@
-Ôªøimport 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/tutorial_service.dart';
@@ -29,33 +29,33 @@ class _AppOnboardingPageState extends State<AppOnboardingPage> {
     _pages = widget.isBusiness ? _businessPages : _clientPages;
   }
 
-  // CONTE√öDO BUSINESS
+  // CONTE⁄DO BUSINESS
   final List<Map<String, dynamic>> _businessPages = [
     {
       'title': 'Bem-vindo ao MarkaAI Business',
       'desc':
-          'A ferramenta completa para gerenciar sua barbearia, sal√£o ou est√©tica com intelig√™ncia.',
+          'A ferramenta completa para gerenciar sua barbearia, sal„o ou estÈtica com inteligÍncia.',
       'icon': FontAwesomeIcons.store,
       'color': AppColors.primaryPurple,
     },
     {
-      'title': 'Configura√ß√£o de Perfil',
+      'title': 'ConfiguraÁ„o de Perfil',
       'desc':
-          'Personalize sua loja com fotos, logo e endere√ßo para atrair mais clientes na sua regi√£o.',
+          'Personalize sua loja com fotos, logo e endereÁo para atrair mais clientes na sua regi„o.',
       'icon': FontAwesomeIcons.addressCard,
       'color': Colors.teal,
     },
     {
       'title': 'Agenda Inteligente',
       'desc':
-          'Organize seus hor√°rios, evite conflitos e receba agendamentos online 24h por dia.',
+          'Organize seus hor·rios, evite conflitos e receba agendamentos online 24h por dia.',
       'icon': FontAwesomeIcons.calendarCheck,
       'color': Colors.blue,
     },
     {
-      'title': 'Gest√£o de Equipe',
+      'title': 'Gest„o de Equipe',
       'desc':
-          'Adicione seus funcion√°rios e permita que eles gerenciem suas pr√≥prias agendas integradas.',
+          'Adicione seus funcion·rios e permita que eles gerenciem suas prÛprias agendas integradas.',
       'icon': FontAwesomeIcons.users,
       'color': Colors.purple,
     },
@@ -69,39 +69,39 @@ class _AppOnboardingPageState extends State<AppOnboardingPage> {
     {
       'title': 'Tudo Pronto!',
       'desc':
-          'Para um guia detalhado de cada fun√ß√£o, acesse nosso menu "Ajuda / Tutorial" no painel.',
+          'Para um guia detalhado de cada funÁ„o, acesse nosso menu "Ajuda / Tutorial" no painel.',
       'icon': FontAwesomeIcons.circleCheck,
       'color': AppColors.gold,
     },
   ];
 
-  // CONTE√öDO CLIENTE
+  // CONTE⁄DO CLIENTE
   final List<Map<String, dynamic>> _clientPages = [
     {
       'title': 'Encontre os Melhores',
       'desc':
-          'Busque pelos melhores profissionais e estabelecimentos de beleza da sua regi√£o.',
+          'Busque pelos melhores profissionais e estabelecimentos de beleza da sua regi„o.',
       'icon': FontAwesomeIcons.magnifyingGlass,
       'color': AppColors.primaryPurple,
     },
     {
       'title': 'Agende em Segundos',
       'desc':
-          'Escolha o servi√ßo, o profissional e o hor√°rio ideal. Sem liga√ß√µes, sem demora.',
+          'Escolha o serviÁo, o profissional e o hor·rio ideal. Sem ligaÁıes, sem demora.',
       'icon': FontAwesomeIcons.clock,
       'color': Colors.blue,
     },
     {
-      'title': 'Hist√≥rico e Favoritos',
+      'title': 'HistÛrico e Favoritos',
       'desc':
-          'Acesse seus agendamentos anteriores e refa√ßa servi√ßos com um toque.',
+          'Acesse seus agendamentos anteriores e refaÁa serviÁos com um toque.',
       'icon': FontAwesomeIcons.heart,
       'color': Colors.red,
     },
     {
       'title': 'Tudo Pronto!',
       'desc':
-          'Ficou com alguma d√∫vida? Acesse o guia completo no menu do seu perfil.',
+          'Ficou com alguma d˙vida? Acesse o guia completo no menu do seu perfil.',
       'icon': FontAwesomeIcons.circleCheck,
       'color': AppColors.gold,
     },
@@ -130,7 +130,7 @@ class _AppOnboardingPageState extends State<AppOnboardingPage> {
       body: SafeArea(
         child: Column(
           children: [
-            // Bot√£o Pular
+            // Bot„o Pular
             Align(
               alignment: Alignment.topRight,
               child: TextButton(
@@ -198,7 +198,7 @@ class _AppOnboardingPageState extends State<AppOnboardingPage> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  // Indicador de P√°ginas
+                  // Indicador de P·ginas
                   Row(
                     children: List.generate(
                       _pages.length,
@@ -217,7 +217,7 @@ class _AppOnboardingPageState extends State<AppOnboardingPage> {
                     ),
                   ),
 
-                  // Bot√£o Pr√≥ximo
+                  // Bot„o PrÛximo
                   ElevatedButton(
                     onPressed: _nextPage,
                     style: ElevatedButton.styleFrom(
@@ -233,8 +233,8 @@ class _AppOnboardingPageState extends State<AppOnboardingPage> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(_currentPage == _pages.length - 1
-                            ? "Come√ßar"
-                            : "Pr√≥ximo"),
+                            ? "ComeÁar"
+                            : "PrÛximo"),
                         const SizedBox(width: 8),
                         const Icon(Icons.arrow_forward, size: 16),
                       ],

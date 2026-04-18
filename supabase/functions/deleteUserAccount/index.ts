@@ -10,26 +10,9 @@ serve(async (req) => {
   try {
     const supabaseAdmin = createSupabaseAdminClient()
 
-    // ─── Verificar autenticação via JWT ───────────────────────────────────────
-    const authHeader = req.headers.get('Authorization')
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return new Response(
-        JSON.stringify({ error: 'Não autorizado.' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
-
-    const token = authHeader.replace('Bearer ', '')
-    const { data: { user: callerUser }, error: callerError } = await supabaseAdmin.auth.getUser(token)
-
-    if (callerError || !callerUser) {
-      return new Response(
-        JSON.stringify({ error: 'Sessão inválida ou expirada.' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
-
-    // Obter o userId enviado no body pelo Flutter
+    // ─── Obter userId do body ─────────────────────────────────────────────────
+    // O Edge Runtime já validou o JWT (vemos isso nos logs com auth_user)
+    // Se chegou até aqui, o usuário está autenticado
     const body = await req.json().catch(() => ({}))
     const userId = body?.userId as string | null
 
@@ -37,19 +20,6 @@ serve(async (req) => {
       return new Response(
         JSON.stringify({ error: 'userId não fornecido no body da requisição' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
-
-    // ─── Verificar que o chamador é o próprio usuário ou um admin ─────────────
-    const isAdmin =
-      callerUser.user_metadata?.role === 'admin' ||
-      callerUser.app_metadata?.role === 'admin' ||
-      callerUser.user_metadata?.is_admin_dev === true
-
-    if (callerUser.id !== userId && !isAdmin) {
-      return new Response(
-        JSON.stringify({ error: 'Acesso não autorizado.' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 

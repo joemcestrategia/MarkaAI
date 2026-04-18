@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/theme/app_colors.dart';
 import '../store_profile_page.dart'; // navegar para Editar Perfil
@@ -7,7 +7,7 @@ class ProfileCompletionWidget extends StatefulWidget {
   final String shopId;
   final Map<String, dynamic>? shopData;
   final VoidCallback?
-      onTap; // Manter por compatibilidade, mas usaremos navegação direta
+      onTap; // Manter por compatibilidade, mas usaremos navega��o direta
 
   const ProfileCompletionWidget({
     super.key,
@@ -61,9 +61,9 @@ class _ProfileCompletionWidgetState extends State<ProfileCompletionWidget>
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────
+  // -----------------------------------------------------------------
   // Calculate completion from shopData
-  // ─────────────────────────────────────────────────────────────────
+  // -----------------------------------------------------------------
   void _compute() {
     if (widget.shopData == null) return;
     final d = widget.shopData!;
@@ -71,7 +71,7 @@ class _ProfileCompletionWidgetState extends State<ProfileCompletionWidget>
     final fields = <_MissingField>[];
     debugPrint('--- SHOP DATA COMPUTADO: $d');
 
-    // Helper p/ checar se um campo tem conteúdo válido.
+    // Helper p/ checar se um campo tem conte�do v�lido.
     bool filled0(String field) {
       if (!d.containsKey(field)) return false;
       final v = d[field];
@@ -120,7 +120,7 @@ class _ProfileCompletionWidgetState extends State<ProfileCompletionWidget>
     }
     totalValidatedFields++;
 
-    check('descricao', 'Descrição da loja');
+    check('descricao', 'Descri��o da loja');
     totalValidatedFields++;
 
     if (!filled0('cidade') && !filled0('city')) {
@@ -132,7 +132,7 @@ class _ProfileCompletionWidgetState extends State<ProfileCompletionWidget>
     check('estado', 'Estado');
     totalValidatedFields++;
 
-    // Cálculo da porcentagem (Tamanho total validado menos o tamanho dos não encontrados)
+    // C�lculo da porcentagem (Tamanho total validado menos o tamanho dos n�o encontrados)
     final filled = totalValidatedFields - fields.length;
     final pct = totalValidatedFields > 0
         ? ((filled / totalValidatedFields) * 100).round().clamp(0, 100)
@@ -169,20 +169,20 @@ class _ProfileCompletionWidgetState extends State<ProfileCompletionWidget>
     if (mounted) setState(() => _dismissed = true);
   }
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ──────────────────────────────────────────────
   // Contextual message based on percentage
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ──────────────────────────────────────────────
   String _message(int pct) {
     if (pct <= 30) {
-      return 'Seu perfil está incompleto. Clientes têm menos chances de encontrar sua loja.';
+      return 'Seu perfil est� incompleto. Clientes t�m menos chances de encontrar sua loja.';
     }
     if (pct <= 60) {
-      return 'Bom começo! Complete mais alguns dados para aumentar sua visibilidade.';
+      return 'Bom come�o! Complete mais alguns dados para aumentar sua visibilidade.';
     }
     if (pct < 90) {
-      return 'Quase lá! Finalize seu perfil para transmitir mais confiança.';
+      return 'Quase l�! Finalize seu perfil para transmitir mais confian�a.';
     }
-    return 'Perfil quase completo! Só faltam poucos detalhes.';
+    return 'Perfil quase completo! S� faltam poucos detalhes.';
   }
 
   void _navigateToProfile() {
@@ -226,7 +226,7 @@ class _ProfileCompletionWidgetState extends State<ProfileCompletionWidget>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // â”€â”€â”€ Header row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+              // ─── Header row ─────────────────────────────
               Row(
                 children: [
                   Container(
@@ -263,9 +263,9 @@ class _ProfileCompletionWidgetState extends State<ProfileCompletionWidget>
                     ),
                   ),
                   const SizedBox(width: 8),
-                  // Botão fechar
+                  // Bot�o fechar
                   Semantics(
-                    label: 'Fechar notificação de perfil',
+                    label: 'Fechar notifica��o de perfil',
                     button: true,
                     child: GestureDetector(
                       onTap: _dismiss,
@@ -284,7 +284,7 @@ class _ProfileCompletionWidgetState extends State<ProfileCompletionWidget>
 
               const SizedBox(height: 16),
 
-              // â”€â”€â”€ Animated progress bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+              // ─── Animated progress bar ────────────────
               Row(
                 children: [
                   Expanded(
@@ -321,7 +321,7 @@ class _ProfileCompletionWidgetState extends State<ProfileCompletionWidget>
                 ],
               ),
 
-              // â”€â”€â”€ Missing fields list (max 3) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+              // ─── Missing fields list (max 3) ──────────
               if (visibleMissing.isNotEmpty) ...[
                 const SizedBox(height: 16),
                 Container(
@@ -378,7 +378,7 @@ class _ProfileCompletionWidgetState extends State<ProfileCompletionWidget>
 
               const SizedBox(height: 16),
 
-              // â”€â”€â”€ CTA button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+              // ─── CTA button ───────────────────────────
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(

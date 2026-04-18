@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'admin_simple_page.dart';
 
 // Wrapper admin page pointing to the simplified admin implementation.

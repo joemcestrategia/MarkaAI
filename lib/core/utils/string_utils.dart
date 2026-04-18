@@ -1,14 +1,14 @@
-﻿class StringUtils {
+class StringUtils {
   static String removeDiacritics(String str) {
-    var withDia =
-        'ÀÁÂÃÄÅàáâãäåÒÓÔÕÖØòóôõöøÈÉÊËèéêëÇçÐÌÍÎÏìíîïÙÚÛÜùúûüÑñŠšÝŸÿýŽž';
-    var withoutDia =
+    const withDia = 'ÀÁÂÃÄÅàáâãäåÒÓÔÕÖØòóôõöøÈÉÊËèéêëÇçÐÌÍÎÏìíîïÙÚÛÜùúûüÑñŠšÝŸÿŽž';
+    const withoutDia =
         'AAAAAAaaaaaaOOOOOOOooooooEEEEeeeeeCcDIIIIiiiiUUUUuuuuNnSsYyyZz';
 
+    var result = str;
     for (int i = 0; i < withDia.length; i++) {
-      str = str.replaceAll(withDia[i], withoutDia[i]);
+      result = result.replaceAll(withDia[i], withoutDia[i]);
     }
 
-    return str;
+    return result;
   }
 }

@@ -206,7 +206,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
 
       final snapshot = await sb.Supabase.instance.client
           .from('appointments')
-          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, service_name, professional_name')
+          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name')
           .eq('shop_id', widget.shopId)
           .lte('scheduled_at', endOfToday.toUtc().toIso8601String())
           .order('scheduled_at', ascending: false)
@@ -256,7 +256,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     try {
       final snapshot = await sb.Supabase.instance.client
           .from('appointments')
-          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, service_name, professional_name')
+          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name')
           .eq('shop_id', widget.shopId)
           .gte('scheduled_at', startOfMonth.toUtc().toIso8601String())
           .lte('scheduled_at', endOfMonth.toUtc().toIso8601String())
@@ -297,7 +297,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
 
     try {
       final client = sb.Supabase.instance.client;
-      var query = client.from('appointments').select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, service_name, professional_name').eq('shop_id', widget.shopId);
+      var query = client.from('appointments').select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name').eq('shop_id', widget.shopId);
 
       // Simple implementation: load first page
       if (_startFromSelectedDay && _startFromDate != null && _weekEndDate != null) {
@@ -353,7 +353,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
       
       final snapshot = await sb.Supabase.instance.client
           .from('appointments')
-          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, service_name, professional_name')
+          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name')
           .eq('shop_id', widget.shopId)
           .gt('scheduled_at', lastDate)
           .order('scheduled_at', ascending: true)
@@ -397,7 +397,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
 
       final snapshot = await sb.Supabase.instance.client
           .from('appointments')
-          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, service_name, professional_name')
+          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name')
           .eq('shop_id', widget.shopId)
           .lt('scheduled_at', firstDate)
           .order('scheduled_at', ascending: false)
@@ -2809,7 +2809,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
           DateTime(endDate.year, endDate.month, endDate.day, 23, 59, 59);
       final snap = await sb.Supabase.instance.client
           .from('appointments')
-          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, birthday_discount_applied, metadata, service_id, client_name, client_phone, client_email, service_name, professional_name')
+          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, birthday_discount_applied, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name')
           .eq('shop_id', widget.shopId)
           .gte('scheduled_at', start.toUtc().toIso8601String())
           .lte('scheduled_at', end.toUtc().toIso8601String())
@@ -2926,6 +2926,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     final String clientDisplay = clientNome.isNotEmpty ? clientNome : 'Cliente';
     final String clientInitial =
         clientDisplay.isNotEmpty ? clientDisplay[0].toUpperCase() : '?';
+    final String clientPhoto = (data['client_photo'] ?? '').toString().trim();
 
     final rawServiceNome = (data['service_name'] ?? data['servico_nome'] ?? data['servicoNome'] ?? data['serviceName'] ?? data['servico'] ?? '').toString().trim();
     final serviceNome = (rawServiceNome.toLowerCase() == 'null') ? '' : rawServiceNome;
@@ -2933,6 +2934,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     final String professionalNome = data['professional_name'] ?? data['profissional_nome'] ?? data['professionalName'] ?? data['profissionalNome'] ?? 'Não definido';
 
     void openClientProfile() {
+      if (clientId == null) return;
       showModalBottomSheet(
         context: context,
         isScrollControlled: true,
@@ -2947,6 +2949,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
               body: ClientDetailsPage(
                 clientData: {
                   'nome': clientNome,
+                  'name': clientNome,
                   'telefone': data['client_phone'] ??
                       data['telefone'] ??
                       data['whatsapp'] ??
@@ -2955,6 +2958,10 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                   'origem': data['tipo'] == 'manual' ? 'manual' : 'app',
                   'totalGasto': total,
                   'visitas': 1,
+                  // Passa a foto do cliente para exibição imediata
+                  'foto': clientPhoto.isNotEmpty ? clientPhoto : null,
+                  'foto_perfil': clientPhoto.isNotEmpty ? clientPhoto : null,
+                  'photo_url': clientPhoto.isNotEmpty ? clientPhoto : null,
                 },
                 clientId: clientId.toString(),
                 shopIdOverride: widget.shopId,
@@ -3044,22 +3051,30 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                           GestureDetector(
                             onTap: openClientProfile,
                             child: Container(
-                              width: 32,
-                              height: 32,
+                              width: 36,
+                              height: 36,
                               decoration: BoxDecoration(
                                 color: AppColors.primaryPurple.withValues(alpha: 0.1),
                                 shape: BoxShape.circle,
+                                image: clientPhoto.isNotEmpty
+                                    ? DecorationImage(
+                                        image: NetworkImage(clientPhoto),
+                                        fit: BoxFit.cover,
+                                      )
+                                    : null,
                               ),
-                              child: Center(
-                                child: Text(
-                                  clientInitial,
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                    color: AppColors.primaryPurple,
-                                  ),
-                                ),
-                              ),
+                              child: clientPhoto.isEmpty
+                                  ? Center(
+                                      child: Text(
+                                        clientInitial,
+                                        style: const TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.bold,
+                                          color: AppColors.primaryPurple,
+                                        ),
+                                      ),
+                                    )
+                                  : null,
                             ),
                           ),
                           const SizedBox(height: 8),

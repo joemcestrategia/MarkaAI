@@ -1,4 +1,4 @@
-Ôªøimport 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../core/theme/app_colors.dart';
 
@@ -10,7 +10,7 @@ class MercadoPagoHelpPage extends StatelessWidget {
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FD),
       appBar: AppBar(
-        title: const Text("Tutorial de Integra√ß√£o",
+        title: const Text("Tutorial de IntegraÁ„o",
             style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: AppColors.primaryPurple,
         foregroundColor: Colors.white,
@@ -42,21 +42,21 @@ class MercadoPagoHelpPage extends StatelessWidget {
             ),
             _buildStepCard(
               number: "2",
-              title: "Crie uma Aplica√ß√£o",
+              title: "Crie uma AplicaÁ„o",
               content:
-                  "1. Fa√ßa login na sua conta do Mercado Pago.\n2. Clique em 'Suas Integra√ß√µes'.\n3. Clique em 'Criar Aplica√ß√£o'.\n4. D√™ um nome (Ex: MarkaAI) e selecione 'Pagamento Online'.",
+                  "1. FaÁa login na sua conta do Mercado Pago.\n2. Clique em 'Suas IntegraÁıes'.\n3. Clique em 'Criar AplicaÁ„o'.\n4. DÍ um nome (Ex: MarkaAI) e selecione 'Pagamento Online'.",
             ),
             _buildStepCard(
               number: "3",
-              title: "Ative as Credenciais de Produ√ß√£o",
+              title: "Ative as Credenciais de ProduÁ„o",
               content:
-                  "No menu lateral, v√° em 'Credenciais de Produ√ß√£o'.\n\n√¢≈°¬†√Ø¬∏¬è IMPORTANTE: N√£o use as credenciais de 'Teste' (Sandbox), sen√£o o dinheiro n√£o cair√° na sua conta real.",
+                  "No menu lateral, v· em 'Credenciais de ProduÁ„o'.\n\n‚ö†Ô∏è IMPORTANTE: N„o use as credenciais de 'Teste' (Sandbox), sen„o o dinheiro n„o cair· na sua conta real.",
             ),
             _buildStepCard(
               number: "4",
               title: "Copie e Cole",
               content:
-                  "Voc√™ ver√° dois c√≥digos:\n\nüîë Public Key (Chave P√∫blica)\nüîê Access Token (Come√ßa com APP_USR...)\n\nCopie esses c√≥digos e cole nas configura√ß√µes do App.",
+                  "VocÍ ver· dois cÛdigos:\n\n?? Public Key (Chave P˙blica)\n?? Access Token (ComeÁa com APP_USR...)\n\nCopie esses cÛdigos e cole nas configuraÁıes do App.",
               isLast: true,
             ),
             const SizedBox(height: 30),
@@ -73,7 +73,7 @@ class MercadoPagoHelpPage extends StatelessWidget {
                   SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      "Nunca compartilhe seu Access Token com estranhos. Ele d√° acesso √† sua conta.",
+                      "Nunca compartilhe seu Access Token com estranhos. Ele d· acesso ‡ sua conta.",
                       style: TextStyle(
                           color: Colors.orange,
                           fontSize: 12,
@@ -119,7 +119,7 @@ class MercadoPagoHelpPage extends StatelessWidget {
                         fontWeight: FontWeight.bold)),
                 SizedBox(height: 5),
                 Text(
-                    "Receba pagamentos via Pix e Cart√£o com baixa autom√°tica no sistema.",
+                    "Receba pagamentos via Pix e Cart„o com baixa autom·tica no sistema.",
                     style: TextStyle(color: Colors.white70, fontSize: 12)),
               ],
             ),

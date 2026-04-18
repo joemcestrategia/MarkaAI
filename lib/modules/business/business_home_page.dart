@@ -12,7 +12,7 @@ import 'business_history_page.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../../core/widgets/splash_loading_widget.dart';
 import 'boost_shop_page.dart';
-import '../admin/admin_dashboard_page.dart';
+import 'package:markaai/modules/admin/admin_dashboard_page.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/services/notification_service.dart';
@@ -45,6 +45,7 @@ import '../../pages/privacy_settings_page.dart';
 import 'holidays_page.dart';
 // import '../clients/client_affiliate_page.dart'; // Removido: sistema de afiliados desativado
 import '../fiscal/nfse_dashboard_screen.dart';
+import '../../features/commissions/commission_management_page.dart';
 
 class BusinessHomePage extends StatefulWidget {
   const BusinessHomePage({super.key});
@@ -89,11 +90,14 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   Future<List<Map<String, dynamic>>>? _statsFuture;
   Future<List<Map<String, dynamic>>>? _todayFuture;
   Future<List<Map<String, dynamic>>>? _commissionFuture;
+  Future<List<Map<String, dynamic>>>? _monthlyAppointmentsFuture;
   Future<List<Map<String, dynamic>>>? _birthdayFuture;
   Future<List<Map<String, dynamic>>>? _employeesFuture;
   List<Map<String, dynamic>> _statsCache = [];
+  int _lastDashboardYear = -999; 
+  int _lastDashboardMonth = -999;
+
   sb.RealtimeChannel? _appointmentsChannel;
-  int _lastDashboardYear = -999; // Sentinel para detectar mudança de ano
 
   @override
   void initState() {
@@ -334,6 +338,9 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
     // Comissões
     _canViewCommissions = _currentFeatures.commissionView;
+    if (!_canViewCommissions) {
+      _restrictedIndices.add(13);
+    }
 
     // Folgas e Feriados (Índice 11)
     if (!_currentFeatures.holidaysManagement) {
@@ -560,6 +567,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       case 10: return const PrivacySettingsPage();
       case 11: return HolidaysPage(shopId: shopId ?? "");
       case 12: return const NfseDashboardScreen();
+      case 13: return CommissionManagementPage(shopId: shopId ?? "", showAppBar: isDesktop);
       default: return _buildHomeDashboard(isDesktop: isDesktop);
     }
   }
@@ -668,6 +676,14 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
                 _buildDesktopMenuItem(
                     12, Icons.receipt_long_rounded, "Fiscal NFS-e"),
+
+                _buildDesktopMenuItem(
+                    13, 
+                    Icons.paid_outlined, 
+                    "Comissões",
+                    trailing: !_canViewCommissions
+                        ? const Icon(Icons.lock, size: 16, color: Colors.grey)
+                        : null),
 
                 _buildDesktopMenuItem(
                     9, Icons.trending_up_rounded, "Reajuste de Valores"),
@@ -971,6 +987,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                         _buildTabletNavIcon(11, Icons.beach_access_rounded, "Folgas",
                             badge: _pendingHolidaysCount),
                         _buildTabletNavIcon(12, Icons.receipt_long_rounded, "NFS-e"),
+                        _buildTabletNavIcon(13, Icons.paid_outlined, "Comissões"),
                       ],
                     ),
                   ),
@@ -1100,6 +1117,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       appBar: AppBar(
         backgroundColor: AppColors.primaryPurple,
         elevation: 0,
+        centerTitle: false,
         iconTheme: const IconThemeData(color: Colors.white),
         title: Text(
           _getScreenTitle(_selectedIndex),
@@ -1301,6 +1319,14 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                   icon: Icons.receipt_long_rounded,
                   title: "Fiscal NFS-e",
                   index: 12,
+                ),
+                _buildDrawerItem(
+                  icon: Icons.paid_outlined,
+                  title: "Comissões",
+                  index: 13,
+                  trailing: !_canViewCommissions
+                      ? const Icon(Icons.lock_outline, size: 16, color: Colors.grey)
+                      : null,
                 ),
                 _buildDrawerItem(
                   icon: Icons.local_offer_outlined,
@@ -1566,7 +1592,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       final end = DateTime(now.year, now.month, now.day, 23, 59, 59);
       final result = await sb.Supabase.instance.client
           .from('appointments')
-          .select('id, scheduled_at, status, client_name, service_name')
+          .select('id, scheduled_at, status, client_name, service_name, total_payable, total_price, total_value, valor_com_desconto, labor_value')
           .eq('shop_id', shopId!)
           .gte('scheduled_at', start.toIso8601String())
           .lte('scheduled_at', end.toIso8601String())
@@ -1594,12 +1620,45 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       return [];
     }
   }
+  
+  Future<List<Map<String, dynamic>>> _fetchMonthlyAppointments(
+      DateTime startData, DateTime endData) async {
+    if (shopId == null || shopId!.isEmpty) return [];
+    try {
+      final result = await sb.Supabase.instance.client
+          .from('appointments')
+          .select('scheduled_at, status, total_payable, total_price, total_value, valor_com_desconto, labor_value')
+          .eq('shop_id', shopId!)
+          .gte('scheduled_at', startData.toIso8601String())
+          .lte('scheduled_at', endData.toIso8601String());
+      return List<Map<String, dynamic>>.from(result);
+    } catch (e) {
+      debugPrint('❌ [DASHBOARD] Erro ao buscar dados mensais: $e');
+      return [];
+    }
+  }
+
+  DateTime _commissionStart() {
+    if (_selectedYear == -1) return DateTime(2023, 1, 1);
+    if (_selectedMonth > 0) return DateTime(_selectedYear, _selectedMonth, 1);
+    return DateTime(_selectedYear, 1, 1);
+  }
+
+  DateTime _commissionEnd() {
+    if (_selectedYear == -1) return DateTime(2030, 12, 31, 23, 59, 59);
+    if (_selectedMonth > 0) {
+      return DateTime(_selectedYear, _selectedMonth + 1, 1)
+          .subtract(const Duration(seconds: 1));
+    }
+    return DateTime(_selectedYear, 12, 31, 23, 59, 59);
+  }
 
   void _refreshDashboard() {
     setState(() {
       _statsFuture = null;
       _todayFuture = null;
       _commissionFuture = null;
+      _monthlyAppointmentsFuture = null;
       _birthdayFuture = null;
       _employeesFuture = null;
     });
@@ -1609,20 +1668,21 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     final shopIdReady = shopId != null && shopId!.isNotEmpty;
     if (shopIdReady && (_statsFuture == null || _lastDashboardYear != _selectedYear)) {
       _lastDashboardYear = _selectedYear;
+      _lastDashboardMonth = _selectedMonth;
       _statsFuture = _fetchDashboardStats(_selectedYear);
       _todayFuture = _fetchTodayAppointments();
+      _commissionFuture = _fetchCommissionAppointments(
+          _commissionStart(), _commissionEnd());
+      _monthlyAppointmentsFuture = _fetchMonthlyAppointments(
+          _commissionStart(), _commissionEnd());
+    } else if (shopIdReady && _lastDashboardMonth != _selectedMonth) {
+      _lastDashboardMonth = _selectedMonth;
       if (_canViewCommissions) {
-        DateTime startData;
-        DateTime endData;
-        if (_selectedYear == -1) {
-          startData = DateTime(2023, 1, 1);
-          endData = DateTime(2030, 12, 31);
-        } else {
-          startData = DateTime(_selectedYear, 1, 1);
-          endData = DateTime(_selectedYear, 12, 31, 23, 59, 59);
-        }
-        _commissionFuture = _fetchCommissionAppointments(startData, endData);
+        _commissionFuture = _fetchCommissionAppointments(
+          _commissionStart(), _commissionEnd());
       }
+      _monthlyAppointmentsFuture = _fetchMonthlyAppointments(
+          _commissionStart(), _commissionEnd());
     }
 
     return FutureBuilder<List<Map<String, dynamic>>>(
@@ -1643,7 +1703,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           _statsCache = snapshot.data!;
         }
         return _buildDashboardContent(
-          stats: snapshot.data ?? _statsCache, isDesktop: isDesktop, isRefreshing: false);
+          stats: snapshot.data ?? _statsCache, isDesktop: isDesktop, isRefreshing: false, monthlyAppointmentsFuture: _monthlyAppointmentsFuture);
       },
     );
   }
@@ -1652,6 +1712,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     required List<Map<String, dynamic>> stats,
     required bool isDesktop,
     bool isRefreshing = false,
+    Future<List<Map<String, dynamic>>>? monthlyAppointmentsFuture,
   }) {
     debugPrint(
         "📊 [DASHBOARD] ${stats.length} linhas de stats para $shopId (${_selectedYear == -1 ? 'todos' : _selectedYear}).");
@@ -1670,7 +1731,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     Map<int, double> yearMoney = {};
     Map<int, int> yearQty = {};
 
-    // Filtrar por mês se selecionado (e não estiver em "todos os anos")
+    // KPI totais: respeitam o filtro de mês
     final filteredStats = (!isAllYears && _selectedMonth > 0)
         ? stats.where((r) => (r['month'] as num?)?.toInt() == _selectedMonth).toList()
         : stats;
@@ -1678,11 +1739,16 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     for (var row in filteredStats) {
       final revenue = (row['revenue'] as num?)?.toDouble() ?? 0;
       final count = (row['appointments_count'] as num?)?.toInt() ?? 0;
-      final month = (row['month'] as num?)?.toInt() ?? 1;
-      final year = (row['year'] as num?)?.toInt() ?? _selectedYear;
-
       faturamentoTotal += revenue;
       totalAtendimentos += count;
+    }
+
+    // Gráfico: sempre exibe todos os meses/anos (sem filtro de mês)
+    for (var row in stats) {
+      final revenue = (row['revenue'] as num?)?.toDouble() ?? 0;
+      final count = (row['appointments_count'] as num?)?.toInt() ?? 0;
+      final month = (row['month'] as num?)?.toInt() ?? 1;
+      final year = (row['year'] as num?)?.toInt() ?? _selectedYear;
 
       if (!isAllYears) {
         if (month >= 1 && month <= 12) {
@@ -1700,6 +1766,30 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       chartLabels.sort();
       dataMoney = chartLabels.map((key) => yearMoney[int.parse(key)] ?? 0.0).toList();
       dataQty = chartLabels.map((key) => (yearQty[int.parse(key)] ?? 0).toDouble()).toList();
+    } else if (!isAllYears) {
+      // Truncar meses futuros sem dados
+      int lastMonthWithData = 0;
+      for (int i = 0; i < 12; i++) {
+        if (dataMoney[i] > 0 || dataQty[i] > 0) {
+          lastMonthWithData = i + 1;
+        }
+      }
+      
+      // Se estiver no ano atual, limita pelo menos até o mês atual ou o último com dado
+      final currentYear = DateTime.now().year;
+      
+      int limit = lastMonthWithData;
+      if (_selectedYear == currentYear) {
+         // Se for o ano atual, mas ainda não tem dados em meses passados, 
+         // o lastMonthWithData pode ser menor que o mês atual.
+         // Mantemos o comportamento de mostrar "até o último que tem dados".
+      }
+
+      if (limit == 0) limit = 1; // Mostra pelo menos o primeiro mês se tudo estiver vazio
+      
+      dataMoney = dataMoney.sublist(0, limit);
+      dataQty = dataQty.sublist(0, limit);
+      chartLabels = chartLabels.sublist(0, limit);
     }
 
     double faturamentoMaoDeObra = faturamentoTotal;
@@ -1719,6 +1809,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         faturamentoMaoDeObra: faturamentoMaoDeObra,
         faturamentoProdutos: faturamentoProdutos,
         isRefreshing: isRefreshing,
+        monthlyAppointmentsFuture: monthlyAppointmentsFuture,
       );
     } else {
       return _buildMobileDashboard(
@@ -1732,6 +1823,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         faturamentoMaoDeObra: faturamentoMaoDeObra,
         faturamentoProdutos: faturamentoProdutos,
         isRefreshing: isRefreshing,
+        monthlyAppointmentsFuture: monthlyAppointmentsFuture,
       );
     }
   }
@@ -1749,6 +1841,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     required double faturamentoMaoDeObra,
     required double faturamentoProdutos,
     bool isRefreshing = false,
+    Future<List<Map<String, dynamic>>>? monthlyAppointmentsFuture,
   }) {
     return Column(
       children: [
@@ -1838,265 +1931,37 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                     dataQty,
                     chartLabels,
                     isAllYears,
+                    faturamentoTotal,
+                    totalAtendimentos.toDouble(),
                   ),
                 ),
                 const SizedBox(width: 16),
-                Expanded(
+                /* Composição de Faturamento removida a pedido do usuário */
+                /* Expanded(
                   flex: 3,
                   child: _buildBreakdownCard(
                     faturamentoMaoDeObra,
                     faturamentoProdutos,
                     faturamentoTotal,
                   ),
-                ),
+                ), */
               ],
             ),
           ),
-        if (shopId != null && _canViewCommissions) ...[
+        /* Comissões da Equipe removida a pedido do usuário */
+        /* if (shopId != null && _canViewCommissions) ...[
           const SizedBox(height: 16),
           _buildEquipeComissoesCard(shopId!),
+        ], */
+
+        if (monthlyAppointmentsFuture != null && _selectedMonth > 0) ...[
+          const SizedBox(height: 20),
+          _buildWeeklyRevenueSection(monthlyAppointmentsFuture),
         ],
       ],
     );
   }
 
-  Widget _buildEquipeComissoesCard(String shopId) {
-    if (_commissionFuture == null) return const SizedBox.shrink();
-
-    _employeesFuture ??= sb.Supabase.instance.client
-        .from('employees')
-        .select('id, name, commission_percent')
-        .eq('shop_id', shopId);
-
-    return FutureBuilder<List<dynamic>>(
-      future: Future.wait([_commissionFuture!, _employeesFuture!]),
-      builder: (context, snap) {
-        if (snap.hasError || !snap.hasData) return const SizedBox.shrink();
-        final appointmentDocs = snap.data![0] as List<Map<String, dynamic>>;
-        final employees = snap.data![1] as List<Map<String, dynamic>>;
-        if (employees.isEmpty) return const SizedBox.shrink();
-
-        // Calcular produção por profissional
-        Map<String, double> producaoPorProf = {};
-        for (var data in appointmentDocs) {
-          final status = (data['status'] ?? '').toString().toLowerCase();
-          if (status != 'confirmado' && status != 'concluido') continue;
-          final pid = data['professional_id']?.toString() ?? '';
-          if (pid.isEmpty) continue;
-          double valor = 0.0;
-          for (final k in ['total_payable', 'total_price', 'total_value', 'valor_com_desconto', 'labor_value']) {
-            final v = double.tryParse(data[k]?.toString() ?? '');
-            if (v != null && v > 0) { valor = v; break; }
-          }
-          producaoPorProf[pid] = (producaoPorProf[pid] ?? 0) + valor;
-        }
-        double totalComissao = 0;
-        final List<Map<String, dynamic>> teamData = [];
-
-        // Preparar dados
-        for (var ed in employees) {
-          final nome = (ed['name'] ?? ed['nome'])?.toString() ?? 'Profissional';
-          final p = ed['commission_percent'];
-          final percent = (p is num) ? p.toDouble() : 0.0;
-          final produzido = producaoPorProf[ed['id']] ?? 0.0;
-          final aReceber = percent > 0 ? (produzido * percent / 100) : 0.0;
-
-          if (produzido > 0 || aReceber > 0) {
-            totalComissao += aReceber;
-            teamData.add({
-              'nome': nome,
-              'produzido': produzido,
-              'aReceber': aReceber,
-              'percent': percent,
-            });
-          }
-        }
-
-        // Se ningum produziu nada, no mostra ou mostra vazio elegante
-        if (teamData.isEmpty) return const SizedBox.shrink();
-
-        // Ordenar por valor a receber (maior para menor)
-        teamData.sort((a, b) =>
-            (b['aReceber'] as double).compareTo(a['aReceber'] as double));
-
-        return Container(
-          margin: const EdgeInsets.symmetric(vertical: 8),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 10,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Column(
-            children: [
-              // Header com Gradiente
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  borderRadius:
-                      const BorderRadius.vertical(top: Radius.circular(16)),
-                  gradient: LinearGradient(
-                    colors: [
-                      AppColors.primaryPurple,
-                      AppColors.primaryPurple.withValues(alpha: 0.8)
-                    ],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Icon(Icons.people_alt_outlined,
-                          color: Colors.white, size: 20),
-                    ),
-                    const SizedBox(width: 12),
-                    const Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            "Comisses da Equipe",
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                          ),
-                          Text(
-                            "Produo e valores a repassar",
-                            style: TextStyle(
-                              color: Colors.white70,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        const Text(
-                          "Total a Pagar",
-                          style: TextStyle(color: Colors.white70, fontSize: 10),
-                        ),
-                        Text(
-                          NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$')
-                              .format(totalComissao),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-
-              // Lista de Profissionais
-              ListView.separated(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                padding: const EdgeInsets.all(16),
-                itemCount: teamData.length,
-                separatorBuilder: (_, __) => const Divider(height: 24),
-                itemBuilder: (context, index) {
-                  final item = teamData[index];
-                  return Row(
-                    children: [
-                      CircleAvatar(
-                        radius: 20,
-                        backgroundColor:
-                            AppColors.primaryPurple.withValues(alpha: 0.1),
-                        child: Text(
-                          item['nome'].toString().substring(0, 1).toUpperCase(),
-                          style: const TextStyle(
-                            color: AppColors.primaryPurple,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              item['nome'],
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
-                                color: Colors.black87,
-                              ),
-                            ),
-                            Text(
-                              "Produziu: ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(item['produzido'])}",
-                              style: TextStyle(
-                                color: Colors.grey[600],
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(
-                            "Comisso (${item['percent']}%)",
-                            style: TextStyle(
-                                color: Colors.grey[500], fontSize: 10),
-                          ),
-                          Text(
-                            NumberFormat.currency(
-                                    locale: 'pt_BR', symbol: 'R\$')
-                                .format(item['aReceber']),
-                            style: const TextStyle(
-                              color: Colors.green,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  );
-                },
-              ),
-
-              // Footer
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.grey[50],
-                  borderRadius:
-                      const BorderRadius.vertical(bottom: Radius.circular(16)),
-                ),
-                child: Text(
-                  "Valores calculados com base nos agendamentos concludos do perodo selecionado.",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.grey[500], fontSize: 11),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
 
   Widget _buildMobileDashboard({
     required bool isAllYears,
@@ -2109,6 +1974,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     required double faturamentoMaoDeObra,
     required double faturamentoProdutos,
     bool isRefreshing = false,
+    Future<List<Map<String, dynamic>>>? monthlyAppointmentsFuture,
   }) {
     final fmt = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
 
@@ -2131,7 +1997,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
             // -- Hero Header com gradiente ------------------------------------
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
             decoration: const BoxDecoration(
               gradient: LinearGradient(
                 colors: [Color(0xFF6C3CE2), Color(0xFF9B5CF6)],
@@ -2174,30 +2040,35 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                         ],
                       ),
                     ),
-                    Row(
-                      children: [
-                        _buildMonthDropdown(dark: true),
-                        const SizedBox(width: 8),
-                        _buildYearDropdown(dark: true),
-                      ],
+                    IntrinsicWidth(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              _buildMonthDropdown(dark: true),
+                              const SizedBox(width: 8),
+                              _buildYearDropdown(dark: true),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          FittedBox(
+                            fit: BoxFit.fitWidth,
+                            alignment: Alignment.centerRight,
+                            child: Text(
+                              fmt.format(faturamentoTotal),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: -0.5,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
-                ),
-                const SizedBox(height: 20),
-                // Faturamento em destaque no header
-                Text(
-                  fmt.format(faturamentoTotal),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 32,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.5,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                const Text(
-                  'Faturamento total',
-                  style: TextStyle(color: Colors.white60, fontSize: 12),
                 ),
               ],
             ),
@@ -2208,32 +2079,62 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           Transform.translate(
             offset: const Offset(0, -14),
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: _buildKpiCard(
-                      title: 'Atendimentos',
-                      value: totalAtendimentos.toString(),
-                      subtitle:
-                          isAllYears ? 'total geral' : 'em $_selectedYear',
-                      icon: Icons.people_alt_rounded,
-                      color: const Color(0xFF4F8EF7),
-                      isMoney: false,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildKpiCard(
-                      title: 'Ticket Mdio',
-                      value: fmt.format(ticketMedio),
-                      subtitle: 'por atendimento',
-                      icon: Icons.receipt_long_rounded,
-                      color: const Color(0xFF00C9A7),
-                      isMoney: true,
-                    ),
-                  ),
-                ],
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: FutureBuilder<List<Map<String, dynamic>>>(
+                future: monthlyAppointmentsFuture,
+                builder: (context, snap) {
+                  int diasTrabalhados = 0;
+                  if (snap.hasData) {
+                    final setDias = <int>{};
+                    for (var doc in snap.data!) {
+                      final status = (doc['status'] ?? '').toString().toLowerCase();
+                      if (status == 'cancelado' || status == 'falta') continue;
+                      final dateStr = doc['scheduled_at'] as String?;
+                      if (dateStr != null) {
+                        final d = DateTime.tryParse(dateStr);
+                        if (d != null) setDias.add(d.day);
+                      }
+                    }
+                    diasTrabalhados = setDias.length;
+                  }
+
+                  return Row(
+                    children: [
+                      Expanded(
+                        child: _buildKpiCard(
+                          title: 'Atendimentos',
+                          value: totalAtendimentos.toString(),
+                          subtitle: 'total',
+                          icon: Icons.people_alt_rounded,
+                          color: const Color(0xFF4F8EF7),
+                          isMoney: false,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _buildKpiCard(
+                          title: 'Ticket Médio',
+                          value: fmt.format(ticketMedio),
+                          subtitle: 'média',
+                          icon: Icons.receipt_long_rounded,
+                          color: const Color(0xFF00C9A7),
+                          isMoney: true,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _buildKpiCard(
+                          title: 'Dias Trab.',
+                          value: diasTrabalhados.toString(),
+                          subtitle: 'no mês',
+                          icon: Icons.calendar_today_rounded,
+                          color: AppColors.gold,
+                          isMoney: false,
+                        ),
+                      ),
+                    ],
+                  );
+                }
               ),
             ),
           ),
@@ -2248,25 +2149,39 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
                 // -- Card Hoje ---------------------------------------------
                 _buildHojeSection(),
+                
+                if (monthlyAppointmentsFuture != null && _selectedMonth > 0) ...[
+                  const SizedBox(height: 12),
+                  _buildWeeklyRevenueSection(monthlyAppointmentsFuture),
+                ],
+
                 const SizedBox(height: 12),
 
                 if (_currentFeatures.financialTab) ...[
-                  // -- Breakdown Servios vs Produtos ------------------------
-                  _buildBreakdownVisual(
+                  /* Composição de Faturamento removida a pedido do usuário */
+                  /* _buildBreakdownVisual(
                     faturamentoMaoDeObra,
                     faturamentoProdutos,
                     faturamentoTotal,
-                  ),
+                  ), */
                   const SizedBox(height: 12),
 
-                  // -- Grfico -----------------------------------------------
-                  _buildMobileChart(dataMoney, dataQty, chartLabels, isAllYears),
+                  // -- Gráfico -----------------------------------------------
+                  _buildMobileChart(
+                    dataMoney.take(12).toList(), 
+                    dataQty.take(12).toList(), 
+                    chartLabels.take(12).toList(), 
+                    isAllYears,
+                    faturamentoTotal,
+                    totalAtendimentos.toDouble(),
+                  ),
                 ],
 
-                if (shopId != null && _canViewCommissions) ...[
+                /* Comissões da Equipe removida a pedido do usuário */
+                /* if (shopId != null && _canViewCommissions) ...[
                   const SizedBox(height: 12),
                   _buildEquipeComissoesCard(shopId!),
-                ],
+                ], */
                 const SizedBox(height: 24),
               ],
             ),
@@ -2296,7 +2211,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         }
       },
       child: Container(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
@@ -2322,37 +2237,37 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                         color.withValues(alpha: 0.05)
                       ],
                     ),
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Icon(icon, color: color, size: 18),
+                  child: Icon(icon, color: color, size: 16),
                 ),
                 const Spacer(),
-                Icon(Icons.trending_up_rounded, color: color, size: 14),
+                Icon(Icons.trending_up_rounded, color: color, size: 12),
               ],
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             Text(
               title,
               style: TextStyle(
-                  fontSize: 11,
+                  fontSize: 10,
                   color: Colors.grey[500],
                   fontWeight: FontWeight.w600),
             ),
-            const SizedBox(height: 3),
+            const SizedBox(height: 2),
             FittedBox(
               fit: BoxFit.scaleDown,
               alignment: Alignment.centerLeft,
               child: Text(
                 value,
                 style: const TextStyle(
-                    fontSize: 17,
+                    fontSize: 14,
                     fontWeight: FontWeight.bold,
                     color: Color(0xFF1A1D2E)),
               ),
             ),
-            const SizedBox(height: 2),
+            const SizedBox(height: 1),
             Text(subtitle,
-                style: TextStyle(fontSize: 10, color: Colors.grey[400])),
+                style: TextStyle(fontSize: 9, color: Colors.grey[400])),
           ],
         ),
       ),
@@ -2369,14 +2284,29 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           final status = (data['status'] ?? '').toString();
           return status == 'agendado' || status == 'confirmado';
         }).toList();
-        return _buildHojeCard(hoje, proximosHoje);
+
+        double totalDia = 0.0;
+        for (var doc in todayDocs) {
+          final status = (doc['status'] ?? '').toString().toLowerCase();
+          if (status == 'cancelado' || status == 'falta') continue;
+          
+          double valor = 0.0;
+          for (final k in ['total_payable', 'total_price', 'total_value', 'valor_com_desconto', 'labor_value']) {
+            final v = double.tryParse(doc[k]?.toString() ?? '');
+            if (v != null && v > 0) { valor = v; break; }
+          }
+          totalDia += valor;
+        }
+
+        return _buildHojeCard(hoje, proximosHoje, totalDia);
       },
     );
   }
 
-  Widget _buildHojeCard(int hoje, List<Map<String, dynamic>> proximosHoje) {
+  Widget _buildHojeCard(int hoje, List<Map<String, dynamic>> proximosHoje, double totalDia) {
+    final fmt = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
@@ -2424,15 +2354,15 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: hoje == 0 ? Colors.grey[100] : const Color(0xFFF3F0FF),
+                  color: totalDia == 0 ? Colors.grey[100] : const Color(0xFFF3F0FF),
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
-                  '$hoje realizados',
+                  fmt.format(totalDia),
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
-                    color: hoje == 0 ? Colors.grey : AppColors.primaryPurple,
+                    color: totalDia == 0 ? Colors.grey : AppColors.primaryPurple,
                   ),
                 ),
               ),
@@ -2489,6 +2419,21 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                         ],
                       ),
                     ),
+                    Text(
+                      () {
+                        double valor = 0.0;
+                        for (final k in ['total_payable', 'total_price', 'total_value', 'valor_com_desconto', 'labor_value']) {
+                          final v = double.tryParse(data[k]?.toString() ?? '');
+                          if (v != null && v > 0) { valor = v; break; }
+                        }
+                        return fmt.format(valor);
+                      }(),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                      ),
+                    ),
                   ],
                 ),
               );
@@ -2499,103 +2444,13 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     );
   }
 
-  Widget _buildBreakdownVisual(double servico, double produto, double total) {
-    final fmt = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
-    final pctServico = total > 0 ? servico / total : 0.0;
-    final pctProduto = total > 0 ? produto / total : 0.0;
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFF0EEFF)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 12,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.pie_chart_rounded,
-                  color: AppColors.primaryPurple, size: 18),
-              const SizedBox(width: 8),
-              const Text('Composio do Faturamento',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-            ],
-          ),
-          const SizedBox(height: 14),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: SizedBox(
-              height: 10,
-              child: Row(
-                children: [
-                  Flexible(
-                    // ✅ FIX: Clamp para evitar flex: 0 que causa Gray Screen no Flutter
-                    flex: (pctServico * 100).round().clamp(1, 100),
-                    child: Container(color: const Color(0xFF6C3CE2)),
-                  ),
-                  Flexible(
-                    flex: (pctProduto * 100).round().clamp(1, 100),
-                    child: Container(color: const Color(0xFF00C9A7)),
-                  ),
-                  if (pctServico + pctProduto < 0.99)
-                    Flexible(
-                      flex: ((1 - pctServico - pctProduto) * 100).round().clamp(1, 100),
-                      child: Container(color: Colors.grey[200]),
-                    ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 14),
-          _breakdownRow(
-              'Serviços', servico, pctServico, const Color(0xFF6C3CE2), fmt),
-          const SizedBox(height: 8),
-          _breakdownRow(
-              'Produtos', produto, pctProduto, const Color(0xFF00C9A7), fmt),
-        ],
-      ),
-    );
-  }
-
-  Widget _breakdownRow(
-      String label, double value, double pct, Color color, NumberFormat fmt) {
-    return Row(
-      children: [
-        Container(
-          width: 10,
-          height: 10,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-        ),
-        const SizedBox(width: 8),
-        Text(label,
-            style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey[700],
-                fontWeight: FontWeight.w500)),
-        const Spacer(),
-        Text(fmt.format(value),
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-        const SizedBox(width: 6),
-        Text('${(pct * 100).toStringAsFixed(0)}%',
-            style: TextStyle(fontSize: 11, color: Colors.grey[400])),
-      ],
-    );
-  }
-
   Widget _buildMobileChart(
     List<double> moneyData,
     List<double> qtyData,
     List<String> labels,
     bool isAllYears,
+    double totalFat,
+    double totalAtend,
   ) {
     double maxMoney = moneyData.fold(0, max);
     if (maxMoney == 0) maxMoney = 1;
@@ -2628,14 +2483,12 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           const SizedBox(height: 8),
           Row(
             children: [
-              _legendItem("Faturamento", AppColors.primaryPurple),
-              const SizedBox(width: 16),
-              _legendItem("Atendimentos", AppColors.gold),
+               _legendItem("Faturamento", AppColors.primaryPurple),
             ],
           ),
           const SizedBox(height: 30),
           SizedBox(
-            height: 220,
+            height: 180,
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               // Start scroll from the end to see the most recent months
@@ -2646,15 +2499,18 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 child: BarChart(
                   BarChartData(
                     alignment: BarChartAlignment.spaceAround,
-                    maxY: 150,
+                    maxY: 180,
                     minY: 0,
                     barTouchData: BarTouchData(
                       enabled: true,
                       touchTooltipData: BarTouchTooltipData(
                         fitInsideHorizontally: true,
                         fitInsideVertically: true,
-                        tooltipPadding: const EdgeInsets.all(8),
-                        tooltipMargin: 8,
+                        tooltipPadding: EdgeInsets.zero,
+                        tooltipMargin: 4,
+                        tooltipBgColor: Colors.transparent,
+                        tooltipBorder: BorderSide.none,
+                        tooltipHorizontalOffset: 0,
                         getTooltipItem: (group, groupIndex, rod, rodIndex) {
                           String label = labels[groupIndex];
                           // Money
@@ -2663,11 +2519,11 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                             final fmt = NumberFormat.currency(
                                 locale: 'pt_BR', symbol: 'R\$');
                             return BarTooltipItem(
-                              '$label\n${fmt.format(val)}',
+                              fmt.format(val),
                               const TextStyle(
-                                  color: Colors.white,
+                                  color: AppColors.primaryPurple,
                                   fontWeight: FontWeight.bold,
-                                  fontSize: 12),
+                                  fontSize: 10),
                             );
                           }
                           // Qty
@@ -2719,7 +2575,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                     gridData: FlGridData(
                       show: true,
                       drawVerticalLine: false,
-                      horizontalInterval: 50,
+                      horizontalInterval: 30,
                       getDrawingHorizontalLine: (value) => FlLine(
                         color: Colors.grey.withValues(alpha: 0.1),
                         strokeWidth: 1,
@@ -2735,22 +2591,15 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                       if (moneyH < 2) moneyH = 2;
                       if (qtyH < 2) qtyH = 2;
 
+                      double rodWidth = max(18.0, 30.0 - (labels.length * 0.5));
                       return BarChartGroupData(
                         x: i,
-                        barsSpace: 4,
-                        showingTooltipIndicators: [], // Could be used to always show labels
+                        showingTooltipIndicators: [0], 
                         barRods: [
                           BarChartRodData(
                             toY: moneyH,
                             color: AppColors.primaryPurple,
-                            width: 14,
-                            borderRadius: const BorderRadius.vertical(
-                                top: Radius.circular(4)),
-                          ),
-                          BarChartRodData(
-                            toY: qtyH,
-                            color: AppColors.gold,
-                            width: 14,
+                            width: rodWidth,
                             borderRadius: const BorderRadius.vertical(
                                 top: Radius.circular(4)),
                           ),
@@ -2950,17 +2799,20 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     List<double> qtyData,
     List<String> labels,
     bool isAllYears,
+    double totalFat,
+    double totalAtend,
   ) {
     double maxMoney = moneyData.fold(0, max);
     if (maxMoney == 0) maxMoney = 1;
     double maxQty = qtyData.fold(0, max);
     if (maxQty == 0) maxQty = 1;
-    double barWidth = isAllYears ? 35.0 : 20.0;
+    double barWidth = isAllYears ? 45.0 : 35.0;
 
     String formatVal(double v) =>
         v >= 1000 ? "${(v / 1000).toStringAsFixed(1)}k" : v.toInt().toString();
 
     return Container(
+      height: 260,
       padding: const EdgeInsets.all(25),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -2978,102 +2830,68 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           Row(
             children: [
               const Text(
-                "Evoluo de Performance",
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                "Evolução de Performance",
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
               const Spacer(),
               _legendItem("Faturamento", AppColors.primaryPurple),
-              const SizedBox(width: 12),
-              _legendItem("Atendimentos", AppColors.gold),
             ],
           ),
           const SizedBox(height: 30),
           Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                double chartHeight = constraints.maxHeight;
-                return Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: List.generate(labels.length, (index) {
-                    double moneyH =
-                        (moneyData[index] / maxMoney) * (chartHeight * 0.75);
-                    double qtyH =
-                        (qtyData[index] / maxQty) * (chartHeight * 0.75);
-
-                    return Column(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Column(
-                              mainAxisAlignment: MainAxisAlignment.end,
-                              children: [
-                                if (moneyData[index] > 0)
-                                  Text(
-                                    formatVal(moneyData[index]),
-                                    style: const TextStyle(
-                                      fontSize: 8,
-                                      fontWeight: FontWeight.bold,
-                                      color: AppColors.primaryPurple,
-                                    ),
-                                  ),
-                                const SizedBox(height: 4),
-                                Container(
-                                  width: barWidth,
-                                  height: moneyH.clamp(2.0, chartHeight),
-                                  decoration: const BoxDecoration(
+            child: Row(
+              children: [
+                Expanded(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      double chartHeight = constraints.maxHeight;
+                      return Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: List.generate(labels.length, (index) {
+                          double moneyH =
+                              (moneyData[index] / maxMoney) * (chartHeight * 0.75);
+      
+                          return Column(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              if (moneyData[index] > 0)
+                                Text(
+                                  formatVal(moneyData[index]),
+                                  style: const TextStyle(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.bold,
                                     color: AppColors.primaryPurple,
-                                    borderRadius: BorderRadius.vertical(
-                                      top: Radius.circular(4),
-                                    ),
                                   ),
                                 ),
-                              ],
-                            ),
-                            const SizedBox(width: 2),
-                            Column(
-                              mainAxisAlignment: MainAxisAlignment.end,
-                              children: [
-                                if (qtyData[index] > 0)
-                                  Text(
-                                    qtyData[index].toInt().toString(),
-                                    style: const TextStyle(
-                                      fontSize: 8,
-                                      fontWeight: FontWeight.bold,
-                                      color: AppColors.gold,
-                                    ),
-                                  ),
-                                const SizedBox(height: 4),
-                                Container(
-                                  width: barWidth,
-                                  height: qtyH.clamp(2.0, chartHeight),
-                                  decoration: const BoxDecoration(
-                                    color: AppColors.gold,
-                                    borderRadius: BorderRadius.vertical(
-                                      top: Radius.circular(4),
-                                    ),
+                              const SizedBox(height: 4),
+                              Container(
+                                width: barWidth,
+                                height: moneyH.clamp(2.0, chartHeight),
+                                decoration: const BoxDecoration(
+                                  color: AppColors.primaryPurple,
+                                  borderRadius: BorderRadius.vertical(
+                                    top: Radius.circular(4),
                                   ),
                                 ),
-                              ],
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        Text(
-                          labels[index],
-                          style: const TextStyle(
-                            fontSize: 10,
-                            color: Colors.grey,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    );
-                  }),
-                );
-              },
+                              ),
+                              const SizedBox(height: 10),
+                              Text(
+                                labels[index],
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  color: Colors.grey,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          );
+                        }),
+                      );
+                    },
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -3105,78 +2923,6 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     );
   }
 
-  Widget _buildBreakdownCard(
-    double servico,
-    double produto,
-    double total,
-  ) {
-    double pctS = total > 0 ? servico / total : 0;
-    double pctP = total > 0 ? produto / total : 0;
-
-    return Container(
-      padding: const EdgeInsets.all(25),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 10,
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            "Receita",
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const Spacer(),
-          Container(
-            height: 20,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(10),
-              color: Colors.grey[100],
-            ),
-            child: Row(
-              children: [
-                if (pctS > 0)
-                  Expanded(
-                    flex: (pctS * 100).toInt().clamp(1, 100),
-                    child: Container(
-                      decoration: const BoxDecoration(
-                        color: AppColors.primaryPurple,
-                        borderRadius: BorderRadius.horizontal(
-                          left: Radius.circular(10),
-                        ),
-                      ),
-                    ),
-                  ),
-                if (pctP > 0)
-                  Expanded(
-                    flex: (pctP * 100).toInt().clamp(1, 100),
-                    child: Container(
-                      decoration: const BoxDecoration(
-                        color: AppColors.gold,
-                        borderRadius: BorderRadius.horizontal(
-                          right: Radius.circular(10),
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-          _buildLegendItemBreakdown("Serviços", pctS, AppColors.primaryPurple),
-          const Divider(),
-          _buildLegendItemBreakdown("Produtos", pctP, AppColors.gold),
-          const Spacer(),
-        ],
-      ),
-    );
-  }
 
   /// Busca aniversariantes entre os clientes que já agendaram nesta loja.
   /// Usa appointments para identificar client_ids, depois filtra birth_date.
@@ -3342,27 +3088,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     }
   }
 
-  Widget _buildLegendItemBreakdown(String label, double pct, Color color) {
-    return Row(
-      children: [
-        Container(
-          width: 10,
-          height: 10,
-          decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Text(label, style: const TextStyle(fontSize: 12)),
-        const Spacer(),
-        Text(
-          "${(pct * 100).toStringAsFixed(1)}%",
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
-      ],
-    );
-  }
+
 
   String _getScreenTitle(int index) {
     switch (index) {
@@ -3395,5 +3121,125 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       default:
         return "";
     }
+  }
+
+  Widget _buildWeeklyRevenueSection(Future<List<Map<String, dynamic>>> future) {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: future,
+      builder: (context, snap) {
+        if (!snap.hasData) return const SizedBox.shrink();
+        final appointments = snap.data!;
+        if (appointments.isEmpty) return const SizedBox.shrink();
+
+        // Agrupar por semanas
+        Map<int, double> weeklySums = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0};
+        for (var doc in appointments) {
+          final status = (doc['status'] ?? '').toString().toLowerCase();
+          if (status == 'cancelado' || status == 'falta') continue;
+
+          final dateStr = doc['scheduled_at'] as String?;
+          if (dateStr == null) continue;
+          final date = DateTime.tryParse(dateStr);
+          if (date == null) continue;
+
+          final day = date.day;
+          int week = 1;
+          if (day <= 7) { week = 1; }
+          else if (day <= 14) { week = 2; }
+          else if (day <= 21) { week = 3; }
+          else if (day <= 28) { week = 4; }
+          else { week = 5; }
+
+          double valor = 0.0;
+          for (final k in ['total_payable', 'total_price', 'total_value', 'valor_com_desconto', 'labor_value']) {
+            final v = double.tryParse(doc[k]?.toString() ?? '');
+            if (v != null && v > 0) { valor = v; break; }
+          }
+          weeklySums[week] = (weeklySums[week] ?? 0) + valor;
+        }
+
+        return _buildWeeklyRevenueChart(weeklySums);
+      },
+    );
+  }
+
+  Widget _buildWeeklyRevenueChart(Map<int, double> data) {
+    final fmt = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+    final maxVal = data.values.fold(0.01, (a, b) => a > b ? a : b);
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04), blurRadius: 10),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            "Faturamento Semanal",
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+          ),
+          const SizedBox(height: 16),
+          ...List.generate(5, (index) {
+            final week = index + 1;
+            final valor = data[week] ?? 0.0;
+            final pct = valor / maxVal;
+            if (week == 5 && valor == 0) return const SizedBox.shrink();
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text("Semana $week",
+                          style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+                      Text(fmt.format(valor),
+                          style: const TextStyle(
+                              fontSize: 11, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Stack(
+                    children: [
+                      Container(
+                        height: 8,
+                        width: double.infinity,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[100],
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                      FractionallySizedBox(
+                        widthFactor: pct.clamp(0.01, 1.0),
+                        child: Container(
+                          height: 8,
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [
+                                AppColors.primaryPurple,
+                                Color(0xFF9B5CF6)
+                              ],
+                            ),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
   }
 }

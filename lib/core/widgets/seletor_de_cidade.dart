@@ -8,9 +8,9 @@ import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_typeahead/flutter_typeahead.dart';
-import '../../core/utils/string_utils.dart';
-import '../../core/theme/app_colors.dart';
-import '../../core/data/cidades_brasil.dart';
+import 'package:markaai/core/utils/string_utils.dart';
+import 'package:markaai/core/theme/app_colors.dart';
+import 'package:markaai/core/data/cidades_brasil.dart';
 
 const String _kCidadePrefsKey = 'app_cidade_selecionada';
 const String _kCidadesListKey = 'app_cidades_salvas_v2';

@@ -33,7 +33,9 @@ class _EditProfilePageState extends State<EditProfilePage> {
 
   void _loadData() async {
     final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return;
+    if (user == null) {
+      return;
+    }
 
     final userData = await Supabase.instance.client
         .from('users')
@@ -80,7 +82,9 @@ class _EditProfilePageState extends State<EditProfilePage> {
     });
     try {
       final user = Supabase.instance.client.auth.currentUser;
-      if (user == null) return;
+      if (user == null) {
+        return;
+      }
 
       String? photoUrl = _userModel?.photoUrl;
 

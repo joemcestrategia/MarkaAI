@@ -606,6 +606,7 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
         serviceName: servicoData['name'],
         scheduledAt: fullDate,
         totalValue: valor,
+        totalPrice: valor,
         durationMin:
             int.tryParse(servicoData['duration_min']?.toString() ?? "30") ?? 30,
         createdBy: widget.preSelectedClientId != null ? 'dono' : 'cliente',

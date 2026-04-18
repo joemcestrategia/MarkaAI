@@ -140,7 +140,11 @@ class AuthService {
       final response = await _supabase.auth.signUp(
         email: email.trim(),
         password: password,
-        emailRedirectTo: kIsWeb ? null : 'markaai://confirm-email',
+        emailRedirectTo: kIsWeb
+            ? (kDebugMode
+                ? 'http://localhost:3000/confirm-email'
+                : '${Uri.base.origin}/confirm-email')
+            : 'markaai://confirm-email',
         data: {
           'name': name,
           'role': role,

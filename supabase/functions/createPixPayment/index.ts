@@ -12,8 +12,13 @@ serve(async (req) => {
     const adminSupabase = createSupabaseAdminClient()
 
     // Tenta pegar o usuário apenas para log e idempotência, mas não bloqueia se falhar o JWT
-    const { data: userData } = await supabase.auth.getUser()
-    const userId = userData?.user?.id || 'anonymous'
+    let userId = 'anonymous'
+    try {
+      const { data: userData } = await supabase.auth.getUser()
+      userId = userData?.user?.id || 'anonymous'
+    } catch (_) {
+      // Não crítico: falha de JWT (ex: algoritmo ES256) não bloqueia geração do PIX
+    }
 
     const { shop_id, amount, email, description, external_reference } = await req.json()
 

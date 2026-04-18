@@ -84,11 +84,25 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
           widget.clientData['city'] = data['city'] ?? widget.clientData['city'];
           widget.clientData['state'] = data['state'] ?? widget.clientData['state'];
           widget.clientData['number'] = data['number'] ?? widget.clientData['number'];
-          
+
           // Se o nome no banco for mais completo, atualiza também
           if ((data['name']?.toString() ?? '').isNotEmpty) {
-             widget.clientData['nome'] = data['name'];
-             widget.clientData['name'] = data['name'];
+            widget.clientData['nome'] = data['name'];
+            widget.clientData['name'] = data['name'];
+          }
+
+          // Atualiza foto do Google / perfil (photo_url no banco users)
+          final photoFromDb = data['photo_url']?.toString() ?? '';
+          if (photoFromDb.isNotEmpty) {
+            // Foto do Google tem prioridade — atualiza todos os campos de foto
+            widget.clientData['photo_url'] = photoFromDb;
+            widget.clientData['foto'] = photoFromDb;
+            widget.clientData['foto_perfil'] = photoFromDb;
+          }
+
+          // Telefone também
+          if ((data['phone']?.toString() ?? '').isNotEmpty) {
+            widget.clientData['telefone'] = data['phone'];
           }
         });
       }
@@ -340,6 +354,119 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
     });
   }
 
+  /// Exibe a foto do cliente em tamanho maior via Dialog com fundo escuro
+  void _showPhotoDialog(BuildContext context, String fotoUrl, String nome) {
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.85),
+      builder: (ctx) {
+        return GestureDetector(
+          onTap: () => Navigator.pop(ctx),
+          child: Scaffold(
+            backgroundColor: Colors.transparent,
+            body: Stack(
+              children: [
+                // Fundo escuro clicável para fechar
+                Positioned.fill(
+                  child: GestureDetector(
+                    onTap: () => Navigator.pop(ctx),
+                    child: Container(color: Colors.transparent),
+                  ),
+                ),
+                Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Foto ampliada
+                      Hero(
+                        tag: 'client_photo_${widget.clientId}',
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: Image.network(
+                            fotoUrl,
+                            width: 260,
+                            height: 260,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Container(
+                              width: 260,
+                              height: 260,
+                              decoration: BoxDecoration(
+                                color: Colors.grey[800],
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: const Icon(Icons.person, size: 80, color: Colors.white54),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      // Nome do cliente
+                      Text(
+                        nome,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          shadows: [Shadow(blurRadius: 8, color: Colors.black)],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      // Botão WhatsApp direto
+                      Builder(builder: (context) {
+                        final tel = widget.clientData['telefone'] ?? widget.clientData['phone'] ?? '';
+                        if (tel.isEmpty || tel == 'Não informado') return const SizedBox.shrink();
+                        return ElevatedButton.icon(
+                          onPressed: () {
+                            Navigator.pop(ctx);
+                            _launchWhatsApp();
+                          },
+                          icon: const Icon(Icons.chat_rounded, size: 18),
+                          label: const Text(
+                            'Chamar no WhatsApp',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF25D366),
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                          ),
+                        );
+                      }),
+                      const SizedBox(height: 8),
+                      // Dica de fechar
+                      const Text(
+                        'Toque em qualquer lugar para fechar',
+                        style: TextStyle(color: Colors.white60, fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+                // Botão X no canto
+                Positioned(
+                  top: MediaQuery.of(ctx).padding.top + 8,
+                  right: 16,
+                  child: GestureDetector(
+                    onTap: () => Navigator.pop(ctx),
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.close, color: Colors.white, size: 22),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -352,10 +479,14 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
       builder: (context, snapshot) {
         if (snapshot.hasData) _currentFeatures = snapshot.data!;
 
-        final nome = widget.clientData['nome'] ?? 'Cliente';
-        final telefone = widget.clientData['telefone'] ?? '';
+        final nome = widget.clientData['nome'] ?? widget.clientData['name'] ?? 'Cliente';
+        final telefone = widget.clientData['telefone'] ?? widget.clientData['phone'] ?? '';
         final foto =
-            widget.clientData['foto'] ?? widget.clientData['foto_perfil'] ?? '';
+            widget.clientData['photo_url']?.toString().isNotEmpty == true
+                ? widget.clientData['photo_url'].toString()
+                : widget.clientData['foto']?.toString().isNotEmpty == true
+                    ? widget.clientData['foto'].toString()
+                    : widget.clientData['foto_perfil']?.toString() ?? '';
         final bool isManual = widget.clientData['origem'] == 'manual';
         final Color themeColor = isManual ? Colors.orange : AppColors.primaryPurple;
         final initials = nome.isNotEmpty ? nome[0].toUpperCase() : '?';
@@ -372,33 +503,50 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
               // Linha 1: Avatar, nome e botão fechar
               Row(
                 children: [
-                  // Avatar pequeno
-                  Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: LinearGradient(
-                        colors: [
-                          themeColor.withValues(alpha: 0.8),
-                          themeColor,
-                        ],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      image: foto.isNotEmpty
-                          ? DecorationImage(
-                              image: NetworkImage(foto), fit: BoxFit.cover)
-                          : null,
-                    ),
-                    child: foto.isEmpty
-                        ? Center(
-                            child: Text(initials,
-                                style: const TextStyle(
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.white)))
+                  // Avatar clicável para ver foto em tamanho maior
+                  GestureDetector(
+                    onTap: foto.isNotEmpty
+                        ? () => _showPhotoDialog(context, foto, nome)
                         : null,
+                    child: Hero(
+                      tag: 'client_photo_${widget.clientId}',
+                      child: Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: LinearGradient(
+                            colors: [
+                              themeColor.withValues(alpha: 0.8),
+                              themeColor,
+                            ],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          image: foto.isNotEmpty
+                              ? DecorationImage(
+                                  image: NetworkImage(foto), fit: BoxFit.cover)
+                              : null,
+                          boxShadow: foto.isNotEmpty
+                              ? [
+                                  BoxShadow(
+                                    color: themeColor.withValues(alpha: 0.3),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 2),
+                                  )
+                                ]
+                              : null,
+                        ),
+                        child: foto.isEmpty
+                            ? Center(
+                                child: Text(initials,
+                                    style: const TextStyle(
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.white)))
+                            : null,
+                      ),
+                    ),
                   ),
                   const SizedBox(width: 12),
 

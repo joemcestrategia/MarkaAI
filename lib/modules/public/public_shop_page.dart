@@ -3,12 +3,12 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
-import '../../core/theme/app_colors.dart';
-import '../../widgets/google_reviews_widget.dart';
-import '../../core/utils/service_image_keywords.dart';
-import '../../core/widgets/pexels_image_widget.dart';
-import '../clients/client_service_detail_page.dart';
-import '../../core/constants/api_keys.dart';
+import 'package:markaai/core/theme/app_colors.dart';
+import 'package:markaai/widgets/google_reviews_widget.dart';
+import 'package:markaai/core/utils/service_image_keywords.dart';
+import 'package:markaai/core/widgets/pexels_image_widget.dart';
+import 'package:markaai/modules/clients/client_service_detail_page.dart';
+import 'package:markaai/core/constants/api_keys.dart';
 
 class PublicShopPage extends StatefulWidget {
   final String slug;
@@ -693,10 +693,7 @@ Widget _buildServicesShowcase(String shopId) {
       if (!snapshot.hasData || snapshot.data!.isEmpty) return const SizedBox.shrink();
 
       final activeServices = snapshot.data!.where((s) => s['is_active'] == null || s['is_active'] == true).toList();
-      final docsWithPhotos = activeServices.where((data) {
-        final fotos = data['photos_urls'] ?? data['fotos_urls'] ?? data['fotos'] ?? data['imageUrl'] ?? data['imagens'];
-        return (fotos is String && fotos.isNotEmpty) || (fotos is List && fotos.isNotEmpty);
-      }).toList();
+      final docsWithPhotos = activeServices.where((data) => (data['is_featured'] ?? false) == true).toList();
 
       if (docsWithPhotos.isEmpty) return const SizedBox.shrink();
 

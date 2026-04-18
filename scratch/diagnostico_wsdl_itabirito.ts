@@ -1,3 +1,4 @@
+export {};
 async function fetchWsdl() {
   const url = 'https://itabirito.atende.net/?pg=services&service=WNENotaFiscalEletronicaNfe&wsdl';
   console.log(`Buscando WSDL em: ${url}...`);
@@ -26,7 +27,7 @@ async function fetchWsdl() {
     console.log(wsdl);
     console.log('--- FIM DO WSDL ---');
     
-  } catch (err) {
+  } catch (err: any) {
     console.error('Falha na requisição:', err.message);
   }
 }

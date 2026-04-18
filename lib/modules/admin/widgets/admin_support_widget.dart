@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/foundation.dart';
-import 'dart:io' if (dart.library.html) 'package:flutter_application_1/core/utils/io_stub.dart' as io;
+import 'dart:io' if (dart.library.html) 'package:markaai/core/utils/io_stub.dart' as io;
 import 'package:path_provider/path_provider.dart';
 import '../../support/admin_tickets_page.dart';
 

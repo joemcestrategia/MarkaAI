@@ -1,4 +1,4 @@
-Ôªøimport 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 import '../onboarding/client_onboarding_page.dart';
 import '../login/login_page.dart';
@@ -21,7 +21,7 @@ class UserTypePage extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              "Para come√ßar,\nquem √© voc√™?",
+              "Para comeÁar,\nquem È vocÍ?",
               style: TextStyle(
                 fontSize: 32,
                 fontWeight: FontWeight.bold,
@@ -35,11 +35,11 @@ class UserTypePage extends StatelessWidget {
             ),
             const SizedBox(height: 48),
 
-            // BOT√ÉO CLIENTE
+            // BOT√O CLIENTE
             _buildButton(
               context,
               title: "SOU CLIENTE",
-              subtitle: "Quero agendar um servi√ßo agora",
+              subtitle: "Quero agendar um serviÁo agora",
               icon: Icons.person_search,
               color: Colors.blue,
               onTap: () {
@@ -53,10 +53,10 @@ class UserTypePage extends StatelessWidget {
 
             const SizedBox(height: 20),
 
-            // BOT√ÉO PROPRIET√ÅRIO
+            // BOT√O PROPRIET¡RIO
             _buildButton(
               context,
-              title: "SOU PROPRIET√ÅRIO",
+              title: "SOU PROPRIET¡RIO",
               subtitle: "Quero gerenciar meu studio e equipe",
               icon: Icons.business_center,
               color: AppColors.primaryPurple,
@@ -112,7 +112,7 @@ class UserTypePage extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(title,
-                      // CORRE√á√ÉO AQUI: Trocado .black por .bold ou .w900 para evitar o erro da imagem c9c15d.png
+                      // CORRE«√O AQUI: Trocado .black por .bold ou .w900 para evitar o erro da imagem c9c15d.png
                       style: TextStyle(
                           fontWeight: FontWeight.bold,
                           fontSize: 18,

@@ -399,6 +399,8 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
         _fetchAppointments(prevStart, prevEnd),
         _fetchTransactions(prevStart, prevEnd),
         _fetchServices(),
+        _fetchCommissionDetails(start, end),
+        _fetchCommissionDetails(prevStart, prevEnd),
       ]);
 
       final currentAppts = results[0];
@@ -407,6 +409,8 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
       final prevAppts = results[3];
       final prevTrans = results[4];
       final services = results[5];
+      final currentCommissions = results[6];
+      final prevCommissions = results[7];
 
       // Monta mapa nome_serviço → cost_percent
       final costMap = <String, double>{};
@@ -422,8 +426,8 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
           ' | appts=${currentAppts.length} | trans=${currentTrans.length}'
           ' | emps=${employees.length}');
 
-      _calculateMetrics(currentAppts, currentTrans, employees, costMap);
-      _calculatePreviousPeriod(prevAppts, prevTrans, costMap);
+      _calculateMetrics(currentAppts, currentTrans, employees, costMap, currentCommissions);
+      _calculatePreviousPeriod(prevAppts, prevTrans, costMap, prevCommissions);
     } catch (e, st) {
       debugPrint('❌ FINANCEIRO ERRO: $e\n$st');
       if (mounted) {
@@ -448,6 +452,23 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
         .gte('scheduled_at', start.toIso8601String())
         .lte('scheduled_at', end.toIso8601String());
     return List<Map<String, dynamic>>.from(res);
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchCommissionDetails(
+      DateTime start, DateTime end) async {
+    try {
+      final supabase = sb.Supabase.instance.client;
+      final res = await supabase
+          .from('vw_commission_summary')
+          .select()
+          .eq('shop_id', _shopId!)
+          .gte('scheduled_at', start.toIso8601String())
+          .lt('scheduled_at', end.toIso8601String());
+      return List<Map<String, dynamic>>.from(res);
+    } catch (e) {
+      debugPrint("Erro ao buscar detalhes de comissão: $e");
+      return [];
+    }
   }
 
   Future<List<Map<String, dynamic>>> _fetchTransactions(
@@ -491,6 +512,7 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
     List<Map<String, dynamic>> appts,
     List<Map<String, dynamic>> trans,
     Map<String, double> costMap,
+    List<Map<String, dynamic>> commissionDetails,
   ) {
     double rev = 0, exp = 0, com = 0, custoSvc = 0;
     int completed = 0, cancelled = 0, rescheduled = 0, checkoutAntic = 0;
@@ -501,8 +523,7 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
       if (_isCompleted(status)) {
         completed++;
         rev += value;
-        final comPct = _toDouble(d['commission_percent']);
-        if (comPct > 0) com += value * comPct / 100;
+        // comissão via view SQL
         final svcName = (d['service_name'] ?? '').toString();
         final costPct = costMap[svcName] ?? 0;
         if (costPct > 0) custoSvc += value * costPct / 100;
@@ -513,6 +534,12 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
       }
       if (d['is_rescheduled'] == true) rescheduled++;
     }
+
+    // Soma comissões do período anterior vindas da view
+    for (var c in commissionDetails) {
+      com += _toDouble(c['commission_amount']);
+    }
+
     for (var d in trans) {
       final val = (d['valor'] as num?)?.toDouble() ?? 0;
       if (val < 0 && (d['tipo'] ?? '') != 'comissao') exp += val.abs();
@@ -539,6 +566,7 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
     List<Map<String, dynamic>> trans,
     List<Map<String, dynamic>> emps,
     Map<String, double> costMap,
+    List<Map<String, dynamic>> commissionDetails,
   ) {
     double totalRevenue = 0;
     double totalExpense = 0;
@@ -561,6 +589,16 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
     Map<String, double> empCommissions = {};
     Map<String, String> empNames = {};
     Map<String, _ProfessionalEfficiency> profEffMap = {};
+    
+    // Mapeamento para comissões vindas da view SQL (id: valor)
+    Map<String, double> apptCommissionsFromView = {};
+    for (var c in commissionDetails) {
+      final apptId = c['appointment_id'].toString();
+      final amount = _toDouble(c['commission_amount']);
+      apptCommissionsFromView[apptId] = amount;
+      totalCommission += amount;
+    }
+
     for (var d in emps) {
       final id = d['id'].toString();
       final name = (d['name'] ?? d['nome'] ?? 'Profissional').toString();
@@ -607,12 +645,11 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
           profEffMap[empId]!..receita += value..minutosTrabalhados += duration;
         }
 
-        if (empId != null && empCommissions.containsKey(empId)) {
-          final com = value * empCommissions[empId]! / 100;
-          totalCommission += com;
-          final nome = empNames[empId] ?? 'Profissional';
-          profissionaisMap[nome] = (profissionaisMap[nome] ?? 0) + value;
-        } else if (empId != null) {
+        if (empId != null) {
+          final apptId = data['id'].toString();
+          final com = apptCommissionsFromView[apptId] ?? 0.0;
+          // Se tiver comissão na view, ela já foi somada no totalCommission acima
+          // Aqui garantimos que usamos a comissão correta para o profissional específico se necessário
           final nome = empNames[empId] ?? data['professional_name'] ?? 'Profissional';
           profissionaisMap[nome.toString()] = (profissionaisMap[nome.toString()] ?? 0) + value;
         }
@@ -792,9 +829,9 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
     // Priority order: total_payable (final bill) → total_price (checkout) →
     // total_value (owner-created) → fallbacks. Returns first non-zero value.
     for (final key in [
-      'total_payable',
       'total_price',
       'total_value',
+      'total_payable',
       'valor_com_desconto',
       'labor_value',
       'price',
@@ -807,14 +844,7 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
   }
 
   bool _isCompleted(String status) =>
-      status == 'concluido' ||
-      status == 'finalizado' ||
-      status == 'pago' ||
-      status == 'completed' ||
-      status == 'efetuado' ||
-      status == 'confirmado' || // pago online (PIX/cartão)
-      status == 'agendado'   || // agendamento criado, pagamento no local
-      status == 'pendente';     // agendamento criado pelo proprietário
+      status == 'concluido';
 
   /// Retorna delta percentual entre [current] e [prev].
   /// Positivo = crescimento, negativo = queda.

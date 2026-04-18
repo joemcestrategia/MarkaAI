@@ -798,147 +798,182 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
           );
   }
 
+  // --- NAVEGAÇÃO PARA O PERFIL DO CLIENTE ---
+  Future<void> _navigateToClientProfile() async {
+    if (_selectedClientId == null) return;
+    setState(() => _isLoading = true);
+    try {
+      // shop_id pode estar em snake_case ou camelCase
+      final shopId = widget.appointmentDoc['shop_id'] ??
+          widget.appointmentDoc['shopId'];
+
+      // Busca dados completos do cliente na tabela users
+      final userDoc = await Supabase.instance.client
+          .from('users')
+          .select()
+          .eq('id', _selectedClientId!)
+          .maybeSingle();
+
+      Map<String, dynamic> clientData;
+      if (userDoc != null) {
+        clientData = Map<String, dynamic>.from(userDoc);
+        // Garante chaves compatíveis com ClientDetailsPage
+        clientData['nome'] = clientData['name'] ?? clientData['nome'] ?? _selectedClientName ?? '';
+        clientData['telefone'] = clientData['phone'] ?? clientData['telefone'] ?? _selectedClientPhone ?? '';
+        // Foto do Google ou cadastro (photo_url → foto → foto_perfil)
+        final photoFromDb = clientData['photo_url']?.toString() ?? '';
+        if (photoFromDb.isNotEmpty) {
+          clientData['foto'] = photoFromDb;
+          clientData['foto_perfil'] = photoFromDb;
+        } else if (_selectedClientPhoto != null && _selectedClientPhoto!.isNotEmpty) {
+          clientData['foto'] = _selectedClientPhoto;
+          clientData['photo_url'] = _selectedClientPhoto;
+        }
+      } else {
+        // Fallback: usa os dados que já temos no agendamento
+        clientData = {
+          'nome': _selectedClientName ?? '',
+          'name': _selectedClientName ?? '',
+          'telefone': _selectedClientPhone ?? '',
+          'origem': 'manual',
+        };
+        if (_selectedClientPhoto != null && _selectedClientPhoto!.isNotEmpty) {
+          clientData['foto'] = _selectedClientPhoto;
+          clientData['photo_url'] = _selectedClientPhoto;
+        }
+      }
+
+      if (mounted) {
+        setState(() => _isLoading = false);
+        if (widget.isEmbedded) {
+          showDialog(
+            context: context,
+            builder: (context) => Dialog(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 500),
+                child: ClientDetailsPage(
+                  clientData: clientData,
+                  clientId: _selectedClientId!,
+                  onClose: () => Navigator.pop(context),
+                  shopIdOverride: shopId,
+                ),
+              ),
+            ),
+          );
+        } else {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => Scaffold(
+                appBar: AppBar(
+                  title: const Text("Perfil do Cliente"),
+                  backgroundColor: AppColors.primaryPurple,
+                  foregroundColor: Colors.white,
+                ),
+                body: ClientDetailsPage(
+                  clientData: clientData,
+                  clientId: _selectedClientId!,
+                  onClose: () => Navigator.pop(context),
+                  shopIdOverride: shopId,
+                ),
+              ),
+            ),
+          ).then((_) {
+            _loadData();
+            setState(() {});
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Erro ao carregar cliente: $e")),
+        );
+      }
+    }
+  }
+
   // --- HEADER COMPACTO (Focado no Cliente) ---
   Widget _buildCompactHeader(String status) {
     Color statusColor = status == 'confirmado'
         ? Colors.green
         : (status == 'cancelado' ? Colors.red : Colors.orange);
 
-    return InkWell(
-      onTap: _selectedClientId != null
-          ? () async {
-              // Buscar dados completos do cliente no Firestore antes de navegar
-              setState(() => _isLoading = true);
-              try {
-                final shopId = widget.appointmentDoc['shopId'];
-
-                // Tenta buscar na coleção users
-                final userDoc = await Supabase.instance.client
-                    .from('users')
-                    .select()
-                    .eq('id', _selectedClientId!)
-                    .maybeSingle();
-
-                Map<String, dynamic> clientData;
-                if (userDoc != null) {
-                  clientData = userDoc;
-                  // Ensure name and phone use correct keys
-                  clientData['nome'] = clientData['name'] ?? clientData['nome'];
-                  clientData['telefone'] = clientData['phone'] ?? clientData['telefone'];
-                } else {
-                  // Fallback final: Usa os dados que já temos no agendamento
-                  clientData = {
-                    'nome': _selectedClientName,
-                    'telefone': _selectedClientPhone,
-                    'origem': 'manual',
-                  };
-                }
-
-                if (mounted) {
-                  setState(() => _isLoading = false);
-                  // Navega para o perfil do cliente
-                  if (widget.isEmbedded) {
-                    // No Desktop, idealmente abriria na mesma coluna ou substituiria
-                    // Por enquanto, seguimos o padrão de diálogo ou push
-                    showDialog(
-                      context: context,
-                      builder: (context) => Dialog(
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 500),
-                          child: ClientDetailsPage(
-                            clientData: clientData,
-                            clientId: _selectedClientId!,
-                            onClose: () => Navigator.pop(context),
-                            shopIdOverride: shopId,
-                          ),
-                        ),
-                      ),
-                    );
-                  } else {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => Scaffold(
-                          appBar: AppBar(
-                            title: const Text("Perfil do Cliente"),
-                            backgroundColor: AppColors.primaryPurple,
-                            foregroundColor: Colors.white,
-                          ),
-                          body: ClientDetailsPage(
-                            clientData: clientData,
-                            clientId: _selectedClientId!,
-                            onClose: () => Navigator.pop(context),
-                            shopIdOverride: shopId,
-                          ),
-                        ),
-                      ),
-                    ).then((_) {
-                      // Recarrega os dados caso o nome tenha sido editado
-                      _loadData();
-                      setState(() {});
-                    });
-                  }
-                }
-              } catch (e) {
-                if (mounted) {
-                  setState(() => _isLoading = false);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text("Erro ao carregar cliente: $e")),
-                  );
-                }
-              }
-            }
-          : null,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.grey[200]!),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.02),
-                blurRadius: 4,
-                offset: const Offset(0, 2),
-              )
-            ]),
-        child: Row(
-          children: [
-            CircleAvatar(
-              radius: 20,
-              backgroundColor: AppColors.primaryPurple.withValues(alpha: 0.1),
-              backgroundImage: _selectedClientPhoto != null && _selectedClientPhoto!.isNotEmpty
-                  ? NetworkImage(_selectedClientPhoto!)
-                  : null,
-              onBackgroundImageError: _selectedClientPhoto != null ? (_, __) {} : null,
-              child: (_selectedClientPhoto == null || _selectedClientPhoto!.isEmpty)
-                  ? const Icon(Icons.person, color: AppColors.primaryPurple, size: 20)
-                  : null,
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[200]!),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.02),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          )
+        ],
+      ),
+      child: Row(
+        children: [
+            // Avatar clicável → leva ao perfil
+            GestureDetector(
+              onTap: _selectedClientId != null ? _navigateToClientProfile : null,
+              child: CircleAvatar(
+                radius: 22,
+                backgroundColor: AppColors.primaryPurple.withValues(alpha: 0.1),
+                backgroundImage: _selectedClientPhoto != null && _selectedClientPhoto!.isNotEmpty
+                    ? NetworkImage(_selectedClientPhoto!)
+                    : null,
+                onBackgroundImageError: _selectedClientPhoto != null ? (_, __) {} : null,
+                child: (_selectedClientPhoto == null || _selectedClientPhoto!.isEmpty)
+                    ? const Icon(Icons.person, color: AppColors.primaryPurple, size: 22)
+                    : null,
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          _selectedClientName ?? "Cliente",
-                          style: const TextStyle(
+                  // Nome clicável com indicação visual
+                  GestureDetector(
+                    onTap: _selectedClientId != null ? _navigateToClientProfile : null,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            _selectedClientName ?? "Cliente",
+                            style: TextStyle(
                               fontSize: 15,
                               fontWeight: FontWeight.bold,
-                              color: Colors.black87),
-                          overflow: TextOverflow.ellipsis,
+                              color: _selectedClientId != null
+                                  ? AppColors.primaryPurple
+                                  : Colors.black87,
+                              decoration: _selectedClientId != null
+                                  ? TextDecoration.underline
+                                  : TextDecoration.none,
+                              decorationColor: AppColors.primaryPurple.withValues(alpha: 0.5),
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                      ),
-                    ],
+                        if (_selectedClientId != null) ...[
+                          const SizedBox(width: 4),
+                          const Icon(
+                            Icons.arrow_forward_ios_rounded,
+                            size: 11,
+                            color: AppColors.primaryPurple,
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 6),
                   if (_selectedClientPhone != null &&
                       _selectedClientPhone!.isNotEmpty &&
-                      _selectedClientPhone != 'Não informado') 
+                      _selectedClientPhone != 'Não informado')
                     Row(
                       children: [
                         ElevatedButton.icon(
@@ -1007,7 +1042,6 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
             ),
           ],
         ),
-      ),
     );
   }
 

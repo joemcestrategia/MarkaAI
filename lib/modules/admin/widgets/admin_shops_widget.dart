@@ -452,7 +452,9 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
                     'is_boosted': true,
                   }).eq('id', id);
 
-                  if (context.mounted) Navigator.pop(context);
+                  if (context.mounted) {
+                    Navigator.pop(context);
+                  }
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(content: Text('Boost de $days dias adicionado!')),
@@ -534,7 +536,9 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
                     'subscription': null,
                   }).eq('id', id);
 
-                  if (context.mounted) Navigator.pop(context);
+                  if (context.mounted) {
+                    Navigator.pop(context);
+                  }
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
@@ -686,7 +690,9 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
                     'subscription': null,
                   }).eq('id', id);
 
-                  if (context.mounted) Navigator.pop(context);
+                  if (context.mounted) {
+                    Navigator.pop(context);
+                  }
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(

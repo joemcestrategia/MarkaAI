@@ -1,17 +1,17 @@
-Ôªøclass AuthMessages {
+class AuthMessages {
   static const String telefoneJaCadastrado =
-      "Este telefone j√° est√° vinculado a uma conta. Fa√ßa login para continuar.";
+      "Este telefone j· est· vinculado a uma conta. FaÁa login para continuar.";
 
   static const String emailJaCadastrado =
-      "Este e-mail j√° est√° cadastrado. Fa√ßa login ou recupere sua senha.";
+      "Este e-mail j· est· cadastrado. FaÁa login ou recupere sua senha.";
 
   static const String contaSimilarEncontrada =
-      "Encontramos uma conta com dados semelhantes. √â voc√™? Fa√ßa login para continuar.";
+      "Encontramos uma conta com dados semelhantes. … vocÍ? FaÁa login para continuar.";
 
   static String vincularSocial(String provedor) {
-    return "J√° existe uma conta com este e-mail. Deseja vincular seu $provedor a esta conta?";
+    return "J· existe uma conta com este e-mail. Deseja vincular seu $provedor a esta conta?";
   }
 
   static const String telefoneInvalido =
-      "Informe um telefone v√°lido com DDD. Ex: (11) 99999-9999";
+      "Informe um telefone v·lido com DDD. Ex: (11) 99999-9999";
 }

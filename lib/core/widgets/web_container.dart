@@ -1,5 +1,5 @@
-Ôªøimport 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart'; // Para saber se √© Web
+import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart'; // Para saber se È Web
 
 class WebContainer extends StatelessWidget {
   final Widget child;
@@ -10,18 +10,18 @@ class WebContainer extends StatelessWidget {
     super.key,
     required this.child,
     this.backgroundColor =
-        const Color(0xFFF0F2F5), // Cinza clarinho padr√£o web
+        const Color(0xFFF0F2F5), // Cinza clarinho padr„o web
   });
 
   @override
   Widget build(BuildContext context) {
-    // Se for Web, aplica a conten√ß√£o
+    // Se for Web, aplica a contenÁ„o
     if (kIsWeb) {
       return Container(
-        color: backgroundColor, // Fundo da p√°gina inteira
+        color: backgroundColor, // Fundo da p·gina inteira
         child: Center(
           child: ConstrainedBox(
-            // T√ÅTICA: Limita a largura a 500px (tamanho de um tablet/celular grande)
+            // T¡TICA: Limita a largura a 500px (tamanho de um tablet/celular grande)
             constraints: const BoxConstraints(maxWidth: 500),
             child: Container(
               decoration: BoxDecoration(
@@ -41,7 +41,7 @@ class WebContainer extends StatelessWidget {
       );
     }
 
-    // Se for Android/iOS, n√£o faz nada (deixa ocupar tudo)
+    // Se for Android/iOS, n„o faz nada (deixa ocupar tudo)
     return child;
   }
 }

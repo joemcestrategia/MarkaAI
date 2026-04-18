@@ -1,4 +1,4 @@
-name: flutter_application_1
+name: markaai
 description: "A new Flutter project."
 publish_to: 'none'
 
@@ -89,3 +89,13 @@ flutter_icons:
     generate: true
     image_path: "assets/images/icon.png"
   image_path: "assets/images/icon.png"
+
+flutter_native_splash:
+  color: "#ffffff"
+  image: "assets/images/icon.png"
+  android_12:
+    image: "assets/images/icon.png"
+    color: "#ffffff"
+  android: true
+  ios: true
+  web: false

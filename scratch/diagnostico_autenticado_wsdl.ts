@@ -1,3 +1,4 @@
+export {};
 async function diagnosticoWsdl() {
   const url = 'https://itabirito.atende.net/?pg=services&service=WNENotaFiscalEletronicaNfe&wsdl';
   const user = '41027409000189';
@@ -23,7 +24,7 @@ async function diagnosticoWsdl() {
       console.log(content);
       return;
     }
-  } catch (e) {
+  } catch (e: any) {
     console.log(`Erro na Forma 1: ${e.message}`);
   }
 
@@ -45,7 +46,7 @@ async function diagnosticoWsdl() {
       console.log(content);
       return;
     }
-  } catch (e) {
+  } catch (e: any) {
     console.log(`Erro na Forma 2: ${e.message}`);
   }
 }

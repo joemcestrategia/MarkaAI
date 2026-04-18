@@ -13,6 +13,7 @@ class AppointmentModel {
   final String status;
   final String paymentMethod;
   final double totalValue;
+  final double totalPrice;
   final int durationMin;
   final DateTime? createdAt;
   final String createdBy; // 'dono' ou 'cliente'
@@ -32,6 +33,7 @@ class AppointmentModel {
     this.status = 'agendado',
     this.paymentMethod = 'No Local',
     required this.totalValue,
+    required this.totalPrice,
     required this.durationMin,
     this.createdAt,
     required this.createdBy,
@@ -52,7 +54,8 @@ class AppointmentModel {
       scheduledAt: DateTime.parse(map['scheduled_at']),
       status: map['status'] ?? 'agendado',
       paymentMethod: map['payment_method'] ?? 'No Local',
-      totalValue: (map['total_value'] ?? 0).toDouble(),
+      totalValue: (map['total_value'] ?? map['total_price'] ?? 0).toDouble(),
+      totalPrice: (map['total_price'] ?? map['total_value'] ?? 0).toDouble(),
       durationMin: map['duration_min'] ?? 30,
       createdAt: map['created_at'] != null ? DateTime.parse(map['created_at']) : null,
       createdBy: map['created_by'] ?? 'cliente',
@@ -75,6 +78,7 @@ class AppointmentModel {
       'status': status,
       'payment_method': paymentMethod,
       'total_value': totalValue,
+      'total_price': totalPrice,
       'duration_min': durationMin,
       'created_at': (createdAt ?? DateTime.now()).toIso8601String(),
       'created_by': createdBy,

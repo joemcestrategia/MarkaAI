@@ -202,7 +202,48 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
       return;
     }
 
-    // 3. Verificar se o serviço requer aviso prévio
+    // 3. Verificar se a loja permite múltiplos agendamentos
+    final shopConfig = shopDoc['config'] as Map<String, dynamic>? ?? {};
+    final permitirMultiplos = shopConfig['permitir_multiplos'] ?? true;
+    if (!permitirMultiplos && user != null) {
+      final now = DateTime.now();
+      final clientAppts = await Supabase.instance.client
+          .from('appointments')
+          .select('id, scheduled_at, status')
+          .eq('client_id', user.id)
+          .eq('shop_id', shopDoc['id'])
+          .not('status', 'in', '("cancelado","rejeitado","excluido","pendente_pix")')
+          .gte('scheduled_at', now.toIso8601String())
+          .limit(1);
+
+      if (clientAppts != null && clientAppts.isNotEmpty) {
+        if (mounted) {
+          setState(() => _isNavigating = false);
+          final appt = clientAppts[0];
+          final data = DateTime.parse(appt['scheduled_at']);
+          final dataFmt = '${data.day.toString().padLeft(2, '0')}/${data.month.toString().padLeft(2, '0')}';
+          await showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Agendamento não permitido'),
+              content: Text(
+                'Esta loja não permite múltiplos agendamentos. Você já possui um agendamento ativo para ${dataFmt}.\n\n'
+                'Cancele o agendamento existente ou aguarde até a data para criar um novo.'
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+          );
+        }
+        return;
+      }
+    }
+
+    // 4. Verificar se o serviço requer aviso prévio
     final bool requiresWarning = widget.serviceData['requires_warning'] ?? 
                                  widget.serviceData['requiresWarning'] ?? false;
     final String warningMessage = widget.serviceData['warning_message'] ?? 

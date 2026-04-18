@@ -1,6 +1,6 @@
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
 import { corsHeaders } from '../_shared/cors.ts'
-import { createSupabaseClient } from '../_shared/supabase.ts'
+import { createSupabaseAdminClient } from '../_shared/supabase.ts'
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -8,7 +8,8 @@ serve(async (req) => {
   }
 
   try {
-    const supabase = createSupabaseClient(req)
+    // Usa admin client para não depender de autenticação do usuário
+    const supabase = createSupabaseAdminClient()
     const { access_token, shop_id, payment_id } = await req.json()
 
     let tokenToUse = access_token

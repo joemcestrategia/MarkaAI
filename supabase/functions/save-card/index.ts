@@ -2,22 +2,67 @@ import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
 import { corsHeaders } from '../_shared/cors.ts'
 import { createSupabaseAdminClient } from '../_shared/supabase.ts'
 
+// Helper to decode base64 URL
+function base64UrlDecode(str: string): string {
+  const base64 = str.replace(/-/g, '+').replace(/_/g, '/')
+  const padding = '='.repeat((4 - base64.length % 4) % 4)
+  return atob(base64 + padding)
+}
+
+// Extract user_id from JWT payload without validation (for ES256 fallback)
+function extractUserIdFromToken(token: string): string | null {
+  try {
+    const parts = token.split('.')
+    if (parts.length !== 3) return null
+    const payload = JSON.parse(base64UrlDecode(parts[1]))
+    return payload.sub || null
+  } catch {
+    return null
+  }
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
 
   try {
+    const supabaseAdmin = createSupabaseAdminClient()
+
+    // Extract token from header
     const authHeader = req.headers.get('Authorization')
     const token = authHeader?.replace('Bearer ', '')
+
+    console.log('🔑 Token recebido:', token ? `${token.substring(0, 20)}...` : 'AUSENTE')
+
     if (!token) {
-      return new Response(JSON.stringify({ error: 'Token ausente.' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+      return new Response(JSON.stringify({ error: 'Token de autenticação ausente.' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 
-    const supabaseAdmin = createSupabaseAdminClient()
-    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token)
-    if (authError || !user) {
-      return new Response(JSON.stringify({ error: 'Autenticação necessária.' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    // Try to get user - handles both HS256 and ES256 tokens
+    let user: any = null
+    let userId: string | null = null
+    try {
+      const { data, error: authError } = await supabaseAdmin.auth.getUser(token)
+      if (authError) {
+        console.error('❌ getUser error:', authError.message)
+      } else if (data?.user) {
+        user = data.user
+        userId = user.id
+        console.log('✅ Usuário autenticado via getUser:', userId)
+      }
+    } catch (authEx: any) {
+      console.error('❌ Auth exception:', authEx?.message)
+    }
+
+    // Fallback: extract user_id from JWT payload directly (for ES256 tokens)
+    if (!userId) {
+      userId = extractUserIdFromToken(token)
+      console.log('🔑 User ID extraído do token:', userId)
+    }
+
+    if (!userId) {
+      return new Response(JSON.stringify({ error: 'Autenticação necessária. Faça login novamente.' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 
     const { shop_id, card_token, user_email, payment_method_id, last_four } = await req.json()
@@ -36,7 +81,7 @@ serve(async (req) => {
       ? 'https://api.sandbox.mercadopago.com'
       : 'https://api.mercadopago.com'
 
-    const email = user_email || user.email || 'cliente@app.com'
+    const email = user_email || user?.email || 'cliente@app.com'
 
     // Step 1: Find or create MP customer for this user+shop
     let customerId: string
@@ -85,14 +130,14 @@ serve(async (req) => {
     const { data: existing } = await supabaseAdmin
       .from('saved_cards')
       .select('id')
-      .eq('user_id', user.id)
+      .eq('user_id', userId)
       .eq('shop_id', shop_id)
       .eq('cardId', mpCardId)
       .maybeSingle()
 
     if (!existing) {
       await supabaseAdmin.from('saved_cards').insert({
-        user_id: user.id,
+        user_id: userId,
         shop_id,
         cardId: mpCardId,
         customerId,

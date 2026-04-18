@@ -1,27 +1,27 @@
-Ôªøimport 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 
 /// Helper para gerenciar responsividade e adaptar layouts
 class ResponsiveHelper {
-  /// Verifica se est√° em mobile
+  /// Verifica se est· em mobile
   static bool isMobile(BuildContext context) {
     return MediaQuery.of(context).size.width < 600;
   }
 
-  /// Verifica se est√° em tablet
+  /// Verifica se est· em tablet
   static bool isTablet(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
     return width >= 600 && width < 1024;
   }
 
-  /// Verifica se est√° em desktop
+  /// Verifica se est· em desktop
   static bool isDesktop(BuildContext context) {
     return MediaQuery.of(context).size.width >= 1024;
   }
 
-  /// Retorna largura m√°xima para conte√∫do no desktop
+  /// Retorna largura m·xima para conte˙do no desktop
   static double getMaxContentWidth(BuildContext context) {
     if (isDesktop(context)) {
-      return 1200; // Largura m√°xima no desktop
+      return 1200; // Largura m·xima no desktop
     }
     return MediaQuery.of(context).size.width;
   }
@@ -37,8 +37,8 @@ class ResponsiveHelper {
     }
   }
 
-  /// Abre modal ou p√°gina dependendo do dispositivo
-  /// No mobile: abre como p√°gina full-screen
+  /// Abre modal ou p·gina dependendo do dispositivo
+  /// No mobile: abre como p·gina full-screen
   /// No desktop/tablet: abre como modal
   static Future<T?> showResponsiveDialog<T>({
     required BuildContext context,
@@ -46,7 +46,7 @@ class ResponsiveHelper {
     bool barrierDismissible = true,
   }) {
     if (isMobile(context)) {
-      // Mobile: navega√ß√£o full-screen
+      // Mobile: navegaÁ„o full-screen
       return Navigator.push<T>(
         context,
         MaterialPageRoute(
@@ -75,14 +75,14 @@ class ResponsiveHelper {
     }
   }
 
-  /// Abre bottom sheet ou p√°gina dependendo do dispositivo
+  /// Abre bottom sheet ou p·gina dependendo do dispositivo
   static Future<T?> showResponsiveBottomSheet<T>({
     required BuildContext context,
     required Widget Function(BuildContext) builder,
     bool isDismissible = true,
   }) {
     if (isMobile(context)) {
-      // Mobile: navega√ß√£o full-screen
+      // Mobile: navegaÁ„o full-screen
       return Navigator.push<T>(
         context,
         MaterialPageRoute(
@@ -111,7 +111,7 @@ class ResponsiveHelper {
     }
   }
 
-  /// Widget que centraliza conte√∫do no desktop
+  /// Widget que centraliza conte˙do no desktop
   static Widget centerContentOnDesktop({
     required BuildContext context,
     required Widget child,
@@ -129,7 +129,7 @@ class ResponsiveHelper {
     return child;
   }
 
-  /// Scaffold com largura m√°xima no desktop
+  /// Scaffold com largura m·xima no desktop
   static Widget responsiveScaffold({
     required BuildContext context,
     PreferredSizeWidget? appBar,
@@ -184,7 +184,7 @@ class ResponsiveHelper {
     }
   }
 
-  /// Grid responsivo (n√∫mero de colunas)
+  /// Grid responsivo (n˙mero de colunas)
   static int getGridColumns(BuildContext context) {
     if (isMobile(context)) {
       return 1;
@@ -195,7 +195,7 @@ class ResponsiveHelper {
     }
   }
 
-  /// Espa√ßamento responsivo
+  /// EspaÁamento responsivo
   static double getResponsiveSpacing(BuildContext context, double baseSpacing) {
     if (isMobile(context)) {
       return baseSpacing;

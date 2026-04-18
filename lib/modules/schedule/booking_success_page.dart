@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../core/theme/app_colors.dart';
 
@@ -97,7 +97,7 @@ class BookingSuccessPage extends StatelessWidget {
 
               const Spacer(),
 
-              // ── Salvar na Agenda ─────────────────────────────────────────
+              // -- Salvar na Agenda -----------------------------------------
               SizedBox(
                 width: double.infinity,
                 height: 52,
@@ -143,7 +143,7 @@ class BookingSuccessPage extends StatelessWidget {
     );
   }
 
-  // ── Calendar helpers ────────────────────────────────────────────────────
+  // -- Calendar helpers ----------------------------------------------------
 
   /// Parses "DD/MM/YYYY" + "HH:MM" into a DateTime (UTC for Google Calendar).
   DateTime? _parseDateTime() {

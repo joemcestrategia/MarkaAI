@@ -1,17 +1,17 @@
 import 'package:flutter/foundation.dart';
-import 'dart:io' if (dart.library.html) 'package:flutter_application_1/core/utils/io_stub.dart' as io;
+import 'dart:io' if (dart.library.html) 'package:markaai/core/utils/io_stub.dart' as io;
 // ignore_for_file: use_build_context_synchronously
 import 'package:flutter/material.dart';
 import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
 import 'package:pinput/pinput.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:image_picker/image_picker.dart';
-import '../../core/theme/app_colors.dart';
-import '../../core/services/viacep_service.dart';
-import '../../core/services/session_service.dart';
-import '../../core/models/user_model.dart';
-import '../clients/client_home_page.dart';
-import '../../core/services/image_service.dart';
+import 'package:markaai/core/theme/app_colors.dart';
+import 'package:markaai/core/services/viacep_service.dart';
+import 'package:markaai/core/services/session_service.dart';
+import 'package:markaai/core/models/user_model.dart';
+import 'package:markaai/modules/clients/client_home_page.dart';
+import 'package:markaai/core/services/image_service.dart';
 
 class ClientOnboardingPage extends StatefulWidget {
   const ClientOnboardingPage({super.key});

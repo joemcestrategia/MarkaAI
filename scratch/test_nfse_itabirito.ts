@@ -3,6 +3,7 @@
  * FORMATO CUSTOMIZADO (NAMESPACE net.atende) - Baseado no WSDL
  */
 
+export {};
 const CNPJ = "41027409000189";
 const IM = "1505602";
 const USUARIO = "41027409000189";

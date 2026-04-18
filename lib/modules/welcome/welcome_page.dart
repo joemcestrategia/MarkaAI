@@ -1,4 +1,4 @@
-Ôªøimport 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 import '../login/login_choice_page.dart';
 
@@ -14,30 +14,30 @@ class WelcomePage extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // 1. A Nova Logo (Substituindo o √≠cone antigo)
+            // 1. A Nova Logo (Substituindo o Ìcone antigo)
             Image.asset(
               'assets/images/logo_full.png',
               width: 280, // Tamanho generoso para destacar a marca
             ),
 
             const SizedBox(
-                height: 10), // Espa√ßo menor pois o logo j√° tem margem interna
+                height: 10), // EspaÁo menor pois o logo j· tem margem interna
 
             // 2. Slogan / Frase de Impacto
-            // Como o logo j√° diz "MarkaAI", aqui colocamos o valor do app
+            // Como o logo j· diz "MarkaAI", aqui colocamos o valor do app
             const Text(
-              "Seu neg√≥cio em outro n√≠vel",
+              "Seu negÛcio em outro nÌvel",
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 20,
-                fontWeight: FontWeight.w500, // Peso m√©dio para eleg√¢ncia
-                color: Colors.grey, // Cinza para n√£o brigar com o logo
+                fontWeight: FontWeight.w500, // Peso mÈdio para eleg‚ncia
+                color: Colors.grey, // Cinza para n„o brigar com o logo
               ),
             ),
 
             const SizedBox(height: 60),
 
-            // 3. Bot√£o de A√ß√£o
+            // 3. Bot„o de AÁ„o
             SizedBox(
               width: double.infinity,
               height: 55,
@@ -57,11 +57,11 @@ class WelcomePage extends StatelessWidget {
                       borderRadius: BorderRadius.circular(15)),
                 ),
                 child: const Text(
-                  "VAMOS COME√áAR",
+                  "VAMOS COME«AR",
                   style: TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
-                    letterSpacing: 1.0, // Espa√ßamento para facilitar leitura
+                    letterSpacing: 1.0, // EspaÁamento para facilitar leitura
                   ),
                 ),
               ),

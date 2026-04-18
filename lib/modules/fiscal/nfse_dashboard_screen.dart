@@ -201,24 +201,26 @@ class _NfseDashboardScreenState extends State<NfseDashboardScreen>
     ];
 
     String? currentError;
-    bool finalizadoComSucesso = false;
-
     StateSetter? setModalState;
+    BuildContext? capturedModalCtx;
 
-    // Mostra o modal de progresso
+    if (!mounted) return;
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (modalCtx) => StatefulBuilder(
-        builder: (ctx, ss) {
-          setModalState = ss;
-          return NfseProgressModal(
-            title: 'Emitindo Nota Fiscal',
-            steps: steps,
-            errorMessage: currentError,
-          );
-        },
-      ),
+      builder: (modalCtx) {
+        capturedModalCtx = modalCtx;
+        return StatefulBuilder(
+          builder: (ctx, ss) {
+            setModalState = ss;
+            return NfseProgressModal(
+              title: 'Emitindo Nota Fiscal',
+              steps: steps,
+              errorMessage: currentError,
+            );
+          },
+        );
+      },
     );
 
     void refreshModal() {
@@ -249,13 +251,12 @@ class _NfseDashboardScreenState extends State<NfseDashboardScreen>
       if (result.sucesso) {
         steps[2].isDone = true;
         steps[3].isDone = true;
-        finalizadoComSucesso = true;
         refreshModal();
         
         // Fecha o modal após 1 segundo de sucesso e recarrega
         await Future.delayed(const Duration(seconds: 1));
-        if (mounted) {
-          Navigator.of(context, rootNavigator: true).pop();
+        if (mounted && capturedModalCtx != null && capturedModalCtx!.mounted) {
+          Navigator.of(capturedModalCtx!, rootNavigator: true).pop();
           _showResultSnackbar(true, null);
           await _load();
         }
@@ -356,6 +357,7 @@ class _NfseDashboardScreenState extends State<NfseDashboardScreen>
       NfseProgressStep(label: 'Finalizando processo...'),
     ];
 
+    if (!mounted) return;
     showDialog(
       context: context,
       barrierDismissible: false,

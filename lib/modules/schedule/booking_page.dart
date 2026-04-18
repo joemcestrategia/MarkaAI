@@ -1322,6 +1322,7 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                         'service_id': widget.serviceDoc['id'],
                                         'service_name': finalName,
                                         'total_price': finalPrice,
+                                        'total_value': finalPrice,
                                         'professional_id': widget.professionalDoc['id'],
                                         'professional_name': profData['name'] ?? profData['nome'] ?? 'Profissional',
                                         'duration_min': duration,

@@ -4,7 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 import 'nfse_service.dart';
-import 'package:flutter_application_1/modules/fiscal/widgets/nfse_progress_modal.dart';
+import 'package:markaai/modules/fiscal/widgets/nfse_progress_modal.dart';
 
 class NfseHistoricoScreen extends StatefulWidget {
   const NfseHistoricoScreen({super.key});

@@ -29,8 +29,29 @@ class PixPaymentPage extends StatefulWidget {
   State<PixPaymentPage> createState() => _PixPaymentPageState();
 }
 
-class _PixPaymentPageState extends State<PixPaymentPage> {
+class _PixPaymentPageState extends State<PixPaymentPage>
+    with WidgetsBindingObserver {
   bool _isVerifying = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Quando o app volta ao foreground, verifica status automaticamente
+    if (state == AppLifecycleState.resumed && !_isVerifying && mounted) {
+      _handleManualVerification();
+    }
+  }
 
   Future<void> _handleManualVerification() async {
     setState(() => _isVerifying = true);

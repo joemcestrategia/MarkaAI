@@ -1,4 +1,4 @@
-import 'dart:io' if (dart.library.html) 'package:flutter_application_1/core/utils/io_stub.dart' as io;
+import 'dart:io' if (dart.library.html) 'package:markaai/core/utils/io_stub.dart' as io;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -535,11 +535,15 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                 return const Center(child: CircularProgressIndicator());
               }
 
-              // Filter client-side if multiple filters are not supported on stream
+              // Filter client-side: exibe apenas serviços com is_featured == true
               final allServices = snapshot.data!;
-              final activeServices = allServices.where((s) => s['ativo'] == true).toList();
+              final featuredServices = allServices
+                  .where((s) =>
+                      (s['is_active'] ?? s['ativo'] ?? true) == true &&
+                      (s['is_featured'] ?? false) == true)
+                  .toList();
 
-              if (activeServices.isEmpty) {
+              if (featuredServices.isEmpty) {
                 return Center(
                   child: Container(
                     padding: const EdgeInsets.all(20),
@@ -550,40 +554,15 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.storefront,
+                        Icon(Icons.star_outline,
                             color: Colors.grey[400], size: 40),
                         const SizedBox(height: 8),
                         Text(
-                          "Nenhum serviço ativo.",
-                          style: TextStyle(color: Colors.grey[600]),
+                          "Nenhum serviço destacado. Ative \"Destacar na Vitrine\" em um serviço.",
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.grey[600], fontSize: 12),
                         ),
                       ],
-                    ),
-                  ),
-                );
-              }
-
-              final docsWithPhotos = activeServices.where((data) {
-                final fotos = data['photos_urls'] ??
-                    data['fotos'] ??
-                    data['image_url'] ??
-                    data['imagens'] ??
-                    [];
-
-                if (fotos is String && fotos.isNotEmpty) return true;
-                if (fotos is List && fotos.isNotEmpty) return true;
-
-                return false;
-              }).toList();
-
-              if (docsWithPhotos.isEmpty) {
-                return Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Text(
-                      "Adicione fotos aos seus serviços para exibi-los aqui.",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.grey[600]),
                     ),
                   ),
                 );
@@ -592,9 +571,9 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
               return ListView.builder(
                 padding: const EdgeInsets.symmetric(horizontal: 15),
                 scrollDirection: Axis.horizontal,
-                itemCount: docsWithPhotos.length,
+                itemCount: featuredServices.length,
                 itemBuilder: (context, index) {
-                  final data = docsWithPhotos[index];
+                  final data = featuredServices[index];
 
                   dynamic fotosData = data['photos_urls'] ??
                       data['fotos'] ??

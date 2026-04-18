@@ -30,8 +30,18 @@ class _EmailConfirmationPageState extends State<EmailConfirmationPage> {
     try {
       final supabase = sb.Supabase.instance.client;
 
-      // Aguarda um pouco para o Supabase processar o token da URL
-      await Future.delayed(const Duration(seconds: 1));
+      // Para implicit flow: tenta processar o fragment da URL explicitamente
+      if (kIsWeb) {
+        try {
+          final fragment = Uri.base.fragment;
+          if (fragment.contains('access_token')) {
+            await supabase.auth.getSessionFromUrl(Uri.base);
+          }
+        } catch (_) {}
+      }
+
+      // Aguarda o SDK processar o token (aumentado para maior resiliência)
+      await Future.delayed(const Duration(seconds: 2));
 
       // Verifica se há uma sessão ativa (email confirmado)
       final session = supabase.auth.currentSession;
@@ -69,52 +79,85 @@ class _EmailConfirmationPageState extends State<EmailConfirmationPage> {
     }
   }
 
-  /// Garante que os dados pós-cadastro estejam migrados após confirmação de e-mail.
-  /// Para donos de negócio, cria o registro da loja a partir dos metadados do usuário
-  /// caso ainda não exista (o que ocorre quando email confirmation está ativo no Supabase).
+  /// Garante que os dados pós-cadastro estejam no banco após confirmação de e-mail.
+  /// Faz upsert de TODOS os campos do perfil a partir dos metadados do signUp(),
+  /// garantindo que o perfil esteja completo independente do estado do trigger.
   Future<void> _ensurePostSignupDataMigrated(sb.User user) async {
     try {
       final metadata = user.userMetadata ?? {};
-      final role = metadata['role']?.toString();
-      if (role != 'dono') return;
-
+      final role = metadata['role']?.toString() ?? 'cliente';
       final supabase = sb.Supabase.instance.client;
       final uid = user.id;
 
-      // Verifica se a loja já existe
-      final existing = await supabase
-          .from('shops')
-          .select('id')
-          .eq('id', uid)
-          .maybeSingle();
-      if (existing != null) return;
-
-      // Cria loja a partir dos metadados salvos no signUp()
-      final street = metadata['street']?.toString() ?? '';
-      final number = metadata['number']?.toString() ?? '';
-      final address =
-          street.isNotEmpty ? '$street, $number'.trim().replaceAll(RegExp(r',\s*$'), '') : '';
-
-      final shopData = {
+      // Upsert completo do perfil para TODOS os tipos de usuário
+      final profileData = <String, dynamic>{
         'id': uid,
-        'name': (metadata['business_name']?.toString().isNotEmpty == true
-            ? metadata['business_name']
-            : metadata['name'])?.toString() ?? '',
-        'phone': metadata['phone']?.toString() ?? '',
-        'city': metadata['city']?.toString() ?? '',
-        'state': metadata['state']?.toString() ?? '',
-        'zip_code': metadata['zip_code']?.toString() ?? '',
-        'address': address,
-        'neighborhood': metadata['neighborhood']?.toString() ?? '',
-        'owner_id': uid,
-        'verified': false,
-        'plan_id': 'free',
+        'email': user.email ?? '',
+        'name': metadata['name']?.toString() ?? '',
+        'role': role,
+        'plan': metadata['plan']?.toString() ?? 'free',
+        'verified': true,
       };
 
-      await supabase.from('shops').upsert(shopData);
-      await supabase.from('users').update({'shop_id': uid}).eq('id', uid);
+      final phone = metadata['phone']?.toString() ?? '';
+      if (phone.isNotEmpty) profileData['phone'] = phone;
 
-      debugPrint('[EmailConfirmation] Loja criada para dono=$uid via metadados.');
+      final zipCode = metadata['zip_code']?.toString() ?? '';
+      if (zipCode.isNotEmpty) profileData['zip_code'] = zipCode;
+
+      final street = metadata['street']?.toString() ?? '';
+      if (street.isNotEmpty) profileData['street'] = street;
+
+      final neighborhood = metadata['neighborhood']?.toString() ?? '';
+      if (neighborhood.isNotEmpty) profileData['neighborhood'] = neighborhood;
+
+      final city = metadata['city']?.toString() ?? '';
+      if (city.isNotEmpty) profileData['city'] = city;
+
+      final state = metadata['state']?.toString() ?? '';
+      if (state.isNotEmpty) profileData['state'] = state;
+
+      final number = metadata['number']?.toString() ?? '';
+      if (number.isNotEmpty) profileData['number'] = number;
+
+      final birthDate = metadata['birth_date']?.toString() ?? '';
+      if (birthDate.isNotEmpty) profileData['birth_date'] = birthDate;
+
+      await supabase.from('users').upsert(profileData);
+      debugPrint('[EmailConfirmation] Perfil upsertado para uid=$uid, role=$role');
+
+      // Para donos: garante que a loja exista
+      if (role == 'dono' || role == 'business') {
+        final existing = await supabase
+            .from('shops')
+            .select('id')
+            .eq('id', uid)
+            .maybeSingle();
+
+        if (existing == null) {
+          final address = street.isNotEmpty
+              ? '$street, $number'.trim().replaceAll(RegExp(r',\s*$'), '')
+              : '';
+
+          await supabase.from('shops').upsert({
+            'id': uid,
+            'name': (metadata['business_name']?.toString().isNotEmpty == true
+                    ? metadata['business_name']
+                    : metadata['name'])?.toString() ?? '',
+            'phone': phone,
+            'city': city,
+            'state': state,
+            'zip_code': zipCode,
+            'address': address,
+            'neighborhood': neighborhood,
+            'owner_id': uid,
+            'verified': false,
+            'plan_id': 'free',
+          });
+          await supabase.from('users').update({'shop_id': uid}).eq('id', uid);
+          debugPrint('[EmailConfirmation] Loja criada para dono=$uid via metadados.');
+        }
+      }
     } catch (e) {
       debugPrint('[EmailConfirmation] Aviso: falha ao migrar dados pós-confirmação: $e');
     }

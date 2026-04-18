@@ -11,8 +11,14 @@ serve(async (req) => {
     const supabase = createSupabaseClient(req)
     
     // Auth Check
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
+    let user: any
+    try {
+      const { data, error: authError } = await supabase.auth.getUser()
+      if (authError || !data?.user) {
+        return new Response(JSON.stringify({ error: 'Usuário não autenticado' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+      }
+      user = data.user
+    } catch (_) {
       return new Response(JSON.stringify({ error: 'Usuário não autenticado' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 

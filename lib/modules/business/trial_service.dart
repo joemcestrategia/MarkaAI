@@ -47,7 +47,7 @@ class TrialService {
       }
 
       return {
-        'canUseTrial': !trialUsed,
+        'canUseTrial': !trialUsed && (data['plan_id'] == 'free' || data['plan_id'] == null),
         'trialActive': trialActive,
         'trialExpired': trialExpired,
         'daysRemaining': daysRemaining,

@@ -278,6 +278,8 @@ class _PriceAdjustmentPageState extends State<PriceAdjustmentPage> {
           await supabase.from('appointments').update({
             'valor': serviceNewPrices[serviceId],
             'valor_total': serviceNewPrices[serviceId],
+            'total_price': serviceNewPrices[serviceId],
+            'total_value': serviceNewPrices[serviceId],
             'reajustado': true,
           }).eq('id', data['id']);
         }

@@ -7,6 +7,7 @@ class ServiceModel {
   final double cost;
   final int durationMin;
   final bool isActive;
+  final bool isFeatured;
   final List<String> photosUrls;
   final List<String> categoryIds;
   final List<Map<String, dynamic>> variations;
@@ -23,6 +24,7 @@ class ServiceModel {
     this.cost = 0.0,
     required this.durationMin,
     this.isActive = true,
+    this.isFeatured = false,
     this.photosUrls = const [],
     this.categoryIds = const [],
     this.variations = const [],
@@ -41,6 +43,7 @@ class ServiceModel {
       cost: (map['cost'] ?? map['custo'] ?? 0).toDouble(),
       durationMin: map['duration_min'] ?? map['tempo_min'] ?? 30,
       isActive: map['is_active'] ?? map['ativo'] ?? true,
+      isFeatured: map['is_featured'] ?? false,
       photosUrls: List<String>.from(map['photos_urls'] ?? map['fotos_urls'] ?? []),
       categoryIds: List<String>.from(map['category_ids'] ?? map['categoryIds'] ?? []),
       variations: List<Map<String, dynamic>>.from(map['variations'] ?? []),
@@ -60,6 +63,7 @@ class ServiceModel {
       'cost': cost,
       'duration_min': durationMin,
       'is_active': isActive,
+      'is_featured': isFeatured,
       'photos_urls': photosUrls,
       'category_ids': categoryIds,
       'variations': variations,

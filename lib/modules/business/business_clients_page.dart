@@ -6,7 +6,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:rxdart/rxdart.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
-import '../../core/utils/string_utils.dart';
+import 'package:markaai/core/utils/string_utils.dart';
 import '../clients/client_register_page.dart';
 import '../clients/client_details_page.dart';
 import 'subscription_service.dart';
@@ -220,6 +220,56 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
             content: Text('Erro ao abrir WhatsApp: $e'),
             backgroundColor: Colors.red,
           ),
+        );
+      }
+    }
+  }
+
+  void _showClearVisitorsDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Limpar Visitantes?"),
+        content: const Text("Isso apagará todo o histórico de visualizações (leads) da sua loja. Esta ação não pode ser desfeita."),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("CANCELAR"),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _clearVisitors();
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            child: const Text("LIMPAR TUDO"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _clearVisitors() async {
+    if (shopId == null) return;
+    
+    try {
+      setState(() => _isLoadingId = true); // Reutiliza flag de loading para feedback visual
+      await sb.Supabase.instance.client
+          .from('shop_views')
+          .delete()
+          .eq('shop_id', shopId!);
+      
+      if (mounted) {
+        setState(() => _isLoadingId = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Lista de visitantes limpa com sucesso!")),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoadingId = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Erro ao limpar visitantes: $e"), backgroundColor: Colors.red),
         );
       }
     }
@@ -490,6 +540,19 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                 _buildTabButton(1, "Visitantes", Icons.visibility_outlined, 
                     isLocked: !_currentFeatures.visitorsAnalytics, 
                     count: _visitorsCount),
+                if (_selectedTabIndex == 1 && _visitorsCount > 0) ...[
+                  const SizedBox(width: 15),
+                  TextButton.icon(
+                    onPressed: _showClearVisitorsDialog,
+                    icon: const Icon(Icons.delete_sweep_outlined, size: 18, color: Colors.red),
+                    label: const Text("Limpar", style: TextStyle(color: Colors.red, fontSize: 13, fontWeight: FontWeight.bold)),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      backgroundColor: Colors.red.withValues(alpha: 0.05),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -857,9 +920,10 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
       if (c['origem'] == 'manual') {
         if (c['telefone'] != "Não informado") mainClients.add(c);
       } else {
-        // Clientes são apenas quem tem agendamentos
-        // Visitantes são quem só visualizou ou favoritou, mas não agendou
-        if (c['agendamentosCount'] > 0) {
+        // Clientes são quem tem agendamentos OU são classificados como VIP
+        bool isVip = c['classification'] == 'vip' || (c['tags'] as List? ?? []).contains('vip');
+        
+        if (c['agendamentosCount'] > 0 || isVip) {
           mainClients.add(c);
         } else {
           visitorLeads.add(c);

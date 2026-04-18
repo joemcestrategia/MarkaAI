@@ -7,7 +7,7 @@ import '../../core/services/mercado_pago_service.dart';
 import '../../core/widgets/loading_page.dart';
 import '../schedule/checkout_transparente_page.dart';
 import '../schedule/booking_page.dart';
-import '../schedule/booking_success_page.dart';
+import 'package:markaai/modules/schedule/booking_success_page.dart';
 import '../../pages/pix_payment_page.dart';
 import '../../core/services/client_verification_service.dart';
 import 'dart:async';

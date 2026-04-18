@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 import 'login_page.dart';
 
@@ -19,7 +19,7 @@ class LoginChoicePage extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Logo Centralizada para reforçar a marca
+            // Logo Centralizada para refor�ar a marca
             Center(
               child: Image.asset('assets/images/logo_full.png', width: 180),
             ),
@@ -34,20 +34,20 @@ class LoginChoicePage extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             const Text(
-              "Selecione uma opção para acessar o centro de comando MarkaAI.",
+              "Selecione uma op��o para acessar o centro de comando MarkaAI.",
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 14, color: Colors.grey),
             ),
             const SizedBox(height: 50),
 
-            // Botão Entrar (Login)
+            // Bot�o Entrar (Login)
             SizedBox(
               height: 55,
               child: ElevatedButton(
                 onPressed: () {
                   Navigator.push(
                     context,
-                    // ðŸ›¡ï¸ CORREÇÃO: Removido isNewUser que causava erro
+                    // 🛡️ CORRE��O: Removido isNewUser que causava erro
                     MaterialPageRoute(builder: (context) => const LoginPage()),
                   );
                 },
@@ -58,7 +58,7 @@ class LoginChoicePage extends StatelessWidget {
                       borderRadius: BorderRadius.circular(12)),
                   elevation: 0,
                 ),
-                child: const Text("JÁ TENHO UMA CONTA",
+                child: const Text("J� TENHO UMA CONTA",
                     style: TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,
@@ -68,15 +68,15 @@ class LoginChoicePage extends StatelessWidget {
 
             const SizedBox(height: 20),
 
-            // Botão Criar Conta (Outlined)
+            // Bot�o Criar Conta (Outlined)
             SizedBox(
               height: 55,
               child: OutlinedButton(
                 onPressed: () {
-                  // Aqui você pode apontar para sua RegisterPage futuramente
+                  // Aqui voc� pode apontar para sua RegisterPage futuramente
                   Navigator.push(
                     context,
-                    // ðŸ›¡ï¸ CORREÇÃO: Removido isNewUser que causava erro
+                    // 🛡️ CORRE��O: Removido isNewUser que causava erro
                     MaterialPageRoute(builder: (context) => const LoginPage()),
                   );
                 },

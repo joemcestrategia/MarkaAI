@@ -7,7 +7,7 @@ import '../../core/theme/app_colors.dart';
 import '../../core/utils/service_image_keywords.dart';
 import '../../core/widgets/pexels_image_widget.dart';
 import '../../core/constants/api_keys.dart';
-import '../../widgets/google_reviews_widget.dart';
+import 'package:markaai/widgets/google_reviews_widget.dart';
 
 class ShopProfilePage extends StatefulWidget {
   final Map<String, dynamic> shopDoc;
@@ -631,30 +631,17 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
           .from('services')
           .select()
           .eq('shop_id', widget.shopDoc['id'])
-          .then((list) => list.where((d) => (d['is_active'] ?? d['ativo']) == true).toList()),
+          .then((list) => list
+              .where((d) =>
+                  (d['is_active'] ?? d['ativo'] ?? true) == true &&
+                  (d['is_featured'] ?? false) == true)
+              .toList()),
       builder: (context, snapshot) {
         if (!snapshot.hasData || snapshot.data!.isEmpty) {
           return const SizedBox.shrink();
         }
 
-        final activeServices = snapshot.data!;
-        final docsWithPhotos = activeServices.where((data) {
-          final fotos = data['photos_urls'] ??
-              data['fotos'] ??
-              data['image_url'] ??
-              data['imageUrl'] ??
-              data['imagens'] ??
-              [];
-
-          if (fotos is String && fotos.isNotEmpty) return true;
-          if (fotos is List && fotos.isNotEmpty) return true;
-
-          return false;
-        }).toList();
-
-        if (docsWithPhotos.isEmpty) {
-          return const SizedBox.shrink();
-        }
+        final featuredServices = snapshot.data!;
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -677,9 +664,9 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
               child: ListView.builder(
                 padding: const EdgeInsets.symmetric(horizontal: 15),
                 scrollDirection: Axis.horizontal,
-                itemCount: docsWithPhotos.length,
+                itemCount: featuredServices.length,
                 itemBuilder: (context, index) {
-                  final data = docsWithPhotos[index];
+                  final data = featuredServices[index];
 
                   dynamic fotosData = data['photos_urls'] ??
                       data['fotos'] ??

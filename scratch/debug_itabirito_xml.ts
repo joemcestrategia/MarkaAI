@@ -1,4 +1,5 @@
 
+export {};
 const url = 'https://itabirito.atende.net/?pg=services&service=WNENotaFiscalEletronicaNfe&cidade=padrao';
 const auth = btoa('41027409000189:09142583624A_*b');
 

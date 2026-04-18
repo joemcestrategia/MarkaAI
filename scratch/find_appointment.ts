@@ -1,4 +1,5 @@
 
+export {};
 const SUPABASE_URL = 'https://uhccgcojwqvkfyzrmebv.supabase.co';
 const ANON_KEY = 'sb_publishable_gmX2ol9O_y3XjHt8bJ-NgQ_b2nfxFmR';
 const CNPJ = "41027409000189";

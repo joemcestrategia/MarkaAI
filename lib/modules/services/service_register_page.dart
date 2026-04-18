@@ -1,4 +1,4 @@
-import 'dart:io' if (dart.library.html) 'package:flutter_application_1/core/utils/io_stub.dart' as io;
+import 'dart:io' if (dart.library.html) 'package:markaai/core/utils/io_stub.dart' as io;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -53,6 +53,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
   bool _isDragging = false;
   double _uploadProgress = 0;
   bool _ativo = true;
+  bool _isFeatured = false;
   List<String> _categoryIds = [];
   late PlanFeatures _currentFeatures = planFeaturesConfig[PlanKey.free]!;
 
@@ -71,6 +72,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
       _descriptionController.text = data['description'] ?? "";
       _existingUrls = List<String>.from(data['photos_urls'] ?? []);
       _ativo = data['is_active'] ?? true;
+      _isFeatured = data['is_featured'] ?? false;
 
       if (data['variations'] != null) {
         _variations = List<Map<String, dynamic>>.from(data['variations']);
@@ -453,6 +455,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
         photosUrls: uploadedUrls,
         categoryIds: _categoryIds,
         isActive: _ativo,
+        isFeatured: _isFeatured,
         variations: _variations,
         requiresWarning: _requerAviso,
         warningMessage: _requerAviso ? _avisoController.text.trim() : "",
@@ -918,6 +921,72 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                                       color: _ativo ? Colors.black87 : Colors.grey,
                                       fontSize: 13)),
                             ]),
+
+                            const SizedBox(height: 12),
+
+                            // TOGGLE: DESTACAR NA VITRINE
+                            AnimatedContainer(
+                              duration: const Duration(milliseconds: 250),
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              decoration: BoxDecoration(
+                                color: _isFeatured
+                                    ? Colors.amber.shade50
+                                    : Colors.grey.shade50,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: _isFeatured
+                                      ? Colors.amber.shade400
+                                      : Colors.grey.shade300,
+                                  width: _isFeatured ? 1.5 : 1,
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    _isFeatured ? Icons.star_rounded : Icons.star_outline_rounded,
+                                    color: _isFeatured ? Colors.amber.shade700 : Colors.grey,
+                                    size: 26,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          "Destacar na Vitrine",
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 14,
+                                            color: _isFeatured
+                                                ? Colors.amber.shade800
+                                                : Colors.black87,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          "Este serviço aparecerá nos Destaques da Vitrine para os clientes.",
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: _isFeatured
+                                                ? Colors.amber.shade700
+                                                : Colors.grey.shade600,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Transform.scale(
+                                    scale: 0.85,
+                                    child: Switch(
+                                      value: _isFeatured,
+                                      activeColor: Colors.amber.shade600,
+                                      activeTrackColor: Colors.amber.shade200,
+                                      onChanged: (val) => setState(() => _isFeatured = val),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
 
                             const SizedBox(height: 16),
 

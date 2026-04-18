@@ -1,4 +1,4 @@
-ï»¿// Modelo de ServiÃ§o
+// Modelo de Serviço
 class ServiceItem {
   final String name;
   final double price;
@@ -8,7 +8,7 @@ class ServiceItem {
       {required this.name, required this.price, required this.durationMinutes});
 }
 
-// Modelo de NegÃ³cio (Atualizado com ServiÃ§os)
+// Modelo de Negócio (Atualizado com Serviços)
 class Business {
   final String id;
   final String name;
@@ -16,7 +16,7 @@ class Business {
   final String address;
   final double rating;
   final String imageUrl;
-  final List<ServiceItem> services; // Lista de serviÃ§os da loja
+  final List<ServiceItem> services; // Lista de serviços da loja
 
   Business({
     required this.id,
@@ -40,7 +40,7 @@ final List<Business> mockBusinesses = [
     imageUrl:
         'https://img.freepik.com/fotos-gratis/homem-no-salao-de-barbearia-fazendo-o-corte-de-cabelo-e-barba_1303-20953.jpg',
     services: [
-      ServiceItem(name: "Corte DegradÃª", price: 35.0, durationMinutes: 40),
+      ServiceItem(name: "Corte Degradê", price: 35.0, durationMinutes: 40),
       ServiceItem(name: "Barba Lenhador", price: 25.0, durationMinutes: 30),
       ServiceItem(
           name: "Combo (Cabelo + Barba)", price: 50.0, durationMinutes: 60),
@@ -49,8 +49,8 @@ final List<Business> mockBusinesses = [
   ),
   Business(
     id: '2',
-    name: 'EspaÃ§o Bella',
-    category: 'SalÃ£o de Beleza',
+    name: 'Espaço Bella',
+    category: 'Salão de Beleza',
     address: 'Rua das Flores, 200 - Jardins',
     rating: 4.9,
     imageUrl:
@@ -59,7 +59,7 @@ final List<Business> mockBusinesses = [
       ServiceItem(name: "Corte Feminino", price: 80.0, durationMinutes: 60),
       ServiceItem(name: "Escova Modeladora", price: 45.0, durationMinutes: 40),
       ServiceItem(
-          name: "HidrataÃ§Ã£o Profunda", price: 120.0, durationMinutes: 90),
+          name: "Hidratação Profunda", price: 120.0, durationMinutes: 90),
     ],
   ),
   Business(
@@ -71,9 +71,9 @@ final List<Business> mockBusinesses = [
     imageUrl:
         'https://img.freepik.com/fotos-gratis/manicure-aplicando-esmalte-vermelho-nas-unhas-da-cliente_23-2148003666.jpg',
     services: [
-      ServiceItem(name: "MÃ£o Simples", price: 25.0, durationMinutes: 30),
-      ServiceItem(name: "PÃ© Simples", price: 25.0, durationMinutes: 30),
-      ServiceItem(name: "MÃ£o + PÃ©", price: 45.0, durationMinutes: 60),
+      ServiceItem(name: "Mão Simples", price: 25.0, durationMinutes: 30),
+      ServiceItem(name: "Pé Simples", price: 25.0, durationMinutes: 30),
+      ServiceItem(name: "Mão + Pé", price: 45.0, durationMinutes: 60),
       ServiceItem(name: "Alongamento Gel", price: 150.0, durationMinutes: 120),
     ],
   ),

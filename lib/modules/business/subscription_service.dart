@@ -576,13 +576,29 @@ class SubscriptionService {
         throw Exception("Usuário não autenticado ou sem e-mail.");
       }
 
+      // Verifica se há sessão ativa antes de exibir o loading
+      final currentSession = sb.Supabase.instance.client.auth.currentSession;
+      if (currentSession == null) {
+        if (context.mounted) {
+          PremiumDialogs.showError(context,
+              "Sua sessão expirou. Por favor, saia do aplicativo e faça login novamente para continuar.");
+        }
+        return false;
+      }
+
       PremiumDialogs.showLoading(context, "Preparando seu novo ambiente...");
 
-      // Garante que o JWT está válido antes de chamar a Edge Function do Stripe
+      // Garante que o JWT está atualizado antes de chamar a Edge Function do Stripe
       try {
         await sb.Supabase.instance.client.auth.refreshSession();
       } catch (refreshErr) {
         debugPrint('_iniciarPagamentoAssinatura: refresh session falhou ($refreshErr)');
+        if (context.mounted) PremiumDialogs.hideLoading(context);
+        if (context.mounted) {
+          PremiumDialogs.showError(context,
+              "Sua sessão expirou. Por favor, saia do aplicativo e faça login novamente para continuar.");
+        }
+        return false;
       }
 
       final success = await StripeService.instance.setupSubscriptionPayment(
@@ -740,11 +756,30 @@ class SubscriptionService {
     try {
       final supabase = sb.Supabase.instance.client;
 
+      // Verifica sessão ativa antes de prosseguir
+      final currentSession = supabase.auth.currentSession;
+      if (currentSession == null) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Sua sessão expirou. Por favor, saia do aplicativo e faça login novamente.'),
+            backgroundColor: Colors.red,
+          ));
+        }
+        return false;
+      }
+
       // Garante que o JWT está atualizado antes de chamar a Edge Function
       try {
         await supabase.auth.refreshSession();
       } catch (refreshErr) {
-        debugPrint('upgradeSubscription: refresh session falhou ($refreshErr), tentando mesmo assim.');
+        debugPrint('upgradeSubscription: refresh session falhou ($refreshErr)');
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Sua sessão expirou. Por favor, saia do aplicativo e faça login novamente.'),
+            backgroundColor: Colors.red,
+          ));
+        }
+        return false;
       }
 
       final response = await supabase.functions.invoke('upgrade-subscription', body: {
@@ -774,11 +809,8 @@ class SubscriptionService {
     } catch (e) {
       debugPrint('upgradeSubscription error: $e');
       if (context.mounted) {
-        final msg = (e.toString().contains('401') || e.toString().contains('Invalid JWT'))
-            ? 'Sua sessão expirou. Por favor, saia do aplicativo e faça login novamente para continuar.'
-            : 'Erro no upgrade: $e';
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(msg), backgroundColor: Colors.red),
+          SnackBar(content: Text('Erro ao atualizar plano. Tente novamente.'), backgroundColor: Colors.red),
         );
       }
       return false;

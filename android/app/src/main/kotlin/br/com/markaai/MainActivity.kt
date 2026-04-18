@@ -1,4 +1,4 @@
-package com.example.flutter_application_1
+package br.com.markaai
 
 import io.flutter.embedding.android.FlutterFragmentActivity
 

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:convert';
-import 'dart:io' if (dart.library.html) 'package:flutter_application_1/core/utils/io_stub.dart' as io;
+import 'dart:io' if (dart.library.html) 'package:markaai/core/utils/io_stub.dart' as io;
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -117,14 +117,12 @@ class _PrivacySettingsPageState extends State<PrivacySettingsPage> {
       if (sessionResult.session == null) {
         throw Exception('Sessão expirada. Faça login novamente para excluir a conta.');
       }
-      final freshToken = sessionResult.session!.accessToken;
-
-      // Timeout de 60s para evitar loading infinito caso a função trave
+      // IMPORTANTE: NÃO passar o header Authorization manualmente.
+      // O SDK do Supabase já injeta o JWT atualizado da sessão automaticamente.
       final response = await Supabase.instance.client.functions
           .invoke(
             'deleteUserAccount',
             body: {'userId': currentUser.id},
-            headers: {'Authorization': 'Bearer $freshToken'},
           )
           .timeout(
             const Duration(seconds: 60),

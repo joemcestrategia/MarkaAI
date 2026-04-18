@@ -9,12 +9,15 @@ serve(async (req) => {
 
   try {
     const supabase = createSupabaseClient(req)
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser()
-
-    if (authError || !user) {
+    try {
+      const { data, error: authError } = await supabase.auth.getUser()
+      if (authError || !data?.user) {
+        return new Response(
+          JSON.stringify({ error: 'Usuário não autenticado' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
+    } catch (_) {
       return new Response(
         JSON.stringify({ error: 'Usuário não autenticado' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -101,7 +104,7 @@ serve(async (req) => {
       .from('appointments')
       .select('scheduled_at, duration_min')
       .eq('professional_id', professional_id)
-      .not('status', 'in', '("cancelado","rejeitado","excluido")')
+      .not('status', 'in', '("cancelado","rejeitado","excluido","pendente_pix")')
       .gte('scheduled_at', new Date(reqStart.getTime() - 2 * 60 * 60 * 1000).toISOString())
       .lte('scheduled_at', new Date(reqEnd.getTime() + 2 * 60 * 60 * 1000).toISOString())
 

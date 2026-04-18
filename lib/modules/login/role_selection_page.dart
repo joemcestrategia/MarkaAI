@@ -1,7 +1,7 @@
-ï»¿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 import '../clients/client_register_page.dart';
-// ðŸš¨ IMPORT CORRIGIDO: Removida a HomePage genÃ©rica e adicionada a Home de NegÃ³cios
+// ?? IMPORT CORRIGIDO: Removida a HomePage genérica e adicionada a Home de Negócios
 import '../business/business_home_page.dart';
 
 class RoleSelectionPage extends StatelessWidget {
@@ -21,7 +21,7 @@ class RoleSelectionPage extends StatelessWidget {
                 size: 80, color: AppColors.primaryPurple),
             const SizedBox(height: 24),
             const Text(
-              "Como vocÃª deseja usar\no MarkaAI?",
+              "Como você deseja usar\no MarkaAI?",
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 26,
@@ -31,17 +31,17 @@ class RoleSelectionPage extends StatelessWidget {
             ),
             const SizedBox(height: 10),
             const Text(
-              "Selecione o seu perfil para personalizarmos sua experiÃªncia.",
+              "Selecione o seu perfil para personalizarmos sua experiência.",
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 16, color: Colors.grey),
             ),
             const SizedBox(height: 50),
 
-            // OPÃ‡ÃƒO 1: CLIENTE
+            // OPÇÃO 1: CLIENTE
             _buildRoleCard(
               context,
               title: "Sou Cliente",
-              subtitle: "Quero agendar horÃ¡rios e encontrar serviÃ§os.",
+              subtitle: "Quero agendar horários e encontrar serviços.",
               icon: Icons.person_outline,
               color: Colors.blue,
               onTap: () {
@@ -55,15 +55,15 @@ class RoleSelectionPage extends StatelessWidget {
 
             const SizedBox(height: 24),
 
-            // OPÃ‡ÃƒO 2: PROFISSIONAL (DONO)
+            // OPÇÃO 2: PROFISSIONAL (DONO)
             _buildRoleCard(
               context,
               title: "Sou Profissional",
-              subtitle: "Sou dono de salÃ£o ou prestador de serviÃ§o.",
+              subtitle: "Sou dono de salão ou prestador de serviço.",
               icon: Icons.storefront,
               color: AppColors.primaryPurple,
               onTap: () {
-                // ðŸš¨ NAVEGAÃ‡ÃƒO CORRIGIDA: Agora aponta para a Home de NegÃ³cios real
+                // ?? NAVEGAÇÃO CORRIGIDA: Agora aponta para a Home de Negócios real
                 Navigator.pushAndRemoveUntil(
                   context,
                   MaterialPageRoute(

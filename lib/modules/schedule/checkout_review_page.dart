@@ -3,7 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/mercado_pago_service.dart';
-import 'booking_success_page.dart';
+import 'package:markaai/modules/schedule/booking_success_page.dart';
 
 class CheckoutReviewPage extends StatefulWidget {
   final Map<String, dynamic> paymentData;
@@ -116,6 +116,7 @@ class _CheckoutReviewPageState extends State<CheckoutReviewPage> {
       'status': 'confirmado',
       'payment_method': 'Cartão de Crédito',
       'total_price': widget.paymentData['valor'],
+      'total_value': widget.paymentData['valor'],
       'metadata': {'payment_id': paymentId},
     });
 

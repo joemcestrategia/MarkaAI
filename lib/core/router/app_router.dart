@@ -1,24 +1,24 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
-import '../utils/html_stub.dart' if (dart.library.html) 'dart:html' as html;
+import 'package:markaai/core/utils/html_stub.dart' if (dart.library.html) 'dart:html' as html;
 import 'package:supabase_flutter/supabase_flutter.dart' as sb;
-import '../../modules/login/login_page.dart';
-import '../../modules/public/public_shop_page.dart';
-import '../../modules/business/business_home_page.dart';
-import '../../modules/clients/client_home_page.dart';
-import '../../modules/auth/reset_password_page.dart';
-import '../../modules/auth/email_confirmation_page.dart';
-import '../../core/theme/app_colors.dart';
-import '../../modules/inventory/inventory_home_page.dart';
-import '../../modules/business/subscription_plans_page.dart';
-import '../../modules/clients/rescheduling_success_page.dart';
-import '../../modules/business/price_adjustment_page.dart';
-import '../../modules/admin/admin_dashboard_page.dart';
-import '../../modules/admin/admin_setup_page.dart';
-import '../../core/services/session_service.dart';
-import '../../core/services/auth_service.dart';
-import '../widgets/splash_loading_widget.dart';
+import 'package:markaai/modules/login/login_page.dart';
+import 'package:markaai/modules/public/public_shop_page.dart';
+import 'package:markaai/modules/business/business_home_page.dart';
+import 'package:markaai/modules/clients/client_home_page.dart';
+import 'package:markaai/modules/auth/reset_password_page.dart';
+import 'package:markaai/modules/auth/email_confirmation_page.dart';
+import 'package:markaai/core/theme/app_colors.dart';
+import 'package:markaai/modules/inventory/inventory_home_page.dart';
+import 'package:markaai/modules/business/subscription_plans_page.dart';
+import 'package:markaai/modules/clients/rescheduling_success_page.dart';
+import 'package:markaai/modules/business/price_adjustment_page.dart';
+import 'package:markaai/modules/admin/admin_dashboard_page.dart';
+import 'package:markaai/modules/admin/admin_setup_page.dart';
+import 'package:markaai/core/services/session_service.dart';
+import 'package:markaai/core/services/auth_service.dart';
+import 'package:markaai/core/widgets/splash_loading_widget.dart';
 
 class AppRouter {
   static Route<dynamic> generateRoute(RouteSettings settings) {

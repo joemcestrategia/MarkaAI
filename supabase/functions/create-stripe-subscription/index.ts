@@ -34,9 +34,15 @@ serve(async (req: Request) => {
       Deno.env.get('SUPABASE_ANON_KEY') || ''
     )
 
-    const { data: { user }, error: userError } = await supabaseClient.auth.getUser(jwt)
-    if (userError || !user) {
-      return new Response(JSON.stringify({ error: 'Unauthorized', details: userError }), { status: 401, headers: corsHeaders })
+    let user: any
+    try {
+      const { data, error: userError } = await supabaseClient.auth.getUser(jwt)
+      if (userError || !data?.user) {
+        return new Response(JSON.stringify({ error: 'Unauthorized', details: userError }), { status: 401, headers: corsHeaders })
+      }
+      user = data.user
+    } catch (_) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders })
     }
 
     const { plan_id, email, shop_id } = await req.json()

@@ -280,7 +280,9 @@ class _EditAppointmentConfirmPageState
           final status = (d['status'] ?? '').toString().toLowerCase();
           if (status == 'cancelado' ||
               status == 'recusado' ||
-              status == 'excluido') continue;
+              status == 'excluido') {
+            continue;
+          }
 
           final dt = DateTime.parse(d['scheduled_at'].toString());
           final dur = int.tryParse(d['duration_min']?.toString() ?? '') ?? 30;
@@ -307,7 +309,9 @@ class _EditAppointmentConfirmPageState
           final status = (d['status'] ?? '').toString().toLowerCase();
           if (status == 'cancelado' ||
               status == 'recusado' ||
-              status == 'excluido') continue;
+              status == 'excluido') {
+            continue;
+          }
 
           final dt = DateTime.parse(d['scheduled_at'].toString());
           final dur = int.tryParse(d['duration_min']?.toString() ?? '') ?? 30;
@@ -676,7 +680,11 @@ class _EditAppointmentConfirmPageState
                 Radio<int>(
                   value: actionValue,
                   groupValue: _selectedAction,
-                  onChanged: (val) => setState(() => _selectedAction = val!),
+                  onChanged: (val) {
+                    if (val != null) {
+                      setState(() => _selectedAction = val);
+                    }
+                  },
                   activeColor: AppColors.primaryPurple,
                   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),

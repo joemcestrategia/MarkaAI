@@ -188,22 +188,17 @@ class MercadoPagoService {
     String? issuerId,
   }) async {
     try {
-      debugPrint("⚡ [Service] Chamando Supabase Function: criar-pagamento");
-
-      // Refresh session e obtém token fresco para enviar explicitamente no header
-      try {
-        await _supabase.auth.refreshSession();
-      } catch (e) {
-        debugPrint("⚠️ Falha ao renovar sessão: $e");
-      }
+      // Debug: verificar autenticação
       final session = _supabase.auth.currentSession;
-      if (session == null) {
-        throw Exception('Sessão expirada. Faça login novamente para continuar.');
-      }
+      final user = _supabase.auth.currentUser;
+      debugPrint("🔑 [Auth Debug] Session presente: ${session != null}");
+      debugPrint("🔑 [Auth Debug] User presente: ${user != null}");
+      debugPrint("🔑 [Auth Debug] Access token: ${session?.accessToken.substring(0, 20)}...");
+
+      debugPrint("⚡ [Service] Chamando Supabase Function: criar-pagamento");
 
       final response = await _supabase.functions.invoke(
         'criar-pagamento',
-        headers: {'Authorization': 'Bearer ${session.accessToken}'},
         body: {
           'shop_id': shopId,
           'card_token': cardToken,
@@ -344,15 +339,9 @@ class MercadoPagoService {
   }) async {
     try {
       debugPrint("⚡ [Service] Chamando Supabase Function: save-card");
-      try {
-        await _supabase.auth.refreshSession();
-      } catch (_) {}
-      final session = _supabase.auth.currentSession;
-      if (session == null) throw Exception('Sessão expirada.');
 
       final response = await _supabase.functions.invoke(
         'save-card',
-        headers: {'Authorization': 'Bearer ${session.accessToken}'},
         body: {
           'shop_id': shopId,
           'card_token': cardToken,

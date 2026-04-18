@@ -8,7 +8,7 @@ import 'package:geocoding/geocoding.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../core/theme/app_colors.dart';
-import '../../core/services/viacep_service.dart';
+import 'package:markaai/core/services/viacep_service.dart';
 
 class EditClientPage extends StatefulWidget {
   final Map<String, dynamic> clientData;

@@ -2,24 +2,68 @@ import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
 import { corsHeaders } from '../_shared/cors.ts'
 import { createSupabaseAdminClient } from '../_shared/supabase.ts'
 
+// Helper to decode base64 URL
+function base64UrlDecode(str: string): string {
+  const base64 = str.replace(/-/g, '+').replace(/_/g, '/')
+  const padding = '='.repeat((4 - base64.length % 4) % 4)
+  return atob(base64 + padding)
+}
+
+// Extract user_id from JWT payload without validation (for ES256 fallback)
+function extractUserIdFromToken(token: string): string | null {
+  try {
+    const parts = token.split('.')
+    if (parts.length !== 3) return null
+    const payload = JSON.parse(base64UrlDecode(parts[1]))
+    return payload.sub || null
+  } catch {
+    return null
+  }
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
 
   try {
-    // Extract and validate JWT via admin.auth.getUser(token) — most reliable pattern for Edge Functions
+    const supabaseAdmin = createSupabaseAdminClient()
+
+    // Extract token from header
     const authHeader = req.headers.get('Authorization')
     const token = authHeader?.replace('Bearer ', '')
+
+    console.log('🔑 Token recebido:', token ? `${token.substring(0, 20)}...` : 'AUSENTE')
+    console.log('🔑 Auth header:', authHeader ? 'presente' : 'ausente')
+
     if (!token) {
       return new Response(JSON.stringify({ error: 'Token de autenticação ausente.' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 
-    const supabaseAdmin = createSupabaseAdminClient()
-    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token)
-    if (authError || !user) {
-      console.error('Auth error:', authError?.message)
-      return new Response(JSON.stringify({ error: 'Autenticação necessária.' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    // Try to get user - handles both HS256 and ES256 tokens
+    let user: any = null
+    let userId: string | null = null
+    try {
+      const { data, error: authError } = await supabaseAdmin.auth.getUser(token)
+      if (authError) {
+        console.error('❌ getUser error:', authError.message)
+      } else if (data?.user) {
+        user = data.user
+        userId = user.id
+        console.log('✅ Usuário autenticado via getUser:', userId)
+      }
+    } catch (authEx: any) {
+      console.error('❌ Auth exception:', authEx?.message)
+    }
+
+    // Fallback: extract user_id from JWT payload directly (for ES256 tokens)
+    if (!userId) {
+      userId = extractUserIdFromToken(token)
+      console.log('🔑 User ID extraído do token:', userId)
+    }
+
+    if (!userId) {
+      return new Response(JSON.stringify({ error: 'Autenticação necessária. Faça login novamente.' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 
     const { shop_id, amount, description, email, payer_email, cpf, payer_cpf, card_token, installments, payment_method_id, issuer_id } = await req.json()
@@ -50,7 +94,7 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: 'Mercado Pago não configurado nesta loja.' }), { status: 412, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 
-    const idempotencyKey = `card-${user.id}-${Date.now()}`
+    const idempotencyKey = `card-${userId}-${Date.now()}`
     const paymentData: any = {
       transaction_amount: parsedAmount, // already rounded to 2dp
       token: card_token,

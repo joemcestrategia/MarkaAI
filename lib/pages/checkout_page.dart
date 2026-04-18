@@ -106,6 +106,7 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
   String? _appliedCouponCode;
 
   String? _preSavedAppointmentId;
+  bool _isConfirmingPayment = false;
 
   Timer? _timerPolling;
   
@@ -1016,11 +1017,17 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
       double valor = valorFinalComJuros;
       String desc = (_selectedPaymentType == 'sinal') ? "Sinal" : "Total";
       
-      // Gera referência temporária para o PIX (NÃO cria agendamento ainda).
-      // O agendamento só será criado quando o pagamento for confirmado (approved).
-      final tempRef = "ORD-${DateTime.now().millisecondsSinceEpoch}";
-      _preSavedAppointmentId = null;
-      _generatePix(valor, desc, externalRef: tempRef);
+      // Pre-salva o agendamento com 'pendente_pix' antes de gerar o QR Code.
+      // Garante que o horário fica reservado e o webhook confirma mesmo se o app fechar.
+      final preSavedId = await _saveBooking(
+        metodo: (_selectedPaymentType == 'sinal') ? "Pix (Sinal)" : "Pix",
+        status: "pendente_pix",
+        valorPago: 0,
+        isPreSave: true,
+      );
+      if (preSavedId == null) return; // pre-save falhou (ex: horário indisponível)
+      _preSavedAppointmentId = preSavedId;
+      _generatePix(valor, desc, externalRef: preSavedId);
     } else {
       debugPrint('→ Pagamento CARTÃO → cobrando com dados já coletados');
       double valorParaCobrar = valorFinalComJuros;
@@ -2163,10 +2170,11 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
         );
         if (status == 'approved') {
           timer.cancel();
-          if (mounted) {
+          if (mounted && !_isConfirmingPayment) {
+            _isConfirmingPayment = true;
             // Fecha a PixPaymentPage (modal de QR Code) se ainda estiver aberta
             if (Navigator.canPop(context)) Navigator.pop(context);
-            _saveBooking(
+            await _saveBooking(
                 metodo: "Pix",
                 status: "confirmado",
                 valorPago: valorPago,
@@ -2207,12 +2215,14 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
               return false;
             }
           },
-          onPaid: () {
+          onPaid: () async {
+            if (_isConfirmingPayment) return;
+            _isConfirmingPayment = true;
             // Cancelar o polling automático se o manual confirmou
             _timerPolling?.cancel();
             // Fecha a PixPaymentPage e salva o agendamento
             Navigator.pop(c);
-            _saveBooking(
+            await _saveBooking(
                 metodo: "Pix",
                 status: "confirmado",
                 valorPago: valorPago,
@@ -2258,41 +2268,44 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
           int.tryParse(widget.serviceDoc['duration_min']?.toString() ?? '30') ??
               30;
 
-      // Validação de Double-Booking via Cloud Function no Backend
-      try {
-        final result = await Supabase.instance.client.functions.invoke('checkAvailability', body: {
-          'professional_id': widget.professionalDoc['id'],
-          'shop_id': widget.shopId,
-          'start_time': bookingDate.toIso8601String(),
-          'duration': duration,
-        });
+      // Validação de Double-Booking via Cloud Function no Backend.
+      // Pulada ao confirmar um pre-save (slot já foi validado na etapa de geração do PIX).
+      if (widget.rescheduleId != null || appointmentId == null) {
+        try {
+          final result = await Supabase.instance.client.functions.invoke('checkAvailability', body: {
+            'professional_id': widget.professionalDoc['id'],
+            'shop_id': widget.shopId,
+            'start_time': bookingDate.toIso8601String(),
+            'duration': duration,
+          });
 
-        if (result.data['available'] != true) {
-          if (mounted) {
-            // Fecha o loading de "Finalizando agendamento..." se ele estiver aberto
-            if (Navigator.canPop(context)) Navigator.pop(context);
-            
-            await showDialog(
-              context: context,
-              builder: (ctx) => AlertDialog(
-                title: const Text('Horário Indisponível'),
-                content: const Text(
-                    'Infelizmente este horário foi preenchido por outra pessoa enquanto você finalizava. Por favor, escolha outro horário.'),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    child: const Text('OK'),
-                  ),
-                ],
-              ),
-            );
+          if (result.data['available'] != true) {
+            if (mounted) {
+              // Fecha o loading de "Finalizando agendamento..." se ele estiver aberto
+              if (Navigator.canPop(context)) Navigator.pop(context);
+              
+              await showDialog(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: const Text('Horário Indisponível'),
+                  content: const Text(
+                      'Infelizmente este horário foi preenchido por outra pessoa enquanto você finalizava. Por favor, escolha outro horário.'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('OK'),
+                    ),
+                  ],
+                ),
+              );
+            }
+            setState(() => _isLoading = false);
+            return null;
           }
-          setState(() => _isLoading = false);
-          return null;
+        } catch (e) {
+          debugPrint('Erro na validação de disponibilidade (backend): $e');
+          // Em caso de erro na função, procedemos com a validação local já existente abaixo
         }
-      } catch (e) {
-        debugPrint('Erro na validação de disponibilidade (backend): $e');
-        // Em caso de erro na função, procedemos com a validação local já existente abaixo
       }
 
       // Validação: permitir agendamentos múltiplos (configuração da loja)
@@ -2305,7 +2318,12 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
             .from('appointments')
             .select()
             .eq('client_id', user.id);
+        final currentApptId = _preSavedAppointmentId ?? appointmentId;
         final conflicting = clientAppts.where((data) {
+          // Pular o próprio agendamento que está sendo confirmado (update)
+          if (currentApptId != null && data['id']?.toString() == currentApptId) {
+            return false;
+          }
           final sId = data['shop_id']?.toString() ?? '';
           final status = (data['status'] ?? '').toString();
           final ts = data['scheduled_at'];
@@ -2322,7 +2340,7 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
           if (sId != widget.shopId) {
             return false;
           }
-          if (!['agendado', 'confirmado', 'pendente', 'pendente_verificacao']
+          if (!['agendado', 'confirmado', 'pendente', 'pendente_verificacao', 'pendente_pix']
               .contains(status)) {
             return false;
           }
@@ -2379,6 +2397,7 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
         'professional_name': profData['name'] ?? 'Profissional',
         'service_id': widget.serviceDoc['id'],
         'total_price': valorTotal,
+        'total_value': valorTotal,
         'valor_com_desconto': totalDiscounted, // Valor após CUPOM/NIVER (usado para mostrar o risquinho)
         'total_payable': totalWithTax, // Valor final que o cliente deve pagar (incluindo taxas)
         'paid_amount': valorPago,
