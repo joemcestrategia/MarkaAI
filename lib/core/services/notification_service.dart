@@ -3,6 +3,9 @@ import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 import 'package:flutter/foundation.dart';
 import '_web_push.dart' if (dart.library.io) '_web_push_stub.dart';
 
+import 'dart:io';
+import 'package:firebase_messaging/firebase_messaging.dart';
+
 // VAPID public key – NOT secret, safe to embed.
 // Generate with: npx web-push generate-vapid-keys
 // Then set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY as Supabase secrets.
@@ -19,7 +22,29 @@ class NotificationService {
     }
   }
 
-  static Future<String?> getToken() async => null;
+  static Future<String?> getToken() async {
+    try {
+      if (kIsWeb) {
+        // Na web poderíamos obter o VAPID token via FCM da mesma forma se configurassemos Firebase na web
+        // Mas como mantém-se o Web Push VAPID, deixamos retornar null e contar com push_subscriptions
+        return null; 
+      }
+      // Mobile nativo — FCM
+      final messaging = FirebaseMessaging.instance;
+      final settings = await messaging.requestPermission();
+      
+      if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+        final token = await messaging.getToken();
+        debugPrint('[FCM_TOKEN] Token obtido: $token');
+        return token;
+      }
+      debugPrint('[FCM_TOKEN] Permissão negada pelo usuário');
+      return null;
+    } catch (e) {
+      debugPrint('[FCM_TOKEN] Erro ao obter token: $e');
+      return null;
+    }
+  }
 
   static Future<void> registerToken(String userId) async {
     debugPrint('ℹ️ registerToken: $userId');

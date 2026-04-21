@@ -81,17 +81,7 @@ serve(async (req: Request) => {
       },
     })
 
-    // Atualizar no Supabase
-    await supabaseAdmin.from('shops').update({
-      plan_id: new_plan_id,
-      subscription: {
-        ...sub,
-        plan_id: new_plan_id,
-        status: 'active',
-        payment_provider: 'stripe',
-        updated_at: new Date().toISOString(),
-      },
-    }).eq('id', shop_id)
+    // Atualização removida do Supabase aqui. O Stripe-Webhook fará isso no próximo ciclo faturado.
 
     return new Response(JSON.stringify({
       message: `Downgrade para ${new_plan_name || new_plan_id} realizado.`,

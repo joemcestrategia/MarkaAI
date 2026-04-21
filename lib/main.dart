@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart';
 import 'core/utils/url_strategy_stub.dart'
     if (dart.library.html) 'core/utils/url_strategy_web.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -9,7 +11,7 @@ import 'core/router/app_router.dart';
 import 'modules/business/mobile_subscription_manager.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'core/constants/api_keys.dart';
-
+import 'package:app_links/app_links.dart';
 
 import 'core/services/session_service.dart';
 import 'core/services/shop_data_cache_service.dart';
@@ -20,16 +22,40 @@ void main() async {
     WidgetsFlutterBinding.ensureInitialized();
     print("=== BOOT STEP 0: v2 - FlutterBinding Inicializado ===");
     
+    // === BOOT STEP 0.5: Iniciando Firebase ===
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+    print('=== BOOT STEP 0.5: Firebase Inicializado ===');
+
     // 1. Inicializar Supabase (obrigatório antes de runApp)
     print("=== BOOT STEP 1.1: Iniciando Supabase ===");
     await Supabase.initialize(
       url: ApiKeys.supabaseUrl,
       anonKey: ApiKeys.supabaseAnonKey,
       authOptions: const FlutterAuthClientOptions(
-        authFlowType: AuthFlowType.implicit,
+        authFlowType: AuthFlowType.pkce,
       ),
     );
     print("=== BOOT STEP 1: Supabase Inicializado ===");
+
+    // 1.5 Inicializar Deep Links (OAuth Callback)
+    print("=== BOOT STEP 1.5: Configurando Deep Links ===");
+    if (!kIsWeb) {
+      final appLinks = AppLinks();
+      
+      appLinks.getInitialLink().then((uri) async {
+        if (uri != null) {
+          debugPrint("=== INITIAL DEEP LINK: $uri ===");
+          await Supabase.instance.client.auth.getSessionFromUrl(uri);
+        }
+      });
+
+      appLinks.uriLinkStream.listen((uri) async {
+        debugPrint("=== STREAM DEEP LINK RECEIVED: $uri ===");
+        await Supabase.instance.client.auth.getSessionFromUrl(uri);
+      });
+    }
 
     // 2. Inicializar SessionService (obrigatório para roteamento)
     print("=== BOOT STEP 2: Iniciando SessionService ===");

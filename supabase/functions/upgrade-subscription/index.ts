@@ -76,19 +76,7 @@ serve(async (req: Request) => {
       },
     })
 
-    // Atualizar no Supabase
-    await supabaseAdmin.from('shops').update({
-      plan_id: new_plan_id,
-      trial_active: false,
-      subscription: {
-        ...sub,
-        plan_id: new_plan_id,
-        status: 'active',
-        cancel_at_period_end: false,
-        payment_provider: 'stripe',
-        updated_at: new Date().toISOString(),
-      },
-    }).eq('id', shop_id)
+    // Atualização removida do Supabase aqui. O webhook ouvirá o `invoice.paid` ou `customer.subscription.updated` e aplicará a alteração com segurança.
 
     return new Response(JSON.stringify({
       message: `Plano atualizado para ${new_plan_name || new_plan_id} com sucesso!`,

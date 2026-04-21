@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <base href="/">
+
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+
+  <meta name="description" content="MarkaAI.app - Gestão Inteligente de Agendamentos.">
+
+  <meta name="google-signin-client_id"
+    content="170942564821-s8doqh3tcqe4rs7muauefgkdqehcf1l9.apps.googleusercontent.com">
+
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="MarkaAI">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="icons/Icon-192.png">
+  <link rel="apple-touch-icon" sizes="167x167" href="icons/Icon-192.png">
+  <link rel="apple-touch-icon" sizes="152x152" href="icons/Icon-192.png">
+
+  <link rel="icon" type="image/png" href="favicon.png?v=3" />
+
+  <title>MarkaAI.app</title>
+  <link rel="manifest" href="manifest.json">
+
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/croppie/2.6.5/croppie.css" media="print" onload="this.media='all'">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/croppie/2.6.5/croppie.min.js"></script>
+</head>
+
+<body>
+  <!-- Splash screen: Anti-Gravidade Minimalista -->
+  <style>
+    #splash {
+      position: fixed;
+      inset: 0;
+      /* Gradiente radial combinando as duas identidades Roxas */
+      background: radial-gradient(circle at center, #6A1B9A 0%, #2D264B 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      z-index: 9999;
+    }
+
+    #splash .logo {
+      width: 140px;
+      height: 140px;
+      object-fit: cover;
+      margin-bottom: 32px;
+      border-radius: 50%;
+      /* Flutuação leve e anti-gravidade */
+      animation: float 2s ease-in-out infinite alternate;
+    }
+
+    @keyframes float {
+      0% { transform: translateY(-8px); }
+      100% { transform: translateY(8px); }
+    }
+
+    /* Texto MarkaAI */
+    .brand-text {
+      color: white;
+      font-size: 36px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      text-shadow: 0 2px 6px rgba(0, 0, 0, 0.26);
+      font-family: system-ui, -apple-system, sans-serif;
+      margin-top: 24px;
+      margin-bottom: 64px;
+    }
+
+    /* Linear loading simplificado que combina com SplashLoadingWidget */
+    .linear-loader {
+      width: 150px;
+      height: 4px;
+      background-color: rgba(255, 255, 255, 0.24);
+      border-radius: 10px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .linear-loader::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: 40%;
+      background-color: #ffffff;
+      border-radius: 10px;
+      animation: shiftProgress 1.5s ease-in-out infinite;
+    }
+
+    @keyframes shiftProgress {
+      0% { left: -40%; width: 40%; }
+      50% { left: 40%; width: 60%; }
+      100% { left: 100%; width: 40%; }
+    }
+
+    /* Ensure flutter content sits above splash when removed */
+    #flutter-root {
+      position: relative;
+      z-index: 0;
+    }
+  </style>
+
+  <div id="splash" aria-hidden="true">
+    <div style="text-align: center; display: flex; flex-direction: column; align-items: center;">
+      <img class="logo" src="assets/assets/images/icon.png" alt="MarkaAI" style="margin-bottom: 0;">
+      <div class="brand-text">MarkaAI</div>
+    </div>
+    <!-- Simple loading line -->
+    <div class="linear-loader" role="status" aria-label="Carregando"></div>
+  </div>
+
+  <!-- Stripe Web SDK (Obrigatório para flutter_stripe_web) -->
+  <script src="https://js.stripe.com/v3/" defer></script>
+
+  <script>
+    // Previne múltiplas abas no hot reload
+    if (window.opener) {
+      window.opener.location.href = window.location.href;
+      window.close();
+    }
+  </script>
+  <!-- Web Push: Service Worker + Subscription Bridge -->
+  <script>
+    (function () {
+      if (!('serviceWorker' in navigator)) return;
+
+      // Register our push service worker
+      navigator.serviceWorker.register('/sw.js').then(function (reg) {
+        console.log('[SW] Registered:', reg.scope);
+      }).catch(function (err) {
+        console.warn('[SW] Registration failed:', err);
+      });
+
+      // Helper: converts a URL-safe base64 string to Uint8Array (needed for VAPID key)
+      function _urlBase64ToUint8Array(base64String) {
+        var padding = '='.repeat((4 - base64String.length % 4) % 4);
+        var base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+        var rawData = window.atob(base64);
+        var outputArray = new Uint8Array(rawData.length);
+        for (var i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
+        return outputArray;
+      }
+
+      // Called by Flutter (via dart:js_interop) to subscribe and return subscription JSON
+      window.markaSubscribePush = async function (vapidPublicKey) {
+        try {
+          if (!('PushManager' in window)) return null;
+          var reg = await navigator.serviceWorker.ready;
+          var existing = await reg.pushManager.getSubscription();
+          if (existing) return JSON.stringify(existing.toJSON());
+          var sub = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: _urlBase64ToUint8Array(vapidPublicKey),
+          });
+          return JSON.stringify(sub.toJSON());
+        } catch (e) {
+          console.warn('[PushManager] Subscribe error:', e);
+          return null;
+        }
+      };
+
+      // Called by Flutter to unsubscribe
+      window.markaUnsubscribePush = async function () {
+        try {
+          var reg = await navigator.serviceWorker.ready;
+          var sub = await reg.pushManager.getSubscription();
+          if (sub) await sub.unsubscribe();
+        } catch (e) {
+          console.warn('[PushManager] Unsubscribe error:', e);
+        }
+      };
+    })();
+  </script>
+  <script src="flutter_bootstrap.js" async></script>
+  <script>
+    function hideSplash() {
+      var s = document.getElementById('splash');
+      if (!s) return;
+      console.log("MarkaAI: Hiding splash screen...");
+      s.style.transition = 'opacity 500ms ease';
+      s.style.opacity = '0';
+      setTimeout(function () { if (s.parentNode) s.parentNode.removeChild(s); }, 600);
+    }
+    // Flutter web usually dispatches this event when it renders first frame
+    window.addEventListener('flutter-first-frame', hideSplash);
+    // Fallback significantly increased for slower mobile connections
+    setTimeout(hideSplash, 20000);
+  </script>
+  <script>
+    window.addEventListener("dragover", function (e) {
+      e.preventDefault(); // Anula o comportamento padrão de "arrastar"
+    }, false);
+
+    window.addEventListener("drop", function (e) {
+      e.preventDefault(); // Anula o comportamento padrão de "soltar" (abrir arquivo)
+    }, false);
+  </script>
+</body>
+
+</html>

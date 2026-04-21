@@ -179,6 +179,82 @@ const sendOwnerPush = async (supabase: any, shopId: string, title: string, messa
   }
 }
 
+async function sendOwnerFCM(supabaseAdmin: any, ownerId: string, title: string, body: string): Promise<void> {
+  const { data: tokenData } = await supabaseAdmin
+    .from('fcm_tokens')
+    .select('token')
+    .eq('user_id', ownerId)
+    .single();
+
+  if (!tokenData?.token) {
+    console.log('[FCM_PUSH] Sem token FCM para owner:', ownerId);
+    return;
+  }
+
+  const projectId = Deno.env.get('FCM_PROJECT_ID');
+  const serviceAccountKey = Deno.env.get('FCM_SERVICE_ACCOUNT_KEY');
+  
+  if (!projectId || !serviceAccountKey) {
+    console.error('[FCM_PUSH] Variáveis de ambiente FCM não configuradas. ProjectId:', projectId);
+    return;
+  }
+
+  try {
+    const accessToken = await getGoogleAccessToken(JSON.parse(serviceAccountKey));
+    
+    const res = await fetch(
+      `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          message: {
+            token: tokenData.token,
+            notification: { title, body },
+            android: { priority: 'high' },
+            apns: { payload: { aps: { sound: 'default', badge: 1 } } },
+          }
+        })
+      }
+    );
+    
+    if (!res.ok) {
+      console.error('[FCM_PUSH] Erro ao enviar:', await res.text());
+    } else {
+      console.log('[FCM_PUSH] Notificação enviada para:', ownerId);
+    }
+  } catch(e) {
+    console.error('[FCM_PUSH] exception:', e);
+  }
+}
+
+async function getGoogleAccessToken(serviceAccount: any): Promise<string> {
+  const { default: jwt } = await import('npm:jsonwebtoken@9');
+  
+  const now = Math.floor(Date.now() / 1000);
+  const payload = {
+    iss: serviceAccount.client_email,
+    scope: 'https://www.googleapis.com/auth/firebase.messaging',
+    aud: 'https://oauth2.googleapis.com/token',
+    iat: now,
+    exp: now + 3600,
+  };
+  
+  const token = jwt.sign(payload, serviceAccount.private_key, { algorithm: 'RS256' });
+  
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${token}`,
+  });
+  
+  const data = await res.json();
+  return data.access_token;
+}
+
 // ==========================================
 // Payload Builder
 // ==========================================
@@ -211,12 +287,39 @@ async function buildPayloadFromAppointment(supabase: any, appt: any) {
   let salonAddress = "";
   
   let salonLogo = ""
+  let ownerEmail: string | null = null;
+  let ownerIdForFCM: string | null = null;
 
   console.log('[buildPayload] shop_id:', appt.shop_id)
 
   if (appt.shop_id) {
     const { data: shopData, error: shopErr } = await supabase.from('shops').select('name, address, number, city, logo_url, owner_id').eq('id', appt.shop_id).maybeSingle()
     if (shopErr) console.error('[buildPayload] shops query error:', shopErr.message, '| shop_id:', appt.shop_id)
+    
+    // CORREÇÃO: usar shop_id diretamente como owner_id
+    // pois os dois são o mesmo UUID neste sistema
+    try {
+      const ownerId = appt.shop_id; // shop_id === owner_id
+      ownerIdForFCM = ownerId;
+      
+      const { data: { user }, error: userError } = 
+        await supabase.auth.admin.getUserById(ownerId);
+      
+      ownerEmail = user?.email ?? null;
+      
+      console.log('[OWNER_EMAIL]', {
+        ownerId,
+        ownerEmail,
+        source: 'auth.admin.getUserById via shop_id'
+      });
+      
+      if (!ownerEmail) {
+        console.error('[OWNER_EMAIL] Email não encontrado para ownerId:', ownerId);
+      }
+    } catch (e) {
+      console.error('[OWNER_EMAIL] Exceção:', e);
+    }
+    
     console.log('[buildPayload] shopData:', JSON.stringify(shopData))
     if (shopData) {
       salonName = shopData.name || salonName
@@ -229,13 +332,11 @@ async function buildPayloadFromAppointment(supabase: any, appt: any) {
       // Fallback logo: method 1 — user linked via users.shop_id (dono com shop_id preenchido)
       if (!salonLogo) {
         const { data: ownerByShopId } = await supabase.from('users').select('photo_url').eq('shop_id', appt.shop_id).in('role', ['business', 'dono']).limit(1).maybeSingle()
-        console.log('[buildPayload] ownerByShopId:', JSON.stringify(ownerByShopId))
         if (ownerByShopId?.photo_url) salonLogo = ownerByShopId.photo_url
       }
       // Fallback logo: method 2 — user linked via shops.owner_id (caso Go4Me e similares)
-      if (!salonLogo && shopData.owner_id) {
+      if (shopData.owner_id && !salonLogo) {
         const { data: ownerById } = await supabase.from('users').select('photo_url').eq('id', shopData.owner_id).maybeSingle()
-        console.log('[buildPayload] ownerById:', JSON.stringify(ownerById))
         if (ownerById?.photo_url) salonLogo = ownerById.photo_url
       }
     }
@@ -244,6 +345,8 @@ async function buildPayloadFromAppointment(supabase: any, appt: any) {
   return {
     clientPhone,
     clientEmail,
+    ownerEmail,
+    ownerId: ownerIdForFCM,
     payload: {
       clientName,
       salonName,
@@ -260,6 +363,44 @@ async function buildPayloadFromAppointment(supabase: any, appt: any) {
 // ==========================================
 // Email Templates
 // ==========================================
+
+const buildOwnerEmail = (data: any, eventType: string, eventColor: string) => `
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><title>${eventType} – MarkaAI</title></head>
+<body style="margin:0;padding:0;background:#f4f0fb;font-family:'Segoe UI',Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f0fb;">
+    <tr><td align="center" style="padding:48px 20px;">
+      <table width="560" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;width:100%;">
+        <tr><td align="center" style="background:linear-gradient(160deg,#3b0f8c 0%,#5c1fc4 60%,#7c3aed 100%);border-radius:16px 16px 0 0;padding:36px 48px 32px;">
+          <img src="https://uhccgcojwqvkfyzrmebv.supabase.co/storage/v1/object/public/Logo%20MarkaAI/logo_white.png" alt="MarkaAI" width="140" style="display:block;margin:0 auto;max-height:42px;object-fit:contain;"/>
+        </td></tr>
+        <tr><td style="height:3px;background:linear-gradient(90deg,#7c3aed,#a78bfa,#7c3aed);"></td></tr>
+        <tr><td style="background:#fff;padding:40px 48px 32px;">
+          <p style="margin:0 0 8px;color:${eventColor};font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px;">${eventType}</p>
+          <p style="margin:0 0 20px;color:#1a1a2e;font-size:20px;font-weight:700;line-height:1.3;">Olá, <strong>Proprietário</strong>!</p>
+          <p style="margin:0 0 28px;color:#4b5563;font-size:15px;line-height:1.75;">
+            Informamos uma atualização em um agendamento. Confira os detalhes abaixo:
+          </p>
+          <div style="background:#f9fafb;border-radius:14px;padding:28px;margin-bottom:32px;border:1px solid #ede9fe;">
+            <p style="margin:0 0 16px;text-align:center;color:#1a1a2e;font-size:18px;font-weight:700;">Detalhes do Agendamento</p>
+            <hr style="border:none;border-top:1px solid #ede9fe;margin:16px 0;"/>
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr><td style="padding:6px 0;color:#6b7280;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;width:36%;">Cliente</td><td style="padding:6px 0;color:#1a1a2e;font-size:15px;font-weight:600;">${data.payload.clientName}</td></tr>
+              <tr><td style="padding:6px 0;color:#6b7280;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;">Serviço</td><td style="padding:6px 0;color:#1a1a2e;font-size:15px;font-weight:600;">${data.payload.serviceName}</td></tr>
+              <tr><td style="padding:6px 0;color:#6b7280;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;">Profissional</td><td style="padding:6px 0;color:#1a1a2e;font-size:15px;">${data.payload.professionalName}</td></tr>
+              <tr><td style="padding:6px 0;color:#6b7280;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;">Data</td><td style="padding:6px 0;color:#1a1a2e;font-size:15px;font-weight:600;">${data.payload.date}</td></tr>
+              <tr><td style="padding:6px 0;color:#6b7280;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;">Horário</td><td style="padding:6px 0;color:${eventColor};font-size:17px;font-weight:700;">${data.payload.time}</td></tr>
+            </table>
+          </div>
+        </td></tr>
+        <tr><td style="background:#faf8ff;border-top:1px solid #ede9fe;border-radius:0 0 16px 16px;padding:20px 48px;text-align:center;">
+          <p style="margin:0;color:#c4b5fd;font-size:11px;line-height:1.6;">© 2026 MarkaAI · Email automático, não responda.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
 
 const buildConfirmationEmail = (data: any) => `
 <!DOCTYPE html>
@@ -425,11 +566,25 @@ serve(async (req) => {
       const attachments = icsAttachment ? [icsAttachment] : []
 
       console.log(`[INSERT] Disparando notificações para agendamento ${appt.id}...`)
-      await Promise.allSettled([
+      console.log('[OWNER_EMAIL_DEBUG]', {
+        ownerId: appt.shop_id,
+        ownerEmail: data.ownerEmail,
+        clientEmail: data.clientEmail,
+        eventType: 'INSERT'
+      });
+      const results = await Promise.allSettled([
         data.clientPhone ? sendWhatsApp(data.clientPhone, 'appointment_confirmation', [data.payload.clientName, data.payload.salonName, data.payload.date, data.payload.time, data.payload.serviceName]) : Promise.resolve(),
         data.clientEmail ? sendEmail(data.clientEmail, '✅ Agendamento Confirmado — MarkaAI', emailHtml, attachments) : Promise.resolve(),
+        data.ownerEmail ? sendEmail(data.ownerEmail, '✅ Novo Agendamento — MarkaAI', buildOwnerEmail(data, '✅ Novo Agendamento', '#16a34a')) : Promise.resolve(),
         appt.shop_id ? sendOwnerPush(supabase, appt.shop_id, '📅 Novo Agendamento', `${data.payload.clientName} — ${data.payload.serviceName} às ${data.payload.time} (${data.payload.date})`) : Promise.resolve(),
+        data.ownerId ? sendOwnerFCM(supabase, data.ownerId, '📅 Novo Agendamento', `${data.payload.clientName} — ${data.payload.serviceName} às ${data.payload.time} (${data.payload.date})`) : Promise.resolve(),
       ])
+
+      results.forEach((r, i) => {
+        if (r.status === 'rejected') {
+          console.error(`[PROMISE_${i}_FAILED]`, r.reason);
+        }
+      });
 
     } 
     else if (payload.type === 'UPDATE') {
@@ -447,11 +602,27 @@ serve(async (req) => {
         const emailHtml = buildConfirmationEmail(data)
         const icsAtt = buildICSAttachment(after, data.payload.salonName, data.payload.address, 'REQUEST')
         const atts = icsAtt ? [icsAtt] : []
-        await Promise.allSettled([
+        
+        console.log('[OWNER_EMAIL_DEBUG]', {
+          ownerId: after.shop_id,
+          ownerEmail: data.ownerEmail,
+          clientEmail: data.clientEmail,
+          eventType: 'UPDATE_CONFIRMED'
+        });
+        
+        const results = await Promise.allSettled([
           data.clientPhone ? sendWhatsApp(data.clientPhone, 'appointment_confirmation', [data.payload.clientName, data.payload.salonName, data.payload.date, data.payload.time, data.payload.serviceName]) : Promise.resolve(),
           data.clientEmail ? sendEmail(data.clientEmail, '✅ Agendamento Confirmado — MarkaAI', emailHtml, atts) : Promise.resolve(),
+          data.ownerEmail ? sendEmail(data.ownerEmail, '✅ Agendamento Confirmado — MarkaAI', buildOwnerEmail(data, '✅ Agendamento Confirmado', '#16a34a')) : Promise.resolve(),
           after.shop_id ? sendOwnerPush(supabase, after.shop_id, '✅ Agendamento Confirmado', `${data.payload.clientName} — ${data.payload.serviceName} às ${data.payload.time} (${data.payload.date})`) : Promise.resolve(),
+          data.ownerId ? sendOwnerFCM(supabase, data.ownerId, '✅ Agendamento Confirmado', `${data.payload.clientName} — ${data.payload.serviceName} às ${data.payload.time} (${data.payload.date})`) : Promise.resolve(),
         ])
+        
+        results.forEach((r, i) => {
+          if (r.status === 'rejected') {
+            console.error(`[PROMISE_${i}_FAILED]`, r.reason);
+          }
+        });
       }
       // 2. Mudança para Cancelamento
       else if (statusChanged && currentStatus === 'cancelado') {
@@ -460,11 +631,27 @@ serve(async (req) => {
         const emailHtml = buildCancellationEmail(data)
         const icsAtt = buildICSAttachment(after, data.payload.salonName, data.payload.address, 'CANCEL')
         const atts = icsAtt ? [icsAtt] : []
-        await Promise.allSettled([
+        
+        console.log('[OWNER_EMAIL_DEBUG]', {
+          ownerId: after.shop_id,
+          ownerEmail: data.ownerEmail,
+          clientEmail: data.clientEmail,
+          eventType: 'UPDATE_CANCELLED'
+        });
+        
+        const results = await Promise.allSettled([
           data.clientPhone ? sendWhatsApp(data.clientPhone, 'appointment_cancellation', [data.payload.clientName, data.payload.salonName, data.payload.date, data.payload.time]) : Promise.resolve(),
           data.clientEmail ? sendEmail(data.clientEmail, '❌ Agendamento Cancelado — MarkaAI', emailHtml, atts) : Promise.resolve(),
+          data.ownerEmail ? sendEmail(data.ownerEmail, '❌ Agendamento Cancelado — MarkaAI', buildOwnerEmail(data, '❌ Agendamento Cancelado', '#ef4444')) : Promise.resolve(),
           after.shop_id ? sendOwnerPush(supabase, after.shop_id, '❌ Agendamento Cancelado', `${data.payload.clientName} cancelou — ${data.payload.serviceName} de ${data.payload.date} às ${data.payload.time}`) : Promise.resolve(),
+          data.ownerId ? sendOwnerFCM(supabase, data.ownerId, '❌ Agendamento Cancelado', `${data.payload.clientName} cancelou — ${data.payload.serviceName} de ${data.payload.date} às ${data.payload.time}`) : Promise.resolve(),
         ])
+        
+        results.forEach((r, i) => {
+          if (r.status === 'rejected') {
+            console.error(`[PROMISE_${i}_FAILED]`, r.reason);
+          }
+        });
       }
       // 3. Reagendamento (Mudança de Data/Hora mantendo status confirmado)
       else if (dateChanged && notifiableStatuses.includes(currentStatus)) {
@@ -473,11 +660,27 @@ serve(async (req) => {
         const emailHtml = buildReschedulingEmail(data)
         const icsAtt = buildICSAttachment(after, data.payload.salonName, data.payload.address, 'REQUEST')
         const atts = icsAtt ? [icsAtt] : []
-        await Promise.allSettled([
+        
+        console.log('[OWNER_EMAIL_DEBUG]', {
+          ownerId: after.shop_id,
+          ownerEmail: data.ownerEmail,
+          clientEmail: data.clientEmail,
+          eventType: 'UPDATE_RESCHEDULED'
+        });
+        
+        const results = await Promise.allSettled([
           data.clientPhone ? sendWhatsApp(data.clientPhone, 'appointment_confirmation', [data.payload.clientName, data.payload.salonName, data.payload.date, data.payload.time, data.payload.serviceName]) : Promise.resolve(),
           data.clientEmail ? sendEmail(data.clientEmail, '🔄 Agendamento Atualizado — MarkaAI', emailHtml, atts) : Promise.resolve(),
+          data.ownerEmail ? sendEmail(data.ownerEmail, '🔄 Agendamento Atualizado — MarkaAI', buildOwnerEmail(data, '🔄 Agendamento Atualizado', '#7c3aed')) : Promise.resolve(),
           after.shop_id ? sendOwnerPush(supabase, after.shop_id, '🔄 Reagendamento', `${data.payload.clientName} reagendou — ${data.payload.serviceName} para ${data.payload.date} às ${data.payload.time}`) : Promise.resolve(),
+          data.ownerId ? sendOwnerFCM(supabase, data.ownerId, '🔄 Reagendamento', `${data.payload.clientName} reagendou — ${data.payload.serviceName} para ${data.payload.date} às ${data.payload.time}`) : Promise.resolve(),
         ])
+        
+        results.forEach((r, i) => {
+          if (r.status === 'rejected') {
+            console.error(`[PROMISE_${i}_FAILED]`, r.reason);
+          }
+        });
       }
     }
 

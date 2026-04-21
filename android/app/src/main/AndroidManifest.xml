@@ -6,6 +6,8 @@
     <!-- Location permissions required for geolocation features -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <!-- Permission to send native notifications (Android 13+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
     <application
         android:label="MarkaAI"

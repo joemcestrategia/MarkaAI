@@ -830,12 +830,13 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
             borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
           ),
           padding: EdgeInsets.fromLTRB(
-              24, 24, 24, MediaQuery.of(ctx).padding.bottom + 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
+              20, 20, 20, MediaQuery.of(ctx).padding.bottom + 20),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
                 child: Container(
                   width: 40,
                   height: 4,
@@ -845,7 +846,7 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
                   ),
                 ),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 16),
               Text(
                 'Detalhes do Agendamento',
                 style: Theme.of(context)
@@ -853,7 +854,7 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
                     .titleLarge
                     ?.copyWith(fontWeight: FontWeight.bold),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 16),
               Row(
                 children: [
                   Container(
@@ -905,7 +906,7 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
                   ),
                 ],
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 16),
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: Container(
@@ -975,7 +976,7 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
                   },
                 ),
               ),
-              const Divider(height: 32),
+              const Divider(height: 16),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -1073,7 +1074,7 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
                 ),
               ],
               if (valorRestante > 0 && !(appointment['status']?.toString().toLowerCase().contains('cancelado') ?? false)) ...[
-                const SizedBox(height: 24),
+                const SizedBox(height: 16),
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
@@ -1095,7 +1096,7 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
                   ),
                 ),
               ],
-              const SizedBox(height: 32),
+              const SizedBox(height: 16),
               if (isUpcoming && _shouldShowActions(appointment)) ...[
                 Row(
                   children: [
@@ -1166,6 +1167,7 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
                 )
               ]
             ],
+          ),
           ),
         );
       },

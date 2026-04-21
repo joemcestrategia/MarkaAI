@@ -1,0 +1,1860 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sistema de Agendamento Grátis para Salões, Clínicas e Profissionais | MarkaAI</title>
+  <meta name="description" content="Sistema completo de agendamento, financeiro e gestão para salões de beleza, clínicas de estética, estúdios de tatuagem, manicures, terapeutas, lava-jatos e mais. Sistema online. Teste grátis!" />
+  <meta name="keywords" content="sistema para salão, sistema para barbearia, agenda para tatuador, sistema para clinica de estetica, agenda manicure, gestão de lavajato, software agendamento, markaai" />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://www.markaai.com.br/" />
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://www.markaai.com.br/" />
+  <meta property="og:title" content="Sistema de Agendamento Grátis para Salões, Clínicas e Profissionais | MarkaAI" />
+  <meta property="og:description" content="Sistema completo de agendamento e gestão multi-setor. Agendamento 24h, financeiro, comissões, Mercado Pago. Comece grátis, sem pegadinhas." />
+  <meta property="og:image" content="https://uhccgcojwqvkfyzrmebv.supabase.co/storage/v1/object/public/Logo%20MarkaAI/logo_white.png" />
+  <meta property="og:locale" content="pt_BR" />
+  <meta property="og:site_name" content="MarkaAI" />
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Sistema de Agendamento Grátis para Salões, Clínicas e Profissionais | MarkaAI" />
+  <meta name="twitter:description" content="Sistema de agendamento e gestão multi-setor. Comece grátis!" />
+  <meta name="twitter:image" content="https://uhccgcojwqvkfyzrmebv.supabase.co/storage/v1/object/public/Logo%20MarkaAI/logo_white.png" />
+
+  <!-- Structured Data JSON-LD (Technical SEO) -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "MarkaAI",
+    "operatingSystem": "Web, Android, iOS",
+    "applicationCategory": "BusinessApplication",
+    "offers": {
+      "@type": "Offer",
+      "price": "0.00",
+      "priceCurrency": "BRL"
+    },
+    "description": "Sistema completo de agendamento online, financeiro e gestão de equipe para salões de beleza, barbearias, clínicas de estética, tatuadores, manicures, terapeutas, trancistas e lava-jatos.",
+    "url": "https://www.markaai.com.br"
+  }
+  </script>
+
+  <style>
+    /* ─── Reset & Base ──────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --purple:       #6A1B9A;
+      --purple-dark:  #2D264B;
+      --gold:         #FFD700;
+      --cta:          #FF6500;
+      --cta-hover:    #E65700;
+      --bg-secondary: #F5F7FA;
+      --bg-white:     #FFFFFF;
+      --text-main:    #2D264B;
+      --text-muted:   #666666;
+      --font:         system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --radius:       12px;
+      --shadow:       0 4px 24px rgba(0,0,0,0.08);
+      --shadow-lg:    0 8px 40px rgba(106,27,154,0.18);
+      --transition:   0.3s ease;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: var(--font);
+      color: var(--text-main);
+      background: var(--bg-white);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* ─── Scroll Progress Bar ───────────────────────── */
+    #progress-bar {
+      position: fixed;
+      top: 0; left: 0;
+      height: 3px;
+      width: 0%;
+      background: linear-gradient(90deg, #9C27B0, #4A148C);
+      z-index: 9999;
+      transition: width 0.1s linear;
+    }
+
+    /* ─── Header ────────────────────────────────────── */
+    header {
+      position: fixed;
+      top: 3px; left: 0; right: 0;
+      z-index: 1000;
+      background: rgba(255, 255, 255, 0.97);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-bottom: 1px solid rgba(0,0,0,0.05);
+      transition: background var(--transition), box-shadow var(--transition);
+    }
+
+    header.scrolled {
+      background: rgba(255, 255, 255, 0.99);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.05);
+    }
+
+    .header-inner {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 0 24px;
+      height: 68px;
+      display: flex;
+      align-items: center;
+      gap: 32px;
+    }
+
+    .logo-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      flex-shrink: 0;
+    }
+
+    .logo-img {
+      height: 42px;
+      object-fit: contain;
+    }
+
+    nav {
+      display: flex;
+      align-items: center;
+      gap: 28px;
+      flex: 1;
+    }
+
+    nav a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 500;
+      transition: color var(--transition);
+    }
+
+    nav a:hover { color: var(--purple); }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 10px 22px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      transition: all var(--transition);
+      border: none;
+      font-family: var(--font);
+    }
+
+    .btn-outline-dark {
+      background: transparent;
+      color: var(--text-main);
+      border: 1.5px solid rgba(0,0,0,0.15);
+    }
+
+    .btn-outline-dark:hover {
+      background: rgba(0,0,0,0.03);
+      border-color: rgba(0,0,0,0.3);
+    }
+
+    .btn-primary {
+      background: var(--cta);
+      color: #FFFFFF;
+    }
+
+    .btn-primary:hover {
+      background: var(--cta-hover);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px rgba(255,101,0,0.4);
+    }
+
+    .btn-cta {
+      background: var(--cta);
+      color: #FFFFFF;
+    }
+
+    .btn-cta:hover {
+      background: var(--cta-hover);
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(255,101,0,0.4);
+    }
+
+    .btn-cta-lg {
+      padding: 16px 36px;
+      font-size: 16px;
+      border-radius: 10px;
+    }
+
+    .btn-outline-dark-lg {
+      padding: 15px 32px;
+      font-size: 16px;
+      border-radius: 10px;
+      border-width: 2px;
+      background: transparent;
+      color: var(--text-main);
+      border: 2px solid rgba(0,0,0,0.15);
+    }
+    
+    .btn-outline-dark-lg:hover {
+      background: rgba(0,0,0,0.03);
+      border-color: rgba(0,0,0,0.3);
+    }
+
+    /* Hamburguer */
+    .hamburger {
+      display: none;
+      flex-direction: column;
+      gap: 5px;
+      padding: 8px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      margin-left: auto;
+    }
+
+    .hamburger span {
+      display: block;
+      width: 22px;
+      height: 2px;
+      background: #000000;
+      border-radius: 2px;
+      transition: all var(--transition);
+    }
+
+    .hamburger.open span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+    .hamburger.open span:nth-child(2) { opacity: 0; }
+    .hamburger.open span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
+    .mobile-menu {
+      display: none;
+      flex-direction: column;
+      background: var(--purple-dark);
+      padding: 16px 24px 20px;
+      border-top: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .mobile-menu.open { display: flex; }
+
+    .mobile-menu a {
+      color: rgba(255,255,255,0.85);
+      text-decoration: none;
+      font-size: 15px;
+      font-weight: 500;
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      transition: color var(--transition);
+    }
+
+    .mobile-menu a:last-child { border-bottom: none; }
+    .mobile-menu a:hover { color: rgba(255,255,255,0.95); }
+
+    /* ─── Sections Common ───────────────────────────── */
+    section { 
+      padding: 96px 24px; 
+      scroll-margin-top: 80px; 
+    }
+
+    .container {
+      max-width: 1280px;
+      margin: 0 auto;
+    }
+
+    .section-tag {
+      display: inline-block;
+      padding: 6px 16px;
+      background: rgba(106,27,154,0.12);
+      color: var(--purple);
+      border-radius: 100px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      margin-bottom: 16px;
+    }
+
+    .section-title {
+      font-size: clamp(26px, 4vw, 40px);
+      font-weight: 800;
+      color: var(--text-main);
+      line-height: 1.2;
+      margin-bottom: 12px;
+    }
+
+    .section-subtitle {
+      font-size: 17px;
+      color: var(--text-muted);
+      max-width: 600px;
+    }
+
+    .section-header { margin-bottom: 56px; }
+
+    /* ─── HERO ──────────────────────────────────────── */
+    #hero {
+      background: #FFFFFF;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      padding: 120px 24px 80px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    #hero::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 60% 50% at 80% 20%, rgba(106,27,154,0.02) 0%, transparent 60%),
+        radial-gradient(ellipse 50% 60% at 10% 80%, rgba(106,27,154,0.04) 0%, transparent 60%);
+    }
+
+    .hero-inner {
+      max-width: 1280px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 64px;
+      align-items: center;
+      position: relative;
+      z-index: 1;
+    }
+
+    .hero-content { color: var(--text-main); }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      background: rgba(106,27,154,0.06);
+      border: 1px solid rgba(106,27,154,0.15);
+      border-radius: 100px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--purple);
+      letter-spacing: 0.5px;
+      margin-bottom: 24px;
+    }
+
+    .hero-title {
+      font-size: clamp(28px, 4.5vw, 52px);
+      font-weight: 900;
+      line-height: 1.1;
+      margin-bottom: 20px;
+      color: var(--text-main);
+      letter-spacing: -0.5px;
+    }
+
+    .hero-title span { color: var(--purple); font-style: italic; }
+
+    .hero-subtitle {
+      font-size: 17px;
+      color: var(--text-muted);
+      margin-bottom: 36px;
+      line-height: 1.7;
+      max-width: 520px;
+    }
+
+    .hero-ctas {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-bottom: 28px;
+    }
+
+    .trust-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .trust-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    .trust-item svg { flex-shrink: 0; color: var(--purple); }
+
+    /* Hero SVG Illustration */
+    .hero-visual {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .hero-illustration {
+      width: 100%;
+      max-width: 480px;
+      filter: drop-shadow(0 20px 60px rgba(0,0,0,0.3));
+      animation: float 6s ease-in-out infinite;
+    }
+
+    @keyframes float {
+      0%, 100% { transform: translateY(0px); }
+      50% { transform: translateY(-16px); }
+    }
+
+    /* ─── FEATURES ──────────────────────────────────── */
+    #funcionalidades {
+      background: var(--bg-secondary);
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+      margin-bottom: 48px;
+    }
+
+    .feature-card {
+      background: var(--bg-white);
+      border-radius: var(--radius);
+      padding: 28px;
+      box-shadow: var(--shadow);
+      transition: all var(--transition);
+      border: 1px solid rgba(106,27,154,0.06);
+    }
+
+    .feature-card:hover {
+      transform: translateY(-4px);
+      box-shadow: var(--shadow-lg);
+      border-color: rgba(106,27,154,0.2);
+    }
+
+    .feature-icon {
+      width: 48px;
+      height: 48px;
+      background: linear-gradient(135deg, rgba(106,27,154,0.12), rgba(106,27,154,0.06));
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px;
+    }
+
+    .feature-icon svg { color: var(--purple); }
+
+    .feature-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-main);
+      margin-bottom: 8px;
+    }
+
+    .feature-desc {
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.65;
+    }
+
+    .features-extras {
+      background: var(--bg-white);
+      border-radius: var(--radius);
+      padding: 28px 32px;
+      box-shadow: var(--shadow);
+    }
+
+    .extras-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 16px;
+    }
+
+    .extras-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 28px;
+    }
+
+    .extras-item {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 13px;
+      color: var(--text-main);
+      font-weight: 500;
+    }
+
+    .check-icon {
+      width: 18px;
+      height: 18px;
+      background: rgba(106,27,154,0.12);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    /* ─── PLANS ──────────────────────────────────────── */
+    #planos {
+      background: var(--bg-white);
+    }
+
+    .plans-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 20px;
+      align-items: start;
+    }
+
+    .plan-card {
+      border-radius: var(--radius);
+      padding: 28px 24px;
+      border: 1.5px solid #E8E8F0;
+      position: relative;
+      transition: all var(--transition);
+      background: var(--bg-white);
+    }
+
+    .plan-card:hover {
+      transform: translateY(-3px);
+      box-shadow: var(--shadow-lg);
+    }
+
+    .plan-card.featured {
+      border-color: var(--purple);
+      border-width: 2px;
+      box-shadow: 0 8px 32px rgba(106,27,154,0.14);
+    }
+
+    .plan-badge {
+      position: absolute;
+      top: -14px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--purple);
+      color: #FFFFFF;
+      font-size: 11px;
+      font-weight: 800;
+      padding: 4px 14px;
+      border-radius: 100px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      white-space: nowrap;
+      border: 1px solid rgba(255,255,255,0.3);
+    }
+
+    .plan-name {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--purple);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+
+    .plan-price {
+      font-size: 36px;
+      font-weight: 900;
+      color: var(--text-main);
+      line-height: 1;
+      margin-bottom: 4px;
+    }
+
+    .plan-price sup {
+      font-size: 16px;
+      font-weight: 700;
+      vertical-align: top;
+      margin-top: 8px;
+      display: inline-block;
+    }
+
+    .plan-price-period {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 20px;
+    }
+
+    .plan-divider {
+      height: 1px;
+      background: #E8E8F0;
+      margin: 16px 0;
+    }
+
+    .plan-features {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 24px;
+    }
+
+    .plan-features li {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--text-main);
+      line-height: 1.5;
+    }
+
+    .plan-features li .check-icon {
+      margin-top: 1px;
+    }
+
+    .btn-plan {
+      display: block;
+      width: 100%;
+      text-align: center;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 700;
+      text-decoration: none;
+      transition: all var(--transition);
+    }
+
+    .btn-plan-primary {
+      background: var(--cta);
+      color: #FFFFFF;
+      border: none;
+    }
+
+    .btn-plan-primary:hover {
+      background: var(--cta-hover);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px rgba(255,101,0,0.4);
+    }
+
+    .btn-plan-outline {
+      background: transparent;
+      color: var(--purple);
+      border: 1.5px solid var(--purple);
+    }
+
+    .btn-plan-outline:hover {
+      background: rgba(106,27,154,0.06);
+    }
+
+    .plans-footer {
+      text-align: center;
+      margin-top: 32px;
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+
+    /* ─── NUMBERS ─────────────────────────────────────── */
+    #numeros {
+      background: var(--purple-dark);
+      padding: 72px 24px;
+    }
+
+    .numbers-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 32px;
+      text-align: center;
+    }
+
+    .number-item {}
+
+    .number-value {
+      font-size: clamp(36px, 5vw, 56px);
+      font-weight: 900;
+      color: #FFFFFF;
+      line-height: 1;
+      margin-bottom: 8px;
+    }
+
+    .number-label {
+      font-size: 14px;
+      color: rgba(255,255,255,0.7);
+      font-weight: 500;
+    }
+
+    /* ─── SUPPORT ─────────────────────────────────────── */
+    #suporte {
+      background: var(--bg-secondary);
+    }
+
+    .support-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 32px;
+      align-items: start;
+    }
+
+    .support-card {
+      background: var(--bg-white);
+      border-radius: var(--radius);
+      padding: 36px;
+      box-shadow: var(--shadow);
+      border: 1px solid rgba(106,27,154,0.08);
+    }
+
+    .support-card-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text-main);
+      margin-bottom: 12px;
+    }
+
+    .support-card-desc {
+      font-size: 14px;
+      color: var(--text-muted);
+      line-height: 1.7;
+      margin-bottom: 24px;
+    }
+
+    /* Form */
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-main);
+      margin-bottom: 6px;
+    }
+
+    .form-control {
+      width: 100%;
+      padding: 11px 14px;
+      border: 1.5px solid #D0D0E0;
+      border-radius: 8px;
+      font-size: 14px;
+      font-family: var(--font);
+      color: var(--text-main);
+      background: var(--bg-white);
+      transition: border-color var(--transition), box-shadow var(--transition);
+      outline: none;
+    }
+
+    .form-control:focus {
+      border-color: var(--purple);
+      box-shadow: 0 0 0 3px rgba(106,27,154,0.1);
+    }
+
+    .form-control::placeholder { color: #ABABAB; }
+
+    textarea.form-control {
+      resize: vertical;
+      min-height: 110px;
+    }
+
+    .char-counter {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-align: right;
+      margin-top: 4px;
+    }
+
+    .btn-submit {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      padding: 13px;
+      background: var(--purple);
+      color: #FFFFFF;
+      border: none;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 700;
+      font-family: var(--font);
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+
+    .btn-submit:hover:not(:disabled) {
+      background: #7B1FA2;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px rgba(106,27,154,0.4);
+    }
+
+    .btn-submit:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
+    }
+
+    .form-message {
+      margin-top: 14px;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      display: none;
+    }
+
+    .form-message.success {
+      background: rgba(56,161,105,0.1);
+      color: #276749;
+      border: 1px solid rgba(56,161,105,0.3);
+      display: block;
+    }
+
+    .form-message.error {
+      background: rgba(220,52,52,0.08);
+      color: #C53030;
+      border: 1px solid rgba(220,52,52,0.25);
+      display: block;
+    }
+
+    /* ─── CTA FINAL ───────────────────────────────────── */
+    #cta-final {
+      background: linear-gradient(135deg, var(--purple) 0%, var(--purple-dark) 100%);
+      text-align: center;
+      padding: 96px 24px;
+    }
+
+    .cta-title {
+      font-size: clamp(28px, 5vw, 50px);
+      font-weight: 900;
+      color: #FFFFFF;
+      margin-bottom: 12px;
+    }
+
+    .cta-subtitle {
+      font-size: 18px;
+      color: rgba(255,255,255,0.8);
+      margin-bottom: 36px;
+    }
+
+    /* ─── FOOTER ──────────────────────────────────────── */
+    footer {
+      background: var(--purple-dark);
+      padding: 48px 24px 32px;
+    }
+
+    .footer-inner {
+      max-width: 1280px;
+      margin: 0 auto;
+    }
+
+    .footer-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 28px;
+      padding-bottom: 28px;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+      flex-wrap: wrap;
+    }
+
+    .footer-brand p {
+      font-size: 13px;
+      color: rgba(255,255,255,0.55);
+      margin-top: 6px;
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 24px;
+      flex-wrap: wrap;
+    }
+
+    .footer-links a {
+      color: rgba(255,255,255,0.7);
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 500;
+      transition: color var(--transition);
+    }
+
+    .footer-links a:hover { color: var(--gold); }
+
+    .footer-bottom {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .footer-copy {
+      font-size: 12px;
+      color: rgba(255,255,255,0.4);
+    }
+
+    .footer-legal {
+      display: flex;
+      gap: 20px;
+    }
+
+    .footer-legal a {
+      color: rgba(255,255,255,0.4);
+      text-decoration: none;
+      font-size: 12px;
+      transition: color var(--transition);
+    }
+
+    .footer-legal a:hover { color: rgba(255,255,255,0.7); }
+
+    /* ─── Fade-in Animation ───────────────────────────── */
+    .fade-in {
+      opacity: 0;
+      transform: translateY(28px);
+      transition: opacity 0.6s ease, transform 0.6s ease;
+    }
+
+    .fade-in.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .fade-in-delay-1 { transition-delay: 0.1s; }
+    .fade-in-delay-2 { transition-delay: 0.2s; }
+    .fade-in-delay-3 { transition-delay: 0.3s; }
+    .fade-in-delay-4 { transition-delay: 0.4s; }
+
+    /* ─── Spinner ─────────────────────────────────────── */
+    .spinner {
+      width: 18px;
+      height: 18px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #FFF;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: none;
+    }
+
+    .btn-submit.loading .spinner { display: block; }
+    .btn-submit.loading .btn-text { display: none; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ─── Story & Mercado Pago Sections ─────────────── */
+    .story-grid, .mp-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      align-items: stretch;
+      min-height: 500px;
+    }
+
+    .story-content, .mp-content {
+      padding: 80px 40px;
+      max-width: 640px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .mp-logo-box {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .mp-logo-img {
+      height: 40px;
+      object-fit: contain;
+    }
+
+    .integrated-visual {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      overflow: hidden;
+      background: #FFFFFF;
+    }
+
+    .integrated-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .btn-header-mobile {
+      display: none;
+    }
+
+    /* ─── Carousel Animation ──────────────────────────── */
+    .carousel-wrapper {
+      position: relative;
+      width: 100%;
+      min-height: 500px;
+      overflow: hidden;
+    }
+
+    .carousel-img {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      opacity: 0;
+      animation: fadeCarousel 30s infinite ease-in-out;
+    }
+
+    /* 6 imagens, ciclo de 30s => cada uma fica 5s visível */
+    .carousel-img:nth-child(1) { animation-delay: 0s; }
+    .carousel-img:nth-child(2) { animation-delay: 5s; }
+    .carousel-img:nth-child(3) { animation-delay: 10s; }
+    .carousel-img:nth-child(4) { animation-delay: 15s; }
+    .carousel-img:nth-child(5) { animation-delay: 20s; }
+    .carousel-img:nth-child(6) { animation-delay: 25s; }
+
+    @keyframes fadeCarousel {
+      0%    { opacity: 0; }
+      5%    { opacity: 1; }
+      16.6% { opacity: 1; }
+      21.6% { opacity: 0; }
+      100%  { opacity: 0; }
+    }
+
+    /* ─── Responsive ──────────────────────────────────── */
+    @media (max-width: 1024px) {
+      .plans-grid { grid-template-columns: repeat(2, 1fr); }
+      .features-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (max-width: 768px) {
+      nav, .header-actions { display: none; }
+      .hamburger { display: flex; }
+      
+      .btn-header-mobile {
+        display: inline-flex;
+        margin-left: auto;
+        margin-right: 12px;
+        padding: 8px 16px;
+        font-size: 13px;
+      }
+
+      .story-grid, .mp-grid {
+        grid-template-columns: 1fr;
+        text-align: center;
+        gap: 40px;
+      }
+
+      .mp-logo-box { justify-content: center; }
+      .story-content, .mp-content { margin: 0 auto; }
+      .integrated-visual { order: -1; }
+      .integrated-img { max-width: 320px; }
+
+      .hero-inner {
+        grid-template-columns: 1fr;
+        text-align: center;
+        gap: 40px;
+      }
+
+      .hero-subtitle { max-width: 100%; }
+      .hero-ctas { justify-content: center; }
+      .trust-badges { justify-content: center; }
+      .hero-visual { order: -1; }
+      .hero-illustration { max-width: 300px; }
+
+      .features-grid { grid-template-columns: 1fr; }
+      .plans-grid {
+        grid-template-columns: 1fr;
+        max-width: 380px;
+        margin: 0 auto;
+      }
+
+      .numbers-grid { grid-template-columns: repeat(2, 1fr); }
+
+      .support-grid { grid-template-columns: 1fr; }
+
+      .footer-top { flex-direction: column; align-items: flex-start; }
+      .footer-bottom { flex-direction: column; align-items: flex-start; }
+
+      section { padding: 72px 20px; }
+    }
+
+    @media (max-width: 375px) {
+      .hero-title { font-size: 26px; }
+      .btn-gold-lg, .btn-outline-white-lg { padding: 14px 24px; font-size: 15px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ── Scroll Progress ── -->
+  <div id="progress-bar" aria-hidden="true"></div>
+
+  <!-- ────────────────────────────── HEADER ────────────────────────────── -->
+  <header id="site-header">
+    <div class="header-inner">
+      <a href="/" class="logo-wrap" aria-label="MarkaAI — Página inicial">
+        <img
+          src="https://uhccgcojwqvkfyzrmebv.supabase.co/storage/v1/object/public/Logo%20MarkaAI/logo_black.png"
+          alt="Logo MarkaAI"
+          class="logo-img"
+          onerror="this.src='https://uhccgcojwqvkfyzrmebv.supabase.co/storage/v1/object/public/Logo%20MarkaAI/logo_white.png'; this.style.filter='brightness(0)';"
+        />
+      </a>
+
+      <nav aria-label="Navegação principal">
+        <a href="#funcionalidades" id="nav-features">Funcionalidades</a>
+        <a href="#planos" id="nav-plans">Planos</a>
+        <a href="#suporte" id="nav-support">Suporte</a>
+      </nav>
+
+      <div class="header-actions">
+        <a href="/login" class="btn btn-outline-dark" id="btn-header-login">Entrar</a>
+        <a href="/register" class="btn btn-primary" id="btn-header-register">Inscreva-se</a>
+      </div>
+
+      <a href="/register" class="btn btn-cta btn-header-mobile">Inscreva-se</a>
+
+      <button class="hamburger" id="hamburger-btn" aria-label="Abrir menu" aria-expanded="false">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+    </div>
+
+    <nav class="mobile-menu" id="mobile-menu" aria-label="Menu mobile">
+      <a href="#funcionalidades" id="mob-features">Funcionalidades</a>
+      <a href="#planos" id="mob-plans">Planos</a>
+      <a href="#suporte" id="mob-support">Suporte</a>
+      <a href="/login" id="mob-login">Entrar</a>
+      <a href="/register" id="mob-register" style="color:var(--cta);font-weight:700;">Inscreva-se →</a>
+    </nav>
+  </header>
+
+  <!-- ─────────────────────────────── HERO ─────────────────────────────── -->
+  <section id="hero" aria-labelledby="hero-heading">
+    <div class="hero-inner">
+      <div class="hero-content">
+        <h1 id="hero-heading" class="hero-title">
+          O sistema de agendamento mais completo para <span>quem trabalha com horário marcado</span>
+        </h1>
+
+        <p class="hero-subtitle">
+          Salões, barber shops, clínicas, estúdios — qualquer profissional que agenda. Agenda inteligente, financeiro, equipe, cupons, feriados e nota fiscal em um só lugar.
+        </p>
+
+        <div class="hero-ctas">
+          <a href="/register" class="btn btn-cta btn-cta-lg" id="btn-hero-register">Criar conta grátis</a>
+          <a href="/login" class="btn btn-outline-dark btn-outline-dark-lg" id="btn-hero-login">Já tenho conta</a>
+        </div>
+
+        <div class="trust-badges">
+          <div class="trust-item">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+            30 dias grátis
+          </div>
+          <div class="trust-item">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+            Sem cartão de crédito
+          </div>
+          <div class="trust-item">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+            Cancele quando quiser
+          </div>
+        </div>
+      </div>
+
+      <div class="hero-visual" aria-hidden="true">
+        <img 
+          src="/img/hero-professionals-white.png" 
+          alt="Profissionais reais utilizando o MarkaAI" 
+          class="hero-illustration" 
+          style="border-radius: 24px; width: 100%; max-width: 640px; object-fit: cover; box-shadow: 0 24px 60px rgba(0,0,0,0.4);"
+        >
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── PARA QUEM É O MARKAAI ───────────────────── -->
+  <section id="para-quem" style="background:#F5F7FA; padding:0;">
+    <div class="mp-grid">
+      <div class="mp-content fade-in">
+        <span class="section-tag">Para quem é o MarkaAI?</span>
+        <h2 class="section-title">Se você atende com hora marcada, é para você.</h2>
+        <p class="section-subtitle" style="margin-bottom:24px;">
+          O MarkaAI não é apenas para salões de beleza. Ele foi projetado para se adaptar a qualquer modelo de negócio que precise de organização, agendamentos online e controle financeiro.
+        </p>
+        <ul class="plan-features" style="margin-bottom:32px;">
+          <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div><strong>Salões, Barbearias e Trancistas</strong></li>
+          <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div><strong>Estúdios de Tatuagem e Piercing</strong></li>
+          <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div><strong>Clínicas de Estética e Terapeutas</strong></li>
+          <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div><strong>Manicures e Lash Designers</strong></li>
+          <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div><strong>Lava-jatos e Serviços de Faxina</strong></li>
+        </ul>
+        <a href="/register" class="btn btn-primary" id="btn-para-quem-cta">Ver como funciona</a>
+      </div>
+      <div class="integrated-visual fade-in fade-in-delay-2" style="background:var(--bg-white);">
+        <div class="carousel-wrapper">
+          <img src="/img/car_tattoo.png"      alt="Tatuador utilizando MarkaAI"          class="carousel-img">
+          <img src="/img/car_manicure.png"    alt="Manicure utilizando MarkaAI"          class="carousel-img">
+          <img src="/img/car_therapist.png"   alt="Terapeuta utilizando MarkaAI"         class="carousel-img">
+          <img src="/img/car_carwash.png"     alt="Dono de lava-jato utilizando MarkaAI" class="carousel-img">
+          <img src="/img/car_braider.png"     alt="Trancista utilizando MarkaAI"         class="carousel-img">
+          <img src="/img/car_esthetician.png" alt="Esteticista utilizando MarkaAI"       class="carousel-img">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────────────────────── FUNCIONALIDADES ─────────────────────── -->
+  <section id="funcionalidades" aria-labelledby="features-heading">
+    <div class="container">
+      <div class="section-header fade-in">
+        <span class="section-tag">Funcionalidades</span>
+        <h2 id="features-heading" class="section-title">Não existe nada igual com tantas funções</h2>
+        <p class="section-subtitle">Criado por quem tem salão e viveu cada dificuldade do dia a dia. Cada funcionalidade resolve um problema real.</p>
+      </div>
+
+      <!-- Bloco de diferencial: criado por quem vive o negócio -->
+      <div class="features-extras fade-in" style="margin-bottom:40px; background: linear-gradient(135deg, var(--purple-dark) 0%, #4A148C 100%); color:#fff; border:none;">
+        <p class="extras-title" style="color:rgba(255,255,255,0.6);">Por que o MarkaAI é diferente?</p>
+        <p style="font-size:16px; line-height:1.8; color:rgba(255,255,255,0.9); margin-bottom:20px;">
+          💇 O MarkaAI nasceu dentro de um salão de beleza — cada tela, cada automação, cada recurso existe porque foi uma necessidade real. Não é software genérico adaptado: é um sistema criado por quem vive isso no dia a dia.
+        </p>
+        <div class="extras-list">
+          <div class="extras-item" style="color:rgba(255,255,255,0.9);">
+            <div class="check-icon" style="background:rgba(255,255,255,0.15);"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="#fff" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>
+            Reajuste automático anual de preços
+          </div>
+          <div class="extras-item" style="color:rgba(255,255,255,0.9);">
+            <div class="check-icon" style="background:rgba(255,255,255,0.15);"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="#fff" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>
+            Gestão de feriados por profissional
+          </div>
+          <div class="extras-item" style="color:rgba(255,255,255,0.9);">
+            <div class="check-icon" style="background:rgba(255,255,255,0.15);"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="#fff" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>
+            Influencers com cupons do seu negócio
+          </div>
+          <div class="extras-item" style="color:rgba(255,255,255,0.9);">
+            <div class="check-icon" style="background:rgba(255,255,255,0.15);"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="#fff" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>
+            Sinal obrigatório para reservar horário
+          </div>
+          <div class="extras-item" style="color:rgba(255,255,255,0.9);">
+            <div class="check-icon" style="background:rgba(255,255,255,0.15);"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="#fff" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>
+            Controle total na palma da mão
+          </div>
+          <div class="extras-item" style="color:rgba(255,255,255,0.9);">
+            <div class="check-icon" style="background:rgba(255,255,255,0.15);"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="#fff" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>
+            Desconto de aniversário automático
+          </div>
+          <div class="extras-item" style="color:rgba(255,255,255,0.9);">
+            <div class="check-icon" style="background:rgba(255,255,255,0.15);"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="#fff" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>
+            Alerta de cliente sumido (reconquista)
+          </div>
+          <div class="extras-item" style="color:rgba(255,255,255,0.9);">
+            <div class="check-icon" style="background:rgba(255,255,255,0.15);"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="#fff" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>
+            Backup da agenda no Google Calendar
+          </div>
+        </div>
+      </div>
+
+      <div class="features-grid">
+        <!-- Card 1 -->
+        <article class="feature-card fade-in fade-in-delay-1">
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><rect x="7" y="14" width="3" height="3" rx="0.5" fill="currentColor" stroke="none"/><rect x="11" y="14" width="3" height="3" rx="0.5" fill="currentColor" stroke="none"/></svg>
+          </div>
+          <h3 class="feature-title">Agenda Inteligente</h3>
+          <p class="feature-desc">Agendamento online 24h, otimização automática de horários, controle de intervalo entre atenções e antecedência mínima configurável. Seus clientes marcam enquanto você dorme.</p>
+        </article>
+
+        <!-- Card 2 -->
+        <article class="feature-card fade-in fade-in-delay-2">
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+          <h3 class="feature-title">Equipe e Comissões</h3>
+          <p class="feature-desc">Cadastre profissionais, deixe o cliente escolher com quem quer ser atendido e calcule comissões automaticamente. Controle de desempenho individual por profissional.</p>
+        </article>
+
+        <!-- Card 3 -->
+        <article class="feature-card fade-in fade-in-delay-3">
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+          </div>
+          <h3 class="feature-title">Financeiro Completo</h3>
+          <p class="feature-desc">Fluxo de caixa, receitas, despesas, relatórios, comissões e análises gráficas avançadas. Comparativo por período, eficiência da equipe e insights de crescimento.</p>
+        </article>
+
+        <!-- Card 4 -->
+        <article class="feature-card fade-in fade-in-delay-1">
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+          </div>
+          <h3 class="feature-title">Pagamentos Online</h3>
+          <p class="feature-desc">Receba via PIX, Cartão de Crédito e Débito direto no app com Mercado Pago. Exija sinal antecipado e elimine faltas. Seus clientes pagam antes de chegar.</p>
+        </article>
+
+        <!-- Card 5 -->
+        <article class="feature-card fade-in fade-in-delay-2">
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          </div>
+          <h3 class="feature-title">Marketing com Influencers</h3>
+          <p class="feature-desc">Crie cupons exclusivos para influencers divulgarem seu negócio. Desconto de aniversário automático, programa de indicação e fidelização de clientes VIP.</p>
+        </article>
+
+        <!-- Card 6 -->
+        <article class="feature-card fade-in fade-in-delay-3">
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>
+          </div>
+          <h3 class="feature-title">Feriados e Folgas</h3>
+          <p class="feature-desc">Defina feriados nacionais e personalizados por profissional. Decida se vai trabalhar ou não em cada data especial. Bloqueio automático sem dor de cabeça.</p>
+        </article>
+
+        <!-- Card 7 -->
+        <article class="feature-card fade-in fade-in-delay-1">
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          </div>
+          <h3 class="feature-title">Nota Fiscal (NFS-e)</h3>
+          <p class="feature-desc">Emissão de Notas Fiscais de Serviço Eletrônicas integrada. Também exija CPF nos agendamentos para segurança e conformidade com a LGPD.</p>
+        </article>
+
+        <!-- Card 8 -->
+        <article class="feature-card fade-in fade-in-delay-2">
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/><path d="M16 11h2a2 2 0 0 1 2 2v2"/></svg>
+          </div>
+          <h3 class="feature-title">CRM de Clientes</h3>
+          <p class="feature-desc">Histórico completo, classificação VIP, alerta de clientes sumidos, bloqueio de perfis problemáticos. Reconquiste quem sumiu automaticamente.</p>
+        </article>
+
+        <!-- Card 9 -->
+        <article class="feature-card fade-in fade-in-delay-3">
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+          </div>
+          <h3 class="feature-title">Reajuste Automático</h3>
+          <p class="feature-desc">Programe o reajuste anual de todos os seus preços com um clique. Percentual configurável, por serviço ou em lote. Seu faturamento corrigido sem esforço.</p>
+        </article>
+      </div>
+
+      <!-- Extras -->
+      <div class="features-extras fade-in">
+        <p class="extras-title">Também incluso em todos os planos</p>
+        <div class="extras-list">
+          <div class="extras-item"><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Agendamento online 24h</div>
+          <div class="extras-item"><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Página pública da loja</div>
+          <div class="extras-item"><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Backup no Google Calendar</div>
+          <div class="extras-item"><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Links no Google Business</div>
+          <div class="extras-item"><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Estoque de produtos</div>
+          <div class="extras-item"><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Clientes ilimitados</div>
+          <div class="extras-item"><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Link personalizado da loja</div>
+          <div class="extras-item"><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>LGPD e segurança</div>
+          <div class="extras-item"><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Bloqueio de feriados</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ──────────────────────────── NOSSA HISTÓRIA ───────────────────────── -->
+  <section id="nossa-historia" style="background:#FFFFFF; padding:0;">
+    <div class="story-grid">
+      <div class="story-content fade-in">
+        <span class="section-tag">Nossa História</span>
+        <h2 class="section-title">De um problema real nascia o MarkaAI</h2>
+        <p class="section-subtitle" style="margin-bottom:24px;">
+          O MarkaAI não nasceu em uma sala de reuniões, mas sim dentro do <strong>AFROED STUDIO</strong>. 
+          Como desenvolvedor de software, vi de perto os desafios que minha esposa enfrentava: o talento imenso para trançar cabelos e cuidar de pessoas muitas vezes era consumido pelo caos da agenda e da gestão.
+        </p>
+        <p class="section-subtitle" style="margin-bottom:24px;">
+          Decidi criar algo que facilitasse a vida dela — e a sua. O MarkaAI foi moldado nas dificuldades do dia a dia de um salão real, focado em devolver ao profissional o que ele tem de mais precioso: <strong>tempo</strong>.
+        </p>
+        <a href="/register" class="btn btn-cta" id="btn-story-cta">Começar minha história</a>
+      </div>
+      <div class="integrated-visual fade-in fade-in-delay-2">
+        <img src="/img/historia-afroed.png" alt="Desenvolvedor e Esposa no AFROED Studio" class="integrated-img">
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── MERCADO PAGO ────────────────────────────── -->
+  <section id="mercado-pago" style="background:#F5F7FA; padding:0;">
+    <div class="mp-grid">
+      <div class="integrated-visual fade-in">
+        <img src="/img/mercadopago-direto.png" alt="Integração Direta Mercado Pago" class="integrated-img">
+      </div>
+      <div class="mp-content fade-in fade-in-delay-2">
+        <div class="mp-logo-box">
+          <img src="/img/mercado-pago-logo.png" alt="Logo Mercado Pago" class="mp-logo-img">
+        </div>
+        <h2 class="section-title">Seu dinheiro cai direto na sua conta</h2>
+        <p class="section-subtitle" style="margin-bottom:24px;">
+          Chega de intermediários ou de ter que "solicitar saque" para ver a cor do seu dinheiro. Com nossa conexão direta com o <strong>Mercado Pago</strong>, você recebe seus pagamentos online instantaneamente.
+        </p>
+        <ul class="plan-features" style="margin-bottom:32px;">
+          <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Dinheiro direto na conta do dono da loja</li>
+          <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Sem taxas de saque ou espera</li>
+          <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Total transparência no financeiro</li>
+        </ul>
+        <a href="/register" class="btn btn-outline-dark" id="btn-mp-cta">Configurar pagamentos</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── GARANTIA FREEMIUM ───────────────────────── -->
+  <section id="freemium" style="background:#FFFFFF; padding:0;">
+    <div class="story-grid">
+      <div class="story-content fade-in">
+        <span class="section-tag">Totalmente sem riscos</span>
+        <h2 class="section-title">Comece grátis, sem pegadinhas.</h2>
+        <p class="section-subtitle" style="margin-bottom:24px;">
+          Nós odiamos aquelas ferramentas que te "obrigam" a pagar depois de alguns dias. Aqui você tem controle total.
+        </p>
+        <ul class="plan-features" style="margin-bottom:32px;">
+          <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div><strong>Plano Gratuito para Sempre:</strong> Se o MarkaAI Free é suficiente para você, use-o para sempre. Sem custos, sem taxas ocultas.</li>
+          <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div><strong>Teste de 30 Dias sem Cartão:</strong> Quer testar as versões completas? Você tem 30 dias de bônus, e não pedimos seu cartão de crédito na inscrição.</li>
+          <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div><strong>Liberdade Total:</strong> Cresceu? Faça upgrade apenas quando precisar. Apertou? Volte para o plano gratuito a qualquer momento com um clique.</li>
+        </ul>
+        <a href="/register" class="btn btn-cta" id="btn-freemium-cta">Criar minha conta grátis</a>
+      </div>
+      <div class="integrated-visual fade-in fade-in-delay-2">
+        <img src="/img/garantia-gratis.png" alt="Profissional tranquilo usando MarkaAI Grátis" class="integrated-img">
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────────── PLANOS ──────────────────────────────── -->
+  <section id="planos" aria-labelledby="plans-heading">
+    <div class="container">
+      <div class="section-header fade-in" style="text-align:center;">
+        <span class="section-tag">Planos e Preços</span>
+        <h2 id="plans-heading" class="section-title">Planos para cada momento do seu negócio</h2>
+        <p class="section-subtitle" style="margin:0 auto; margin-bottom:40px;">Comece grátis e evolua no seu ritmo. 30 dias de teste sem cartão.</p>
+        <div class="integrated-visual fade-in" style="margin-bottom:48px;">
+          <img src="/img/equipe-sucesso.png" alt="Equipe MarkaAI de Sucesso" class="integrated-img" style="max-width:380px;">
+        </div>
+      </div>
+
+      <div class="plans-grid">
+        <!-- Free -->
+        <div class="plan-card fade-in fade-in-delay-1" id="plan-free">
+          <p class="plan-name">Free</p>
+          <p class="plan-price">Grátis</p>
+          <p class="plan-price-period">para sempre</p>
+          <div class="plan-divider"></div>
+          <ul class="plan-features" aria-label="Recursos do plano Free">
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>1 Profissional cadastrado</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Agendamento online 24h</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Página pública da loja</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Backup no Google Calendar</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Clientes ilimitados</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Link personalizado da loja</li>
+          </ul>
+          <a href="/register" class="btn-plan btn-plan-outline" id="cta-plan-free">Usar plano Free</a>
+        </div>
+
+        <!-- Start -->
+        <div class="plan-card fade-in fade-in-delay-2" id="plan-start">
+          <p class="plan-name">Start</p>
+          <p class="plan-price"><sup>R$</sup>29<span style="font-size:20px;font-weight:700;">,90</span></p>
+          <p class="plan-price-period">/mês</p>
+          <div class="plan-divider"></div>
+          <ul class="plan-features" aria-label="Recursos do plano Start">
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Tudo do plano Free +</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Até 2 profissionais</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Pagamentos via PIX online</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Sinal obrigatório para reservar</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Desconto de aniversário automático</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Cliente escolhe o profissional</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Otimização automática de horários</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>3 fotos por serviço</li>
+          </ul>
+          <a href="/register" class="btn-plan btn-plan-outline" id="cta-plan-start">Assinar Start</a>
+        </div>
+
+        <!-- Plus (DESTAQUE) -->
+        <div class="plan-card featured fade-in fade-in-delay-3" id="plan-plus">
+          <div class="plan-badge">Mais popular</div>
+          <p class="plan-name">Plus</p>
+          <p class="plan-price"><sup>R$</sup>59<span style="font-size:20px;font-weight:700;">,90</span></p>
+          <p class="plan-price-period">/mês</p>
+          <div class="plan-divider"></div>
+          <ul class="plan-features" aria-label="Recursos do plano Plus">
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Tudo do plano Start +</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Até 3 profissionais</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Cartão de Crédito e Débito online</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Aba Financeira completa + comissões</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Cupons e influencers</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Clientes VIP, bloqueio e automações</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Gestão de estoque</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Feriados personalizados por profissional</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Visitantes e leads da loja</li>
+          </ul>
+          <a href="/register" class="btn-plan btn-plan-primary" id="cta-plan-plus">Assinar Plus</a>
+        </div>
+
+        <!-- Pro -->
+        <div class="plan-card fade-in fade-in-delay-4" id="plan-pro">
+          <p class="plan-name">Pro</p>
+          <p class="plan-price"><sup>R$</sup>99<span style="font-size:20px;font-weight:700;">,90</span></p>
+          <p class="plan-price-period">/mês</p>
+          <div class="plan-divider"></div>
+          <ul class="plan-features" aria-label="Recursos do plano Pro">
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Tudo do plano Plus +</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Até 5 profissionais</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Análises financeiras avançadas com gráficos</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Eficiência e desempenho da equipe</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Comparativo de receita por período</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Emissão de Nota Fiscal (NFS-e)</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>CPF obrigatório nos agendamentos</li>
+            <li><div class="check-icon"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5l2 2 4-4" stroke="var(--purple)" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></div>Suporte VIP via WhatsApp</li>
+          </ul>
+          <a href="/register" class="btn-plan btn-plan-outline" id="cta-plan-pro">Assinar Pro</a>
+        </div>
+      </div>
+
+      <p class="plans-footer fade-in">
+        Todos os planos incluem <strong>30 dias de teste gratuito</strong>. Sem cartão de crédito para começar. Cancele quando quiser.
+      </p>
+    </div>
+  </section>
+
+  <!-- ──────────────────────────── NÚMEROS ─────────────────────────────── -->
+  <section id="numeros" aria-label="Números e estatísticas">
+    <div class="container">
+      <div class="numbers-grid">
+        <div class="number-item fade-in fade-in-delay-1">
+          <p class="number-value">360°</p>
+          <p class="number-label">Controle total do negócio</p>
+        </div>
+        <div class="number-item fade-in fade-in-delay-2">
+          <p class="number-value">12+</p>
+          <p class="number-label">Módulos integrados</p>
+        </div>
+        <div class="number-item fade-in fade-in-delay-3">
+          <p class="number-value">4</p>
+          <p class="number-label">Planos para todo tamanho de negócio</p>
+        </div>
+        <div class="number-item fade-in fade-in-delay-4">
+          <p class="number-value">30 dias</p>
+          <p class="number-label">Grátis para testar tudo</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ──────────────────────────── SUPORTE ──────────────────────────────── -->
+  <section id="suporte" aria-labelledby="support-heading">
+    <div class="container">
+      <div class="section-header fade-in">
+        <span class="section-tag">Suporte</span>
+        <h2 id="support-heading" class="section-title">Precisa de ajuda?</h2>
+        <p class="section-subtitle">Nossa equipe está pronta para te atender. Clientes com conta podem abrir chamados diretamente no sistema.</p>
+      </div>
+
+      <div class="support-grid">
+        <!-- Coluna esquerda: clientes com conta -->
+        <div class="support-card fade-in fade-in-delay-1">
+          <h3 class="support-card-title">Para clientes com conta</h3>
+          <p class="support-card-desc">
+            Se você já tem uma conta MarkaAI, acesse o suporte completo com histórico de chamados, acompanhamento de status e respostas da equipe diretamente no app.
+          </p>
+          <a href="/login" class="btn btn-primary" id="btn-support-login" style="font-size:15px;padding:13px 24px;">Acessar meu suporte</a>
+        </div>
+
+        <!-- Coluna direita: formulário anônimo -->
+        <div class="support-card fade-in fade-in-delay-2">
+          <h3 class="support-card-title">Dúvidas gerais / pré-venda</h3>
+
+          <form id="contact-form" novalidate>
+            <div class="form-group">
+              <label class="form-label" for="contact-name">Nome *</label>
+              <input
+                type="text"
+                id="contact-name"
+                name="nome"
+                class="form-control"
+                placeholder="Seu nome completo"
+                required
+                autocomplete="name"
+              />
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="contact-email">E-mail *</label>
+              <input
+                type="email"
+                id="contact-email"
+                name="email"
+                class="form-control"
+                placeholder="seu@email.com.br"
+                required
+                autocomplete="email"
+              />
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="contact-phone">WhatsApp / Telefone (Opcional)</label>
+              <input
+                type="tel"
+                id="contact-phone"
+                name="telefone"
+                class="form-control"
+                placeholder="(99) 99999-9999"
+              />
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="contact-subject">Assunto *</label>
+              <select id="contact-subject" name="assunto" class="form-control" required>
+                <option value="" disabled selected>Selecione o assunto</option>
+                <option value="Dúvida sobre planos">Dúvida sobre planos</option>
+                <option value="Problema técnico">Problema técnico</option>
+                <option value="Quero conhecer o sistema">Quero conhecer o sistema</option>
+                <option value="Parceria/Afiliados">Parceria/Afiliados</option>
+                <option value="Outro">Outro</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="contact-message">Mensagem *</label>
+              <textarea
+                id="contact-message"
+                name="mensagem"
+                class="form-control"
+                placeholder="Descreva sua dúvida ou mensagem..."
+                required
+                maxlength="1000"
+              ></textarea>
+              <p class="char-counter"><span id="char-count">0</span>/1000 caracteres</p>
+            </div>
+
+            <button type="submit" class="btn-submit" id="contact-submit">
+              <div class="spinner" aria-hidden="true"></div>
+              <span class="btn-text">Enviar mensagem</span>
+            </button>
+
+            <div class="form-message" id="form-success" role="alert">
+              ✓ Mensagem enviada! Retornaremos em até 24 horas no e-mail informado.
+            </div>
+            <div class="form-message" id="form-error" role="alert">
+              ✗ Não foi possível enviar. Tente novamente ou entre em contato via e-mail.
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────────────────────── CTA FINAL ────────────────────────────── -->
+  <section id="cta-final" aria-labelledby="cta-heading">
+    <div class="container" style="text-align:center;">
+      <h2 id="cta-heading" class="cta-title fade-in">Pronto para transformar seu salão?</h2>
+      <p class="cta-subtitle fade-in fade-in-delay-1">Comece hoje, grátis. Sem burocracia.</p>
+      <a href="/register" class="btn btn-cta btn-cta-lg fade-in fade-in-delay-2" id="btn-cta-final">
+        Criar minha conta grátis
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+      </a>
+    </div>
+  </section>
+
+  <!-- ──────────────────────────── FOOTER ───────────────────────────────── -->
+  <footer>
+    <div class="footer-inner">
+      <div class="footer-top">
+        <div class="footer-brand">
+          <a href="/" class="logo-wrap" aria-label="MarkaAI — Início">
+            <img
+              src="https://uhccgcojwqvkfyzrmebv.supabase.co/storage/v1/object/public/Logo%20MarkaAI/logo_white.png"
+              alt="Logo MarkaAI"
+              class="logo-img"
+              onerror="this.style.display='none'"
+            />
+          </a>
+          <p>Sistema de gestão para salões e estética</p>
+        </div>
+
+        <nav class="footer-links" aria-label="Links de rodapé">
+          <a href="#funcionalidades" id="footer-features">Funcionalidades</a>
+          <a href="#planos" id="footer-plans">Planos</a>
+          <a href="#suporte" id="footer-support">Suporte</a>
+        </nav>
+      </div>
+
+      <div class="footer-bottom">
+        <p class="footer-copy">© 2025 MarkaAI. Todos os direitos reservados.</p>
+        <nav class="footer-legal" aria-label="Links legais">
+          <a href="/privacy-policy" id="footer-privacy">Política de Privacidade</a>
+          <a href="/terms-of-use" id="footer-terms">Termos de Uso</a>
+        </nav>
+      </div>
+    </div>
+  </footer>
+
+  <!-- ──────────────────────────── SCRIPTS ─────────────────────────────── -->
+  <script>
+    (function () {
+      'use strict';
+
+      const SUPABASE_FUNCTION_URL = 'https://uhccgcojwqvkfyzrmebv.supabase.co/functions/v1/contact-landing';
+
+      // ── Scroll Progress Bar ──────────────────────────────────────────
+      const progressBar = document.getElementById('progress-bar');
+      function updateProgress() {
+        const total = document.documentElement.scrollHeight - window.innerHeight;
+        const progress = total > 0 ? (window.scrollY / total) * 100 : 0;
+        progressBar.style.width = progress + '%';
+      }
+
+      // ── Header Scroll Effect ─────────────────────────────────────────
+      const siteHeader = document.getElementById('site-header');
+      function updateHeader() {
+        siteHeader.classList.toggle('scrolled', window.scrollY > 40);
+      }
+
+      window.addEventListener('scroll', () => {
+        updateProgress();
+        updateHeader();
+      }, { passive: true });
+
+      updateProgress();
+      updateHeader();
+
+      // ── Smooth scroll para links âncora ──────────────────────────────
+      document.querySelectorAll('a[href^="#"]').forEach(link => {
+        link.addEventListener('click', function (e) {
+          const target = document.querySelector(this.getAttribute('href'));
+          if (target) {
+            e.preventDefault();
+            const headerH = siteHeader.offsetHeight;
+            const top = target.getBoundingClientRect().top + window.scrollY - headerH - 16;
+            window.scrollTo({ top, behavior: 'smooth' });
+
+            // Fechar menu mobile se aberto
+            closeMobileMenu();
+          }
+        });
+      });
+
+      // ── Menu hamburguer ──────────────────────────────────────────────
+      const hamburgerBtn = document.getElementById('hamburger-btn');
+      const mobileMenu   = document.getElementById('mobile-menu');
+
+      function closeMobileMenu() {
+        hamburgerBtn.classList.remove('open');
+        mobileMenu.classList.remove('open');
+        hamburgerBtn.setAttribute('aria-expanded', 'false');
+      }
+
+      hamburgerBtn.addEventListener('click', () => {
+        const isOpen = hamburgerBtn.classList.toggle('open');
+        mobileMenu.classList.toggle('open', isOpen);
+        hamburgerBtn.setAttribute('aria-expanded', String(isOpen));
+      });
+
+      // Fechar menu ao clicar fora
+      document.addEventListener('click', (e) => {
+        if (!siteHeader.contains(e.target)) closeMobileMenu();
+      });
+
+      // ── Intersection Observer (Fade-in) ──────────────────────────────
+      const fadeEls = document.querySelectorAll('.fade-in');
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('visible');
+            observer.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
+
+      fadeEls.forEach(el => observer.observe(el));
+
+      // ── Contador de caracteres ────────────────────────────────────────
+      const textarea  = document.getElementById('contact-message');
+      const charCount = document.getElementById('char-count');
+
+      textarea.addEventListener('input', () => {
+        charCount.textContent = textarea.value.length;
+        charCount.style.color = textarea.value.length > 900 ? '#C53030' : '';
+      });
+
+      // ── Máscara de Telefone ──────────────────────────────────────────
+      const phoneInput = document.getElementById('contact-phone');
+      phoneInput.addEventListener('input', (e) => {
+        let x = e.target.value.replace(/\D/g, '').match(/(\d{0,2})(\d{0,5})(\d{0,4})/);
+        e.target.value = !x[2] ? x[1] : '(' + x[1] + ') ' + x[2] + (x[3] ? '-' + x[3] : '');
+      });
+
+      // ── Formulário de contato ─────────────────────────────────────────
+      const contactForm   = document.getElementById('contact-form');
+      const submitBtn     = document.getElementById('contact-submit');
+      const successMsg    = document.getElementById('form-success');
+      const errorMsg      = document.getElementById('form-error');
+
+      function setLoading(loading) {
+        submitBtn.disabled = loading;
+        submitBtn.classList.toggle('loading', loading);
+      }
+
+      function showMessage(type) {
+        successMsg.style.display = 'none';
+        errorMsg.style.display   = 'none';
+        if (type === 'success') successMsg.classList.add('success'), successMsg.style.display = 'block';
+        if (type === 'error')   errorMsg.classList.add('error'),   errorMsg.style.display   = 'block';
+      }
+
+      contactForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const nome     = document.getElementById('contact-name').value.trim();
+        const email    = document.getElementById('contact-email').value.trim();
+        const telefone = document.getElementById('contact-phone').value.trim();
+        const assunto  = document.getElementById('contact-subject').value;
+        const mensagem = textarea.value.trim();
+
+        // Validação client-side básica (Telefone agora é opcional)
+        if (!nome || !email || !assunto || !mensagem) {
+          showMessage('error');
+          return;
+        }
+
+        setLoading(true);
+        successMsg.style.display = 'none';
+        errorMsg.style.display   = 'none';
+
+        try {
+          const res = await fetch(SUPABASE_FUNCTION_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ nome, email, telefone, assunto, mensagem }),
+          });
+
+          if (res.ok) {
+            showMessage('success');
+            contactForm.reset();
+            charCount.textContent = '0';
+          } else {
+            const errorData = await res.json().catch(() => ({}));
+            console.error('[MarkaAI] Erro no servidor:', errorData);
+            showMessage('error');
+          }
+        } catch (err) {
+          console.error('[MarkaAI] Erro na requisição:', err);
+          showMessage('error');
+        } finally {
+          setLoading(false);
+        }
+      });
+
+    }());
+  </script>
+</body>
+</html>

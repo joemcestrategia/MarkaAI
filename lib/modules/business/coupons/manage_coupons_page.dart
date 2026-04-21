@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:markaai/modules/business/coupons/coupon_analytics_tab.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/services/coupon_share_service.dart';
 import '../../../core/services/plan_features_service.dart';
@@ -57,7 +58,9 @@ class ManageCouponsPage extends StatefulWidget {
   State<ManageCouponsPage> createState() => _ManageCouponsPageState();
 }
 
-class _ManageCouponsPageState extends State<ManageCouponsPage> {
+class _ManageCouponsPageState extends State<ManageCouponsPage>
+    with TickerProviderStateMixin {
+  late final TabController _tabController;
   final GlobalKey _shareKey = GlobalKey();
   String _shopName = "Minha Loja";
   String? _logoUrl;
@@ -72,8 +75,15 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
     _loadShopData();
     _loadServices();
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadServices() async {
@@ -163,90 +173,125 @@ class _ManageCouponsPageState extends State<ManageCouponsPage> {
             title: const Text('Meus Cupons'),
             backgroundColor: AppColors.primaryPurple,
             foregroundColor: Colors.white,
-          ),
-          body: Stack(
-            children: [
-              SupabaseStreamWidget<List<Map<String, dynamic>>>(
-                key: ValueKey('cpn_stream_$_refreshKey'),
-                initialFuture: ShopDataCacheService().getCoupons(widget.shopId),
-                stream: Supabase.instance.client
-                    .from('coupons')
-                    .stream(primaryKey: ['id'])
-                    .eq('shop_id', widget.shopId),
-                onRetry: () => setState(() => _refreshKey++),
-                emptyBuilder: (context) => _buildEmptyState(),
-                builder: (context, couponsRaw) {
-                  final coupons = List<Map<String, dynamic>>.from(couponsRaw);
-                  
-                  coupons.sort((a, b) {
-                    final aTime = DateTime.tryParse(a['created_at']?.toString() ?? '') ?? DateTime(2000);
-                    final bTime = DateTime.tryParse(b['created_at']?.toString() ?? '') ?? DateTime(2000);
-                    return bTime.compareTo(aTime);
-                  });
-
-                  return ListView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: coupons.length,
-                    itemBuilder: (context, index) {
-                      final data = coupons[index];
-                      return _buildCouponCard(data['id'], data);
-                    },
-                  );
-                },
+            bottom: TabBar(
+              controller: _tabController,
+              indicatorColor: Colors.white,
+              indicatorWeight: 3,
+              labelColor: Colors.white,
+              unselectedLabelColor: Colors.white60,
+              labelStyle: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
               ),
-
-              if (_couponToShare != null)
-                Positioned(
-                  left: -1000,
-                  child: RepaintBoundary(
-                    key: _shareKey,
-                    child: CouponShareService.buildShareableCoupon(
-                      shopName: _shopName,
-                      code: _couponToShare!['code'] ?? '',
-                      discount: (_couponToShare!['discount_percent'] as num?)?.toInt() ?? 0, // Corrigido cast para int
-                      logoUrl: _logoUrl,
-                      description: _couponToShare!['description'],
-                      subdomain: _slug,
-                      validUntil: _couponToShare!['valid_until'] != null
-                          ? DateFormat('dd/MM/yyyy').format(
-                              DateTime.parse(_couponToShare!['valid_until'].toString()))
-                          : null,
-                    ),
-                  ),
+              unselectedLabelStyle: const TextStyle(fontSize: 13),
+              tabs: const [
+                Tab(
+                  icon: Icon(Icons.confirmation_number_outlined, size: 20),
+                  text: 'Cupons',
                 ),
+                Tab(
+                  icon: Icon(Icons.bar_chart_rounded, size: 20),
+                  text: 'Análise',
+                ),
+              ],
+            ),
+          ),
+          body: TabBarView(
+            controller: _tabController,
+            children: [
+              // ── Aba 0: Cupons (original — não modificada) ──────────────
+              Stack(
+                children: [
+                  SupabaseStreamWidget<List<Map<String, dynamic>>>(
+                    key: ValueKey('cpn_stream_$_refreshKey'),
+                    initialFuture: ShopDataCacheService().getCoupons(widget.shopId),
+                    stream: Supabase.instance.client
+                        .from('coupons')
+                        .stream(primaryKey: ['id'])
+                        .eq('shop_id', widget.shopId),
+                    onRetry: () => setState(() => _refreshKey++),
+                    emptyBuilder: (context) => _buildEmptyState(),
+                    builder: (context, couponsRaw) {
+                      final coupons = List<Map<String, dynamic>>.from(couponsRaw);
+                      
+                      coupons.sort((a, b) {
+                        final aTime = DateTime.tryParse(a['created_at']?.toString() ?? '') ?? DateTime(2000);
+                        final bTime = DateTime.tryParse(b['created_at']?.toString() ?? '') ?? DateTime(2000);
+                        return bTime.compareTo(aTime);
+                      });
 
-              if (_isGeneratingImage)
-                Container(
-                  color: Colors.black26,
-                  child: const Center(
-                    child: Card(
-                      child: Padding(
-                        padding:
-                            EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            CircularProgressIndicator(strokeWidth: 2),
-                            SizedBox(width: 16),
-                            Text("Gerando imagem..."),
-                          ],
+                      return ListView.builder(
+                        padding: const EdgeInsets.all(16),
+                        itemCount: coupons.length,
+                        itemBuilder: (context, index) {
+                          final data = coupons[index];
+                          return _buildCouponCard(data['id'], data);
+                        },
+                      );
+                    },
+                  ),
+
+                  if (_couponToShare != null)
+                    Positioned(
+                      left: -1000,
+                      child: RepaintBoundary(
+                        key: _shareKey,
+                        child: CouponShareService.buildShareableCoupon(
+                          shopName: _shopName,
+                          code: _couponToShare!['code'] ?? '',
+                          discount: (_couponToShare!['discount_percent'] as num?)?.toInt() ?? 0,
+                          logoUrl: _logoUrl,
+                          description: _couponToShare!['description'],
+                          subdomain: _slug,
+                          validUntil: _couponToShare!['valid_until'] != null
+                              ? DateFormat('dd/MM/yyyy').format(
+                                  DateTime.parse(_couponToShare!['valid_until'].toString()))
+                              : null,
                         ),
                       ),
                     ),
-                  ),
-                ),
+
+                  if (_isGeneratingImage)
+                    Container(
+                      color: Colors.black26,
+                      child: const Center(
+                        child: Card(
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                CircularProgressIndicator(strokeWidth: 2),
+                                SizedBox(width: 16),
+                                Text("Gerando imagem..."),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              // ── Aba 1: Análise de Cupons (novo widget, apenas leitura) ─
+              CouponAnalyticsTab(shopId: widget.shopId),
             ],
           ),
-          floatingActionButton: FloatingActionButton(
-            onPressed: () {
-              if (!_currentFeatures.coupons) {
-                _showUpgradeDialog();
-                return;
-              }
-              _showCouponDialog();
+          floatingActionButton: AnimatedBuilder(
+            animation: _tabController,
+            builder: (context, _) {
+              if (_tabController.index != 0) return const SizedBox.shrink();
+              return FloatingActionButton(
+                onPressed: () {
+                  if (!_currentFeatures.coupons) {
+                    _showUpgradeDialog();
+                    return;
+                  }
+                  _showCouponDialog();
+                },
+                backgroundColor: AppColors.primaryPurple,
+                child: const Icon(Icons.add, color: Colors.white),
+              );
             },
-            backgroundColor: AppColors.primaryPurple,
-            child: const Icon(Icons.add, color: Colors.white),
           ),
         );
       },

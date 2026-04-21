@@ -51,7 +51,7 @@ class AuthService {
       final String redirectUrl = kIsWeb
           ? (kDebugMode
               ? 'http://localhost:3000'
-              : Uri.base.origin)
+              : '${Uri.base.origin}/login')
           : 'markaai://login-callback';
       
       debugPrint('[AuthService] Iniciando OAuth Google. RedirectTo: $redirectUrl');
@@ -59,6 +59,7 @@ class AuthService {
       await _supabase.auth.signInWithOAuth(
         sb.OAuthProvider.google,
         redirectTo: redirectUrl,
+        authScreenLaunchMode: sb.LaunchMode.externalApplication,
       );
     } catch (e) {
       debugPrint('[AuthService] Erro no OAuth Google: $e');

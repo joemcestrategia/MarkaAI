@@ -197,7 +197,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
             const SizedBox(height: 10),
             TextField(
                 controller: priceVar,
-                keyboardType: TextInputType.number,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 decoration: const InputDecoration(labelText: "Preço (R\$)"))
           ],
         ),
@@ -208,12 +208,16 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
           ElevatedButton(
             onPressed: () {
               if (nameVar.text.isNotEmpty && priceVar.text.isNotEmpty) {
+                // Remove R$ e espaços, depois trata formato BR (1.000,00 -> 1000.00)
+                String raw = priceVar.text.replaceAll(RegExp(r'[R\$\s]'), '');
+                if (raw.contains(',')) {
+                  raw = raw.replaceAll('.', '').replaceAll(',', '.');
+                }
+                
                 setState(() {
                   _variations.add({
                     'name': nameVar.text,
-                    'price':
-                        double.tryParse(priceVar.text.replaceAll(',', '.')) ??
-                            0.0,
+                    'price': double.tryParse(raw) ?? 0.0,
                   });
                 });
                 Navigator.pop(context);
@@ -449,8 +453,16 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
         shopId: shopId,
         name: _nameController.text.trim(),
         description: _descriptionController.text.trim(),
-        price: double.tryParse(_priceController.text.replaceAll(',', '.')) ?? 0,
-        cost: double.tryParse(_custoController.text.replaceAll(',', '.')) ?? 0,
+        price: () {
+          String raw = _priceController.text.replaceAll(RegExp(r'[R\$\s]'), '');
+          if (raw.contains(',')) raw = raw.replaceAll('.', '').replaceAll(',', '.');
+          return double.tryParse(raw) ?? 0.0;
+        }(),
+        cost: () {
+          String raw = _custoController.text.replaceAll(RegExp(r'[R\$\s]'), '');
+          if (raw.contains(',')) raw = raw.replaceAll('.', '').replaceAll(',', '.');
+          return double.tryParse(raw) ?? 0.0;
+        }(),
         durationMin: int.tryParse(_timeController.text) ?? 30,
         photosUrls: uploadedUrls,
         categoryIds: _categoryIds,
@@ -827,8 +839,9 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                                     decimal: true),
                                 validator: (v) {
                                   if (v == null || v.isEmpty) return "Obrigatório";
-                                  final value =
-                                      double.tryParse(v.replaceAll(',', '.'));
+                                  String raw = v.replaceAll(RegExp(r'[R\$\s]'), '');
+                                  if (raw.contains(',')) raw = raw.replaceAll('.', '').replaceAll(',', '.');
+                                  final value = double.tryParse(raw);
                                   if (value == null || value <= 0) {
                                     return "Preço inválido";
                                   }
@@ -850,8 +863,9 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                                     decimal: true),
                                 validator: (v) {
                                   if (v == null || v.isEmpty) return null;
-                                  final value =
-                                      double.tryParse(v.replaceAll(',', '.'));
+                                  String raw = v.replaceAll(RegExp(r'[R\$\s]'), '');
+                                  if (raw.contains(',')) raw = raw.replaceAll('.', '').replaceAll(',', '.');
+                                  final value = double.tryParse(raw);
                                   if (value != null && value < 0) {
                                     return "Custo não pode ser negativo";
                                   }

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'dart:io';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'catalog_import_page.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as sb;
@@ -23,6 +25,7 @@ import '../../widgets/upgrade_modal.dart';
 import '../../core/services/session_service.dart';
 import '../../core/services/shop_data_cache_service.dart';
 import '../login/login_page.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 // --- MÓDULOS ---
 import '../services/services_management_page.dart';
@@ -236,6 +239,35 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           NotificationService.registerToken(effectiveUid);
           NotificationService.initialize().then((_) {
             debugPrint('✅ Notificações inicializadas para o dono da loja');
+            // Solicita permissão e vincula no BD push_subscriptions para o owner
+            NotificationService.requestWebPushPermission();
+
+            // Requisita permissão ao SO nativo (Android/iOS)
+            if (!kIsWeb) {
+              Permission.notification.request().then((status) async {
+                debugPrint('Nativo: Permissão de notificação status = $status');
+                
+                final fcmToken = await NotificationService.getToken();
+                if (fcmToken != null) {
+                  await sb.Supabase.instance.client.from('fcm_tokens').upsert({
+                    'user_id': sb.Supabase.instance.client.auth.currentUser!.id,
+                    'token': fcmToken,
+                    'platform': Platform.isAndroid ? 'android' : 'ios',
+                    'updated_at': DateTime.now().toIso8601String(),
+                  }, onConflict: 'user_id');
+                  debugPrint('[FCM_SAVE] Token salvo no Supabase');
+                }
+                
+                FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
+                  await sb.Supabase.instance.client.from('fcm_tokens').upsert({
+                    'user_id': sb.Supabase.instance.client.auth.currentUser!.id,
+                    'token': newToken,
+                    'platform': Platform.isAndroid ? 'android' : 'ios',
+                    'updated_at': DateTime.now().toIso8601String(),
+                  }, onConflict: 'user_id');
+                });
+              });
+            }
           }).catchError((e) {
             debugPrint('❌ Erro ao inicializar notificações (catchError): $e');
           });

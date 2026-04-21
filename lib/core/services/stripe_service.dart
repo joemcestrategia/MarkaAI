@@ -47,49 +47,9 @@ class StripeService {
         ),
       );
 
-  /// Atualiza o plano no Supabase imediatamente após pagamento aprovado
-  static Future<void> _updatePlanInSupabase(
-    String planId, {
-    String? stripeSubscriptionId,
-    String? stripeCustomerId,
-  }) async {
-    try {
-      String? shopId = await SessionService.getShopId();
-      if (shopId == null) {
-        final user = _supabase.auth.currentUser;
-        if (user != null) {
-          final userDoc = await _supabase
-              .from('users')
-              .select('shop_id')
-              .eq('id', user.id)
-              .maybeSingle();
-          shopId = userDoc?['shop_id']?.toString();
-        }
-      }
-      if (shopId == null) return;
-
-      await _supabase.from('shops').update({
-        'plan_id': planId,
-        'trial_active': false,
-        'subscription': {
-          'plan_id': planId,
-          'status': 'active',
-          'payment_provider': 'stripe',
-          if (stripeSubscriptionId != null)
-            'stripe_subscription_id': stripeSubscriptionId,
-          if (stripeCustomerId != null)
-            'stripe_customer_id': stripeCustomerId,
-          'updated_at': DateTime.now().toIso8601String(),
-        },
-      }).eq('id', shopId);
-
-      debugPrint('[StripeService] Plano atualizado para: $planId');
-    } catch (e) {
-      debugPrint('[StripeService] Erro ao atualizar plano: $e');
-    }
-  }
-
-  // ════════════════════════════════════════════════════════════
+  // A atualização do banco via app (_updatePlanInSupabase) foi REJEITADA.
+  // Todo o fluxo de liberação do produto final agora é exclusivamente garantido
+  // pelo 'stripe-webhook' rodando no servidor.  // ════════════════════════════════════════════════════════════
   //  WEB: Stripe Checkout Sessions (redirect para página hospedada)
   // ════════════════════════════════════════════════════════════
 
@@ -267,13 +227,9 @@ class StripeService {
       // 3. Exibir o Payment Sheet
       await Stripe.instance.presentPaymentSheet();
 
-      // 4. Pagamento aprovado — atualizar plano no Supabase imediatamente
-      final String? subscriptionId = data['subscriptionId'];
-      await _updatePlanInSupabase(
-        planId,
-        stripeSubscriptionId: subscriptionId,
-        stripeCustomerId: customerId,
-      );
+      // 4. Pagamento processado na Stripe
+      // O Edge Function `stripe-webhook` será engatilhado automaticamente
+      // e o Client receberá as novidades via Stream Realtime do Supabase.
 
       return true;
     } on StripeException catch (e) {

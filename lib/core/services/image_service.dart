@@ -108,39 +108,70 @@ class ImageService {
 
     Uint8List processedBytes = Uint8List.fromList(img.encodeJpg(processedImage)); // Usa JPG intermediário para o compress
     
-    // 2. Loop de Compressão Inteligente para atingir o tamanho alvo (WebP)
-    double currentQuality = targetQuality;
+    // 2. Loop de Compressão Inteligente (Resize + Qualidade Combinados para WebP)
+    final List<double> scales = [1.0, 0.75, 0.5];
+    final List<double> qualities = [targetQuality, 0.60, 0.40, 0.20];
+    
+    Uint8List? bestEffortBytes;
+    int bestEffortSize = 0;
+    double finalQuality = targetQuality;
+    int finalWidth = processedImage.width;
+    int finalHeight = processedImage.height;
+    bool achievedTarget = false;
     Uint8List? compressedBytes;
-    int finalSize = 0;
 
-    while (currentQuality >= 0.20) {
-      final compressed = await FlutterImageCompress.compressWithList(
-        processedBytes,
-        minWidth: maxWidth,
-        minHeight: maxHeight,
-        quality: (currentQuality * 100).toInt(),
-        format: CompressFormat.webp,
-      );
+    for (final scale in scales) {
+      final int currentWidth = (maxWidth * scale).toInt();
+      final int currentHeight = (maxHeight * scale).toInt();
 
-      finalSize = compressed.length;
-      if (finalSize <= maxSizeBytes) {
-        compressedBytes = compressed;
-        break;
+      for (final double quality in qualities) {
+        if (quality > targetQuality) continue; // Respeita a qualidade original do contexto
+        
+        final compressed = await FlutterImageCompress.compressWithList(
+          processedBytes,
+          minWidth: currentWidth,
+          minHeight: currentHeight,
+          quality: (quality * 100).toInt(),
+          format: CompressFormat.webp,
+        );
+
+        final currentSize = compressed.length;
+
+        // Mantém o menor resultado possível em memória para um eventual fallback
+        bestEffortBytes = compressed;
+        bestEffortSize = currentSize;
+        finalQuality = quality;
+        finalWidth = currentWidth;
+        finalHeight = currentHeight;
+
+        if (currentSize <= maxSizeBytes) {
+          compressedBytes = compressed;
+          achievedTarget = true;
+          break;
+        }
       }
-
-      currentQuality -= 0.05;
+      if (achievedTarget) break;
     }
 
-    if (compressedBytes == null) {
-      throw Exception('Não foi possível atingir o tamanho alvo de ${maxSizeBytes ~/ 1024}KB mesmo com qualidade mínima.');
+    if (!achievedTarget && bestEffortBytes != null) {
+      // Loga um warning em vez de lançar exceção, mantendo o fluxo funcionando
+      if (kDebugMode) {
+        print('AVISO: Não foi possível atingir o tamanho alvo de ${maxSizeBytes ~/ 1024}KB. '
+              'Tamanho final retornado: ${bestEffortSize ~/ 1024}KB.');
+      }
+      compressedBytes = bestEffortBytes;
+    } else if (compressedBytes == null) {
+      // Trata cenário inesperado (se compressWithList falhar sempre)
+      compressedBytes = processedBytes;
+      bestEffortSize = compressedBytes.length;
     }
 
     return CompressionResult(
-      bytes: compressedBytes,
-      size: finalSize,
-      quality: currentQuality,
-      width: processedImage.width,
-      height: processedImage.height,
+      bytes: compressedBytes!,
+      size: bestEffortSize,
+      quality: finalQuality,
+      width: finalWidth,
+      height: finalHeight,
     );
   }
 

@@ -7,9 +7,45 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:170942564821:android:2635798cc73d6202cfd55c",
+        "mobilesdk_app_id": "1:170942564821:android:154648dc10ccb7b9cfd55c",
         "android_client_info": {
           "package_name": "br.com.markaai"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "170942564821-s8doqh3tcqe4rs7muauefgkdqehcf1l9.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDUqPWrUaodQWDAIDwOHo8zLxSuVQXAgvk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "170942564821-s8doqh3tcqe4rs7muauefgkdqehcf1l9.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "170942564821-uj8d4nrasifsm7ladooi0g4otbrpmtgj.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.flutterApplication1"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:170942564821:android:2635798cc73d6202cfd55c",
+        "android_client_info": {
+          "package_name": "com.example.flutter_application_1"
         }
       },
       "oauth_client": [
@@ -17,7 +53,7 @@
           "client_id": "170942564821-tf15ggasv5lhl85mmukn9jm8ro5so7u8.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
-            "package_name": "br.com.markaai",
+            "package_name": "com.example.flutter_application_1",
             "certificate_hash": "8c94e47cc89f111c9487718839901e84a39b3683"
           }
         },

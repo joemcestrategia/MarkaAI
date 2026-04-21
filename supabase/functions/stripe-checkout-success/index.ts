@@ -64,35 +64,12 @@ serve(async (req: Request) => {
     const mode = session.mode // 'subscription' | 'payment'
 
     if (mode === 'subscription' && shopId && planId) {
-      // ── Atualizar plano da loja ──────────────────────────
-      const subscription = session.subscription as Stripe.Subscription | null
-      const subscriptionId = typeof session.subscription === 'string'
-        ? session.subscription
-        : subscription?.id
-
-      const customerId = typeof session.customer === 'string'
-        ? session.customer
-        : (session.customer as any)?.id
-
-      await supabaseAdmin.from('shops').update({
-        plan_id: planId,
-        trial_active: false,
-        subscription: {
-          plan_id: planId,
-          status: 'active',
-          payment_provider: 'stripe',
-          stripe_subscription_id: subscriptionId || null,
-          stripe_customer_id: customerId || null,
-          updated_at: new Date().toISOString(),
-        },
-      }).eq('id', shopId)
-
-      console.log(`[stripe-checkout-success] Plano ${planId} ativado para shop ${shopId}`)
+      // ── Atualização movida para o Webhook ────────────────
+      console.log(`[stripe-checkout-success] Redirecionando com sucesso o plano ${planId} para shop ${shopId}. O Webhook fará a liberação no banco.`)
     } else if (mode === 'payment' && shopId) {
-      // ── Pagamento avulso (boost) — marcar como pago ────
+      // ── Pagamento avulso (boost) ───────────────────────
       const description = session.metadata?.description || ''
-      console.log(`[stripe-checkout-success] Pagamento avulso confirmado para shop ${shopId}: ${description}`)
-      // Boost activation is handled client-side after redirect
+      console.log(`[stripe-checkout-success] Pagamento avulso (Boost) confirmado para shop ${shopId}: ${description}`)
     }
 
     // ── Resposta ──────────────────────────────────────────

@@ -418,11 +418,19 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
         }
       }
 
+      // Compõe o endereço legado a partir dos campos estruturados para manter compatibilidade
+      List<String> addressParts = [];
+      if (_streetController.text.trim().isNotEmpty) addressParts.add(_streetController.text.trim());
+      if (_numberController.text.trim().isNotEmpty) addressParts.add(_numberController.text.trim());
+      if (_neighborhoodController.text.trim().isNotEmpty) addressParts.add(_neighborhoodController.text.trim());
+      if (_complementController.text.trim().isNotEmpty) addressParts.add(_complementController.text.trim());
+      final addressFull = addressParts.join(', ');
+
       // Atualização seletiva para evitar erros de colunas inexistentes ou sobrescrever dados
       final updateData = {
         'name': _nameController.text.trim(),
         'description': _descController.text.trim(),
-        'address': _addressController.text.trim(),
+        'address': addressFull,
         'whatsapp': _phoneController.text.replaceAll(RegExp(r'\D'), ''),
         'phone': _phoneController.text.replaceAll(RegExp(r'\D'), ''),
         'instagram': _instagramController.text.trim(),
@@ -928,20 +936,20 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                           const SizedBox(height: 12),
                           Row(children: [
                             Expanded(
-                              flex: 3,
+                              flex: 5,
                               child: _buildTextField(
                                 controller: _streetController,
                                 label: "Rua / Logradouro",
                                 icon: Icons.home,
                               ),
                             ),
-                            const SizedBox(width: 10),
+                            const SizedBox(width: 8),
                             Expanded(
-                              flex: 1,
+                              flex: 3,
                               child: _buildTextField(
                                 controller: _numberController,
                                 label: "Número",
-                                icon: Icons.tag,
+                                icon: null,
                               ),
                             ),
                           ]),
@@ -954,21 +962,15 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                                 icon: Icons.location_city,
                               ),
                             ),
-                            const SizedBox(width: 10),
+                            const SizedBox(width: 8),
                             Expanded(
                               child: _buildTextField(
                                 controller: _complementController,
                                 label: "Complemento",
-                                icon: Icons.apartment,
+                                icon: null,
                               ),
                             ),
                           ]),
-                          const SizedBox(height: 12),
-                          _buildTextField(
-                            controller: _addressController,
-                            label: "Endereço Completo (referência)",
-                            icon: Icons.location_on,
-                          ),
                           const SizedBox(height: 12),
                           _buildTextField(
                             controller: _zipController,
@@ -1399,7 +1401,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
   Widget _buildTextField({
     required TextEditingController controller,
     required String label,
-    required IconData icon,
+    required IconData? icon,
     int maxLines = 1,
     TextInputType? keyboardType,
     String? Function(String?)? validator,
@@ -1429,8 +1431,9 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
         decoration: InputDecoration(
           labelText: label,
           hintText: hint,
-          prefixIcon:
-              Icon(icon, color: AppColors.primaryPurple.withValues(alpha: 0.7)),
+          prefixIcon: icon != null
+              ? Icon(icon, color: AppColors.primaryPurple.withValues(alpha: 0.7))
+              : null,
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide.none,
