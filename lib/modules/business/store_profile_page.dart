@@ -1077,7 +1077,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                                                 color: AppColors.primaryPurple),
                                             onPressed: () {
                                               final link =
-                                                  "https://markaai.com.br/preview/${_normalizeSlug(_slugController.text)}";
+                                                  "https://markaai.com.br/${_normalizeSlug(_slugController.text)}";
                                               Clipboard.setData(
                                                   ClipboardData(text: link));
                                               ScaffoldMessenger.of(context)

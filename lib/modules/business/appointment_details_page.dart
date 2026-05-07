@@ -65,6 +65,8 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
   bool _isBirthdayDiscountApplied = false;
   bool _isCouponApplied = false;
   String? _couponCode;
+  String? _clientBirthDate;
+  bool _confirmationSent = false;
 
   @override
   void initState() {
@@ -242,6 +244,9 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
       Map<String, dynamic>? clientData = userDoc;
 
       if (clientData != null && mounted) {
+        setState(() {
+          _clientBirthDate = clientData['birth_date']?.toString() ?? clientData['data_nascimento']?.toString();
+        });
         final String profileName = clientData['name'] ?? '';
         if (profileName.isNotEmpty &&
             (_selectedClientName == null ||
@@ -299,6 +304,15 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
       }
     } catch (e) {
       debugPrint('Erro ao sincronizar dados do cliente: $e');
+    }
+  }
+
+  String _formatBirthDate(String isoString) {
+    try {
+      final date = DateTime.parse(isoString);
+      return DateFormat('dd/MM/yyyy').format(date);
+    } catch (_) {
+      return isoString;
     }
   }
 
@@ -489,15 +503,13 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
           _localDoc = {..._localDoc, ...updateData};
           _isEditing = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text("Atualizado!"), backgroundColor: Colors.green));
+        _showSnackBar("Atualizado!", isError: false);
         // Notifica o pai para atualizar sua lista local
         widget.onAppointmentUpdated?.call(_localDoc);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text("Erro: $e")));
+        _showSnackBar("Erro: $e", isError: true);
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -614,12 +626,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
           .eq('id', widget.appointmentDoc['id']);
 
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('? Agendamento excluído com sucesso'),
-              backgroundColor: Colors.green,
-            ),
-          );
+          _showSnackBar('✅ Agendamento excluído com sucesso', isError: false);
 
           if (widget.isEmbedded) {
             widget.onClose?.call();
@@ -632,15 +639,29 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
       } catch (e) {
         if (mounted) {
           setState(() => _isLoading = false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('â Œ Erro ao excluir: $e'),
-              backgroundColor: Colors.red,
-            ),
-          );
+          _showSnackBar('❌ Erro ao excluir: $e', isError: true);
         }
       }
     }
+  }
+
+  /// Exibe um Snackbar sempre na camada raiz da UI, mesmo quando este widget
+  /// está embutido dentro de uma modal ou painel lateral.
+  void _showSnackBar(String message, {bool isError = false}) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(
+      Navigator.of(context, rootNavigator: true).context,
+    ) ?? ScaffoldMessenger.of(context);
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: isError ? Colors.red : Colors.green,
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: isError ? 5 : 3),
+        ),
+      );
   }
 
   String money(double v) => "R\$ ${v.toStringAsFixed(2).replaceAll('.', ',')}";
@@ -945,16 +966,11 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
                         Flexible(
                           child: Text(
                             _selectedClientName ?? "Cliente",
-                            style: TextStyle(
+                            style: const TextStyle(
                               fontSize: 15,
                               fontWeight: FontWeight.bold,
-                              color: _selectedClientId != null
-                                  ? AppColors.primaryPurple
-                                  : Colors.black87,
-                              decoration: _selectedClientId != null
-                                  ? TextDecoration.underline
-                                  : TextDecoration.none,
-                              decorationColor: AppColors.primaryPurple.withValues(alpha: 0.5),
+                              color: Colors.black87,
+                              decoration: TextDecoration.none,
                             ),
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -964,7 +980,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
                           const Icon(
                             Icons.arrow_forward_ios_rounded,
                             size: 11,
-                            color: AppColors.primaryPurple,
+                            color: Colors.black45,
                           ),
                         ],
                       ],
@@ -976,7 +992,8 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
                       _selectedClientPhone != 'Não informado')
                     Row(
                       children: [
-                        ElevatedButton.icon(
+                        // Botão WhatsApp (ícone apenas)
+                        ElevatedButton(
                           onPressed: () async {
                             final phone = _selectedClientPhone!
                                 .replaceAll(RegExp(r'\D'), '');
@@ -985,13 +1002,65 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
                               await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
                             }
                           },
-                          icon: const Icon(Icons.chat_rounded, size: 14),
-                          label: const Text("WhatsApp", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.green,
                             foregroundColor: Colors.white,
                             elevation: 0,
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                            minimumSize: const Size(0, 30),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                          ),
+                          child: const Icon(Icons.chat_rounded, size: 14),
+                        ),
+                        const SizedBox(width: 6),
+                        // Botão de confirmação de agenda
+                        ElevatedButton.icon(
+                          onPressed: _confirmationSent ? null : () async {
+                            final phone = _selectedClientPhone!
+                                .replaceAll(RegExp(r'\D'), '');
+                            final nomeCompleto = _selectedClientName ?? 'cliente';
+                            final primeiroNome = nomeCompleto.trim().split(' ').first;
+                            final date = _selectedDate;
+                            final time = _selectedTime;
+                            String diaStr = '';
+                            String horaStr = '';
+                            if (date != null) {
+                              final weekdays = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'];
+                              final diaSemana = weekdays[date.weekday - 1];
+                              final dia = date.day.toString().padLeft(2, '0');
+                              final mes = date.month.toString().padLeft(2, '0');
+                              diaStr = '$diaSemana, $dia/$mes';
+                            }
+                            if (time != null) {
+                              final h = time.hour.toString().padLeft(2, '0');
+                              final m = time.minute.toString().padLeft(2, '0');
+                              horaStr = '$h:$m';
+                            }
+                            final servico = (_selectedServiceName != null && _selectedServiceName!.isNotEmpty)
+                                ? _selectedServiceName!
+                                : 'serviço';
+                            final msg = Uri.encodeComponent(
+                              'Olá, $primeiroNome! 😊\n\nPassando para confirmar seu agendamento:\n\n✂️ $servico\n📅 $diaStr às $horaStr\n\nTe esperamos! Qualquer dúvida é só falar. 🙏',
+                            );
+                            final url = 'https://wa.me/55$phone?text=$msg';
+                            if (await canLaunchUrl(Uri.parse(url))) {
+                              await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+                              if (mounted) setState(() => _confirmationSent = true);
+                            }
+                          },
+                          icon: Icon(
+                            _confirmationSent ? Icons.check_circle_rounded : Icons.event_available_rounded,
+                            size: 14,
+                          ),
+                          label: Text(
+                            _confirmationSent ? "Enviado" : "Confirmar",
+                            style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _confirmationSent ? Colors.grey[400] : Colors.blue[700],
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
                             minimumSize: const Size(0, 30),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                           ),
@@ -1046,17 +1115,33 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
   }
 
   // --- PAINEL FINANCEIRO ULTRA-COMPACTO ---
+  double _getDisplayTotal(Map<String, dynamic> data) {
+    final double totalPrice = double.tryParse(data['total_price']?.toString() ?? '0') ?? 0;
+    final double totalPayable = double.tryParse(data['total_payable']?.toString() ?? '0') ?? 0;
+    final double valorCDesc = double.tryParse(data['valor_com_desconto']?.toString() ?? '0') ?? 0;
+    final double discountAmt = double.tryParse(data['discount_amount']?.toString() ?? '0') ?? 0;
+    final bool hasBirthday = data['birthday_discount_applied'] == true;
+    final bool hasCoupon = data['coupon_applied'] == true;
+
+    if (totalPayable > 0 && totalPrice > 0 && totalPayable < totalPrice - 0.01) return totalPayable;
+    if (valorCDesc > 0 && totalPrice > 0 && valorCDesc < totalPrice - 0.01) return valorCDesc;
+    if (discountAmt > 0.01 && totalPrice > 0) return totalPrice - discountAmt;
+    if (hasBirthday && totalPrice > 0) {
+      final pct = double.tryParse(data['birthday_discount_percent']?.toString() ?? '0') ?? 0;
+      if (pct > 0) return totalPrice * (1 - pct / 100);
+    }
+    if (hasCoupon && totalPrice > 0) {
+      final pct = double.tryParse(data['coupon_discount_percent']?.toString() ?? '0') ?? 0;
+      if (pct > 0) return totalPrice * (1 - pct / 100);
+    }
+    if (totalPayable > 0) return totalPayable;
+    if (valorCDesc > 0) return valorCDesc;
+    if (totalPrice > 0) return totalPrice;
+    return double.tryParse(data['total_value']?.toString() ?? data['labor_value']?.toString() ?? data['valor']?.toString() ?? '0') ?? 0;
+  }
+
   Widget _buildFinancialHeroPanel(Map<String, dynamic> data) {
-    // ✅ Prioriza total_value ou valor_com_desconto como o preço final pago
-    final double total = double.tryParse(data['total_value']?.toString() ??
-            data['valor_com_desconto']?.toString() ??
-            data['total_payable']?.toString() ??
-            data['total_price']?.toString() ??
-            data['valor_total']?.toString() ??
-            data['price']?.toString() ??
-            data['valor']?.toString() ??
-            "0") ??
-        0.0;
+    double total = _getDisplayTotal(data);
     final double pago =
         double.tryParse(data['paid_amount']?.toString() ?? data['valor_pago']?.toString() ?? "0") ?? 0.0;
     final double restante = total - pago;
@@ -1099,49 +1184,37 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
               // Exibição de Desconto (Preço Original Riscado com Cálculos Reais)
               Builder(
                 builder: (context) {
-                  // Valor final que o cliente paga
-                  double finalPrice = double.tryParse(
-                    data['valor_com_desconto']?.toString() ?? 
-                    data['total_value']?.toString() ?? 
-                    data['total_price']?.toString() ?? 
-                    data['labor_value']?.toString() ?? '0'
-                  ) ?? 0;
-
-                  // Valor original (tabela)
-                  double originalPrice = double.tryParse(
-                    data['labor_value']?.toString() ?? 
-                    data['total_price']?.toString() ?? 
+                  final double originalPrice = double.tryParse(
+                    data['total_price']?.toString() ??
+                    data['labor_value']?.toString() ??
                     data['total_value']?.toString() ?? '0'
                   ) ?? 0;
-                  
+
+                  final double descontoGravado = double.tryParse(data['discount_amount']?.toString() ?? '0') ?? 0;
+                  final double valorCDesc = double.tryParse(data['valor_com_desconto']?.toString() ?? '0') ?? 0;
                   final bool isBirthday = data['birthday_discount_applied'] == true;
                   final bool isCoupon = data['coupon_applied'] == true;
-                  
-                  final double descontoGravado = double.tryParse(data['discount_amount']?.toString() ?? '0') ?? 0;
-                  
-                  // Se os preços forem iguais mas houver flag de desconto, calculamos o original baseado no percentual (legado)
-                  if (originalPrice <= finalPrice + 0.01 && descontoGravado < 0.01) {
-                    if (isBirthday && _shopBirthdayDiscount > 0) {
-                      originalPrice = finalPrice / (1 - (_shopBirthdayDiscount / 100));
-                    } else if (isCoupon) {
-                      double couponPercent = double.tryParse(data['coupon_discount_percent']?.toString() ?? '0') ?? 0;
-                      if (couponPercent > 0) {
-                        originalPrice = finalPrice / (1 - (couponPercent / 100));
-                      }
-                    }
+
+                  double finalDiscount = 0;
+                  if (descontoGravado > 0.01) {
+                    finalDiscount = descontoGravado;
+                  } else if (valorCDesc > 0 && originalPrice > 0 && valorCDesc < originalPrice - 0.01) {
+                    finalDiscount = originalPrice - valorCDesc;
+                  } else if (isBirthday && originalPrice > 0) {
+                    final pct = double.tryParse(data['birthday_discount_percent']?.toString() ?? '0') ?? 0;
+                    if (pct > 0) finalDiscount = originalPrice * pct / 100;
+                  } else if (isCoupon && originalPrice > 0) {
+                    final pct = double.tryParse(data['coupon_discount_percent']?.toString() ?? '0') ?? 0;
+                    if (pct > 0) finalDiscount = originalPrice * pct / 100;
                   }
-                  
-                  // Prioriza o valor do desconto gravado no banco
-                  final double finalDiscount = descontoGravado > 0.01 ? descontoGravado : (originalPrice - finalPrice);
-                  final double finalOriginal = originalPrice > finalPrice ? originalPrice : (finalPrice + finalDiscount);
-                  
-                  final bool temDesconto = finalDiscount > 0.01;
+
+                  final bool temDesconto = finalDiscount > 0.01 && originalPrice > 0.01;
                                            
                   if (temDesconto) {
                     return Column(
                       children: [
                         Text(
-                          "${money(finalOriginal)} (- ${money(finalDiscount)})",
+                          "${money(originalPrice)} (- ${money(finalDiscount)})",
                           style: TextStyle(
                             fontSize: 13,
                             color: Colors.grey.shade500,
@@ -1205,23 +1278,48 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
                     ),
                   ),
                 if (data['birthday_discount_applied'] == true)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.pink.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.cake_outlined, size: 12, color: Colors.pink),
-                        SizedBox(width: 4),
-                        Text(
-                          "ANIVERSÁRIO",
-                          style: TextStyle(color: Colors.pink, fontSize: 10, fontWeight: FontWeight.bold),
+                  Column(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.pink.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(6),
                         ),
-                      ],
-                    ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.cake_outlined, size: 12, color: Colors.pink),
+                            const SizedBox(width: 4),
+                            Builder(builder: (ctx) {
+                              final double pctBd = double.tryParse(data['birthday_discount_percent']?.toString() ?? '0') ?? 0;
+                              final double discBd = double.tryParse(data['discount_amount']?.toString() ?? '0') ?? 0;
+                              String bdLabel = 'ANIVERSÁRIO';
+                              if (pctBd > 0) bdLabel = '-${pctBd.toStringAsFixed(0)}% ANIVERSÁRIO';
+                              else if (discBd > 0.01) bdLabel = '-${money(discBd)} ANIVERSÁRIO';
+                              return Text(bdLabel, style: const TextStyle(color: Colors.pink, fontSize: 10, fontWeight: FontWeight.bold));
+                            }),
+                          ],
+                        ),
+                      ),
+                      if (_clientBirthDate != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Builder(
+                            builder: (context) {
+                              String dateParts = _clientBirthDate!;
+                              try {
+                                final d = DateTime.parse(dateParts);
+                                dateParts = DateFormat('dd/MM').format(d);
+                              } catch (_) {}
+                              return Text(
+                                dateParts,
+                                style: const TextStyle(color: Colors.pink, fontSize: 10, fontWeight: FontWeight.bold),
+                              );
+                            }
+                          ),
+                        ),
+                    ],
                   ),
               ],
             ),
@@ -2156,14 +2254,14 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
           .map((list) => list.where((d) => (d['shop_id'] ?? d['shopId']) == shopId).toList()),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const SizedBox();
-        final profs = snapshot.data!.where((d) {
-          final skills = d['servicos_habilidade'] as List? ?? [];
-          return skills.isEmpty || skills.contains(_selectedServiceId);
-        }).toList();
+        // ✅ LOJA: exibe TODOS os profissionais sem filtro restritivo.
+        // Profissionais não habilitados são marcados visualmente, mas
+        // podem ser selecionados para atender necessidades administrativas.
+        final profs = snapshot.data!;
 
         if (profs.isEmpty) {
-          return const Text("Nenhum profissional apto para este serviço",
-              style: TextStyle(fontSize: 12, color: Colors.red));
+          return const Text("Nenhum profissional cadastrado",
+              style: TextStyle(fontSize: 12, color: Colors.grey));
         }
 
         return LayoutBuilder(
@@ -2233,6 +2331,13 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
                       itemCount: options.length,
                       itemBuilder: (ctx, index) {
                         final option = options.elementAt(index);
+                        // Verifica se o profissional está habilitado para o serviço selecionado
+                        final List<dynamic> skills =
+                            option['servicos_habilidade'] as List? ??
+                            option['services_ids'] as List? ?? [];
+                        final bool isApto = _selectedServiceId == null ||
+                            skills.isEmpty ||
+                            skills.map((s) => s.toString()).contains(_selectedServiceId);
                         return ListTile(
                           leading: CircleAvatar(
                             radius: 14,
@@ -2243,7 +2348,31 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
                                 ? const Icon(Icons.person, size: 14)
                                 : null,
                           ),
-                          title: Text(option['name'] ?? option['nome'] ?? '', style: const TextStyle(fontSize: 13)),
+                          title: Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  option['name'] ?? option['nome'] ?? '',
+                                  style: const TextStyle(fontSize: 13),
+                                ),
+                              ),
+                              if (!isApto) ...[
+                                const SizedBox(width: 4),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                  decoration: BoxDecoration(
+                                    color: Colors.orange.withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(color: Colors.orange.withValues(alpha: 0.4)),
+                                  ),
+                                  child: const Text(
+                                    '⚠️ Não hab.',
+                                    style: TextStyle(fontSize: 9, color: Colors.orange, fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
                           subtitle: Text(option['role'] ?? option['cargo'] ?? 'Profissional', style: const TextStyle(fontSize: 11)),
                           onTap: () => onSelected(option),
                         );

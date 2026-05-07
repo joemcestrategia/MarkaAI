@@ -19,6 +19,10 @@ class SessionService {
   static const String _keyShopId = 'ss_shopId';
   static const String _keyUserType = 'ss_userType';
 
+  static const String _keyRememberMe = 'ss_remember_me';
+  static const String _keySavedEmail = 'ss_saved_email';
+  static const String _keySavedPass = 'ss_saved_pass';
+
   // Salva os dados do login em armazenamento criptografado
   static Future<void> saveLogin({
     required String userId,
@@ -184,10 +188,41 @@ class SessionService {
     }
   }
 
+  // Salva credenciais para auto-login (funcionalidade "Lembrar-me")
+  static Future<void> saveCredentials({
+    required String email,
+    required String password,
+  }) async {
+    await _secureStorage.write(key: _keySavedEmail, value: email);
+    await _secureStorage.write(key: _keySavedPass, value: password);
+    await _secureStorage.write(key: _keyRememberMe, value: 'true');
+    if (kDebugMode) debugPrint('DEBUG SessionService: credenciais salvas para auto-login');
+  }
+
+  static Future<void> clearCredentials() async {
+    await _secureStorage.delete(key: _keySavedEmail);
+    await _secureStorage.delete(key: _keySavedPass);
+    await _secureStorage.delete(key: _keyRememberMe);
+    if (kDebugMode) debugPrint('DEBUG SessionService: credenciais salvas removidas');
+  }
+
+  static Future<bool> hasRememberMe() async {
+    final v = await _secureStorage.read(key: _keyRememberMe);
+    return v == 'true';
+  }
+
+  static Future<String?> getSavedEmail() async =>
+      _secureStorage.read(key: _keySavedEmail);
+
+  static Future<String?> getSavedPassword() async =>
+      _secureStorage.read(key: _keySavedPass);
+
   static Future<void> logout() async {
     await _secureStorage.delete(key: _keyUserId);
     await _secureStorage.delete(key: _keyShopId);
     await _secureStorage.delete(key: _keyUserType);
+    // Logout explícito limpa credenciais salvas para evitar auto-login indesejado
+    await clearCredentials();
     final prefs = _prefs ?? await SharedPreferences.getInstance();
     // Remove apenas dados de sessão/cache — preserva preferências do usuário (cidade selecionada)
     await prefs.remove(_keyLastAddress);

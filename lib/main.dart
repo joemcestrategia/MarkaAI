@@ -12,6 +12,8 @@ import 'modules/business/mobile_subscription_manager.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'core/constants/api_keys.dart';
 import 'package:app_links/app_links.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'modules/business/business_schedule_page.dart';
 
 import 'core/services/session_service.dart';
 import 'core/services/shop_data_cache_service.dart';
@@ -76,6 +78,66 @@ void main() async {
     // 4. Configure path-based URLs (remove #) on web hosting
     print("=== BOOT STEP 4: Configurando Path Strategy ===");
     configurePathUrlStrategy();
+
+    // 4.5 Configurar tap em notificações nativas (Firebase Messaging)
+    if (!kIsWeb) {
+      try {
+        FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) async {
+          debugPrint("=== ON MESSAGE OPENED APP (Notificação Clicada) ===");
+          final String? dateStr = message.data['scheduled_at'] ?? message.data['appointmentDate'] ?? message.data['date'];
+          final String? appointmentId = message.data['appointment_id'];
+          if (dateStr != null && dateStr.isNotEmpty) {
+            final DateTime? date = DateTime.tryParse(dateStr);
+            if (date != null) {
+              final shopId = await SessionService.getShopId();
+              if (shopId != null && shopId.isNotEmpty) {
+                // Navega para a agenda abrindo no agendamento exato
+                MarkaAIApp.navigatorKey.currentState?.push(
+                  MaterialPageRoute(
+                    builder: (context) => BusinessSchedulePage(
+                      shopId: shopId,
+                      initialDate: date,
+                      initialAppointmentId: appointmentId,
+                    ),
+                  ),
+                );
+              }
+            }
+          }
+        });
+        
+        // Handle terminated state (cold boot)
+        FirebaseMessaging.instance.getInitialMessage().then((RemoteMessage? message) async {
+          if (message != null) {
+            debugPrint("=== GET INITIAL MESSAGE (Notificação Clicada c/ app fechado) ===");
+            final String? dateStr = message.data['scheduled_at'] ?? message.data['appointmentDate'] ?? message.data['date'];
+            final String? appointmentId = message.data['appointment_id'];
+            if (dateStr != null && dateStr.isNotEmpty) {
+              final DateTime? date = DateTime.tryParse(dateStr);
+              if (date != null) {
+                // Aguarda roteamento inicial da auth resolver e puxa a tela
+                Future.delayed(const Duration(seconds: 4), () async {
+                  final shopId = await SessionService.getShopId();
+                  if (shopId != null && shopId.isNotEmpty) {
+                    MarkaAIApp.navigatorKey.currentState?.push(
+                      MaterialPageRoute(
+                        builder: (context) => BusinessSchedulePage(
+                          shopId: shopId,
+                          initialDate: date,
+                          initialAppointmentId: appointmentId,
+                        ),
+                      ),
+                    );
+                  }
+                });
+              }
+            }
+          }
+        });
+      } catch (e) {
+        debugPrint("=== erro no firebase messaging listen: $e ===");
+      }
+    }
 
     // ──────────────────────────────────────────────────────────────────────────
     // runApp() é chamado AGORA — a splash Flutter personalizada cobre a splash

@@ -7,11 +7,11 @@ import { corsHeaders } from '../_shared/cors.ts'
 // ==========================================
 
 const sendWhatsApp = async (phone: string, templateName: string, vars: string[]) => {
-  const token = Deno.env.get('WHATSAPP_TOKEN')
-  const phoneId = Deno.env.get('WHATSAPP_PHONE_ID')
+  const token = Deno.env.get('WHATSAPP_TOKEN') || Deno.env.get('GLOBAL_WA_ACCESS_TOKEN')
+  const phoneId = Deno.env.get('WHATSAPP_PHONE_ID') || Deno.env.get('GLOBAL_WA_PHONE_NUMBER_ID')
   
   if (!token || !phoneId) {
-    console.warn('WhatsApp API variables missing.')
+    console.warn('WhatsApp API variables missing (both local and global).')
     return
   }
 
@@ -179,7 +179,7 @@ const sendOwnerPush = async (supabase: any, shopId: string, title: string, messa
   }
 }
 
-async function sendOwnerFCM(supabaseAdmin: any, ownerId: string, title: string, body: string): Promise<void> {
+async function sendOwnerFCM(supabaseAdmin: any, ownerId: string, title: string, body: string, extraData?: Record<string, string>): Promise<void> {
   const { data: tokenData } = await supabaseAdmin
     .from('fcm_tokens')
     .select('token')
@@ -214,6 +214,7 @@ async function sendOwnerFCM(supabaseAdmin: any, ownerId: string, title: string, 
           message: {
             token: tokenData.token,
             notification: { title, body },
+            data: { ...(extraData || {}) },
             android: { priority: 'high' },
             apns: { payload: { aps: { sound: 'default', badge: 1 } } },
           }
@@ -253,6 +254,35 @@ async function getGoogleAccessToken(serviceAccount: any): Promise<string> {
   
   const data = await res.json();
   return data.access_token;
+}
+
+// ==========================================
+// Activity Log Helper
+// ==========================================
+
+const logActivity = async (
+  supabase: any,
+  shopId: string,
+  appointmentId: string | null,
+  eventType: 'agendamento_criado' | 'reagendamento' | 'pagamento_confirmado' | 'agendamento_cancelado' | 'status_alterado',
+  actorType: 'cliente' | 'dono' | 'sistema',
+  actorName: string,
+  description: string,
+  metadata: Record<string, any> = {},
+) => {
+  try {
+    await supabase.from('shop_activity_log').insert({
+      shop_id: shopId,
+      appointment_id: appointmentId,
+      event_type: eventType,
+      actor_type: actorType,
+      actor_name: actorName,
+      description,
+      metadata,
+    })
+  } catch (e) {
+    console.error('[ACTIVITY_LOG] Erro ao registrar:', e)
+  }
 }
 
 // ==========================================
@@ -572,19 +602,53 @@ serve(async (req) => {
         clientEmail: data.clientEmail,
         eventType: 'INSERT'
       });
-      const results = await Promise.allSettled([
-        data.clientPhone ? sendWhatsApp(data.clientPhone, 'appointment_confirmation', [data.payload.clientName, data.payload.salonName, data.payload.date, data.payload.time, data.payload.serviceName]) : Promise.resolve(),
+      // Detecta se pagamento foi realizado durante o agendamento
+      const paidAmount = parseFloat(appt.paid_amount || appt.valor_pago || '0')
+      const paymentStatus = (appt.payment_status || '').toLowerCase()
+      const isPaid = paymentStatus === 'pago' || paidAmount > 0.01
+
+      const notifPromises: Promise<any>[] = [
         data.clientEmail ? sendEmail(data.clientEmail, '✅ Agendamento Confirmado — MarkaAI', emailHtml, attachments) : Promise.resolve(),
         data.ownerEmail ? sendEmail(data.ownerEmail, '✅ Novo Agendamento — MarkaAI', buildOwnerEmail(data, '✅ Novo Agendamento', '#16a34a')) : Promise.resolve(),
         appt.shop_id ? sendOwnerPush(supabase, appt.shop_id, '📅 Novo Agendamento', `${data.payload.clientName} — ${data.payload.serviceName} às ${data.payload.time} (${data.payload.date})`) : Promise.resolve(),
-        data.ownerId ? sendOwnerFCM(supabase, data.ownerId, '📅 Novo Agendamento', `${data.payload.clientName} — ${data.payload.serviceName} às ${data.payload.time} (${data.payload.date})`) : Promise.resolve(),
-      ])
+        data.ownerId ? sendOwnerFCM(supabase, data.ownerId, '📅 Novo Agendamento', `${data.payload.clientName} — ${data.payload.serviceName} às ${data.payload.time} (${data.payload.date})`, { scheduled_at: appt.scheduled_at || '', appointment_id: appt.id || '' }) : Promise.resolve(),
+      ]
 
+      // Push extra quando pagamento foi confirmado durante o agendamento
+      if (isPaid && appt.shop_id) {
+        const payMethod = (appt.payment_method || 'online').toUpperCase()
+        notifPromises.push(
+          sendOwnerPush(supabase, appt.shop_id, '💳 Pagamento Recebido', `${data.payload.clientName} pagou via ${payMethod} — ${data.payload.serviceName}`)
+        )
+        if (data.ownerId) {
+          notifPromises.push(
+            sendOwnerFCM(supabase, data.ownerId, '💳 Pagamento Recebido', `${data.payload.clientName} pagou via ${payMethod} — ${data.payload.serviceName}`, { appointment_id: appt.id || '', payment_method: appt.payment_method || '' })
+          )
+        }
+      }
+
+      const results = await Promise.allSettled(notifPromises)
       results.forEach((r, i) => {
         if (r.status === 'rejected') {
           console.error(`[PROMISE_${i}_FAILED]`, r.reason);
         }
       });
+
+      // Activity log
+      if (appt.shop_id) {
+        await logActivity(supabase, appt.shop_id, appt.id || null,
+          'agendamento_criado', 'cliente', data.payload.clientName,
+          `${data.payload.clientName} agendou ${data.payload.serviceName} para ${data.payload.date} às ${data.payload.time}`,
+          { service_name: data.payload.serviceName, professional_name: data.payload.professionalName, scheduled_at: appt.scheduled_at }
+        )
+        if (isPaid) {
+          await logActivity(supabase, appt.shop_id, appt.id || null,
+            'pagamento_confirmado', 'cliente', data.payload.clientName,
+            `Pagamento de ${data.payload.clientName} confirmado via ${(appt.payment_method || 'online').toUpperCase()} — ${data.payload.serviceName}`,
+            { payment_method: appt.payment_method, paid_amount: appt.paid_amount, service_name: data.payload.serviceName }
+          )
+        }
+      }
 
     } 
     else if (payload.type === 'UPDATE') {
@@ -611,11 +675,10 @@ serve(async (req) => {
         });
         
         const results = await Promise.allSettled([
-          data.clientPhone ? sendWhatsApp(data.clientPhone, 'appointment_confirmation', [data.payload.clientName, data.payload.salonName, data.payload.date, data.payload.time, data.payload.serviceName]) : Promise.resolve(),
           data.clientEmail ? sendEmail(data.clientEmail, '✅ Agendamento Confirmado — MarkaAI', emailHtml, atts) : Promise.resolve(),
           data.ownerEmail ? sendEmail(data.ownerEmail, '✅ Agendamento Confirmado — MarkaAI', buildOwnerEmail(data, '✅ Agendamento Confirmado', '#16a34a')) : Promise.resolve(),
           after.shop_id ? sendOwnerPush(supabase, after.shop_id, '✅ Agendamento Confirmado', `${data.payload.clientName} — ${data.payload.serviceName} às ${data.payload.time} (${data.payload.date})`) : Promise.resolve(),
-          data.ownerId ? sendOwnerFCM(supabase, data.ownerId, '✅ Agendamento Confirmado', `${data.payload.clientName} — ${data.payload.serviceName} às ${data.payload.time} (${data.payload.date})`) : Promise.resolve(),
+          data.ownerId ? sendOwnerFCM(supabase, data.ownerId, '✅ Agendamento Confirmado', `${data.payload.clientName} — ${data.payload.serviceName} às ${data.payload.time} (${data.payload.date})`, { scheduled_at: after.scheduled_at || '', appointment_id: after.id || '' }) : Promise.resolve(),
         ])
         
         results.forEach((r, i) => {
@@ -623,6 +686,26 @@ serve(async (req) => {
             console.error(`[PROMISE_${i}_FAILED]`, r.reason);
           }
         });
+
+        // Activity log
+        if (after.shop_id) {
+          await logActivity(supabase, after.shop_id, after.id || null,
+            'status_alterado', 'sistema', data.payload.clientName,
+            `${data.payload.clientName} — agendamento de ${data.payload.serviceName} confirmado para ${data.payload.date} às ${data.payload.time}`,
+            { old_status: before.status, new_status: after.status, service_name: data.payload.serviceName }
+          )
+        }
+
+        // Se o pagamento foi confirmado junto com o status
+        const paidAmtConf = parseFloat(after.paid_amount || after.valor_pago || '0')
+        const isPaidConf = (after.payment_status || '').toLowerCase() === 'pago' || paidAmtConf > 0.01
+        if (isPaidConf && after.shop_id) {
+          await logActivity(supabase, after.shop_id, after.id || null,
+            'pagamento_confirmado', 'cliente', data.payload.clientName,
+            `Pagamento de ${data.payload.clientName} confirmado via ${(after.payment_method || 'online').toUpperCase()} — ${data.payload.serviceName}`,
+            { payment_method: after.payment_method, paid_amount: after.paid_amount }
+          )
+        }
       }
       // 2. Mudança para Cancelamento
       else if (statusChanged && currentStatus === 'cancelado') {
@@ -640,11 +723,10 @@ serve(async (req) => {
         });
         
         const results = await Promise.allSettled([
-          data.clientPhone ? sendWhatsApp(data.clientPhone, 'appointment_cancellation', [data.payload.clientName, data.payload.salonName, data.payload.date, data.payload.time]) : Promise.resolve(),
           data.clientEmail ? sendEmail(data.clientEmail, '❌ Agendamento Cancelado — MarkaAI', emailHtml, atts) : Promise.resolve(),
           data.ownerEmail ? sendEmail(data.ownerEmail, '❌ Agendamento Cancelado — MarkaAI', buildOwnerEmail(data, '❌ Agendamento Cancelado', '#ef4444')) : Promise.resolve(),
           after.shop_id ? sendOwnerPush(supabase, after.shop_id, '❌ Agendamento Cancelado', `${data.payload.clientName} cancelou — ${data.payload.serviceName} de ${data.payload.date} às ${data.payload.time}`) : Promise.resolve(),
-          data.ownerId ? sendOwnerFCM(supabase, data.ownerId, '❌ Agendamento Cancelado', `${data.payload.clientName} cancelou — ${data.payload.serviceName} de ${data.payload.date} às ${data.payload.time}`) : Promise.resolve(),
+          data.ownerId ? sendOwnerFCM(supabase, data.ownerId, '❌ Agendamento Cancelado', `${data.payload.clientName} cancelou — ${data.payload.serviceName} de ${data.payload.date} às ${data.payload.time}`, { scheduled_at: after.scheduled_at || '', appointment_id: after.id || '' }) : Promise.resolve(),
         ])
         
         results.forEach((r, i) => {
@@ -652,6 +734,15 @@ serve(async (req) => {
             console.error(`[PROMISE_${i}_FAILED]`, r.reason);
           }
         });
+
+        // Activity log
+        if (after.shop_id) {
+          await logActivity(supabase, after.shop_id, after.id || null,
+            'agendamento_cancelado', 'cliente', data.payload.clientName,
+            `${data.payload.clientName} cancelou ${data.payload.serviceName} de ${data.payload.date} às ${data.payload.time}`,
+            { service_name: data.payload.serviceName, old_status: before.status }
+          )
+        }
       }
       // 3. Reagendamento (Mudança de Data/Hora mantendo status confirmado)
       else if (dateChanged && notifiableStatuses.includes(currentStatus)) {
@@ -669,11 +760,10 @@ serve(async (req) => {
         });
         
         const results = await Promise.allSettled([
-          data.clientPhone ? sendWhatsApp(data.clientPhone, 'appointment_confirmation', [data.payload.clientName, data.payload.salonName, data.payload.date, data.payload.time, data.payload.serviceName]) : Promise.resolve(),
           data.clientEmail ? sendEmail(data.clientEmail, '🔄 Agendamento Atualizado — MarkaAI', emailHtml, atts) : Promise.resolve(),
           data.ownerEmail ? sendEmail(data.ownerEmail, '🔄 Agendamento Atualizado — MarkaAI', buildOwnerEmail(data, '🔄 Agendamento Atualizado', '#7c3aed')) : Promise.resolve(),
           after.shop_id ? sendOwnerPush(supabase, after.shop_id, '🔄 Reagendamento', `${data.payload.clientName} reagendou — ${data.payload.serviceName} para ${data.payload.date} às ${data.payload.time}`) : Promise.resolve(),
-          data.ownerId ? sendOwnerFCM(supabase, data.ownerId, '🔄 Reagendamento', `${data.payload.clientName} reagendou — ${data.payload.serviceName} para ${data.payload.date} às ${data.payload.time}`) : Promise.resolve(),
+          data.ownerId ? sendOwnerFCM(supabase, data.ownerId, '🔄 Reagendamento', `${data.payload.clientName} reagendou — ${data.payload.serviceName} para ${data.payload.date} às ${data.payload.time}`, { scheduled_at: after.scheduled_at || '', appointment_id: after.id || '' }) : Promise.resolve(),
         ])
         
         results.forEach((r, i) => {
@@ -681,6 +771,17 @@ serve(async (req) => {
             console.error(`[PROMISE_${i}_FAILED]`, r.reason);
           }
         });
+
+        // Activity log — reagendamento via webhook (owner ou outro canal)
+        // Nota: reagendamentos via rescheduleAppointment já escrevem o log diretamente;
+        // aqui capturamos qualquer outro reagendamento (ex: edição direta pelo dono).
+        if (after.shop_id) {
+          await logActivity(supabase, after.shop_id, after.id || null,
+            'reagendamento', 'dono', data.payload.clientName,
+            `${data.payload.clientName} — ${data.payload.serviceName} reagendado para ${data.payload.date} às ${data.payload.time}`,
+            { old_scheduled_at: before.scheduled_at, new_scheduled_at: after.scheduled_at, service_name: data.payload.serviceName }
+          )
+        }
       }
     }
 

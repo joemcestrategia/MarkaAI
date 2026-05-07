@@ -87,8 +87,11 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
   // Novos campos para VIP e Aniversário
   bool _isBirthdayMonth = false;
   bool _isProblematic = false;
+  bool _isNewClient = false;
+  Map<String, dynamic>? _shopClientData;
   String? _userPhone;
   String? _userEmail;
+  String? _userName;
   String? _userPhotoUrl;
   double _birthdayDiscountPercent = 0.0;
   bool _birthdayDiscountEnabled = false;
@@ -104,6 +107,7 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
   double _couponDiscountPercent = 0.0;
   String? _appliedCouponId;
   String? _appliedCouponCode;
+  Map<String, dynamic>? _appliedCoupon;
 
   String? _preSavedAppointmentId;
   bool _isConfirmingPayment = false;
@@ -219,6 +223,17 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
             user.id, widget.shopId);
         isProblematic = status['isProblematic'] ?? false;
         isVip = status['isVip'] ?? false;
+
+        // Carrega dados do cliente na loja para validação de cupons
+        try {
+          final shopClientResult = await Supabase.instance.client
+              .from('shop_clients')
+              .select('classification, manual_tags')
+              .eq('user_id', user.id)
+              .eq('shop_id', widget.shopId)
+              .maybeSingle();
+          _shopClientData = shopClientResult;
+        } catch (_) {}
         
         // 🆕 Verifica aniversário focado no mês do agendamento (regra de negócio confirmada)
         if (shopFeatures.birthdayDiscount) {
@@ -232,6 +247,17 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
                   user.id, widget.shopId);
           if (hasUsed) isBirthday = false;
         }
+
+        // Verifica se é novo cliente para validação de cupons
+        // VIP e problemáticos nunca são novos clientes, independente do shop_clients
+        _isNewClient = (isVip || isProblematic)
+            ? false
+            : await CouponService.checkIsNewClient(
+                clientId: user.id,
+                shopId: widget.shopId,
+                currentClassification:
+                    _shopClientData?['classification']?.toString(),
+              );
 
         // Busca telefone do perfil para validação
         final userDoc = await Supabase.instance.client
@@ -247,6 +273,8 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
           if (_userCpf != null && _userCpf!.trim().isEmpty) _userCpf = null;
           _userPhotoUrl = userDoc['photo_url']?.toString();
           if (_userPhotoUrl != null && _userPhotoUrl!.trim().isEmpty) _userPhotoUrl = null;
+          final dbName = userDoc['name']?.toString();
+          if (dbName != null && dbName.trim().isNotEmpty) _userName = dbName.trim();
         }
         // Foto do Google vinda dos metadados de auth (prioridade)
         final authPhoto = user.userMetadata?['avatar_url']?.toString() ?? user.userMetadata?['picture']?.toString();
@@ -279,6 +307,7 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
           _userPhone = _userPhone;
           _userCpf = _userCpf;
           _trustedOnlyPayLocal = trustedOnly;
+          // _isNewClient e _shopClientData já foram atribuídos diretamente
           _cardTaxPercent = cardTax;
 
           // Automação do Desconto de Aniversário
@@ -415,11 +444,31 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
     if (user == null) return;
 
     setState(() => _isLoading = true);
+    // Combina classificação real com tags sintéticas baseadas em status booleano.
+    // Garante que VIP/_isProblematic funcionem mesmo quando shop_clients não é
+    // legível via RLS para o cliente (ex: acesso bloqueado por política).
+    final String? effectiveClassification =
+        _shopClientData?['classification']?.toString() ??
+            (_isVip
+                ? 'VIP'
+                : (_isProblematic ? 'Problemático' : null));
+    final List<String> effectiveTags = [
+      ...List<String>.from(_shopClientData?['manual_tags'] ?? []),
+      if (_isVip && effectiveClassification != 'VIP') 'VIP',
+      if (_isProblematic && effectiveClassification != 'Problemático') 'Problemático',
+    ];
+
     final result = await CouponService.validateCoupon(
       shopId: widget.shopId,
       code: code,
       userId: user.id,
       serviceId: widget.serviceDoc['id'],
+      clientClassification: effectiveClassification,
+      clientManualTags: effectiveTags,
+      isNewClient: _isNewClient,
+      isVipClient: _isVip,
+      selectedPaymentMethod:
+          _selectedPaymentType == 'local' ? 'local' : _selectedMethod,
     );
     setState(() => _isLoading = false);
 
@@ -429,6 +478,7 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
         _couponDiscountPercent = result.discountPercent ?? 0.0;
         _appliedCouponId = result.couponId;
         _appliedCouponCode = code.toUpperCase();
+        _appliedCoupon = result.couponData;
       });
       _recalculateTotals();
       
@@ -451,6 +501,7 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
           context: context,
           message: result.message,
           couponCode: code.isNotEmpty ? code : null,
+          directErrorType: result.errorType,
         );
       }
     }
@@ -462,11 +513,34 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
       _couponDiscountPercent = 0.0;
       _appliedCouponId = null;
       _appliedCouponCode = null;
+      _appliedCoupon = null;
       _couponController.clear();
     });
     _recalculateTotals();
     ScaffoldMessenger.of(context)
         .showSnackBar(const SnackBar(content: Text("Cupom removido.")));
+  }
+
+  Future<void> _showCouponInvalidModal(CouponErrorType errorType) async {
+    if (!mounted) return;
+    await showCouponInvalidModal(
+      context: context,
+      directErrorType: errorType,
+      couponCode: _appliedCouponCode,
+    );
+  }
+
+  Future<void> _revalidateCouponForPaymentMethod() async {
+    if (_appliedCoupon == null) return;
+    final validMethods =
+        List<String>.from(_appliedCoupon!['valid_payment_methods'] ?? []);
+    if (validMethods.isEmpty) return;
+    final effectiveMethod =
+        _selectedPaymentType == 'local' ? 'local' : _selectedMethod;
+    if (effectiveMethod == 'local' || !validMethods.contains(effectiveMethod)) {
+      _removeCoupon();
+      _showCouponInvalidModal(CouponErrorType.onlinePaymentOnly);
+    }
   }
 
   void _handleNextStep() async {
@@ -1629,6 +1703,9 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
                 _selectedPaymentType = value;
                 _recalculateTotals();
               });
+              if (_appliedCoupon != null) {
+                _revalidateCouponForPaymentMethod();
+              }
             },
       child: Opacity(
         opacity: disabled ? 0.6 : 1.0,
@@ -1840,6 +1917,9 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
           _selectedMethod = id;
           _recalculateTotals();
         });
+        if (_appliedCoupon != null) {
+          _revalidateCouponForPaymentMethod();
+        }
       },
       child: Container(
         padding: const EdgeInsets.all(20),
@@ -2388,7 +2468,7 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
       final Map<String, dynamic> bookingData = {
         'shop_id': widget.shopId,
         'client_id': user.id,
-        'client_name': user.userMetadata?['full_name'] ?? user.email ?? 'Cliente',
+        'client_name': _userName ?? user.userMetadata?['full_name'] ?? user.userMetadata?['name'] ?? user.userMetadata?['nome'] ?? 'Cliente',
         'client_email': _userEmail ?? user.email,
         'client_phone': _userPhone,
         'client_photo': _userPhotoUrl,

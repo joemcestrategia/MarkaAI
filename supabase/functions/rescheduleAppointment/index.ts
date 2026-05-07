@@ -2,6 +2,99 @@ import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
 import { corsHeaders } from '../_shared/cors.ts'
 import { createSupabaseClient, createSupabaseAdminClient } from '../_shared/supabase.ts'
 
+// ── Push helpers ──────────────────────────────────────────────────────────────
+
+async function getGoogleAccessTokenForFCM(serviceAccount: any): Promise<string> {
+  const { default: jwt } = await import('npm:jsonwebtoken@9')
+  const now = Math.floor(Date.now() / 1000)
+  const payload = {
+    iss: serviceAccount.client_email,
+    scope: 'https://www.googleapis.com/auth/firebase.messaging',
+    aud: 'https://oauth2.googleapis.com/token',
+    iat: now,
+    exp: now + 3600,
+  }
+  const token = jwt.sign(payload, serviceAccount.private_key, { algorithm: 'RS256' })
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${token}`,
+  })
+  const data = await res.json()
+  return data.access_token
+}
+
+async function sendReschedulePush(
+  supabaseAdmin: any,
+  shopId: string,
+  ownerId: string,
+  title: string,
+  body: string,
+  extraData: Record<string, string>,
+): Promise<void> {
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')
+  const serviceKey  = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+  if (!supabaseUrl || !serviceKey) return
+
+  // VAPID web push (PWA/web)
+  try {
+    await fetch(`${supabaseUrl}/functions/v1/sendPushNotification`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${serviceKey}`,
+      },
+      body: JSON.stringify({ user_id: ownerId, title, message: body, data: extraData }),
+    })
+    console.log('[PUSH] VAPID enviado para owner:', ownerId)
+  } catch (e) {
+    console.error('[PUSH] Erro VAPID:', e)
+  }
+
+  // FCM push (Android/iOS)
+  try {
+    const projectId = Deno.env.get('FCM_PROJECT_ID')
+    const serviceAccountKey = Deno.env.get('FCM_SERVICE_ACCOUNT_KEY')
+    if (!projectId || !serviceAccountKey) return
+
+    const { data: tokenData } = await supabaseAdmin
+      .from('fcm_tokens')
+      .select('token')
+      .eq('user_id', ownerId)
+      .maybeSingle()
+
+    if (!tokenData?.token) return
+
+    const accessToken = await getGoogleAccessTokenForFCM(JSON.parse(serviceAccountKey))
+    const res = await fetch(
+      `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          message: {
+            token: tokenData.token,
+            notification: { title, body },
+            data: extraData,
+            android: { priority: 'high' },
+            apns: { payload: { aps: { sound: 'default', badge: 1 } } },
+          },
+        }),
+      },
+    )
+    if (!res.ok) {
+      console.error('[FCM] Erro ao enviar:', await res.text())
+    } else {
+      console.log('[FCM] Reagendamento enviado para:', ownerId)
+    }
+  } catch (e) {
+    console.error('[FCM] Erro:', e)
+  }
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -106,7 +199,12 @@ serve(async (req) => {
     // Validação de horário de expediente, feriados, etc.
     const dayOfWeek = reqStart.getDay()
     const dartWeekday = dayOfWeek === 0 ? 7 : dayOfWeek
-    const workDays = Array.isArray(prof.work_days) ? prof.work_days.map(Number) : [1,2,3,4,5,6]
+    // fix: bloquear dias sem equipe ativa para qualquer estabelecimento
+    // work_days NULL ou vazio → profissional sem dias configurados → rejeitar
+    const workDays = Array.isArray(prof.work_days) ? prof.work_days.map(Number) : []
+    if (workDays.length === 0) {
+      return new Response(JSON.stringify({ error: 'Profissional sem dias de trabalho configurados' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    }
     if (!workDays.includes(dartWeekday)) {
       return new Response(JSON.stringify({ error: 'Profissional não trabalha neste dia' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
@@ -131,7 +229,7 @@ serve(async (req) => {
       .select('id, scheduled_at, duration_min')
       .eq('professional_id', professionalId)
       .neq('id', appointmentId) // EXCLUIR O ATUAL
-      .not('status', 'in', '("cancelado","rejeitado","excluido")')
+      .not('status', 'in', '("cancelado","rejeitado","recusado","excluido")')
       .gte('scheduled_at', new Date(reqStart.getTime() - 2 * 60 * 60 * 1000).toISOString())
       .lte('scheduled_at', new Date(reqEnd.getTime() + 2 * 60 * 60 * 1000).toISOString())
 
@@ -172,6 +270,55 @@ serve(async (req) => {
       .eq('id', appointmentId)
 
     if (finalUpdateError) throw finalUpdateError
+
+    // ── Pós-update: push + activity log ─────────────────────────────────────
+    try {
+      // Busca owner da loja
+      const { data: shopData } = await supabaseAdmin
+        .from('shops')
+        .select('owner_id, name')
+        .eq('id', shopId)
+        .maybeSingle()
+
+      const ownerId: string = shopData?.owner_id || shopId
+      const clientName: string = currentAppt.client_name || 'Cliente'
+      const serviceName: string = updateData.service_name || currentAppt.service_name || 'Serviço'
+      const profName: string = updateData.professional_name || currentAppt.professional_name || ''
+
+      const dt = new Date(newDateISO)
+      const dateStr = `${dt.getDate().toString().padStart(2, '0')}/${(dt.getMonth()+1).toString().padStart(2,'0')}/${dt.getFullYear()}`
+      const timeStr = `${dt.getHours().toString().padStart(2,'0')}:${dt.getMinutes().toString().padStart(2,'0')}`
+      const pushMsg = `${clientName} reagendou — ${serviceName} para ${dateStr} às ${timeStr}`
+
+      // Push direto ao dono (fix: não depende do webhook)
+      await sendReschedulePush(
+        supabaseAdmin,
+        shopId,
+        ownerId,
+        '🔄 Reagendamento',
+        pushMsg,
+        { appointment_id: appointmentId, scheduled_at: newDateISO },
+      )
+
+      // Activity log
+      await supabaseAdmin.from('shop_activity_log').insert({
+        shop_id: shopId,
+        appointment_id: appointmentId,
+        event_type: 'reagendamento',
+        actor_type: 'cliente',
+        actor_name: clientName,
+        description: pushMsg,
+        metadata: {
+          old_scheduled_at: currentAppt.scheduled_at,
+          new_scheduled_at: newDateISO,
+          service_name: serviceName,
+          professional_name: profName,
+        },
+      })
+    } catch (postErr) {
+      console.error('[POST_UPDATE] Erro em push/log (não crítico):', postErr)
+    }
+    // ────────────────────────────────────────────────────────────────────────
 
     return new Response(
       JSON.stringify({ message: 'Agendamento reagendado com sucesso', id: appointmentId }),

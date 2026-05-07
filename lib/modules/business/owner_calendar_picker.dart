@@ -98,6 +98,7 @@ class _OwnerCalendarPickerState extends State<OwnerCalendarPicker> {
         final data = doc;
         final status = (data['status'] ?? '').toString().toLowerCase();
         if (status == 'cancelado' ||
+            status == 'rejeitado' ||
             status == 'recusado' ||
             status == 'excluido') {
           continue;
@@ -105,7 +106,7 @@ class _OwnerCalendarPickerState extends State<OwnerCalendarPicker> {
 
         final dt = DateTime.parse(data['scheduled_at'].toString());
         final key = _dayKey(dt);
-        final dur = int.tryParse(data['duracao_min']?.toString() ?? '') ??
+        final dur = int.tryParse(data['duration_min']?.toString() ?? '') ??
             widget.serviceDurationMinutes;
         final startMin = dt.hour * 60 + dt.minute;
 

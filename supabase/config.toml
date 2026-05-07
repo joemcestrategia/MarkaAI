@@ -79,3 +79,12 @@ verify_jwt = false
 
 [functions.cancelar-nfse]
 verify_jwt = false
+
+[functions.whatsapp-send]
+verify_jwt = false
+
+[functions.whatsapp-webhook]
+verify_jwt = false
+
+[functions.send-appointment-reminders]
+verify_jwt = false

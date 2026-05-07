@@ -267,17 +267,24 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
                     const SizedBox(height: 24),
                     Text('AÇÕES RÁPIDAS', style: TextStyle(color: textColor.withValues(alpha: 0.4), fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
                     const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 12,
-                      runSpacing: 12,
-                      children: [
-                        _buildActionButton('Editar', Icons.edit_outlined, textColor.withValues(alpha: 0.05), textColor, () => setModalState(() => isEditing = true)),
-                        _buildActionButton('Plano', Icons.stars_outlined, const Color(0xFF22C55E).withValues(alpha: 0.1), const Color(0xFF22C55E), () => _changePlan(data)),
-                        _buildActionButton('Boost', Icons.rocket_launch_outlined, Colors.amber.withValues(alpha: 0.1), Colors.amber, () => _addBoost(data)),
-                        _buildActionButton('Trial', Icons.timer_outlined, const Color(0xFF7C5CFC).withValues(alpha: 0.1), const Color(0xFF7C5CFC), () => _liberarTrial(data)),
-                        _buildActionButton('Excluir', Icons.delete_outline, Colors.red.withValues(alpha: 0.1), Colors.redAccent, () => _deleteShop(data)),
-                      ],
-                    ),
+                    Builder(builder: (context) {
+                      final boostExpiresStr = data['boost_expires_at'] as String?;
+                      final isBoostedNow = boostExpiresStr != null &&
+                          DateTime.tryParse(boostExpiresStr)?.isAfter(DateTime.now()) == true;
+                      return Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        children: [
+                          _buildActionButton('Editar', Icons.edit_outlined, textColor.withValues(alpha: 0.05), textColor, () => setModalState(() => isEditing = true)),
+                          _buildActionButton('Plano', Icons.stars_outlined, const Color(0xFF22C55E).withValues(alpha: 0.1), const Color(0xFF22C55E), () => _changePlan(data)),
+                          _buildActionButton('Boost', Icons.rocket_launch_outlined, Colors.amber.withValues(alpha: 0.1), Colors.amber, () => _addBoost(data)),
+                          if (isBoostedNow)
+                            _buildActionButton('Cancelar Boost', Icons.rocket_outlined, Colors.orange.withValues(alpha: 0.1), Colors.orange, () => _cancelBoost(data)),
+                          _buildActionButton('Trial', Icons.timer_outlined, const Color(0xFF7C5CFC).withValues(alpha: 0.1), const Color(0xFF7C5CFC), () => _liberarTrial(data)),
+                          _buildActionButton('Excluir', Icons.delete_outline, Colors.red.withValues(alpha: 0.1), Colors.redAccent, () => _deleteShop(data)),
+                        ],
+                      );
+                    }),
                   ] else ...[
                     _buildEditField('Nome do Negócio', nomeController, textColor),
                     _buildEditField('Slug (URL)', slugController, textColor),
@@ -476,6 +483,60 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
         ),
       ),
     );
+  }
+
+  Future<void> _cancelBoost(Map<String, dynamic> data) async {
+    final id = data['id'];
+    final nome = data['name'] ?? data['nome'] ?? 'este negócio';
+    final theme = Theme.of(context);
+    final cardColor = theme.cardColor;
+    final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: cardColor,
+        surfaceTintColor: Colors.transparent,
+        title: Text('Cancelar Boost?', style: TextStyle(color: textColor)),
+        content: Text(
+          'Tem certeza que deseja cancelar o boost ativo de "$nome"? O destaque será removido imediatamente.',
+          style: TextStyle(color: textColor.withValues(alpha: 0.6)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('NÃO', style: TextStyle(color: textColor.withValues(alpha: 0.5))),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange, foregroundColor: Colors.white, elevation: 0),
+            child: const Text('CANCELAR BOOST'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        await Supabase.instance.client.from('shops').update({
+          'boost_expires_at': null,
+          'is_boosted': false,
+        }).eq('id', id);
+
+        if (mounted) {
+          Navigator.pop(context);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Boost cancelado com sucesso.')),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Erro ao cancelar boost: $e')),
+          );
+        }
+      }
+    }
   }
 
   Future<void> _changePlan(Map<String, dynamic> data) async {

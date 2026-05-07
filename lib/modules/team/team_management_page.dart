@@ -27,13 +27,34 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
   bool _showPanel = false;
   Map<String, dynamic>? _employeeToEdit;
 
+  // Ordenação de prioridade de escala
+  List<Map<String, dynamic>> _orderedEmployees = [];
+  bool _isSavingPriority = false;
+
   @override
   void initState() {
     super.initState();
     _loadShopId();
   }
 
-  // ðŸ›¡ï¸ CARREGAMENTO DE ID BLINDADO
+  Future<void> _savePriorities(List<Map<String, dynamic>> employees) async {
+    if (shopId == null) return;
+    setState(() => _isSavingPriority = true);
+    try {
+      for (int i = 0; i < employees.length; i++) {
+        await sb.Supabase.instance.client
+            .from('employees')
+            .update({'schedule_priority': i})
+            .eq('id', employees[i]['id'].toString());
+      }
+    } catch (e) {
+      debugPrint('❌ Erro ao salvar prioridades de escala: $e');
+    } finally {
+      if (mounted) setState(() => _isSavingPriority = false);
+    }
+  }
+
+  // 🛡️ CARREGAMENTO DE ID BLINDADO
   Future<void> _loadShopId() async {
     String? id = await SessionService.getShopId();
     if (id == null || id.isEmpty) {
@@ -204,8 +225,24 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text("Membros da Equipe",
-                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text("Membros da Equipe",
+                      style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      Icon(Icons.drag_handle, size: 13, color: Colors.grey[500]),
+                      const SizedBox(width: 3),
+                      Text(
+                        "Arraste para definir prioridade de escala",
+                        style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
               ElevatedButton.icon(
                 onPressed: () =>
                     _handleMemberTap(context, null, isMobile), // Novo Membro
@@ -245,23 +282,72 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
 
               if (snapshot.data!.isEmpty) return _buildEmptyState();
 
-              return ListView.separated(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-                itemCount: snapshot.data!.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 12),
-                itemBuilder: (context, index) {
-                  var data = snapshot.data![index];
-                  // No desktop, destaca o selecionado. No mobile, ninguém fica selecionado visualmente.
-                  bool isSelected =
-                      !isMobile && _showPanel && _employeeToEdit?['id'] == data['id'];
+              // Sincroniza _orderedEmployees com dados do stream (preservando ordem de prioridade)
+              if (!_isSavingPriority) {
+                final newData = snapshot.data!;
+                final sortedFromServer = [...newData]
+                  ..sort((a, b) => ((a['schedule_priority'] ?? 0) as int)
+                      .compareTo((b['schedule_priority'] ?? 0) as int));
 
-                  return GestureDetector(
-                    onTap: () => _handleMemberTap(
-                        context, data, isMobile), // Editar Membro
-                    child: _buildEmployeeCard(data, isSelected),
-                  );
-                },
+                final currentIds = _orderedEmployees
+                    .map((e) => e['id'].toString())
+                    .join(',');
+                final serverIds = sortedFromServer
+                    .map((e) => e['id'].toString())
+                    .join(',');
+
+                if (currentIds != serverIds) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) setState(() => _orderedEmployees = sortedFromServer);
+                  });
+                }
+              }
+
+              final displayList = _orderedEmployees.isNotEmpty
+                  ? _orderedEmployees
+                  : snapshot.data!;
+
+              return Theme(
+                data: Theme.of(context).copyWith(
+                  canvasColor: Colors.transparent,
+                ),
+                child: ReorderableListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+                  itemCount: displayList.length,
+                  itemBuilder: (context, index) {
+                    final data = displayList[index];
+                    final bool isSelected =
+                        !isMobile && _showPanel && _employeeToEdit?['id'] == data['id'];
+                    return Padding(
+                      key: ValueKey(data['id']),
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: GestureDetector(
+                        onTap: () => _handleMemberTap(context, data, isMobile),
+                        child: _buildEmployeeCard(data, isSelected),
+                      ),
+                    );
+                  },
+                  onReorder: (oldIndex, newIndex) {
+                    setState(() {
+                      if (newIndex > oldIndex) newIndex--;
+                      final updated = List<Map<String, dynamic>>.from(_orderedEmployees.isNotEmpty
+                          ? _orderedEmployees
+                          : snapshot.data!);
+                      final item = updated.removeAt(oldIndex);
+                      updated.insert(newIndex, item);
+                      _orderedEmployees = updated;
+                    });
+                    _savePriorities(_orderedEmployees);
+                  },
+                  proxyDecorator: (child, index, animation) {
+                    return Material(
+                      elevation: 6,
+                      borderRadius: BorderRadius.circular(16),
+                      color: Colors.transparent,
+                      child: child,
+                    );
+                  },
+                ),
               );
             },
           ),
@@ -317,7 +403,14 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
               ],
             ),
           ),
-          const Icon(Icons.chevron_right, color: Colors.grey, size: 20),
+          if (_isSavingPriority)
+            const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primaryPurple),
+            )
+          else
+            const Icon(Icons.drag_handle, color: Colors.grey, size: 22),
         ],
       ),
     );

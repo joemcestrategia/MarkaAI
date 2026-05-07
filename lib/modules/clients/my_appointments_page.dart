@@ -83,14 +83,34 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
   }
 
   double _getTotalValue(Map<String, dynamic> appointment) {
-    return ((appointment['total_payable'] ??
-            appointment['valor_com_desconto'] ??
-            appointment['total_price'] ??
-            appointment['total_value'] ??
-            appointment['valor_total'] ??
-            appointment['valor'] ??
-            0) as num)
-        .toDouble();
+    final double totalPrice = double.tryParse(appointment['total_price']?.toString() ?? '0') ?? 0;
+    final double totalPayable = double.tryParse(appointment['total_payable']?.toString() ?? '0') ?? 0;
+    final double valorCDesc = double.tryParse(appointment['valor_com_desconto']?.toString() ?? '0') ?? 0;
+    final double discountAmt = double.tryParse(appointment['discount_amount']?.toString() ?? '0') ?? 0;
+    final bool hasBirthday = appointment['birthday_discount_applied'] == true;
+    final bool hasCoupon = appointment['coupon_applied'] == true;
+
+    // total_payable < total_price → desconto foi aplicado corretamente (inclui taxa de cartão se houver)
+    if (totalPayable > 0 && totalPrice > 0 && totalPayable < totalPrice - 0.01) return totalPayable;
+    // valor_com_desconto < total_price → desconto sem taxa de cartão
+    if (valorCDesc > 0 && totalPrice > 0 && valorCDesc < totalPrice - 0.01) return valorCDesc;
+    // discount_amount gravado diretamente
+    if (discountAmt > 0.01 && totalPrice > 0) return totalPrice - discountAmt;
+    // Fallback percentual de aniversário (registros antigos sem colunas preenchidas)
+    if (hasBirthday && totalPrice > 0) {
+      final pct = double.tryParse(appointment['birthday_discount_percent']?.toString() ?? '0') ?? 0;
+      if (pct > 0) return totalPrice * (1 - pct / 100);
+    }
+    // Fallback percentual de cupom
+    if (hasCoupon && totalPrice > 0) {
+      final pct = double.tryParse(appointment['coupon_discount_percent']?.toString() ?? '0') ?? 0;
+      if (pct > 0) return totalPrice * (1 - pct / 100);
+    }
+    // Sem desconto: melhor valor disponível
+    if (totalPayable > 0) return totalPayable;
+    if (valorCDesc > 0) return valorCDesc;
+    if (totalPrice > 0) return totalPrice;
+    return ((appointment['total_value'] ?? appointment['valor_total'] ?? appointment['valor'] ?? 0) as num).toDouble();
   }
 
   double _getPaidValue(Map<String, dynamic> appointment) {
@@ -423,14 +443,22 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
                 return false;
               }
             },
-            onPaid: () {
+            onPaid: () async {
               _timerPolling?.cancel();
-              if (_isPixPageOpen && mounted) {
-                _isPixPageOpen = false;
-                Navigator.of(context, rootNavigator: true).pop();
+              try {
+                await _updateAppointmentPayment(appointment, amount, 'Pix', paymentId);
+                if (_isPixPageOpen && mounted) {
+                  _isPixPageOpen = false;
+                  Navigator.of(context, rootNavigator: true).pop();
+                }
+                _showPaymentConfirmationModal(appointment, amount);
+              } catch (e) {
+                if (_isPixPageOpen && mounted) {
+                  _isPixPageOpen = false;
+                  Navigator.of(context, rootNavigator: true).pop();
+                }
+                _showPaymentErrorDialog(e.toString());
               }
-              _updateAppointmentPayment(appointment, amount, 'Pix', paymentId);
-              _navigateToPaymentSuccess(appointment);
             },
           ),
         ),
@@ -465,7 +493,7 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
             if (_isPixPageOpen) {
               _isPixPageOpen = false;
               Navigator.of(context, rootNavigator: true).pop(); // Fecha o modal do PIX somente se estiver aberto
-              _navigateToPaymentSuccess(appointment);
+              _showPaymentConfirmationModal(appointment, amount);
             } else {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
@@ -559,6 +587,7 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
       barrierDismissible: false,
       builder: (_) => const Center(child: CircularProgressIndicator()),
     );
+    bool loadingDismissed = false;
 
     try {
       final user = Supabase.instance.client.auth.currentUser!;
@@ -574,8 +603,6 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
         issuerId: cardData['issuerId'],
       );
 
-      navigator.pop();
-
       if (chargeResult['success'] == true) {
         await _updateAppointmentPayment(
           appointment,
@@ -583,14 +610,27 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
           'Cartão de Crédito',
           chargeResult['paymentId'].toString(),
         );
-        _navigateToPaymentSuccess(appointment);
+
+        if (!loadingDismissed) {
+          navigator.pop();
+          loadingDismissed = true;
+        }
+
+        _showPaymentConfirmationModal(appointment, amount);
       } else {
+        if (!loadingDismissed) {
+          navigator.pop();
+          loadingDismissed = true;
+        }
         final errMsg = chargeResult['error']?.toString() ?? 'Pagamento recusado.';
-        _showError(errMsg);
+        _showPaymentErrorDialog(errMsg);
       }
     } catch (e) {
-      navigator.pop();
-      _showError('Erro ao processar cartão: $e');
+      if (!loadingDismissed) {
+        navigator.pop();
+        loadingDismissed = true;
+      }
+      _showPaymentErrorDialog(e.toString());
     }
   }
 
@@ -612,11 +652,12 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
     await Supabase.instance.client
         .from('appointments')
         .update({
-      'payment_method': method,
       'status': newStatus,
-      'valor_pago': newPaid,
       'paid_amount': newPaid,
       'remaining_amount': valorTotal - newPaid,
+      'payment_status': newPaid >= (valorTotal - 0.05) ? 'pago' : 'parcial',
+      'payment_method': method,
+      'updated_at': DateTime.now().toIso8601String(),
       'metadata': {
         ...currentMeta,
         'payment_id': paymentId,
@@ -625,6 +666,18 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
       },
     })
     .eq('id', appointment['id']);
+
+    // Atualizar os dados localmente para que o Modal e a lista reflitam os valores imediatos
+    appointment['paid_amount'] = newPaid;
+    appointment['remaining_amount'] = valorTotal - newPaid;
+    appointment['payment_status'] = newPaid >= (valorTotal - 0.05) ? 'pago' : 'parcial';
+    appointment['payment_method'] = method;
+    appointment['metadata'] = {
+      ...currentMeta,
+      'payment_id': paymentId,
+      'valor_pago': newPaid,
+      'restante_a_pagar': valorTotal - newPaid,
+    };
 
     if (mounted) {
       setState(() {});
@@ -985,30 +1038,38 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      if (appointment['total_price'] != null || appointment['discount_amount'] != null)
-                        Builder(
-                          builder: (context) {
-                            final double original = double.tryParse((appointment['total_price'] ?? 0).toString()) ?? 0;
-                            final double discount = double.tryParse((appointment['discount_amount'] ?? 0).toString()) ?? 0;
-                            final double finalBase = double.tryParse((appointment['valor_com_desconto'] ?? valorTotal).toString()) ?? 0;
-                            
-                            // Tenta obter o desconto de várias formas para compatibilidade
-                            double discountValue = discount > 0 ? discount : (original - finalBase);
-                            double originalPrice = original > finalBase ? original : (finalBase + discountValue);
-
-                            if (discountValue > 0.01) {
-                              return Text(
-                                "${currencyFormat.format(originalPrice)} (- ${currencyFormat.format(discountValue)})",
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey,
-                                  decoration: TextDecoration.lineThrough,
-                                ),
-                              );
-                            }
-                            return const SizedBox.shrink();
+                      Builder(
+                        builder: (context) {
+                          final double original = double.tryParse((appointment['total_price'] ?? 0).toString()) ?? 0;
+                          final double discountAmt = double.tryParse((appointment['discount_amount'] ?? 0).toString()) ?? 0;
+                          final double cDesc = double.tryParse((appointment['valor_com_desconto'] ?? 0).toString()) ?? 0;
+                          final bool hasBd = appointment['birthday_discount_applied'] == true;
+                          final bool hasCp = appointment['coupon_applied'] == true;
+                          double discountValue = 0;
+                          if (discountAmt > 0.01) {
+                            discountValue = discountAmt;
+                          } else if (cDesc > 0 && original > 0 && cDesc < original - 0.01) {
+                            discountValue = original - cDesc;
+                          } else if (hasBd && original > 0) {
+                            final pct = double.tryParse(appointment['birthday_discount_percent']?.toString() ?? '0') ?? 0;
+                            if (pct > 0) discountValue = original * pct / 100;
+                          } else if (hasCp && original > 0) {
+                            final pct = double.tryParse(appointment['coupon_discount_percent']?.toString() ?? '0') ?? 0;
+                            if (pct > 0) discountValue = original * pct / 100;
                           }
-                        ),
+                          if (discountValue > 0.01 && original > 0) {
+                            return Text(
+                              "${currencyFormat.format(original)} (- ${currencyFormat.format(discountValue)})",
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey,
+                                decoration: TextDecoration.lineThrough,
+                              ),
+                            );
+                          }
+                          return const SizedBox.shrink();
+                        }
+                      ),
                       Text(currencyFormat.format(valorTotal),
                           style: const TextStyle(fontWeight: FontWeight.bold)),
                     ],
@@ -1031,17 +1092,26 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
               ],
               if (appointment['birthday_discount_applied'] == true) ...[
                 const SizedBox(height: 8),
-                const Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text('Presente aniversário:',
-                        style: TextStyle(color: Colors.pink, fontSize: 13, fontWeight: FontWeight.w500)),
-                    Text(
-                      'Aplicado',
-                      style: TextStyle(color: Colors.pink, fontWeight: FontWeight.bold, fontSize: 13),
-                    ),
-                  ],
-                ),
+                Builder(builder: (ctx) {
+                  final double origBd = double.tryParse(appointment['total_price']?.toString() ?? '0') ?? 0;
+                  final double discAmt = double.tryParse(appointment['discount_amount']?.toString() ?? '0') ?? 0;
+                  final double cDesc = double.tryParse(appointment['valor_com_desconto']?.toString() ?? '0') ?? 0;
+                  final double pct = double.tryParse(appointment['birthday_discount_percent']?.toString() ?? '0') ?? 0;
+                  double bdDiscount = 0;
+                  if (discAmt > 0.01) bdDiscount = discAmt;
+                  else if (cDesc > 0 && origBd > 0 && cDesc < origBd - 0.01) bdDiscount = origBd - cDesc;
+                  else if (pct > 0 && origBd > 0) bdDiscount = origBd * pct / 100;
+                  final String bdText = bdDiscount > 0.01 ? '- ${currencyFormat.format(bdDiscount)}' : 'Aplicado';
+                  return Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Presente aniversário:',
+                          style: TextStyle(color: Colors.pink, fontSize: 13, fontWeight: FontWeight.w500)),
+                      Text(bdText,
+                          style: const TextStyle(color: Colors.pink, fontWeight: FontWeight.bold, fontSize: 13)),
+                    ],
+                  );
+                }),
               ],
               const SizedBox(height: 8),
               Row(
@@ -1420,21 +1490,108 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
     }
   }
 
-  void _navigateToPaymentSuccess(Map<String, dynamic> appointment) {
+  void _showPaymentConfirmationModal(Map<String, dynamic> appointment, double paidAmount) {
     if (!mounted) return;
-    final ts = appointment['scheduled_at'];
-    final date = ts is String ? DateTime.parse(ts) : ts as DateTime;
-    Navigator.of(context, rootNavigator: true).push(
-      MaterialPageRoute(
-        builder: (_) => BookingSuccessPage(
-          serviceName: appointment['service_name'] ?? 'Serviço',
-          professionalName: appointment['professional_name'] ?? 'Profissional',
-          date: DateFormat('dd/MM/yyyy').format(date),
-          time: DateFormat('HH:mm').format(date),
-          isPaid: true,
-          title: 'Pagamento Confirmado!',
-          subtitle: 'Seu pagamento foi processado com sucesso!',
+    
+    final valorTotal = _getTotalValue(appointment);
+    final valorPago = _getPaidValue(appointment);
+    final valorRestante = valorTotal - valorPago;
+    
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        contentPadding: const EdgeInsets.all(24),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.check_circle_outline, color: Colors.green, size: 64),
+            const SizedBox(height: 16),
+            Text(
+              "Pagamento Confirmado!",
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.primaryPurple,
+                  ),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text("Valor pago agora:", style: TextStyle(color: Colors.grey)),
+                Text(currencyFormat.format(paidAmount), style: const TextStyle(fontWeight: FontWeight.bold)),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text("Total já quitado:", style: TextStyle(color: Colors.grey)),
+                Text("${currencyFormat.format(valorPago)} de ${currencyFormat.format(valorTotal)}", style: const TextStyle(fontWeight: FontWeight.bold)),
+              ],
+            ),
+            const SizedBox(height: 8),
+            const Divider(),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text("Situação:", style: TextStyle(color: Colors.grey)),
+                Text(
+                  valorRestante <= 0.05 ? "Pago integralmente" : "Saldo restante: ${currencyFormat.format(valorRestante)}",
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: valorRestante <= 0.05 ? Colors.green : Colors.orange,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  if (mounted) setState(() {});
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primaryPurple,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                child: const Text('OK', style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ],
         ),
+      ),
+    );
+  }
+
+  void _showPaymentErrorDialog(String message) {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.error_outline, color: Colors.red),
+            SizedBox(width: 8),
+            Text('Erro no pagamento', style: TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Text(message, style: const TextStyle(fontSize: 15)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('FECHAR',
+                style: TextStyle(color: AppColors.primaryPurple, fontWeight: FontWeight.bold)),
+          ),
+        ],
       ),
     );
   }
@@ -1801,15 +1958,26 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                               if (appointment['total_price'] != null)
-                                Builder(
+                                  Builder(
                                   builder: (context) {
-                                    final double original = double.tryParse(appointment['total_price'].toString()) ?? 0;
-                                    // Use valor_com_desconto se disponível para comparar o desconto real (sem taxas)
-                                    final double finalBase = double.tryParse((appointment['valor_com_desconto'] ?? valorTotal).toString()) ?? 0;
-                                    final double discountValue = original - finalBase;
-                                    
-                                    if (discountValue > 0.01) {
+                                    final double original = double.tryParse(appointment['total_price']?.toString() ?? '0') ?? 0;
+                                    final double discountAmt2 = double.tryParse(appointment['discount_amount']?.toString() ?? '0') ?? 0;
+                                    final double cDesc2 = double.tryParse(appointment['valor_com_desconto']?.toString() ?? '0') ?? 0;
+                                    final bool hasBd2 = appointment['birthday_discount_applied'] == true;
+                                    final bool hasCp2 = appointment['coupon_applied'] == true;
+                                    double discountValue = 0;
+                                    if (discountAmt2 > 0.01) {
+                                      discountValue = discountAmt2;
+                                    } else if (cDesc2 > 0 && original > 0 && cDesc2 < original - 0.01) {
+                                      discountValue = original - cDesc2;
+                                    } else if (hasBd2 && original > 0) {
+                                      final pct = double.tryParse(appointment['birthday_discount_percent']?.toString() ?? '0') ?? 0;
+                                      if (pct > 0) discountValue = original * pct / 100;
+                                    } else if (hasCp2 && original > 0) {
+                                      final pct = double.tryParse(appointment['coupon_discount_percent']?.toString() ?? '0') ?? 0;
+                                      if (pct > 0) discountValue = original * pct / 100;
+                                    }
+                                    if (discountValue > 0.01 && original > 0) {
                                       return Text(
                                         "${currencyFormat.format(original)} (- ${currencyFormat.format(discountValue)})",
                                         style: const TextStyle(
@@ -1881,17 +2049,28 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
                             ),
                           ),
                         if (appointment['birthday_discount_applied'] == true)
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: Colors.pink.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: const Text(
-                              "ANIVERSÁRIO",
-                              style: TextStyle(color: Colors.pink, fontSize: 9, fontWeight: FontWeight.bold),
-                            ),
-                          ),
+                          Builder(builder: (ctx) {
+                            final double origBd2 = double.tryParse(appointment['total_price']?.toString() ?? '0') ?? 0;
+                            final double discAmt2 = double.tryParse(appointment['discount_amount']?.toString() ?? '0') ?? 0;
+                            final double cDesc2 = double.tryParse(appointment['valor_com_desconto']?.toString() ?? '0') ?? 0;
+                            final double pct2 = double.tryParse(appointment['birthday_discount_percent']?.toString() ?? '0') ?? 0;
+                            double bdDisc2 = 0;
+                            if (discAmt2 > 0.01) bdDisc2 = discAmt2;
+                            else if (cDesc2 > 0 && origBd2 > 0 && cDesc2 < origBd2 - 0.01) bdDisc2 = origBd2 - cDesc2;
+                            else if (pct2 > 0 && origBd2 > 0) bdDisc2 = origBd2 * pct2 / 100;
+                            final String label2 = bdDisc2 > 0.01
+                                ? "🎂 -${currencyFormat.format(bdDisc2)}"
+                                : "🎂 ANIVERSÁRIO";
+                            return Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.pink.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(label2,
+                                  style: const TextStyle(color: Colors.pink, fontSize: 9, fontWeight: FontWeight.bold)),
+                            );
+                          }),
                       ],
                     ),
                   ],

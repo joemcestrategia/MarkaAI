@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { Plus, Download, Search, X, AlertTriangle, MessageSquareText, BarChart3 } from 'lucide-react'
+import { Plus, Download, Search, X, AlertTriangle, MessageSquareText, BarChart3, Image } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { formatDistanceToNow } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
@@ -109,6 +109,9 @@ export default function SupportListPage() {
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold text-gray-900">Fila de Suporte</h1>
           <div className="flex gap-2">
+            <Link to="/admin/banners" className="inline-flex items-center gap-1.5 px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition">
+              <Image size={14} /> Banners
+            </Link>
             <Link to="/admin/support/relatorios" className="inline-flex items-center gap-1.5 px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition">
               <BarChart3 size={14} /> Relatórios
             </Link>

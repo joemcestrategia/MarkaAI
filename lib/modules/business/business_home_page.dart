@@ -16,6 +16,7 @@ import '../../core/widgets/splash_loading_widget.dart';
 import 'boost_shop_page.dart';
 import 'package:markaai/modules/admin/admin_dashboard_page.dart';
 
+
 import '../../core/theme/app_colors.dart';
 import '../../core/services/notification_service.dart';
 import '../../core/widgets/trial_banner_widget.dart';
@@ -59,6 +60,9 @@ class BusinessHomePage extends StatefulWidget {
 
 class _BusinessHomePageState extends State<BusinessHomePage> {
   int _selectedIndex = 1;
+  DateTime? _scheduleInitialDate;
+  String? _scheduleInitialAppointmentId;
+  Key _scheduleKey = const ValueKey('schedule_default');
 
   String? shopId;
   String userName = "Profissional";
@@ -100,7 +104,10 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   int _lastDashboardYear = -999; 
   int _lastDashboardMonth = -999;
 
+
   sb.RealtimeChannel? _appointmentsChannel;
+  sb.RealtimeChannel? _conversationsChannel;
+  int _needsHumanCount = 0;
 
   @override
   void initState() {
@@ -112,6 +119,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   @override
   void dispose() {
     _appointmentsChannel?.unsubscribe();
+    _conversationsChannel?.unsubscribe();
     super.dispose();
   }
 
@@ -335,6 +343,48 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 _employeesFuture = null;
               });
             }
+          },
+        )
+        .subscribe();
+
+    // Canal Realtime para conversas que precisam de atenção humana
+    _startConversationsRealtime();
+  }
+
+  void _startConversationsRealtime() {
+    if (shopId == null) return;
+    // Busca contagem inicial
+    sb.Supabase.instance.client
+        .from('whatsapp_conversations')
+        .select('id')
+        .eq('shop_id', shopId!)
+        .eq('needs_human', true)
+        .then((rows) {
+      if (mounted) setState(() => _needsHumanCount = rows.length);
+    }).catchError((_) {});
+
+    _conversationsChannel = sb.Supabase.instance.client
+        .channel('home_conversations_$shopId')
+        .onPostgresChanges(
+          event: sb.PostgresChangeEvent.update,
+          schema: 'public',
+          table: 'whatsapp_conversations',
+          filter: sb.PostgresChangeFilter(
+            type: sb.PostgresChangeFilterType.eq,
+            column: 'shop_id',
+            value: shopId!,
+          ),
+          callback: (payload) {
+            if (!mounted) return;
+            // Re-busca contagem atualizada
+            sb.Supabase.instance.client
+                .from('whatsapp_conversations')
+                .select('id')
+                .eq('shop_id', shopId!)
+                .eq('needs_human', true)
+                .then((rows) {
+              if (mounted) setState(() => _needsHumanCount = rows.length);
+            }).catchError((_) {});
           },
         )
         .subscribe();
@@ -587,8 +637,23 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   Widget _buildCurrentScreen({required bool isDesktop}) {
     switch (_selectedIndex) {
       case 0: return _buildHomeDashboard(isDesktop: isDesktop);
-      case 1: return BusinessSchedulePage(shopId: shopId ?? "");
-      case 2: return BusinessHistoryPage(shopId: shopId ?? "");
+      case 1: return BusinessSchedulePage(
+        key: _scheduleKey,
+        shopId: shopId ?? "",
+        initialDate: _scheduleInitialDate,
+        initialAppointmentId: _scheduleInitialAppointmentId,
+      );
+      case 2: return BusinessHistoryPage(
+        shopId: shopId ?? "",
+        onNavigateToSchedule: (date, appointmentId) {
+          setState(() {
+            _selectedIndex = 1;
+            _scheduleInitialDate = date;
+            _scheduleInitialAppointmentId = appointmentId;
+            _scheduleKey = ValueKey('schedule_${date.millisecondsSinceEpoch}_$appointmentId');
+          });
+        },
+      );
       case 3: return const ServicesManagementPage();
       case 4: return const BusinessClientsScreen();
       case 5: return const FinancialDashboardPage();
@@ -778,6 +843,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                   padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                   child: Divider(height: 1),
                 ),
+
+
                 _buildDesktopMenuItem(8, Icons.settings, "Configurações"),
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
@@ -1311,7 +1378,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 ),
                 _buildDrawerItem(
                   icon: Icons.inventory_2_outlined,
-                  title: "Estoque",
+                  title: "Produtos",
                   index: 7,
                 ),
                 _buildDrawerItem(
@@ -1616,6 +1683,37 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     }
   }
 
+  /// Retorna o valor real pós-desconto de um agendamento para cálculos de receita.
+  /// Aplica a mesma lógica de prioridade usada nas telas de exibição.
+  double _resolveAppointmentValue(Map<String, dynamic> data) {
+    final double totalPrice = double.tryParse(data['total_price']?.toString() ?? '0') ?? 0;
+    final double totalPayable = double.tryParse(data['total_payable']?.toString() ?? '0') ?? 0;
+    final double valorCDesc = double.tryParse(data['valor_com_desconto']?.toString() ?? '0') ?? 0;
+    final double discountAmt = double.tryParse(data['discount_amount']?.toString() ?? '0') ?? 0;
+    final bool hasBirthday = data['birthday_discount_applied'] == true;
+    final bool hasCoupon = data['coupon_applied'] == true;
+
+    if (totalPayable > 0 && totalPrice > 0 && totalPayable < totalPrice - 0.01) return totalPayable;
+    if (valorCDesc > 0 && totalPrice > 0 && valorCDesc < totalPrice - 0.01) return valorCDesc;
+    if (discountAmt > 0.01 && totalPrice > 0) return totalPrice - discountAmt;
+    if (hasBirthday && totalPrice > 0) {
+      final pct = double.tryParse(data['birthday_discount_percent']?.toString() ?? '0') ?? 0;
+      if (pct > 0) return totalPrice * (1 - pct / 100);
+    }
+    if (hasCoupon && totalPrice > 0) {
+      final pct = double.tryParse(data['coupon_discount_percent']?.toString() ?? '0') ?? 0;
+      if (pct > 0) return totalPrice * (1 - pct / 100);
+    }
+    if (totalPayable > 0) return totalPayable;
+    if (valorCDesc > 0) return valorCDesc;
+    if (totalPrice > 0) return totalPrice;
+    for (final k in ['total_value', 'labor_value', 'price', 'valor']) {
+      final v = double.tryParse(data[k]?.toString() ?? '');
+      if (v != null && v > 0) return v;
+    }
+    return 0.0;
+  }
+
   Future<List<Map<String, dynamic>>> _fetchTodayAppointments() async {
     if (shopId == null || shopId!.isEmpty) return [];
     try {
@@ -1624,7 +1722,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       final end = DateTime(now.year, now.month, now.day, 23, 59, 59);
       final result = await sb.Supabase.instance.client
           .from('appointments')
-          .select('id, scheduled_at, status, client_name, service_name, total_payable, total_price, total_value, valor_com_desconto, labor_value')
+          .select('id, scheduled_at, status, client_name, service_name, total_payable, total_price, total_value, valor_com_desconto, labor_value, discount_amount, birthday_discount_applied, birthday_discount_percent, coupon_applied, coupon_discount_percent')
           .eq('shop_id', shopId!)
           .gte('scheduled_at', start.toIso8601String())
           .lte('scheduled_at', end.toIso8601String())
@@ -1642,7 +1740,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     try {
       final result = await sb.Supabase.instance.client
           .from('appointments')
-          .select('professional_id, status, total_payable, total_price, total_value, valor_com_desconto, labor_value')
+          .select('professional_id, status, total_payable, total_price, total_value, valor_com_desconto, labor_value, discount_amount, birthday_discount_applied, birthday_discount_percent, coupon_applied, coupon_discount_percent')
           .eq('shop_id', shopId!)
           .gte('scheduled_at', startData.toIso8601String())
           .lte('scheduled_at', endData.toIso8601String());
@@ -1659,7 +1757,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     try {
       final result = await sb.Supabase.instance.client
           .from('appointments')
-          .select('scheduled_at, status, total_payable, total_price, total_value, valor_com_desconto, labor_value')
+          .select('scheduled_at, status, total_payable, total_price, total_value, valor_com_desconto, labor_value, discount_amount, birthday_discount_applied, birthday_discount_percent, coupon_applied, coupon_discount_percent')
           .eq('shop_id', shopId!)
           .gte('scheduled_at', startData.toIso8601String())
           .lte('scheduled_at', endData.toIso8601String());
@@ -1685,6 +1783,23 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     return DateTime(_selectedYear, 12, 31, 23, 59, 59);
   }
 
+  DateTime _weeklyStart() {
+    if (_selectedMonth <= 0) return _commissionStart();
+    final y = _selectedYear > 0 ? _selectedYear : DateTime.now().year;
+    final firstDay = DateTime(y, _selectedMonth, 1);
+    final firstDow = firstDay.weekday % 7; // 0=Dom
+    return firstDay.subtract(Duration(days: firstDow));
+  }
+
+  DateTime _weeklyEnd() {
+    if (_selectedMonth <= 0) return _commissionEnd();
+    final y = _selectedYear > 0 ? _selectedYear : DateTime.now().year;
+    final lastDay = DateTime(y, _selectedMonth + 1, 0); // último dia do mês
+    final lastDow = lastDay.weekday % 7; // 0=Dom..6=Sáb
+    final daysToSat = lastDow == 6 ? 0 : (6 - lastDow);
+    return DateTime(lastDay.year, lastDay.month, lastDay.day + daysToSat, 23, 59, 59);
+  }
+
   void _refreshDashboard() {
     setState(() {
       _statsFuture = null;
@@ -1706,7 +1821,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       _commissionFuture = _fetchCommissionAppointments(
           _commissionStart(), _commissionEnd());
       _monthlyAppointmentsFuture = _fetchMonthlyAppointments(
-          _commissionStart(), _commissionEnd());
+          _weeklyStart(), _weeklyEnd());
     } else if (shopIdReady && _lastDashboardMonth != _selectedMonth) {
       _lastDashboardMonth = _selectedMonth;
       if (_canViewCommissions) {
@@ -1714,7 +1829,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           _commissionStart(), _commissionEnd());
       }
       _monthlyAppointmentsFuture = _fetchMonthlyAppointments(
-          _commissionStart(), _commissionEnd());
+          _weeklyStart(), _weeklyEnd());
     }
 
     return FutureBuilder<List<Map<String, dynamic>>>(
@@ -1988,7 +2103,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
         if (monthlyAppointmentsFuture != null && _selectedMonth > 0) ...[
           const SizedBox(height: 20),
-          _buildWeeklyRevenueSection(monthlyAppointmentsFuture),
+          _buildMonthlyPerformanceSection(monthlyAppointmentsFuture),
         ],
       ],
     );
@@ -2118,13 +2233,17 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                   int diasTrabalhados = 0;
                   if (snap.hasData) {
                     final setDias = <int>{};
+                    final filterY = _selectedYear > 0 ? _selectedYear : DateTime.now().year;
+                    final filterM = _selectedMonth > 0 ? _selectedMonth : DateTime.now().month;
                     for (var doc in snap.data!) {
                       final status = (doc['status'] ?? '').toString().toLowerCase();
                       if (status == 'cancelado' || status == 'falta') continue;
                       final dateStr = doc['scheduled_at'] as String?;
                       if (dateStr != null) {
-                        final d = DateTime.tryParse(dateStr);
-                        if (d != null) setDias.add(d.day);
+                        final d = DateTime.tryParse(dateStr)?.toLocal();
+                        if (d != null && d.month == filterM && d.year == filterY) {
+                          setDias.add(d.day);
+                        }
                       }
                     }
                     diasTrabalhados = setDias.length;
@@ -2184,7 +2303,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 
                 if (monthlyAppointmentsFuture != null && _selectedMonth > 0) ...[
                   const SizedBox(height: 12),
-                  _buildWeeklyRevenueSection(monthlyAppointmentsFuture),
+                  _buildMonthlyPerformanceSection(monthlyAppointmentsFuture),
                 ],
 
                 const SizedBox(height: 12),
@@ -2321,13 +2440,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         for (var doc in todayDocs) {
           final status = (doc['status'] ?? '').toString().toLowerCase();
           if (status == 'cancelado' || status == 'falta') continue;
-          
-          double valor = 0.0;
-          for (final k in ['total_payable', 'total_price', 'total_value', 'valor_com_desconto', 'labor_value']) {
-            final v = double.tryParse(doc[k]?.toString() ?? '');
-            if (v != null && v > 0) { valor = v; break; }
-          }
-          totalDia += valor;
+          totalDia += _resolveAppointmentValue(doc);
         }
 
         return _buildHojeCard(hoje, proximosHoje, totalDia);
@@ -2452,14 +2565,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                       ),
                     ),
                     Text(
-                      () {
-                        double valor = 0.0;
-                        for (final k in ['total_payable', 'total_price', 'total_value', 'valor_com_desconto', 'labor_value']) {
-                          final v = double.tryParse(data[k]?.toString() ?? '');
-                          if (v != null && v > 0) { valor = v; break; }
-                        }
-                        return fmt.format(valor);
-                      }(),
+                      fmt.format(_resolveAppointmentValue(data)),
                       style: const TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
@@ -2506,7 +2612,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            "Performance",
+            "Performance Mensal",
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.bold,
@@ -2862,7 +2968,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           Row(
             children: [
               const Text(
-                "Evolução de Performance",
+                "Performance Mensal",
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
               const Spacer(),
@@ -3139,7 +3245,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       case 6:
         return "Equipe";
       case 7:
-        return "Estoque";
+        return "Produtos";
       case 8:
         return "Configurações";
       case 9:
@@ -3155,7 +3261,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     }
   }
 
-  Widget _buildWeeklyRevenueSection(Future<List<Map<String, dynamic>>> future) {
+  Widget _buildMonthlyPerformanceSection(Future<List<Map<String, dynamic>>> future) {
     return FutureBuilder<List<Map<String, dynamic>>>(
       future: future,
       builder: (context, snap) {
@@ -3163,31 +3269,29 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         final appointments = snap.data!;
         if (appointments.isEmpty) return const SizedBox.shrink();
 
-        // Agrupar por semanas
-        Map<int, double> weeklySums = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0};
-        for (var doc in appointments) {
-          final status = (doc['status'] ?? '').toString().toLowerCase();
-          if (status == 'cancelado' || status == 'falta') continue;
+        const cancelledStatuses = {'cancelado', 'falta', 'recusado', 'rejected', 'cancelled'};
 
+        final y = _selectedYear > 0 ? _selectedYear : DateTime.now().year;
+        final m = _selectedMonth.clamp(1, 12);
+        // Domingo que inicia a semana 1 do mês (pode estar no mês anterior)
+        final firstDow = DateTime(y, m, 1).weekday % 7; // 0=Dom
+        final firstSunday = DateTime(y, m, 1 - firstDow);
+
+        Map<int, double> weeklySums = {};
+
+        for (var doc in appointments) {
           final dateStr = doc['scheduled_at'] as String?;
           if (dateStr == null) continue;
-          final date = DateTime.tryParse(dateStr);
+          final date = DateTime.tryParse(dateStr)?.toLocal();
           if (date == null) continue;
 
-          final day = date.day;
-          int week = 1;
-          if (day <= 7) { week = 1; }
-          else if (day <= 14) { week = 2; }
-          else if (day <= 21) { week = 3; }
-          else if (day <= 28) { week = 4; }
-          else { week = 5; }
+          final status = (doc['status'] ?? '').toString().toLowerCase();
+          if (cancelledStatuses.contains(status)) continue;
 
-          double valor = 0.0;
-          for (final k in ['total_payable', 'total_price', 'total_value', 'valor_com_desconto', 'labor_value']) {
-            final v = double.tryParse(doc[k]?.toString() ?? '');
-            if (v != null && v > 0) { valor = v; break; }
-          }
-          weeklySums[week] = (weeklySums[week] ?? 0) + valor;
+          final diff = date.difference(firstSunday).inDays;
+          if (diff < 0) continue;
+          final week = (diff ~/ 7) + 1;
+          weeklySums[week] = (weeklySums[week] ?? 0) + _resolveAppointmentValue(doc);
         }
 
         return _buildWeeklyRevenueChart(weeklySums);
@@ -3195,9 +3299,48 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     );
   }
 
+  /// Retorna o intervalo Dom-Sáb completo da semana, podendo cruzar meses.
+  /// Ex: "29 mar–4 abr" ou "26 abr–2 mai" ou "5–11 abr"
+  String _weekDateRange(int week) {
+    if (_selectedMonth <= 0) return '';
+    const monthNames = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+    final m = _selectedMonth.clamp(1, 12);
+    final y = _selectedYear > 0 ? _selectedYear : DateTime.now().year;
+
+    // Dia da semana do dia 1 do mês (0=Dom..6=Sáb)
+    final firstDow = DateTime(y, m, 1).weekday % 7;
+
+    // Dia do mês do domingo que inicia esta semana (pode ser 0 ou negativo = mês anterior)
+    final int sundayDom;
+    if (week == 1) {
+      sundayDom = 1 - firstDow;
+    } else {
+      final week1End = firstDow == 0 ? 7 : 7 - firstDow;
+      sundayDom = week1End + (week - 2) * 7 + 1;
+    }
+
+    // Dart aceita day=0 (último dia do mês anterior) e dias negativos
+    final startDate = DateTime(y, m, sundayDom);
+    final endDate = startDate.add(const Duration(days: 6));
+
+    // Semana inteiramente fora do mês → não exibir
+    final lastOfMonth = DateTime(y, m + 1, 0); // day=0 = último dia do mês
+    if (startDate.isAfter(lastOfMonth)) return '';
+
+    // Label: mesmo mês → "5–11 abr"; meses diferentes → "29 mar–4 abr"
+    if (startDate.month == endDate.month) {
+      return '${startDate.day}\u2013${endDate.day} ${monthNames[startDate.month - 1]}';
+    }
+    return '${startDate.day} ${monthNames[startDate.month - 1]}\u2013${endDate.day} ${monthNames[endDate.month - 1]}';
+  }
+
+
   Widget _buildWeeklyRevenueChart(Map<int, double> data) {
     final fmt = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     final maxVal = data.values.fold(0.01, (a, b) => a > b ? a : b);
+    final sortedWeeks = data.keys.toList()..sort();
+
+    const barColor = LinearGradient(colors: [AppColors.primaryPurple, Color(0xFF9B5CF6)]);
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -3216,60 +3359,74 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
             "Faturamento Semanal",
             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
           ),
-          const SizedBox(height: 16),
-          ...List.generate(5, (index) {
-            final week = index + 1;
-            final valor = data[week] ?? 0.0;
-            final pct = valor / maxVal;
-            if (week == 5 && valor == 0) return const SizedBox.shrink();
-
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text("Semana $week",
-                          style: TextStyle(fontSize: 11, color: Colors.grey[600])),
-                      Text(fmt.format(valor),
-                          style: const TextStyle(
-                              fontSize: 11, fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  Stack(
-                    children: [
-                      Container(
-                        height: 8,
-                        width: double.infinity,
-                        decoration: BoxDecoration(
-                          color: Colors.grey[100],
-                          borderRadius: BorderRadius.circular(4),
+          const SizedBox(height: 12),
+          if (sortedWeeks.isEmpty)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Text('Nenhum dado para o filtro selecionado.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[500])),
+              ),
+            )
+          else
+            ...sortedWeeks.map((week) {
+              final valor = data[week] ?? 0.0;
+              final pct = valor / maxVal;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text("Semana $week",
+                                style: TextStyle(
+                                    fontSize: 11, color: Colors.grey[600])),
+                            if (_selectedMonth > 0)
+                              Text(
+                                _weekDateRange(week),
+                                style:
+                                    TextStyle(fontSize: 9, color: Colors.grey[400]),
+                              ),
+                          ],
                         ),
-                      ),
-                      FractionallySizedBox(
-                        widthFactor: pct.clamp(0.01, 1.0),
-                        child: Container(
+                        Text(fmt.format(valor),
+                            style: const TextStyle(
+                                fontSize: 11, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Stack(
+                      children: [
+                        Container(
                           height: 8,
+                          width: double.infinity,
                           decoration: BoxDecoration(
-                            gradient: const LinearGradient(
-                              colors: [
-                                AppColors.primaryPurple,
-                                Color(0xFF9B5CF6)
-                              ],
-                            ),
+                            color: Colors.grey[100],
                             borderRadius: BorderRadius.circular(4),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            );
-          }),
+                        FractionallySizedBox(
+                          widthFactor: pct.clamp(0.01, 1.0),
+                          child: Container(
+                            height: 8,
+                            decoration: BoxDecoration(
+                              gradient: barColor,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            }),
         ],
       ),
     );

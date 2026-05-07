@@ -35,6 +35,16 @@ class ShopModel {
   final Map<String, dynamic>? mercadopago;
   final String? mpAccessToken;
   final Map<String, dynamic>? googleBusiness;
+  final String? whatsappInstanceId;
+  final String? whatsappStatus;
+  final DateTime? whatsappConnectedAt;
+  final String? ownerNotifyPhone;
+  final bool aiAgentEnabled;
+  final String? aiAgentName;
+  final String? aiAgentInstructions;
+  final String? coverUrl;
+  final bool isBoosted;
+  final DateTime? boostExpiresAt;
 
   ShopModel({
     required this.id,
@@ -73,6 +83,16 @@ class ShopModel {
     this.mercadopago,
     this.mpAccessToken,
     this.googleBusiness,
+    this.whatsappInstanceId,
+    this.whatsappStatus,
+    this.whatsappConnectedAt,
+    this.ownerNotifyPhone,
+    this.aiAgentEnabled = false,
+    this.aiAgentName,
+    this.aiAgentInstructions,
+    this.coverUrl,
+    this.isBoosted = false,
+    this.boostExpiresAt,
   });
 
   factory ShopModel.fromMap(Map<String, dynamic> map) {
@@ -117,6 +137,20 @@ class ShopModel {
       mercadopago: map['mercadopago'],
       mpAccessToken: map['mp_access_token'],
       googleBusiness: map['google_business'],
+      whatsappInstanceId: map['whatsapp_instance_id'],
+      whatsappStatus: map['whatsapp_status'],
+      whatsappConnectedAt: map['whatsapp_connected_at'] != null 
+          ? DateTime.tryParse(map['whatsapp_connected_at']) 
+          : null,
+      ownerNotifyPhone: map['owner_notify_phone'],
+      aiAgentEnabled: map['ai_agent_enabled'] ?? false,
+      aiAgentName: map['ai_agent_name'],
+      aiAgentInstructions: map['ai_agent_instructions'],
+      coverUrl: map['cover_url'],
+      isBoosted: map['is_boosted'] ?? false,
+      boostExpiresAt: map['boost_expires_at'] != null
+          ? DateTime.tryParse(map['boost_expires_at'].toString())
+          : null,
     );
   }
 
@@ -158,6 +192,16 @@ class ShopModel {
       'mercadopago': mercadopago,
       'mp_access_token': mpAccessToken,
       'google_business': googleBusiness,
+      'whatsapp_instance_id': whatsappInstanceId,
+      'whatsapp_status': whatsappStatus,
+      'whatsapp_connected_at': whatsappConnectedAt?.toIso8601String(),
+      'owner_notify_phone': ownerNotifyPhone,
+      'ai_agent_enabled': aiAgentEnabled,
+      'ai_agent_name': aiAgentName,
+      'ai_agent_instructions': aiAgentInstructions,
+      'cover_url': coverUrl,
+      'is_boosted': isBoosted,
+      'boost_expires_at': boostExpiresAt?.toIso8601String(),
       'updated_at': DateTime.now().toIso8601String(),
     };
   }

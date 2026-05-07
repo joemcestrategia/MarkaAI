@@ -68,6 +68,7 @@ class _ManageCouponsPageState extends State<ManageCouponsPage>
   bool _isGeneratingImage = false;
   late PlanFeatures _currentFeatures = planFeaturesConfig[PlanKey.free]!;
   List<Map<String, dynamic>> _services = [];
+  List<String> _availableClassifications = [];
   int _refreshKey = 0;
 
   Map<String, dynamic>? _couponToShare;
@@ -78,12 +79,50 @@ class _ManageCouponsPageState extends State<ManageCouponsPage>
     _tabController = TabController(length: 2, vsync: this);
     _loadShopData();
     _loadServices();
+    _loadClassifications();
   }
 
   @override
   void dispose() {
     _tabController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadClassifications() async {
+    // Os 4 presets do sistema são sempre exibidos, independente de clientes cadastrados
+    const systemPresets = ['VIP', 'Sumido', 'Problemático', 'Novo'];
+    final Set<String> upperSeen = systemPresets.map((s) => s.toUpperCase()).toSet();
+    final List<String> all = List.from(systemPresets);
+    try {
+      final data = await Supabase.instance.client
+          .from('shop_clients')
+          .select('classification, manual_tags')
+          .eq('shop_id', widget.shopId);
+      for (final row in data as List<dynamic>) {
+        final cl = row['classification']?.toString();
+        if (cl != null && cl.trim().isNotEmpty) {
+          final upper = cl.trim().toUpperCase();
+          if (!upperSeen.contains(upper)) {
+            upperSeen.add(upper);
+            all.add(cl.trim());
+          }
+        }
+        final tags = row['manual_tags'];
+        if (tags is List) {
+          for (final t in tags) {
+            final ts = t?.toString().trim() ?? '';
+            if (ts.isNotEmpty) {
+              final upper = ts.toUpperCase();
+              if (!upperSeen.contains(upper)) {
+                upperSeen.add(upper);
+                all.add(ts);
+              }
+            }
+          }
+        }
+      }
+    } catch (_) {}
+    if (mounted) setState(() => _availableClassifications = all);
   }
 
   Future<void> _loadServices() async {
@@ -571,6 +610,17 @@ class _ManageCouponsPageState extends State<ManageCouponsPage>
     List<String> selectedServiceIds = initialData?['service_ids'] != null 
         ? List<String>.from(initialData!['service_ids']) 
         : [];
+    String targetAudience = initialData?['target_audience']?.toString() ?? 'all';
+    List<String> blockedClassifications = initialData?['blocked_classifications'] != null
+        ? List<String>.from(initialData!['blocked_classifications'])
+            .map((c) => c.trim().toUpperCase())
+            .where((c) => c.isNotEmpty)
+            .toList()
+        : [];
+    List<String> validPaymentMethods = initialData?['valid_payment_methods'] != null
+        ? List<String>.from(initialData!['valid_payment_methods'])
+        : [];
+    bool servicesExpanded = selectedServiceIds.isNotEmpty;
 
     showModalBottomSheet(
       context: context,
@@ -672,46 +722,91 @@ class _ManageCouponsPageState extends State<ManageCouponsPage>
                 ),
                 const SizedBox(height: 20),
 
-                const Text(
-                  "SERVIÇOS APLICÁVEIS (Opcional)",
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey,
+                InkWell(
+                  onTap: () => setDialogState(() => servicesExpanded = !servicesExpanded),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Row(
+                      children: [
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                "SERVIÇOS APLICÁVEIS",
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                              Text(
+                                "Vazio = válido para todos os serviços",
+                                style: TextStyle(fontSize: 11, color: Colors.grey),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (selectedServiceIds.isNotEmpty)
+                          Container(
+                            margin: const EdgeInsets.only(right: 6),
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: AppColors.primaryPurple.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              '${selectedServiceIds.length} selecionado${selectedServiceIds.length > 1 ? 's' : ''}',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: AppColors.primaryPurple,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        Icon(
+                          servicesExpanded ? Icons.expand_less : Icons.expand_more,
+                          color: Colors.grey,
+                          size: 20,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-                const SizedBox(height: 8),
-                if (_services.isEmpty)
-                  const Text("Nenhum serviço cadastrado.", style: TextStyle(fontSize: 12, color: Colors.grey))
-                else
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 4,
-                    children: _services.map((service) {
-                      final sId = service['id'].toString();
-                      final isSelected = selectedServiceIds.contains(sId);
-                      return FilterChip(
-                        label: Text(service['name'] ?? ''),
-                        selected: isSelected,
-                        onSelected: (selected) {
-                          setDialogState(() {
-                            if (selected) {
-                              selectedServiceIds.add(sId);
-                            } else {
-                              selectedServiceIds.remove(sId);
-                            }
-                          });
-                        },
-                        selectedColor: AppColors.primaryPurple.withValues(alpha: 0.2),
-                        checkmarkColor: AppColors.primaryPurple,
-                        labelStyle: TextStyle(
-                          fontSize: 12,
-                          color: isSelected ? AppColors.primaryPurple : Colors.black87,
-                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                        ),
-                      );
-                    }).toList(),
-                  ),
+                if (servicesExpanded) ...[const SizedBox(height: 4),
+                  if (_services.isEmpty)
+                    const Text("Nenhum serviço cadastrado.", style: TextStyle(fontSize: 12, color: Colors.grey))
+                  else
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      children: _services.map((service) {
+                        final sId = service['id'].toString();
+                        final isSelected = selectedServiceIds.contains(sId);
+                        return FilterChip(
+                          label: Text(service['name'] ?? ''),
+                          selected: isSelected,
+                          onSelected: (selected) {
+                            setDialogState(() {
+                              if (selected) {
+                                selectedServiceIds.add(sId);
+                              } else {
+                                selectedServiceIds.remove(sId);
+                              }
+                            });
+                          },
+                          selectedColor: AppColors.primaryPurple.withValues(alpha: 0.2),
+                          checkmarkColor: AppColors.primaryPurple,
+                          labelStyle: TextStyle(
+                            fontSize: 12,
+                            color: isSelected ? AppColors.primaryPurple : Colors.black87,
+                            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                ],
                 const SizedBox(height: 20),
 
                 Row(
@@ -935,6 +1030,121 @@ class _ManageCouponsPageState extends State<ManageCouponsPage>
                   ),
                 ),
 
+                const SizedBox(height: 24),
+
+                const Text(
+                  "QUEM PODE USAR ESTE CUPOM?",
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[50],
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey[200]!),
+                  ),
+                  child: DropdownButton<String>(
+                    value: targetAudience,
+                    isExpanded: true,
+                    underline: Container(),
+                    items: const [
+                      DropdownMenuItem(value: 'all', child: Text('Todos os clientes')),
+                      DropdownMenuItem(value: 'new_clients', child: Text('Apenas novos clientes')),
+                      DropdownMenuItem(value: 'vip_only', child: Text('Apenas clientes VIP')),
+                    ],
+                    onChanged: (val) =>
+                        setDialogState(() => targetAudience = val ?? 'all'),
+                  ),
+                ),
+
+                const SizedBox(height: 20),
+
+                const Text(
+                  "VÁLIDO PARA QUAL PAGAMENTO?",
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[50],
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey[200]!),
+                  ),
+                  child: DropdownButton<String>(
+                    value: validPaymentMethods.isEmpty ? 'any' : 'online',
+                    isExpanded: true,
+                    underline: Container(),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'any',
+                        child: Text('Qualquer forma de pagamento'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'online',
+                        child: Text('Apenas pagamento online (Pix ou cartão)'),
+                      ),
+                    ],
+                    onChanged: (val) => setDialogState(() {
+                      validPaymentMethods = val == 'online'
+                          ? ['pix', 'card']
+                          : [];
+                    }),
+                  ),
+                ),
+
+                const SizedBox(height: 20),
+                const Text(
+                  "BLOQUEAR PARA CATEGORIAS",
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  "Clientes nestas categorias não poderão usar o cupom",
+                  style: TextStyle(fontSize: 11, color: Colors.grey),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: _availableClassifications.map((cl) {
+                    final isBlocked = blockedClassifications.contains(cl.toUpperCase());
+                    return FilterChip(
+                      label: Text(cl),
+                      selected: isBlocked,
+                      onSelected: (selected) {
+                        setDialogState(() {
+                          if (selected) {
+                            blockedClassifications.add(cl.toUpperCase());
+                          } else {
+                            blockedClassifications.remove(cl.toUpperCase());
+                          }
+                        });
+                      },
+                      selectedColor: Colors.red.withValues(alpha: 0.15),
+                      checkmarkColor: Colors.red,
+                      labelStyle: TextStyle(
+                        fontSize: 12,
+                        color: isBlocked ? Colors.red : Colors.black87,
+                        fontWeight: isBlocked ? FontWeight.bold : FontWeight.normal,
+                      ),
+                    );
+                  }).toList(),
+                ),
+
                 const SizedBox(height: 30),
                 SizedBox(
                   width: double.infinity,
@@ -969,6 +1179,9 @@ class _ManageCouponsPageState extends State<ManageCouponsPage>
                           'max_usage': int.tryParse(limitCtrl.text) ?? 0,
                           'updated_at': DateTime.now().toIso8601String(),
                           'service_ids': selectedServiceIds.isEmpty ? null : selectedServiceIds,
+                          'target_audience': targetAudience,
+                          'blocked_classifications': blockedClassifications,
+                          'valid_payment_methods': validPaymentMethods,
                         };
                         debugPrint('Dados do cupom: $data');
  

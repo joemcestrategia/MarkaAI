@@ -27,6 +27,9 @@ import 'client_search_page.dart';
 import 'client_register_page.dart';
 import '../../core/widgets/seletor_de_cidade.dart';
 import 'package:markaai/core/utils/string_utils.dart';
+import '../../core/utils/shop_image_keywords.dart';
+import '../../core/utils/shop_category_helper.dart';
+import '../../core/widgets/pexels_image_widget.dart';
 import '../../core/services/ad_service.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 
@@ -54,8 +57,9 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
   // Filtros de localização
   String _selectedLocation = "";
-  String _searchText = "";
-  String _selectedCategory = "Todos";
+  final TextEditingController _searchController = TextEditingController();
+  final ValueNotifier<String> _searchNotifier = ValueNotifier('');
+  final ValueNotifier<String> _categoryNotifier = ValueNotifier('Todos');
   double? _userLat;
   double? _userLng;
   final double _selectedRadius = 20.0; // km
@@ -100,6 +104,9 @@ class _ClientHomePageState extends State<ClientHomePage> {
   @override
   void dispose() {
     _cidadeNotifier.dispose();
+    _searchController.dispose();
+    _searchNotifier.dispose();
+    _categoryNotifier.dispose();
     super.dispose();
   }
 
@@ -864,7 +871,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
           .select('id, scheduled_at, status')
           .eq('client_id', uid)
           .eq('shop_id', shop['id'])
-          .not('status', 'in', '("cancelado","rejeitado","excluido","pendente_pix")')
+          .not('status', 'in', '("cancelado","rejeitado","recusado","excluido","pendente_pix")')
           .gte('scheduled_at', now.toIso8601String())
           .limit(1);
 
@@ -1151,6 +1158,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
                       (ctx, i) => _ShopCard(
                         shop: shops[i],
                         onTap: () => _openShopProfile(shops[i]),
+                        index: i,
                       ),
                       childCount: shops.length,
                     ),
@@ -1166,9 +1174,13 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
   // ============ VIEW: EXPLORAR ============
   Widget _buildExploreView({required bool isDesktop}) {
-    return ValueListenableBuilder<CidadeSelecionada?>(
-      valueListenable: _cidadeNotifier,
-      builder: (context, cidade, _) => CustomScrollView(
+    return ListenableBuilder(
+      listenable: Listenable.merge([_cidadeNotifier, _searchNotifier, _categoryNotifier]),
+      builder: (context, _) {
+        final cidade = _cidadeNotifier.value;
+        final searchText = _searchNotifier.value;
+        final selectedCategory = _categoryNotifier.value;
+        return CustomScrollView(
       physics: const BouncingScrollPhysics(),
       slivers: [
         if (!isDesktop)
@@ -1291,16 +1303,18 @@ class _ClientHomePageState extends State<ClientHomePage> {
                 ],
               ),
               child: TextField(
-                onChanged: (v) => setState(() => _searchText = v),
+                controller: _searchController,
+                onChanged: (v) => _searchNotifier.value = v,
                 decoration: InputDecoration(
                   hintText: "O que você procura hoje?",
                   prefixIcon:
                       const Icon(Icons.search, color: AppColors.primaryPurple),
-                  suffixIcon: _searchText.isNotEmpty
+                  suffixIcon: searchText.isNotEmpty
                       ? IconButton(
                           icon: const Icon(Icons.close, size: 20),
                           onPressed: () {
-                            setState(() => _searchText = "");
+                            _searchController.clear();
+                            _searchNotifier.value = '';
                           },
                         )
                       : null,
@@ -1339,7 +1353,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
               itemCount: _categories.length,
               itemBuilder: (context, index) {
                 final cat = _categories[index];
-                final isSelected = _selectedCategory == cat['name'];
+                final isSelected = selectedCategory == cat['name'];
                 return Padding(
                   padding: const EdgeInsets.only(right: 10),
                   child: FilterChip(
@@ -1348,8 +1362,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
                         ? null
                         : Icon(cat['icon'], size: 16, color: Colors.grey[600]),
                     selected: isSelected,
-                    onSelected: (b) =>
-                        setState(() => _selectedCategory = cat['name']),
+                    onSelected: (_) => _categoryNotifier.value = cat['name'],
                     backgroundColor: Colors.white,
                     selectedColor: AppColors.primaryPurple,
                     labelStyle: TextStyle(
@@ -1377,7 +1390,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
             child: Text(
-              _searchText.isEmpty
+              searchText.isEmpty
                   ? "Recomendados para você"
                   : "Resultados da busca",
               style: const TextStyle(
@@ -1500,23 +1513,26 @@ class _ClientHomePageState extends State<ClientHomePage> {
                 }
               }
 
-              final String searchLower = _searchText.isEmpty
+              final String searchLower = searchText.isEmpty
                   ? ""
-                  : StringUtils.removeDiacritics(_searchText).toLowerCase();
+                  : StringUtils.removeDiacritics(searchText).toLowerCase();
               final matchesText = searchLower.isEmpty ||
                   StringUtils.removeDiacritics(d['name'] ?? '')
+                      .toLowerCase()
+                      .contains(searchLower) ||
+                  StringUtils.removeDiacritics(d['category'] ?? '')
                       .toLowerCase()
                       .contains(searchLower);
 
               if (!matchesText) return false;
 
-              final matchesCat = _selectedCategory == "Todos" ||
+              final matchesCat = selectedCategory == "Todos" ||
                   (() {
                     final cats = (d['category'] ?? '')
                         .toString()
                         .split(';')
                         .map((c) => c.trim());
-                    return cats.any((c) => c.contains(_selectedCategory));
+                    return cats.any((c) => c.contains(selectedCategory));
                   })();
 
               return matchesCat && isActive;
@@ -1536,7 +1552,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
                 final expiresStr = d['boost_expires_at']?.toString();
                 final expires = expiresStr != null ? DateTime.tryParse(expiresStr) : null;
                 final bool isBoostActive = d['is_boosted'] == true && 
-                    (expires == null || expires.isAfter(DateTime.now()));
+                    expires != null && expires.isAfter(DateTime.now());
 
                 if (isBoostActive) s += 100;
 
@@ -1591,6 +1607,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
                                       child: _ShopCard(
                                         shop: rowShops[c],
                                         onTap: () => _openShopProfile(rowShops[c]),
+                                        index: index * cols + c,
                                       ),
                                     )
                                   : const SizedBox.shrink(),
@@ -1609,7 +1626,8 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
         const SliverToBoxAdapter(child: SizedBox(height: 80)),
       ],
-    ),
+    );
+      },
     );
   }
 
@@ -1753,8 +1771,9 @@ class _ClientHomePageState extends State<ClientHomePage> {
 class _ShopCard extends StatefulWidget {
   final Map<String, dynamic> shop;
   final VoidCallback onTap;
+  final int index;
 
-  const _ShopCard({required this.shop, required this.onTap});
+  const _ShopCard({required this.shop, required this.onTap, this.index = 0});
 
   @override
   State<_ShopCard> createState() => _ShopCardState();
@@ -1820,51 +1839,13 @@ class _ShopCardState extends State<_ShopCard> {
     final logoUrl = data['logo_url'] ?? data['logoUrl'] ?? "";
     final category = data['category'] ?? data['categoria'] ?? data['nicho'] ?? 'Outros';
 
-    // ? Lógica unificada de Destaque (mesma do Banner e Ordenação)
-    final googleData = data['google_business'] as Map<String, dynamic>?;
-    final double rt = googleData?['rating']?.toDouble() ?? (data['rating']?.toDouble() ?? 0.0);
-    
     final expiresStr = data['boost_expires_at']?.toString();
     final expires = expiresStr != null ? DateTime.tryParse(expiresStr) : null;
-    final bool isBoostActive = data['is_boosted'] == true && 
-        (expires == null || expires.isAfter(DateTime.now()));
+    final bool isBoostActive = data['is_boosted'] == true &&
+        expires != null && expires.isAfter(DateTime.now());
 
-    final bool isDestaque = isBoostActive || rt >= 4.5;
-
-    Color getCatColor(String c) {
-      switch (c.toLowerCase()) {
-        case 'barbearia':
-          return const Color(0xFFE3F2FD);
-        case 'beleza':
-        case 'esttica':
-          return const Color(0xFFFCE4EC);
-        case 'sade':
-          return const Color(0xFFE8F5E9);
-        case 'bem-estar':
-          return const Color(0xFFFFF3E0);
-        default:
-          return Colors.grey[100]!;
-      }
-    }
-
-    IconData getCatIcon(String c) {
-      switch (c.toLowerCase()) {
-        case 'barbearia':
-          return Icons.content_cut;
-        case 'beleza':
-        case 'esttica':
-          return Icons.face;
-        case 'sade':
-          return Icons.medical_services;
-        case 'bem-estar':
-          return Icons.self_improvement;
-        default:
-          return Icons.store;
-      }
-    }
-
-    final Color fallbackColor = getCatColor(category);
-    final IconData fallbackIcon = getCatIcon(category);
+    final Color fallbackColor = ShopCategoryHelper.getCatColor(category);
+    final IconData fallbackIcon = ShopCategoryHelper.getCatIcon(category);
 
     return GestureDetector(
       onTap: widget.onTap,
@@ -1903,37 +1884,58 @@ class _ShopCardState extends State<_ShopCard> {
                                     color: Colors.grey[400], size: 40),
                               ),
                             )
-                          : Container(
-                              color: fallbackColor,
-                              child: Center(
-                                child: Icon(fallbackIcon,
-                                    color: Colors.grey[400], size: 50),
-                              ),
+                          : PexelsImageWidget(
+                              searchQuery: ShopImageKeywords.getEnglishKeyword(category),
+                              index: widget.index,
                             ),
                     ),
                   ),
 
                   // LOGO OVERLAY (Bottom Left of the cover)
-                  if (logoUrl.isNotEmpty)
-                    Positioned(
-                      bottom: 8,
-                      left: 8,
-                      child: Container(
-                        padding: const EdgeInsets.all(2),
-                        decoration: const BoxDecoration(
-                          color: Colors.white,
-                          shape: BoxShape.circle,
-                        ),
-                        child: CircleAvatar(
-                          radius: 18,
-                          backgroundColor: Colors.grey[100],
-                          backgroundImage: CachedNetworkImageProvider(logoUrl),
-                        ),
+                  Positioned(
+                    bottom: 8,
+                    left: 8,
+                    child: Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
                       ),
+                      child: logoUrl.isNotEmpty
+                          ? CircleAvatar(
+                              radius: 18,
+                              backgroundColor: Colors.grey[100],
+                              backgroundImage: CachedNetworkImageProvider(logoUrl),
+                            )
+                          : Container(
+                              width: 36,
+                              height: 36,
+                              decoration: const BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: LinearGradient(
+                                  colors: [Color(0xFF6A1B9A), Color(0xFF2D264B)],
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                ),
+                              ),
+                              child: Center(
+                                child: (data['name'] as String? ?? '').isNotEmpty
+                                    ? Text(
+                                        (data['name'] as String)[0].toUpperCase(),
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 18,
+                                        ),
+                                      )
+                                    : const Icon(Icons.store, color: Colors.white, size: 18),
+                              ),
+                            ),
                     ),
+                  ),
 
                   // BADGE DESTAQUE (Top Right)
-                  if (isDestaque)
+                  if (isBoostActive)
                     Positioned(
                       top: 6,
                       right: 6,
@@ -2411,6 +2413,8 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
   int _currentPage = 0;
   Timer? _autoScrollTimer;
   List<Map<String, dynamic>> _slides = [];
+  final Set<String> _impressedBannerIds = {}; // evita contar impressão dupla por sessão
+
 
   @override
   void initState() {
@@ -2475,17 +2479,13 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
           final cityNorm = StringUtils.removeDiacritics(cityRaw).toLowerCase();
           if (cityNorm != selectedCityNorm) return false;
 
-          // ? Critério de Destaque: Boost Ativo OU Nota Alta
+          // ? Critério de Destaque: Apenas Boost Ativo (pago)
           final expiresStr = d['boost_expires_at']?.toString();
           final expires = expiresStr != null ? DateTime.tryParse(expiresStr) : null;
           final bool isBoostActive = d['is_boosted'] == true && 
-              (expires == null || expires.isAfter(now));
+              expires != null && expires.isAfter(now);
 
-          final googleData = d['google_business'] as Map<String, dynamic>?;
-          final double rt = googleData?['rating']?.toDouble() ?? (d['rating']?.toDouble() ?? 0.0);
-          final bool isHighRated = rt >= 4.5;
-
-          return isBoostActive || isHighRated;
+          return isBoostActive;
         }).map((d) => {...d, '_slide_type': 'shop'}).toList();
 
         // Ordenação preferencial: primeiro impulsionados, depois nota
@@ -2512,6 +2512,33 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
     return [...highlights, ...banners];
   }
 
+  // ── Tracking ─────────────────────────────────────────────────────────────
+
+  /// Registra uma impressão para banners do tipo 'marka' (apenas uma vez por sessão por banner)
+  void _trackImpression(String bannerId) {
+    if (_impressedBannerIds.contains(bannerId)) return;
+    _impressedBannerIds.add(bannerId);
+    _insertBannerEvent(bannerId, 'impression');
+  }
+
+  /// Registra um clique para banners do tipo 'marka'
+  void _trackClick(String bannerId) {
+    _insertBannerEvent(bannerId, 'click');
+  }
+
+  /// Insere o evento na tabela banner_events (fire-and-forget — não bloqueia a UI)
+  void _insertBannerEvent(String bannerId, String eventType) {
+    Supabase.instance.client
+        .from('banner_events')
+        .insert({'banner_id': bannerId, 'event_type': eventType, 'platform': 'mobile'})
+        .then((_) {})
+        .catchError((e) {
+          debugPrint('[BannerTracking] erro ao registrar $eventType: $e');
+        });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+
   void _startAutoScroll(int count) {
     _autoScrollTimer?.cancel();
     if (count <= 1) return;
@@ -2522,6 +2549,7 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
           duration: const Duration(milliseconds: 500), curve: Curves.easeInOut);
     });
   }
+
 
   @override
   void dispose() {
@@ -2658,6 +2686,10 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
     final imgUrl = (banner['image_url'] ?? '').toString();
     return GestureDetector(
       onTap: () async {
+        // Tracking de clique
+        final bannerId = banner['id']?.toString() ?? '';
+        if (bannerId.isNotEmpty) _trackClick(bannerId);
+
         if (ctaUrl.isNotEmpty) {
           final uri = Uri.tryParse(ctaUrl);
           if (uri != null) {
@@ -2775,6 +2807,13 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
               itemBuilder: (ctx, i) {
                 final slide = _slides[i];
                 if (slide['_slide_type'] == 'marka') {
+                  // Registra impressão ao renderizar o slide de banner pago
+                  final bid = slide['id']?.toString() ?? '';
+                  if (bid.isNotEmpty) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) _trackImpression(bid);
+                    });
+                  }
                   return _buildMarkaBannerSlide(slide);
                 }
                 return _buildShopSlide(slide);

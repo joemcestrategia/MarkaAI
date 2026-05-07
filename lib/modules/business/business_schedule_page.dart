@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 import 'package:intl/intl.dart';
 import 'package:table_calendar/table_calendar.dart';
@@ -14,7 +14,9 @@ import '../../core/services/transaction_autocomplete_service.dart';
 
 class BusinessSchedulePage extends StatefulWidget {
   final String shopId;
-  const BusinessSchedulePage({super.key, required this.shopId});
+  final DateTime? initialDate;
+  final String? initialAppointmentId;
+  const BusinessSchedulePage({super.key, required this.shopId, this.initialDate, this.initialAppointmentId});
 
   @override
   State<BusinessSchedulePage> createState() => _BusinessSchedulePageState();
@@ -31,6 +33,10 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
   Map<DateTime, List<String>> _events = {};
   // Keys para cada cabeçalho de dia (permitir scroll até o header)
   final Map<DateTime, GlobalKey> _dayKeys = {};
+  // Keys para scroll até agendamento específico
+  final Map<String, GlobalKey> _appointmentKeys = {};
+  String? _highlightedAppointmentId;
+  bool _initialScrollDone = false;
 
   // Holidays state
   List<dynamic> _nationalHolidays = [];
@@ -47,6 +53,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
       const Duration(minutes: 5); // tempo antes de validar novamente
   Timer? _cacheRefreshTimer;
   Timer? _realtimeDebounceTimer;
+  Timer? _scrollTrackDebounce;
   bool _isLoading = false;
   bool _hasMore = true;
   bool _hasMorePast =
@@ -81,29 +88,38 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
   void initState() {
     super.initState();
     // por padrão, começar a lista a partir da semana atual
-    _startFromSelectedDay = true;
-    final now = DateTime.now();
-    final startOfWeek = now.subtract(Duration(days: now.weekday - 1));
-    _startFromDate = DateTime(startOfWeek.year, startOfWeek.month, startOfWeek.day);
-    final endOfWeek = startOfWeek.add(const Duration(days: 6));
-    _weekEndDate = DateTime(endOfWeek.year, endOfWeek.month, endOfWeek.day, 23, 59, 59);
+    if (widget.initialDate != null) {
+      final d = widget.initialDate!;
+      _focusedDay = d;
+      _selectedDay = d;
+      _showOnlySelectedDay = false;
+      _startFromSelectedDay = true;
+      final startOfWeek = d.subtract(Duration(days: d.weekday - 1));
+      final endOfWeek = startOfWeek.add(const Duration(days: 6));
+      _startFromDate = DateTime(d.year, d.month, d.day); // lista começa no dia exato selecionado
+      _weekEndDate = DateTime(endOfWeek.year, endOfWeek.month, endOfWeek.day, 23, 59, 59);
+      final weekFetchStart = DateTime(startOfWeek.year, startOfWeek.month, startOfWeek.day);
+      // Após o primeiro frame, busca a semana completa no servidor e rola para o dia
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _fetchWeekFromServer(weekFetchStart, _weekEndDate!);
+      });
+    } else {
+      _startFromSelectedDay = true;
+      final now = DateTime.now();
+      final startOfWeek = now.subtract(Duration(days: now.weekday - 1));
+      _startFromDate = DateTime(startOfWeek.year, startOfWeek.month, startOfWeek.day);
+      final endOfWeek = startOfWeek.add(const Duration(days: 6));
+      _weekEndDate = DateTime(endOfWeek.year, endOfWeek.month, endOfWeek.day, 23, 59, 59);
+      // Carrega a semana atual imediatamente (inclui agendamentos futuros da semana)
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _fetchWeekFromServer(_startFromDate!, _weekEndDate!);
+      });
+    }
 
     _loadShopConfig();
     _loadMonthEvents();
-    _loadInitialAppointments();
     _fetchHolidays(); // Added by user
-    _scrollController.addListener(() {
-      // Start loading earlier for smoother experience (preload next page)
-      if (_scrollController.position.pixels >=
-          _scrollController.position.maxScrollExtent * 0.7) {
-        _loadMoreAppointments();
-      }
-      // If near top, try loading older (past) appointments
-      if (_scrollController.position.pixels <=
-          _scrollController.position.minScrollExtent + 150) {
-        _loadMorePastAppointments();
-      }
-    });
+    _scrollController.addListener(_onScroll);
 
     // 1. Inicializar Stream de Employees compartilhado
     _employeesStream = sb.Supabase.instance.client
@@ -188,54 +204,6 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     return _events[dateKey] ?? [];
   }
 
-  // 🔄 CARGA INICIAL: últimos 20 agendamentos da data atual para trás
-  Future<void> _loadInitialAppointments() async {
-    if (_isLoading) return;
-    setState(() {
-      _isLoading = true;
-      _appointments = [];
-      _lastDocument = null;
-      _firstDocument = null;
-      _hasMore = true;
-      _hasMorePast = true;
-    });
-
-    try {
-      final endOfToday = DateTime(
-          DateTime.now().year, DateTime.now().month, DateTime.now().day, 23, 59, 59);
-
-      final snapshot = await sb.Supabase.instance.client
-          .from('appointments')
-          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name')
-          .eq('shop_id', widget.shopId)
-          .lte('scheduled_at', endOfToday.toUtc().toIso8601String())
-          .order('scheduled_at', ascending: false)
-          .limit(_perPage);
-
-      if (mounted) {
-        setState(() {
-          final ordered = snapshot.reversed.toList();
-          for (var d in ordered) {
-            _addToCache(d);
-            _appointments.add(d);
-          }
-          if (ordered.isNotEmpty) {
-            _firstDocument = ordered.first;
-            _lastDocument = ordered.last;
-          }
-          if (snapshot.length < _perPage) {
-            _hasMore = false;
-            _hasMorePast = false;
-          }
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      debugPrint('Erro ao carregar agendamentos iniciais: $e');
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
   // 🗓 CARGA POR MÊS: carrega todos os agendamentos do mês exibido no calendário
   Future<void> _loadAppointmentsForMonth(DateTime month) async {
     if (_isLoading) return;
@@ -256,13 +224,14 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     try {
       final snapshot = await sb.Supabase.instance.client
           .from('appointments')
-          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name')
+          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name, created_by')
           .eq('shop_id', widget.shopId)
           .gte('scheduled_at', startOfMonth.toUtc().toIso8601String())
           .lte('scheduled_at', endOfMonth.toUtc().toIso8601String())
           .order('scheduled_at', ascending: true)
           .limit(_perPage);
 
+      await _enrichClientNames(snapshot);
       if (mounted) {
         setState(() {
           for (var d in snapshot) {
@@ -297,7 +266,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
 
     try {
       final client = sb.Supabase.instance.client;
-      var query = client.from('appointments').select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name').eq('shop_id', widget.shopId);
+      var query = client.from('appointments').select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name, created_by').eq('shop_id', widget.shopId);
 
       // Simple implementation: load first page
       if (_startFromSelectedDay && _startFromDate != null && _weekEndDate != null) {
@@ -317,6 +286,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
 
       final snapshot = await query.order('scheduled_at', ascending: true).limit(_perPage);
 
+      await _enrichClientNames(snapshot);
       if (mounted) {
         setState(() {
           if (snapshot.isNotEmpty) {
@@ -353,12 +323,13 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
       
       final snapshot = await sb.Supabase.instance.client
           .from('appointments')
-          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name')
+          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name, created_by')
           .eq('shop_id', widget.shopId)
           .gt('scheduled_at', lastDate)
           .order('scheduled_at', ascending: true)
           .limit(_perPage);
 
+      await _enrichClientNames(snapshot);
       if (mounted) {
         setState(() {
           if (snapshot.isNotEmpty) {
@@ -397,12 +368,13 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
 
       final snapshot = await sb.Supabase.instance.client
           .from('appointments')
-          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name')
+          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name, created_by')
           .eq('shop_id', widget.shopId)
           .lt('scheduled_at', firstDate)
           .order('scheduled_at', ascending: false)
           .limit(_perPage);
 
+      await _enrichClientNames(snapshot);
       if (mounted) {
         setState(() {
           if (snapshot.isNotEmpty) {
@@ -433,6 +405,29 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     }
   }
 
+  // Busca o nome real do cliente em users quando client_name foi salvo como email
+  Future<void> _enrichClientNames(List<Map<String, dynamic>> list) async {
+    final toFix = list.where((a) {
+      final n = (a['client_name'] ?? '').toString();
+      return n.contains('@') && !n.contains(' ') && a['client_id'] != null;
+    }).toList();
+    if (toFix.isEmpty) return;
+    final ids = toFix.map((a) => a['client_id'].toString()).toSet().toList();
+    try {
+      final rows = await sb.Supabase.instance.client
+          .from('users').select('id, name').inFilter('id', ids);
+      final nameMap = <String, String>{};
+      for (final r in rows) {
+        final n = (r['name'] ?? '').toString().trim();
+        if (n.isNotEmpty && !n.contains('@')) nameMap[r['id'].toString()] = n;
+      }
+      for (final appt in toFix) {
+        final rn = nameMap[appt['client_id'].toString()];
+        if (rn != null) appt['client_name'] = rn;
+      }
+    } catch (_) {}
+  }
+
   bool _shouldShowAppointment(Map<String, dynamic> data) {
     final status = (data['status'] ?? '').toString().toLowerCase();
     return status != 'cancelado';
@@ -455,25 +450,38 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     _fetchWeekFromServer(_startFromDate!, _weekEndDate!);
   }
 
-  // 📍 Scroll automático até o cabeçalho do dia selecionado
+  // 📍 Scroll automático até o topo (dia selecionado é sempre o primeiro item da lista)
   void _scrollToSelectedDay() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final dayKey = DateTime(_selectedDay.year, _selectedDay.month, _selectedDay.day);
-      final key = _dayKeys[dayKey];
+      try {
+        if (_scrollController.hasClients) {
+          _scrollController.animateTo(
+            0.0,
+            duration: const Duration(milliseconds: 400),
+            curve: Curves.easeInOut,
+          );
+        }
+      } catch (_) {}
+    });
+  }
+
+  // 📍 Scroll automático até um agendamento específico com destaque visual
+  void _scrollToAppointment(String appointmentId) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final key = _appointmentKeys[appointmentId];
       if (key?.currentContext != null) {
         Scrollable.ensureVisible(
           key!.currentContext!,
-          duration: const Duration(milliseconds: 400),
+          duration: const Duration(milliseconds: 500),
           curve: Curves.easeInOut,
-          alignment: 0.0,
+          alignment: 0.05,
         );
+        setState(() => _highlightedAppointmentId = appointmentId);
+        Future.delayed(const Duration(seconds: 3), () {
+          if (mounted) setState(() => _highlightedAppointmentId = null);
+        });
       } else {
-        // Fallback: scroll para o topo se o dia não tem header
-        try {
-          _scrollController.animateTo(0.0,
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeInOut);
-        } catch (_) {}
+        _scrollToSelectedDay();
       }
     });
   }
@@ -483,7 +491,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     double sum = 0;
     for (final d in _appointments) {
       if ((d['status'] ?? '').toString().toLowerCase() == 'cancelado') continue;
-      sum += _safeParseValue(d);
+      sum += _getDisplayTotal(d);
     }
     if (mounted) {
       setState(() => _weeklyRevenue = sum);
@@ -511,6 +519,20 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     TimeOfDay appointmentTime = TimeOfDay.fromDateTime(appointmentDate);
     String selectedStatus =
         data['status']?.toString().toLowerCase() ?? 'pendente';
+
+    // Pré-carregar serviços FORA do builder para evitar recriação a cada setModalState
+    final Future<List<Map<String, dynamic>>> servicesFuture =
+        sb.Supabase.instance.client
+            .from('services')
+            .select()
+            .eq('shop_id', widget.shopId)
+            .then((dynamic raw) {
+              final list = List<Map<String, dynamic>>.from(raw as List);
+              return list
+                ..sort((a, b) => (a['name'] ?? a['nome'] ?? '')
+                    .toString()
+                    .compareTo((b['name'] ?? b['nome'] ?? '').toString()));
+            });
 
     showDialog(
       context: context,
@@ -637,17 +659,8 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                     const SizedBox(height: 10),
 
                     // Serviço (Dropdown com serviços cadastrados)
-                    StreamBuilder<List<Map<String, dynamic>>>(
-                      stream: sb.Supabase.instance.client
-                          .from('services')
-                          .stream(primaryKey: ['id'])
-                          .eq('shop_id', widget.shopId)
-                          .map((list) => list
-                              .where((s) => (s['is_active'] ?? s['ativo'] ?? true) == true)
-                              .toList()
-                            ..sort((a, b) => (a['name'] ?? a['nome'] ?? '')
-                                .toString()
-                                .compareTo((b['name'] ?? b['nome'] ?? '').toString()))),
+                    FutureBuilder<List<Map<String, dynamic>>>(
+                      future: servicesFuture,
                       builder: (context, snapshot) {
                         if (!snapshot.hasData) {
                           return const CircularProgressIndicator();
@@ -805,8 +818,8 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                                 final slots =
                                     AvailabilityUtils.generateSmartSlots(
                                   startStr:
-                                      empData['work_start'] ?? "08:00",
-                                  endStr: empData['work_end'] ?? "18:00",
+                                      empData['work_start'] ?? empData['start_time'] ?? "08:00",
+                                  endStr: empData['work_end'] ?? empData['end_time'] ?? "18:00",
                                   interval:
                                       _shopConfig['intervalo_agenda_min'] ?? 30,
                                   serviceDuration: duration,
@@ -1113,6 +1126,20 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
         _isOpeningQuickEntry = false;
         return;
       }
+
+      // Pré-carregar serviços FORA do builder para evitar recriação a cada setModalState
+      final Future<List<Map<String, dynamic>>> servicesFuture =
+          sb.Supabase.instance.client
+              .from('services')
+              .select()
+              .eq('shop_id', widget.shopId)
+              .then((dynamic raw) {
+                final list = List<Map<String, dynamic>>.from(raw as List);
+                return list
+                  ..sort((a, b) => (a['name'] ?? a['nome'] ?? '')
+                      .toString()
+                      .compareTo((b['name'] ?? b['nome'] ?? '').toString()));
+              });
 
       showModalBottomSheet(
         context: context,
@@ -1460,16 +1487,10 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                                      initialValue: TextEditingValue(
                                          text: selectedProfessionalId != null ? selectedProfessionalName : ''),
                                      optionsBuilder: (TextEditingValue textEditingValue) {
-                                       // Filtra por habilitação (se houver serviço selecionado)
-                                       final filteredByService = pros.where((p) {
-                                         if (serviceId == null) return true;
-                                         final List<dynamic> habilitados = p['services_ids'] ?? [];
-                                         
-                                         return habilitados.map((id) => id.toString()).contains(serviceId.toString());
-                                       }).toList();
-
-                                       if (textEditingValue.text.isEmpty) return filteredByService;
-                                       return filteredByService.where((p) => (p['name'] ?? '')
+                                       // LOJA: exibe TODOS os profissionais (sem filtro por habilitacao).
+                                       // O filtro so se aplica ao booking do cliente.
+                                       if (textEditingValue.text.isEmpty) return pros;
+                                       return pros.where((p) => (p['name'] ?? '')
                                            .toString()
                                            .toLowerCase()
                                            .contains(textEditingValue.text.toLowerCase()));
@@ -1545,12 +1566,41 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                                                shrinkWrap: true,
                                                itemCount: options.length,
                                                itemBuilder: (BuildContext context, int index) {
-                                                 final option = options.elementAt(index);
-                                                 return ListTile(
-                                                   dense: true,
-                                                   title: Text(option['name'] ?? '', style: const TextStyle(fontSize: 13)),
-                                                   onTap: () => onSelected(option),
-                                                 );
+                                                  final option = options.elementAt(index);
+                                                  // Indica visualmente profissionais nao habilitados para o servico
+                                                  final List<dynamic> habilitados =
+                                                      option['services_ids'] as List? ??
+                                                      option['servicos_habilidade'] as List? ?? [];
+                                                  final bool isApto = serviceId == null ||
+                                                      habilitados.isEmpty ||
+                                                      habilitados.map((id) => id.toString()).contains(serviceId.toString());
+                                                  return ListTile(
+                                                    dense: true,
+                                                    title: Row(
+                                                      children: [
+                                                        Flexible(
+                                                          child: Text(option['name'] ?? '',
+                                                              style: const TextStyle(fontSize: 13)),
+                                                        ),
+                                                        if (!isApto) ...[
+                                                          const SizedBox(width: 4),
+                                                          Container(
+                                                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                                            decoration: BoxDecoration(
+                                                              color: Colors.orange.withValues(alpha: 0.15),
+                                                              borderRadius: BorderRadius.circular(4),
+                                                              border: Border.all(color: Colors.orange.withValues(alpha: 0.4)),
+                                                            ),
+                                                            child: const Text(
+                                                              '\u26a0\ufe0f Nao hab.',
+                                                              style: TextStyle(fontSize: 9, color: Colors.orange, fontWeight: FontWeight.bold),
+                                                            ),
+                                                          ),
+                                                        ],
+                                                      ],
+                                                    ),
+                                                    onTap: () => onSelected(option),
+                                                  );
                                                },
                                              ),
                                            ),
@@ -1601,11 +1651,8 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                               ],
                             ),
                             const SizedBox(height: 4),
-                             StreamBuilder<List<Map<String, dynamic>>>(
-                               stream: sb.Supabase.instance.client
-                                   .from('services')
-                                   .stream(primaryKey: ['id'])
-                                   .eq('shop_id', widget.shopId),
+                             FutureBuilder<List<Map<String, dynamic>>>(
+                               future: servicesFuture,
                                builder: (context, snapshot) {
                                  if (!snapshot.hasData) return const SizedBox(height: 40);
                                  final allServices = snapshot.data!
@@ -1848,8 +1895,8 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                                           if (!empSnapshot.hasData) return const SizedBox();
                                           final empData = empSnapshot.data ?? {};
                                           final slots = AvailabilityUtils.generateSmartSlots(
-                                            startStr: empData['work_start'] ?? "08:00",
-                                            endStr: empData['work_end'] ?? "18:00",
+                                            startStr: empData['work_start'] ?? empData['start_time'] ?? "08:00",
+                                            endStr: empData['work_end'] ?? empData['end_time'] ?? "18:00",
                                             interval: _shopConfig['intervalo_agenda_min'] ?? 30,
                                             serviceDuration: durationMin,
                                             busyIntervals: busySnapshot.data!,
@@ -2046,28 +2093,35 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
 
   // 📱 LAYOUT MOBILE
   Widget _buildMobileLayout() {
-    return RefreshIndicator(
-      onRefresh: _loadAppointments,
-      color: AppColors.primaryPurple,
-      child: CustomScrollView(
-        slivers: [
-          SliverToBoxAdapter(
-            child: Container(
-              color: Colors.white,
-              child: Column(
-                children: [
-                  _buildCalendarCard(isMobile: true),
-                  _buildStatsSection(),
-                ],
-              ),
+    return Column(
+      children: [
+        // Cabeçalho fixo — calendário sempre visível no topo
+        Container(
+          color: Colors.white,
+          child: Column(
+            children: [
+              _buildCalendarCard(isMobile: true),
+              _buildStatsSection(),
+            ],
+          ),
+        ),
+        // Lista de agendamentos com scroll independente
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: _loadAppointments,
+            color: AppColors.primaryPurple,
+            child: CustomScrollView(
+              controller: _scrollController,
+              slivers: [
+                SliverPadding(
+                  padding: const EdgeInsets.only(top: 10, bottom: 80),
+                  sliver: _buildSliverList(),
+                ),
+              ],
             ),
           ),
-          SliverPadding(
-            padding: const EdgeInsets.only(top: 10, bottom: 80),
-            sliver: _buildSliverList(),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -2286,9 +2340,20 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
       ));
 
       for (final doc in grouped[key]!) {
-        flat.add(Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: _buildAppointmentCard(doc, isDesktop: false),
+        final docId = doc['id']?.toString() ?? '';
+        final appointmentKey = docId.isNotEmpty
+            ? _appointmentKeys.putIfAbsent(docId, () => GlobalKey())
+            : null;
+        flat.add(Container(
+          key: appointmentKey,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: _buildAppointmentCard(
+              doc,
+              isDesktop: false,
+              highlighted: docId == _highlightedAppointmentId,
+            ),
+          ),
         ));
       }
     }
@@ -2348,8 +2413,8 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     }
 
     // 3. Check Working Hours
-    final String startStr = empDoc['work_start'] ?? "08:00";
-    final String endStr = empDoc['work_end'] ?? "18:00";
+    final String startStr = empDoc['work_start'] ?? empDoc['start_time'] ?? "08:00";
+    final String endStr = empDoc['work_end'] ?? empDoc['end_time'] ?? "18:00";
     int startDayMin =
         int.parse(startStr.split(':')[0]) * 60 + int.parse(startStr.split(':')[1]);
     int endDayMin =
@@ -2487,25 +2552,23 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
           selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
           eventLoader: _getEventsForDay,
           onDaySelected: (selectedDay, focusedDay) {
-            // Ao selecionar um dia, definimos a semana do dia como ponto de partida
+            // Ao selecionar um dia, a lista começa a partir desse dia
             final startOfWeek =
                 selectedDay.subtract(Duration(days: selectedDay.weekday - 1));
             final endOfWeek = startOfWeek.add(const Duration(days: 6));
+            final weekStart = DateTime(startOfWeek.year, startOfWeek.month, startOfWeek.day);
+            final weekEnd = DateTime(endOfWeek.year, endOfWeek.month, endOfWeek.day, 23, 59, 59);
             setState(() {
               _selectedDay = selectedDay;
               _focusedDay = focusedDay;
               _showOnlySelectedDay = false;
               _startFromSelectedDay = true;
-              _startFromDate = DateTime(
-                  startOfWeek.year, startOfWeek.month, startOfWeek.day);
-              _weekEndDate =
-                  DateTime(endOfWeek.year, endOfWeek.month, endOfWeek.day, 23, 59, 59);
+              _startFromDate = DateTime(selectedDay.year, selectedDay.month, selectedDay.day); // lista começa no dia clicado
+              _weekEndDate = weekEnd;
             });
-            // Aplicar filtro imediato aos dados em cache e rolar para o dia selecionado.
+            // Filtro imediato no cache + busca semana completa no servidor
             _applyWeekFilterToCache();
-            _scrollToSelectedDay();
-            // Buscar a semana no servidor em background e atualizar a lista quando retornar.
-            _fetchWeekFromServer(_startFromDate!, _weekEndDate!);
+            _fetchWeekFromServer(weekStart, weekEnd);
           },
           onPageChanged: (focusedDay) {
             final oldYear = _focusedDay.year;
@@ -2672,6 +2735,42 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
           ),
           callback: (payload) {
             if (!mounted) return;
+
+            // ── REALTIME CIRÚRGICO: trata UPDATE de confirmed_via_whatsapp e cancelled ──
+            if (payload.eventType == sb.PostgresChangeEvent.update) {
+              final newRecord = payload.newRecord;
+              final id = newRecord['id']?.toString();
+              if (id != null) {
+                final newStatus = (newRecord['status'] ?? '').toString().toLowerCase();
+                final confirmedViaWa = newRecord['confirmed_via_whatsapp'] == true;
+
+                // Agendamento cancelado: remove da lista com animação (via setState)
+                if (newStatus == 'cancelled' || newStatus == 'cancelado') {
+                  setState(() {
+                    _appointments.removeWhere((a) => a['id'].toString() == id);
+                    _docCache.remove(id);
+                    _cacheAccess.remove(id);
+                    for (var list in _events.values) list.remove(id);
+                  });
+                  return;
+                }
+
+                // confirmed_via_whatsapp mudou: atualiza o campo in-place
+                if (confirmedViaWa) {
+                  setState(() {
+                    final idx = _appointments.indexWhere((a) => a['id'].toString() == id);
+                    if (idx != -1) {
+                      _appointments[idx] = Map<String, dynamic>.from(_appointments[idx])
+                        ..['confirmed_via_whatsapp'] = true;
+                      _docCache[id] = _appointments[idx];
+                    }
+                  });
+                  return;
+                }
+              }
+            }
+
+            // Qualquer outro evento: debounce + reload da semana
             _realtimeDebounceTimer?.cancel();
             _realtimeDebounceTimer = Timer(const Duration(milliseconds: 800), () {
               if (!mounted) return;
@@ -2702,6 +2801,33 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     if (val is num) return val.toDouble();
     if (val is String) return double.tryParse(val.replaceAll(',', '.')) ?? 0.0;
     return 0.0;
+  }
+
+  /// Retorna o valor real após descontos para exibição em cards e relatórios.
+  /// Trata registros antigos onde total_payable/valor_com_desconto podem ser NULL ou iguais ao original.
+  double _getDisplayTotal(Map<String, dynamic> data) {
+    final double totalPrice = double.tryParse(data['total_price']?.toString() ?? '0') ?? 0;
+    final double totalPayable = double.tryParse(data['total_payable']?.toString() ?? '0') ?? 0;
+    final double valorCDesc = double.tryParse(data['valor_com_desconto']?.toString() ?? '0') ?? 0;
+    final double discountAmt = double.tryParse(data['discount_amount']?.toString() ?? '0') ?? 0;
+    final bool hasBirthday = data['birthday_discount_applied'] == true;
+    final bool hasCoupon = data['coupon_applied'] == true;
+
+    if (totalPayable > 0 && totalPrice > 0 && totalPayable < totalPrice - 0.01) return totalPayable;
+    if (valorCDesc > 0 && totalPrice > 0 && valorCDesc < totalPrice - 0.01) return valorCDesc;
+    if (discountAmt > 0.01 && totalPrice > 0) return totalPrice - discountAmt;
+    if (hasBirthday && totalPrice > 0) {
+      final pct = double.tryParse(data['birthday_discount_percent']?.toString() ?? '0') ?? 0;
+      if (pct > 0) return totalPrice * (1 - pct / 100);
+    }
+    if (hasCoupon && totalPrice > 0) {
+      final pct = double.tryParse(data['coupon_discount_percent']?.toString() ?? '0') ?? 0;
+      if (pct > 0) return totalPrice * (1 - pct / 100);
+    }
+    if (totalPayable > 0) return totalPayable;
+    if (valorCDesc > 0) return valorCDesc;
+    if (totalPrice > 0) return totalPrice;
+    return _safeParseValue(data);
   }
 
   // -----------------------
@@ -2795,8 +2921,56 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     _scheduleRealtimeChannel?.unsubscribe();
     _cacheRefreshTimer?.cancel();
     _realtimeDebounceTimer?.cancel();
+    _scrollTrackDebounce?.cancel();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  void _onScroll() {
+    // Carregar mais agendamentos futuros quando próximo do fim
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent * 0.7) {
+      _loadMoreAppointments();
+    }
+    // Carregar agendamentos passados quando próximo do topo
+    if (_scrollController.position.pixels <=
+        _scrollController.position.minScrollExtent + 150) {
+      _loadMorePastAppointments();
+    }
+    // Atualizar dia/semana selecionado conforme scroll
+    _updateSelectedDayFromScroll();
+  }
+
+  void _updateSelectedDayFromScroll() {
+    _scrollTrackDebounce?.cancel();
+    _scrollTrackDebounce = Timer(const Duration(milliseconds: 200), () {
+      if (!mounted) return;
+      DateTime? topDay;
+      double? closestBelow;
+
+      for (final entry in _dayKeys.entries) {
+        final ctx = entry.value.currentContext;
+        if (ctx == null) continue;
+        final box = ctx.findRenderObject() as RenderBox?;
+        if (box == null || !box.attached) continue;
+        final pos = box.localToGlobal(Offset.zero);
+        // Pegar o cabeçalho de dia que está mais próximo do topo visível (acima de 350px)
+        if (pos.dy > 0 && pos.dy < 350) {
+          if (closestBelow == null || pos.dy < closestBelow) {
+            closestBelow = pos.dy;
+            topDay = entry.key;
+          }
+        }
+      }
+
+      if (topDay != null && !isSameDay(topDay, _selectedDay)) {
+        final day = topDay;
+        setState(() {
+          _selectedDay = day;
+          _focusedDay = day;
+        });
+      }
+    });
   }
 
   // Fetch a specific week from server and replace visible appointments (silent, no intr. loader)
@@ -2809,7 +2983,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
           DateTime(endDate.year, endDate.month, endDate.day, 23, 59, 59);
       final snap = await sb.Supabase.instance.client
           .from('appointments')
-          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, birthday_discount_applied, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name')
+          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, birthday_discount_applied, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name, created_by')
           .eq('shop_id', widget.shopId)
           .gte('scheduled_at', start.toUtc().toIso8601String())
           .lte('scheduled_at', end.toUtc().toIso8601String())
@@ -2820,6 +2994,9 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
       setState(() {
         // replace visible appointments with fresh week data
         _appointments = List<Map<String, dynamic>>.from(snap);
+        // Sempre permitir carregar mais (scroll infinito além da semana)
+        _hasMore = true;
+        _hasMorePast = true;
         // update cache and cursors
         for (var d in snap) {
           _addToCache(d);
@@ -2848,8 +3025,13 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
       });
       // Recalcular faturamento semanal a partir dos dados frescos
       _updateWeeklyRevenueFromAppointments();
-      // Scroll automático até o dia selecionado
-      _scrollToSelectedDay();
+      // Scroll: para agendamento específico no primeiro carregamento, senão para o topo do dia
+      if (!_initialScrollDone && widget.initialAppointmentId != null) {
+        _initialScrollDone = true;
+        _scrollToAppointment(widget.initialAppointmentId!);
+      } else {
+        _scrollToSelectedDay();
+      }
     } catch (e) {
       debugPrint('Erro ao buscar semana: $e');
     }
@@ -2892,11 +3074,11 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
   }
 
   Widget _buildAppointmentCard(Map<String, dynamic> data,
-      {required bool isDesktop}) {
+      {required bool isDesktop, bool highlighted = false}) {
     final dateStr = data['scheduled_at'] as String;
     DateTime hora = DateTime.parse(dateStr);
 
-    double total = _safeParseValue(data);
+    double total = _getDisplayTotal(data);
     double pago = double.tryParse(
       data['paid_amount']?.toString() ??
       data['paid_value']?.toString() ?? 
@@ -2922,8 +3104,12 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     // Dados para abrir perfil do cliente
     final clientId = data['client_id'] ?? data['clientId'] ?? data['clienteId'] ?? data['userId'];
     final rawClientNome = (data['client_name'] ?? data['name'] ?? '').toString().trim();
-    final clientNome = (rawClientNome.toLowerCase() == 'null') ? '' : rawClientNome;
-    final String clientDisplay = clientNome.isNotEmpty ? clientNome : 'Cliente';
+    final clientNomeRaw = (rawClientNome.toLowerCase() == 'null') ? '' : rawClientNome;
+    // Se o campo contém email (ex: armazenado por engano), extrai o nome local
+    final bool isEmailName = clientNomeRaw.contains('@') && !clientNomeRaw.contains(' ');
+    final String clientDisplay = isEmailName
+        ? 'Cliente' // enriquecimento falhou (rede?) — fallback neutro
+        : (clientNomeRaw.isNotEmpty ? clientNomeRaw : 'Cliente');
     final String clientInitial =
         clientDisplay.isNotEmpty ? clientDisplay[0].toUpperCase() : '?';
     final String clientPhoto = (data['client_photo'] ?? '').toString().trim();
@@ -2932,6 +3118,10 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     final serviceNome = (rawServiceNome.toLowerCase() == 'null') ? '' : rawServiceNome;
     final String serviceDisplay = serviceNome.isNotEmpty ? serviceNome : 'Serviço';
     final String professionalNome = data['professional_name'] ?? data['profissional_nome'] ?? data['professionalName'] ?? data['profissionalNome'] ?? 'Não definido';
+
+    final String? createdByRaw = data['created_by']?.toString();
+    final bool isManual = (clientId == null || clientId.toString().isEmpty) ||
+                          (createdByRaw == 'dono');
 
     void openClientProfile() {
       if (clientId == null) return;
@@ -2948,8 +3138,8 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
             child: Scaffold(
               body: ClientDetailsPage(
                 clientData: {
-                  'nome': clientNome,
-                  'name': clientNome,
+                  'nome': clientDisplay,
+                  'name': clientDisplay,
                   'telefone': data['client_phone'] ??
                       data['telefone'] ??
                       data['whatsapp'] ??
@@ -3012,11 +3202,13 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: highlighted ? AppColors.primaryPurple.withValues(alpha: 0.04) : Colors.white,
           borderRadius: BorderRadius.circular(12),
           border: isSelected
               ? Border.all(color: AppColors.primaryPurple, width: 2)
-              : Border.all(color: Colors.transparent),
+              : highlighted
+                  ? Border.all(color: AppColors.primaryPurple.withValues(alpha: 0.55), width: 1.5)
+                  : Border.all(color: Colors.transparent),
           boxShadow: [
             BoxShadow(
               color: Colors.grey.withValues(alpha: 0.08),
@@ -3053,28 +3245,39 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                             child: Container(
                               width: 36,
                               height: 36,
-                              decoration: BoxDecoration(
-                                color: AppColors.primaryPurple.withValues(alpha: 0.1),
+                              decoration: const BoxDecoration(
+                                color: Color(0x1A7C3AED),
                                 shape: BoxShape.circle,
-                                image: clientPhoto.isNotEmpty
-                                    ? DecorationImage(
-                                        image: NetworkImage(clientPhoto),
-                                        fit: BoxFit.cover,
-                                      )
-                                    : null,
                               ),
-                              child: clientPhoto.isEmpty
-                                  ? Center(
-                                      child: Text(
-                                        clientInitial,
-                                        style: const TextStyle(
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.bold,
-                                          color: AppColors.primaryPurple,
+                              child: ClipOval(
+                                child: clientPhoto.isNotEmpty
+                                    ? Image.network(
+                                        clientPhoto,
+                                        width: 36,
+                                        height: 36,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, __, ___) => Center(
+                                          child: Text(
+                                            clientInitial,
+                                            style: const TextStyle(
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.bold,
+                                              color: AppColors.primaryPurple,
+                                            ),
+                                          ),
+                                        ),
+                                      )
+                                    : Center(
+                                        child: Text(
+                                          clientInitial,
+                                          style: const TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.bold,
+                                            color: AppColors.primaryPurple,
+                                          ),
                                         ),
                                       ),
-                                    )
-                                  : null,
+                              ),
                             ),
                           ),
                           const SizedBox(height: 8),
@@ -3139,14 +3342,34 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                               ],
                             ),
                             const SizedBox(height: 2),
-                            // Serviço e Profissional
+                            // Serviço
                             Text(
-                              "$serviceDisplay • $professionalNome",
+                              serviceDisplay,
                               overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
                               style: TextStyle(
                                 color: Colors.grey.shade600,
                                 fontSize: 11,
                               ),
+                            ),
+                            const SizedBox(height: 2),
+                            // Profissional
+                            Row(
+                              children: [
+                                Icon(Icons.content_cut_rounded, size: 9, color: Colors.grey.shade400),
+                                const SizedBox(width: 3),
+                                Flexible(
+                                  child: Text(
+                                    professionalNome,
+                                    overflow: TextOverflow.ellipsis,
+                                    maxLines: 1,
+                                    style: TextStyle(
+                                      color: Colors.grey.shade500,
+                                      fontSize: 10,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                             const SizedBox(height: 6),
                             // Tags de Status e Pagamento
@@ -3168,6 +3391,55 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                                       fontWeight: FontWeight.w800,
                                       color: statusColor,
                                     ),
+                                  ),
+                                ),
+                                // ✅ Badge WhatsApp Confirmou
+                                if (data['confirmed_via_whatsapp'] == true)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF22C55E).withValues(alpha: 0.12),
+                                      borderRadius: BorderRadius.circular(4),
+                                      border: Border.all(color: const Color(0xFF22C55E).withValues(alpha: 0.3)),
+                                    ),
+                                    child: const Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text('✅', style: TextStyle(fontSize: 8)),
+                                        SizedBox(width: 3),
+                                        Text(
+                                          'CONFIRMOU',
+                                          style: TextStyle(
+                                            fontSize: 8,
+                                            fontWeight: FontWeight.w800,
+                                            color: Color(0xFF16A34A),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                // Badge Manual / App
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: (isManual ? Colors.orange : Colors.blue).withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(color: (isManual ? Colors.orange : Colors.blue).withValues(alpha: 0.25)),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(isManual ? Icons.edit_note : Icons.smartphone, size: 8, color: isManual ? Colors.orange : Colors.blue),
+                                      const SizedBox(width: 3),
+                                      Text(
+                                        isManual ? 'MANUAL' : 'APP',
+                                        style: TextStyle(
+                                          fontSize: 8,
+                                          fontWeight: FontWeight.w800,
+                                          color: isManual ? Colors.orange : Colors.blue,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                                 // Badge de Forma de Pagamento
@@ -3207,11 +3479,24 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                           Builder(builder: (context) {
                             final double originalPrice = double.tryParse(data['total_price']?.toString() ?? '0') ?? 0;
                             final double discountAmt = double.tryParse(data['discount_amount']?.toString() ?? '0') ?? 0;
-                            final bool hasDiscount = discountAmt > 0.01 || originalPrice > total + 0.01;
-                            if (!hasDiscount) return const SizedBox.shrink();
-                            final double trueOriginal = originalPrice > total ? originalPrice : (total + discountAmt);
+                            final double cDesc = double.tryParse(data['valor_com_desconto']?.toString() ?? '0') ?? 0;
+                            final bool hasBd = data['birthday_discount_applied'] == true;
+                            final bool hasCp = data['coupon_applied'] == true;
+                            double discVal = 0;
+                            if (discountAmt > 0.01) {
+                              discVal = discountAmt;
+                            } else if (cDesc > 0 && originalPrice > 0 && cDesc < originalPrice - 0.01) {
+                              discVal = originalPrice - cDesc;
+                            } else if (hasBd && originalPrice > 0) {
+                              final pct = double.tryParse(data['birthday_discount_percent']?.toString() ?? '0') ?? 0;
+                              if (pct > 0) discVal = originalPrice * pct / 100;
+                            } else if (hasCp && originalPrice > 0) {
+                              final pct = double.tryParse(data['coupon_discount_percent']?.toString() ?? '0') ?? 0;
+                              if (pct > 0) discVal = originalPrice * pct / 100;
+                            }
+                            if (discVal < 0.01 || originalPrice < 0.01) return const SizedBox.shrink();
                             return Text(
-                              NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(trueOriginal),
+                              NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(originalPrice),
                               style: const TextStyle(
                                 fontSize: 10,
                                 color: Colors.grey,
@@ -3223,6 +3508,30 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                             NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(total),
                             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                           ),
+                          if (data['birthday_discount_applied'] == true) ...[  
+                            const SizedBox(height: 3),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: Colors.pink.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(color: Colors.pink.withValues(alpha: 0.3)),
+                              ),
+                              child: const Text('🎂 ANIV.', style: TextStyle(fontSize: 7, fontWeight: FontWeight.bold, color: Colors.pink)),
+                            ),
+                          ],
+                          if (data['coupon_applied'] == true && data['coupon_code'] != null) ...[  
+                            const SizedBox(height: 3),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: Colors.blue.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(color: Colors.blue.withValues(alpha: 0.3)),
+                              ),
+                              child: Text('🏷 ${data['coupon_code']}', style: const TextStyle(fontSize: 7, fontWeight: FontWeight.bold, color: Colors.blue)),
+                            ),
+                          ],
                           const SizedBox(height: 4),
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),

@@ -14,6 +14,7 @@ import 'payment_settings_page.dart';
 import 'subscription_plans_page.dart';
 import 'subscription_service.dart';
 import '../../core/widgets/plan_gate_widget.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
 class BusinessSettingsPage extends StatefulWidget {
   const BusinessSettingsPage({super.key});
@@ -34,6 +35,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   bool _clientChoosesProfessional = true;
   bool _onlineBookingActive = true;
   bool _autoBlockHolidays = false;
+
+  bool _whatsappEnabled = true;
 
   // ðŸ•’ Intervalo (Slots)
   int _appointmentIntervalMinutes = 60;
@@ -60,11 +63,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   // Pagamento com cartão - única taxa configurável pelo lojista (aplicada no crédito)
   double _creditTaxPercent = 0.0; // 0..20%
 
-  // Notificações
-  bool _notifyClientAppointment = true;
-  int _notifyDaysBefore = 1; // Padrão: 1 dia antes
-
-  // Novos Recursos: Proteção e Descontos
   bool _trustedOnlyPayInPerson = false;
   bool _birthdayPixDiscountEnabled = false;
   double _birthdayPixDiscountPercent = 10.0;
@@ -179,7 +177,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 if (_creditTaxPercent < 0) _creditTaxPercent = 0;
                 if (_creditTaxPercent > 20) _creditTaxPercent = 20;
 
-                _notifyDaysBefore = config['notificar_dias_antes'] ?? 1;
+                // Notificação removida (movida para WhatsappConfigPage)
 
                 _trustedOnlyPayInPerson =
                     config['trusted_only_pay_in_person'] ?? false;
@@ -198,6 +196,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 _vipMinVisits = (config['vip_min_visits'] ?? 15).toDouble();
                 _vipAvgInterval = (config['vip_avg_interval'] ?? 30).toDouble();
                 _sumidoMaxDays = (config['sumido_max_days'] ?? 45).toDouble();
+                _whatsappEnabled = config['whatsapp_enabled'] ?? true;
               });
             }
           }
@@ -271,8 +270,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           'percentual_sinal': _depositPercent.round(),
           // única taxa aplicada ao crédito (aplicada quando cliente escolher cartão)
           'tax_percent': _creditTaxPercent,
-          'notificar_cliente_agendamento': _notifyClientAppointment,
-          'notificar_dias_antes': _notifyDaysBefore,
           'trusted_only_pay_in_person': _trustedOnlyPayInPerson,
           'birthday_pix_discount_enabled': _birthdayPixDiscountEnabled,
           'birthday_pix_discount_percent': _birthdayPixDiscountPercent,
@@ -282,12 +279,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           'vip_avg_interval': _vipAvgInterval.round(),
           'sumido_max_days': _sumidoMaxDays.round(),
           'require_cpf': _requireCpf,
+          'whatsapp_enabled': _whatsappEnabled,
           'atualizado_em': DateTime.now().toIso8601String(),
-        },
-        'notification_settings': {
-          'send_reminders': _notifyClientAppointment,
-          'default_reminder_days': _notifyDaysBefore,
-          'email_template': 'default',
         }
       }).eq('id', shopId!);
 
@@ -1366,10 +1359,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                                   min: 0,
                                   max: 20,
                                   divisions: 200,
-                                  label:
-                                      "${_creditTaxPercent.toStringAsFixed(1)}%",
-                                  onChanged: (v) =>
-                                      setState(() => _creditTaxPercent = v),
+                                  label: "${_creditTaxPercent.toStringAsFixed(1)}%",
+                                  onChanged: (v) => setState(() => _creditTaxPercent = v),
                                   activeColor: AppColors.primaryPurple,
                                 ),
                               ]),
@@ -1384,60 +1375,22 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
 
   Widget _buildNotificationCard() {
     return _buildSettingCard([
-      // Notificação para a LOJA: novo agendamento
-      _buildSwitchTile(
-        'Avisar-me sobre novos agendamentos',
-        'Receba uma notificação push quando um cliente agendar',
-        _notifyClientAppointment,
-        (v) => setState(() => _notifyClientAppointment = v),
-      ),
-      const Divider(height: 1),
-
-      // Notificação para o CLIENTE: lembrete
-      Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Lembrete automático para clientes',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 4),
-            const Text(
-              'Quantas horas antes do agendamento o cliente recebe o lembrete?',
-              style: TextStyle(fontSize: 12, color: Colors.grey),
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [1, 2, 6, 12, 24, 48].map((h) {
-                // Map existing _notifyDaysBefore (days) ? hours
-                final currentH = _notifyDaysBefore * 24;
-                final isSelected = currentH == h;
-                return ChoiceChip(
-                  label: Text(
-                    h < 24 ? '${h}h' : '${h ~/ 24}d',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: isSelected ? Colors.white : Colors.black87,
-                    ),
-                  ),
-                  selected: isSelected,
-                  selectedColor: AppColors.primaryPurple,
-                  onSelected: (s) {
-                    if (s) {
-                      setState(() {
-                        _notifyDaysBefore = h ~/ 24 == 0 ? 1 : h ~/ 24;
-                      });
-                    }
-                  },
-                );
-              }).toList(),
-            ),
-          ],
+      SwitchListTile(
+        secondary: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: const Color(0xFF25D366).withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: const Icon(FontAwesomeIcons.whatsapp, color: Color(0xFF25D366), size: 20),
         ),
+        title: const Text("Lembretes de WhatsApp",
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+        subtitle: const Text("Envio automático de lembretes para os clientes via WhatsApp.",
+            style: TextStyle(fontSize: 12, color: Colors.grey)),
+        value: _whatsappEnabled,
+        activeColor: const Color(0xFF25D366),
+        onChanged: (v) => setState(() => _whatsappEnabled = v),
       ),
     ]);
   }

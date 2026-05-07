@@ -529,7 +529,7 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
         if (costPct > 0) custoSvc += value * costPct / 100;
         final sinal = _toDouble(d['valor_sinal']);
         if (sinal > 0) checkoutAntic++;
-      } else if (status == 'cancelado') {
+      } else if (_excludedSet.contains(status)) {
         cancelled++;
       }
       if (d['is_rescheduled'] == true) rescheduled++;
@@ -676,7 +676,7 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
         hourlySlots.putIfAbsent(slotKey, _HourlySlot.new)
           ..receita += value
           ..minutos += duration;
-      } else if (status == 'cancelado') {
+      } else if (_excludedSet.contains(status)) {
         cancelled++;
       }
       // Reagendamentos: independe do status final
@@ -826,25 +826,38 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
   double _toDouble(dynamic v) => double.tryParse(v?.toString() ?? '0') ?? 0.0;
 
   double _getAppointmentValue(Map<String, dynamic> data) {
-    // Priority order: total_payable (final bill) → total_price (checkout) →
-    // total_value (owner-created) → fallbacks. Returns first non-zero value.
-    for (final key in [
-      'total_price',
-      'total_value',
-      'total_payable',
-      'valor_com_desconto',
-      'labor_value',
-      'price',
-      'valor',
-    ]) {
+    final double totalPrice = double.tryParse(data['total_price']?.toString() ?? '0') ?? 0;
+    final double totalPayable = double.tryParse(data['total_payable']?.toString() ?? '0') ?? 0;
+    final double valorCDesc = double.tryParse(data['valor_com_desconto']?.toString() ?? '0') ?? 0;
+    final double discountAmt = double.tryParse(data['discount_amount']?.toString() ?? '0') ?? 0;
+    final bool hasBirthday = data['birthday_discount_applied'] == true;
+    final bool hasCoupon = data['coupon_applied'] == true;
+
+    if (totalPayable > 0 && totalPrice > 0 && totalPayable < totalPrice - 0.01) return totalPayable;
+    if (valorCDesc > 0 && totalPrice > 0 && valorCDesc < totalPrice - 0.01) return valorCDesc;
+    if (discountAmt > 0.01 && totalPrice > 0) return totalPrice - discountAmt;
+    if (hasBirthday && totalPrice > 0) {
+      final pct = double.tryParse(data['birthday_discount_percent']?.toString() ?? '0') ?? 0;
+      if (pct > 0) return totalPrice * (1 - pct / 100);
+    }
+    if (hasCoupon && totalPrice > 0) {
+      final pct = double.tryParse(data['coupon_discount_percent']?.toString() ?? '0') ?? 0;
+      if (pct > 0) return totalPrice * (1 - pct / 100);
+    }
+    if (totalPayable > 0) return totalPayable;
+    if (valorCDesc > 0) return valorCDesc;
+    if (totalPrice > 0) return totalPrice;
+    for (final key in ['total_value', 'labor_value', 'price', 'valor']) {
       final d = double.tryParse(data[key]?.toString() ?? '');
       if (d != null && d > 0) return d;
     }
     return 0.0;
   }
 
-  bool _isCompleted(String status) =>
-      status == 'concluido';
+  static const _excludedSet = {
+    'cancelado', 'falta', 'recusado', 'rejected', 'cancelled'
+  };
+  bool _isCompleted(String status) => status.isNotEmpty && !_excludedSet.contains(status);
 
   /// Retorna delta percentual entre [current] e [prev].
   /// Positivo = crescimento, negativo = queda.
@@ -1283,7 +1296,7 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
           value: _totalAtendimentos.toString(),
           icon: Icons.event_available_outlined,
           color: Colors.purple,
-          subtitle: 'Concluídos no período',
+          subtitle: 'Realizados no período',
           delta: prev != null
               ? _delta(_totalAtendimentos.toDouble(), prev.atendimentos.toDouble())
               : null,
@@ -2480,7 +2493,7 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
 
           // ── Desempenho de Vendas ───────────────────────────────────────
           buildSection('Desempenho de Vendas', [
-            buildRow('Agendamentos Concluídos', _totalAtendimentos.toString()),
+            buildRow('Agendamentos Realizados', _totalAtendimentos.toString()),
             buildRow('Ticket Médio', fmt(_ticketMedio)),
             buildRow('Cancelamentos', _totalCancelamentos.toString(),
                 valueColor: _totalCancelamentos > 0 ? red : green),

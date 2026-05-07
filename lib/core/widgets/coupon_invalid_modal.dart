@@ -2,14 +2,19 @@ import 'package:flutter/material.dart';
 
 /// Enum para classificar o tipo de erro do cupom e personalizar a UI
 enum CouponErrorType {
-  notFound,       // Cupom não encontrado
-  expired,        // Cupom expirou
-  alreadyUsed,    // Usuário já usou este cupom
-  limitReached,   // Limite global de usos atingido
-  notForService,  // Cupom não válido para este serviço
-  notActiveMonth, // Cupom não válido neste mês
-  inactive,       // Cupom desativado pelo lojista
-  generic,        // Erro genérico / desconhecido
+  notFound,              // Cupom não encontrado
+  expired,               // Cupom expirou
+  alreadyUsed,           // Usuário já usou este cupom
+  limitReached,          // Limite global de usos atingido
+  notForService,         // Cupom não válido para este serviço
+  notActiveMonth,        // Cupom não válido neste mês
+  inactive,              // Cupom desativado pelo lojista
+  generic,               // Erro genérico / desconhecido
+  onlinePaymentOnly,     // Feature C: cupom válido apenas para pagamento online
+  newClientsOnly,        // Feature A: cupom válido apenas para novos clientes
+  vipOnly,               // Feature A: cupom válido apenas para clientes VIP
+  profileNotEligible,    // Feature A: perfil não elegível (genérico)
+  classificationBlocked, // Feature B: categoria do cliente está bloqueada
 }
 
 /// Retorna o [CouponErrorType] baseado na mensagem de erro do backend
@@ -23,6 +28,11 @@ CouponErrorType parseCouponErrorType(String? message) {
   if (m.contains('mês')) return CouponErrorType.notActiveMonth;
   if (m.contains('ativo')) return CouponErrorType.inactive;
   if (m.contains('inválido')) return CouponErrorType.notFound;
+  if (m.contains('pagamento online') || m.contains('online')) return CouponErrorType.onlinePaymentOnly;
+  if (m.contains('primeira vez')) return CouponErrorType.newClientsOnly;
+  if (m.contains('vip')) return CouponErrorType.vipOnly;
+  if (m.contains('elegível')) return CouponErrorType.profileNotEligible;
+  if (m.contains('não está disponível') || m.contains('indisponível')) return CouponErrorType.classificationBlocked;
   return CouponErrorType.generic;
 }
 
@@ -40,8 +50,9 @@ Future<void> showCouponInvalidModal({
   required BuildContext context,
   String? message,
   String? couponCode,
+  CouponErrorType? directErrorType,
 }) {
-  final errorType = parseCouponErrorType(message);
+  final errorType = directErrorType ?? parseCouponErrorType(message);
   return showDialog(
     context: context,
     barrierColor: Colors.black.withValues(alpha: 0.55),
@@ -190,6 +201,66 @@ class _CouponInvalidModalState extends State<CouponInvalidModal>
           accentColor: const Color(0xFF616161),
           title: 'Cupom Desativado',
           tip: 'O lojista pausou este cupom temporariamente. Entre em contato para mais informações.',
+        );
+      case CouponErrorType.onlinePaymentOnly:
+        return _ErrorConfig(
+          icon: Icons.payment_rounded,
+          gradient: const LinearGradient(
+            colors: [Color(0xFF1565C0), Color(0xFF42A5F5)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          accentColor: const Color(0xFF42A5F5),
+          title: 'Pagamento online necessário',
+          tip: 'Selecione Pix ou cartão para utilizar este cupom.',
+        );
+      case CouponErrorType.newClientsOnly:
+        return _ErrorConfig(
+          icon: Icons.person_add_alt_1_rounded,
+          gradient: const LinearGradient(
+            colors: [Color(0xFF2E7D32), Color(0xFF66BB6A)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          accentColor: const Color(0xFF66BB6A),
+          title: 'Cupom para novos clientes',
+          tip: 'Este cupom é válido apenas para quem está agendando pela primeira vez neste salão.',
+        );
+      case CouponErrorType.vipOnly:
+        return _ErrorConfig(
+          icon: Icons.stars_rounded,
+          gradient: const LinearGradient(
+            colors: [Color(0xFFE65100), Color(0xFFFFB300)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          accentColor: const Color(0xFFFFB300),
+          title: 'Cupom exclusivo VIP',
+          tip: 'Este cupom é válido apenas para clientes VIP do salão.',
+        );
+      case CouponErrorType.profileNotEligible:
+        return _ErrorConfig(
+          icon: Icons.person_off_rounded,
+          gradient: const LinearGradient(
+            colors: [Color(0xFF4A148C), Color(0xFF7B1FA2)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          accentColor: const Color(0xFF7B1FA2),
+          title: 'Perfil não elegível',
+          tip: 'Seu perfil de cliente não está elegível para utilizar este cupom.',
+        );
+      case CouponErrorType.classificationBlocked:
+        return _ErrorConfig(
+          icon: Icons.block_rounded,
+          gradient: const LinearGradient(
+            colors: [Color(0xFF37474F), Color(0xFF78909C)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          accentColor: const Color(0xFF78909C),
+          title: 'Cupom indisponível',
+          tip: 'Este cupom não está disponível para o seu perfil de cliente.',
         );
       case CouponErrorType.notFound:
       case CouponErrorType.generic:

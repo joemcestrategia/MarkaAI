@@ -83,12 +83,17 @@ class _CheckoutReviewPageState extends State<CheckoutReviewPage> {
     );
 
     // Fetch user profile for phone and photo
+    String clientName = user.userMetadata?['full_name']?.toString().trim().isNotEmpty == true
+        ? user.userMetadata!['full_name'].toString().trim()
+        : (user.userMetadata?['name']?.toString().trim().isNotEmpty == true
+            ? user.userMetadata!['name'].toString().trim()
+            : 'Cliente');
     String? clientPhone;
     String? clientPhoto = user.userMetadata?['avatar_url']?.toString() ?? user.userMetadata?['picture']?.toString();
     try {
       final userDoc = await Supabase.instance.client
           .from('users')
-          .select('phone, photo_url')
+          .select('phone, photo_url, name')
           .eq('id', user.id)
           .maybeSingle();
       if (userDoc != null) {
@@ -98,13 +103,15 @@ class _CheckoutReviewPageState extends State<CheckoutReviewPage> {
         if ((clientPhoto == null || clientPhoto.isEmpty) && dbPhoto != null && dbPhoto.isNotEmpty) {
           clientPhoto = dbPhoto;
         }
+        final dbName = userDoc['name']?.toString();
+        if (dbName != null && dbName.trim().isNotEmpty) clientName = dbName.trim();
       }
     } catch (_) {}
 
     await Supabase.instance.client.from('appointments').insert({
       'shop_id': widget.shopId,
       'client_id': user.id,
-      'client_name': user.userMetadata?['full_name'] ?? user.email ?? 'Cliente',
+      'client_name': clientName,
       'client_email': user.email ?? 'cliente@markaai.com.br',
       'client_phone': clientPhone,
       'client_photo': clientPhoto,

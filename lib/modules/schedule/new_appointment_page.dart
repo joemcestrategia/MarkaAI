@@ -3,6 +3,8 @@ import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 import 'package:table_calendar/table_calendar.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
+import '../../core/services/shop_data_cache_service.dart';
+import '../../core/utils/availability_utils.dart';
 import '../../core/models/appointment_model.dart';
 
 class NewAppointmentPage extends StatefulWidget {
@@ -27,6 +29,8 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
   DateTime? _selectedDate;
   TimeOfDay? _selectedTime;
 
+  Map<String, dynamic>? _shopConfig;
+
   // Calendário customizado
   DateTime _focusedDay = DateTime.now();
   final Map<DateTime, bool> _fullDays = {};
@@ -41,7 +45,13 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
 
   Future<void> _loadShopId() async {
     final id = await SessionService.getShopId();
-    setState(() => shopId = id);
+    if (id != null) {
+      final shopData = await ShopDataCacheService().getShop(id);
+      final config = (shopData?['config'] as Map<String, dynamic>?) ?? {};
+      if (mounted) setState(() { shopId = id; _shopConfig = config; });
+    } else {
+      if (mounted) setState(() => shopId = null);
+    }
   }
 
   // --- PASSO 1: SERVIÇOS ---
@@ -295,7 +305,8 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
 
     int duracaoServico =
         int.tryParse(servData['duration_min']?.toString() ?? "30") ?? 30;
-    List<dynamic> workDays = profData['work_days'] ?? [1, 2, 3, 4, 5, 6];
+    // fix: bloquear dias sem equipe ativa para qualquer estabelecimento
+    List<dynamic> workDays = profData['work_days'] ?? [];
 
     if (!workDays.contains(_selectedDate!.weekday)) {
       return Container(
@@ -314,8 +325,8 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
       );
     }
 
-    String startStr = profData['work_start'] ?? "08:00";
-    String endStr = profData['work_end'] ?? "19:00";
+    String startStr = profData['work_start'] ?? profData['start_time'] ?? "08:00";
+    String endStr = profData['work_end'] ?? profData['end_time'] ?? "19:00";
 
     DateTime startOfDay = DateTime(
         _selectedDate!.year, _selectedDate!.month, _selectedDate!.day, 0, 0);
@@ -341,7 +352,7 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
           return const Center(child: CircularProgressIndicator());
         }
 
-        List<String> busyTimes = [];
+        List<Map<String, int>> busyIntervals = [];
         final appointmentsInRange = snapshot.data!.where((data) {
           if (data['scheduled_at'] == null) return false;
           final dt = DateTime.parse(data['scheduled_at']);
@@ -351,61 +362,83 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
 
         for (var data in appointmentsInRange) {
           final status = (data['status'] ?? '').toString().toLowerCase();
-          if (status == 'cancelado' || status == 'recusado') {
+          if (status == 'cancelado' || status == 'rejeitado' || status == 'recusado' || status == 'excluido') {
             continue;
           }
 
           if (data['scheduled_at'] != null) {
-            DateTime dt = DateTime.parse(data['scheduled_at']);
-            String timeStr = _formatTime(dt.hour, dt.minute);
-            busyTimes.add(timeStr);
+            final dt = DateTime.parse(data['scheduled_at']);
+            final startMin = dt.hour * 60 + dt.minute;
+            final durMin = int.tryParse(data['duration_min']?.toString() ?? '30') ?? 30;
+            busyIntervals.add({'start': startMin, 'end': startMin + durMin});
           }
         }
 
-        final slots = _generateProfessionalSlotsWithDuration(
-            startStr, endStr, duracaoServico);
+        final List<String> slots;
+        if (_shopConfig != null) {
+          slots = AvailabilityUtils.generateSmartSlots(
+            startStr: startStr,
+            endStr: endStr,
+            interval: (_shopConfig!['intervalo_agenda_min'] as int?) ?? duracaoServico,
+            serviceDuration: duracaoServico,
+            busyIntervals: busyIntervals,
+            preventGaps: _shopConfig!['evitar_buracos_agenda'] == true,
+            minAdvanceHours: 0,
+            selectedDate: _selectedDate!,
+          );
+        } else {
+          slots = _generateProfessionalSlotsWithDuration(startStr, endStr, duracaoServico);
+        }
 
         if (slots.isEmpty) {
+          return const Text("Sem horários que caibam o serviço hoje.");
+        }
+
+        final workEndParts = endStr.split(':');
+        final workEndMinutes = int.parse(workEndParts[0]) * 60 + int.parse(workEndParts[1]);
+
+        List<Widget> chipWidgets = [];
+        for (final timeStr in slots) {
+          final parts = timeStr.split(':');
+          final slotStartMin = int.parse(parts[0]) * 60 + int.parse(parts[1]);
+
+          bool isBusy = busyIntervals.any((interval) =>
+            slotStartMin < interval['end']! &&
+            (slotStartMin + duracaoServico) > interval['start']!
+          );
+
+          bool exceedsWorkEnd = (slotStartMin + duracaoServico) > workEndMinutes;
+          if (isBusy || exceedsWorkEnd) continue;
+
+          bool isSelected = _selectedTime != null &&
+              _formatTimeOfDay(_selectedTime!) == timeStr;
+
+          chipWidgets.add(ChoiceChip(
+            label: Text(timeStr,
+                style: TextStyle(
+                    color: isSelected ? Colors.white : Colors.black)),
+            selected: isSelected,
+            selectedColor: AppColors.primaryPurple,
+            disabledColor: Colors.grey[200],
+            onSelected: (selected) {
+              setState(() {
+                final parts = timeStr.split(':');
+                _selectedTime = TimeOfDay(
+                    hour: int.parse(parts[0]),
+                    minute: int.parse(parts[1]));
+              });
+            },
+          ));
+        }
+
+        if (chipWidgets.isEmpty) {
           return const Text("Sem horários que caibam o serviço hoje.");
         }
 
         return Wrap(
           spacing: 10,
           runSpacing: 10,
-          children: slots.map((timeStr) {
-            bool isBusy = busyTimes.contains(timeStr);
-            bool isSelected = _selectedTime != null &&
-                _formatTimeOfDay(_selectedTime!) == timeStr;
-
-            return ChoiceChip(
-              label: Text(timeStr,
-                  style: TextStyle(
-                      color: isBusy
-                          ? (isSelected ? Colors.white : Colors.orange)
-                          : (isSelected ? Colors.white : Colors.black),
-                      decoration: isBusy && !isSelected ? TextDecoration.lineThrough : null)),
-              selected: isSelected,
-              selectedColor: isBusy ? Colors.orange : AppColors.primaryPurple,
-              disabledColor: Colors.grey[200],
-              onSelected: (selected) async {
-                if (isBusy) {
-                  // Apenas administradores (fluxo manual) podem sobrepor
-                  if (widget.preSelectedClientId != null) {
-                    bool confirm = await _showConflictDialog(context, timeStr);
-                    if (!confirm) return;
-                  } else {
-                    return; // Cliente não pode clicar em busy
-                  }
-                }
-                setState(() {
-                  final parts = timeStr.split(':');
-                  _selectedTime = TimeOfDay(
-                      hour: int.parse(parts[0]),
-                      minute: int.parse(parts[1]));
-                });
-              },
-            );
-          }).toList(),
+          children: chipWidgets,
         );
       },
     );
@@ -488,9 +521,10 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
 
     int duration =
         int.tryParse(servData['duration_min']?.toString() ?? "30") ?? 30;
-    List<dynamic> workDays = profData['work_days'] ?? [1, 2, 3, 4, 5, 6];
-    String startStr = profData['work_start'] ?? "08:00";
-    String endStr = profData['work_end'] ?? "19:00";
+    // fix: bloquear dias sem equipe ativa para qualquer estabelecimento
+    List<dynamic> workDays = profData['work_days'] ?? [];
+    String startStr = profData['work_start'] ?? profData['start_time'] ?? "08:00";
+    String endStr = profData['work_end'] ?? profData['end_time'] ?? "19:00";
 
     final daysInMonth = DateTime(month.year, month.month + 1, 0).day;
 
@@ -503,26 +537,52 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
         continue;
       }
 
-      List<String> busyTimes = [];
+      List<Map<String, int>> dayBusyIntervals = [];
       for (var data in _monthAppointments) {
         final status = (data['status'] ?? '').toString().toLowerCase();
-        if (status == 'cancelado' || status == 'recusado') continue;
+        if (status == 'cancelado' || status == 'rejeitado' || status == 'recusado' || status == 'excluido') continue;
 
         DateTime dt = DateTime.parse(data['scheduled_at']);
         if (dt.year == date.year &&
             dt.month == date.month &&
             dt.day == date.day) {
-          busyTimes.add(_formatTime(dt.hour, dt.minute));
+          final startMin = dt.hour * 60 + dt.minute;
+          final durMin = int.tryParse(data['duration_min']?.toString() ?? '30') ?? 30;
+          dayBusyIntervals.add({'start': startMin, 'end': startMin + durMin});
         }
       }
 
-      final slots =
-          _generateProfessionalSlotsWithDuration(startStr, endStr, duration);
-      bool hasAnySlot = false;
-      for (var slot in slots) {
-        if (!busyTimes.contains(slot)) {
-          hasAnySlot = true;
-          break;
+      final List<String> slots;
+      if (_shopConfig != null) {
+        slots = AvailabilityUtils.generateSmartSlots(
+          startStr: startStr,
+          endStr: endStr,
+          interval: (_shopConfig!['intervalo_agenda_min'] as int?) ?? duration,
+          serviceDuration: duration,
+          busyIntervals: dayBusyIntervals,
+          preventGaps: _shopConfig!['evitar_buracos_agenda'] == true,
+          minAdvanceHours: 0,
+          selectedDate: date,
+        );
+      } else {
+        slots = _generateProfessionalSlotsWithDuration(startStr, endStr, duration);
+      }
+      bool hasAnySlot;
+      if (_shopConfig != null) {
+        hasAnySlot = slots.isNotEmpty;
+      } else {
+        hasAnySlot = false;
+        for (var slot in slots) {
+          final slotParts = slot.split(':');
+          final slotStartMin = int.parse(slotParts[0]) * 60 + int.parse(slotParts[1]);
+          bool isBusy = dayBusyIntervals.any((interval) =>
+            slotStartMin < interval['end']! &&
+            (slotStartMin + duration) > interval['start']!
+          );
+          if (!isBusy) {
+            hasAnySlot = true;
+            break;
+          }
         }
       }
 
@@ -611,6 +671,57 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
             int.tryParse(servicoData['duration_min']?.toString() ?? "30") ?? 30,
         createdBy: widget.preSelectedClientId != null ? 'dono' : 'cliente',
       );
+
+      final profName = profData['name'] ?? 'Profissional';
+      final serviceName = servicoData['name'] ?? 'Serviço';
+      const weekdays = ['', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo'];
+      final diaSemana = weekdays[fullDate.weekday];
+      final dataStr = '${fullDate.day.toString().padLeft(2, '0')}/${fullDate.month.toString().padLeft(2, '0')}/${fullDate.year}';
+      final horario = _formatTime(fullDate.hour, fullDate.minute);
+
+      try {
+        final availResult = await sb.Supabase.instance.client.functions.invoke(
+          'checkAvailability',
+          body: {
+            'professional_id': _selectedProfessional!['id'],
+            'shop_id': shopId,
+            'start_time': fullDate.toIso8601String(),
+            'duration': appointment.durationMin,
+          },
+        );
+
+        if (availResult.data['available'] != true) {
+          final rawReasons = availResult.data['reasons'];
+          final List<String> reasons = (rawReasons is List)
+              ? rawReasons.map((r) => r.toString()).toList()
+              : [];
+          final reasonText = reasons.isNotEmpty
+              ? reasons.join('\n')
+              : (availResult.data['error']?.toString() ?? 'Horário indisponível.');
+          final message = 'Atenção — $profName\n'
+              'Data: $diaSemana, $dataStr às $horario\n'
+              'Serviço: $serviceName (${appointment.durationMin} min)\n\n'
+              '$reasonText\n\n'
+              'Deseja agendar mesmo assim?';
+          setState(() => _isLoading = false);
+          if (!mounted) return;
+          final confirm = await _showConflictDialog(context, message);
+          if (!confirm) return;
+          if (mounted) setState(() => _isLoading = true);
+        }
+      } catch (e) {
+        debugPrint('Erro na validação de disponibilidade: $e');
+        final message = 'Não foi possível validar disponibilidade no servidor.\n\n'
+            'Profissional: $profName\n'
+            'Data: $diaSemana, $dataStr às $horario\n'
+            'Serviço: $serviceName (${appointment.durationMin} min)\n\n'
+            'Deseja prosseguir mesmo assim?';
+        setState(() => _isLoading = false);
+        if (!mounted) return;
+        final confirm = await _showConflictDialog(context, message);
+        if (!confirm) return;
+        if (mounted) setState(() => _isLoading = true);
+      }
 
       await sb.Supabase.instance.client
           .from('appointments')
@@ -737,7 +848,7 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
     );
   }
 
-  Future<bool> _showConflictDialog(BuildContext context, String timeStr) async {
+  Future<bool> _showConflictDialog(BuildContext context, String message) async {
     final result = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -748,9 +859,11 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
             Text("Conflito Detectado"),
           ],
         ),
-        content: const Text(
-          "Este horário já possui um agendamento. Deseja realizar a sobreposição (overlap) administrativa?",
-          style: TextStyle(fontWeight: FontWeight.w500),
+        content: SingleChildScrollView(
+          child: Text(
+            message,
+            style: const TextStyle(fontWeight: FontWeight.w500),
+          ),
         ),
         actions: [
           TextButton(
@@ -763,7 +876,7 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
               backgroundColor: Colors.orange,
               foregroundColor: Colors.white,
             ),
-            child: const Text("SIM, SOBREPOR"),
+            child: const Text("AGENDAR MESMO ASSIM"),
           ),
         ],
       ),

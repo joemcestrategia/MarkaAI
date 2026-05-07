@@ -7,6 +7,7 @@ import 'package:markaai/modules/admin/widgets/admin_users_widget.dart';
 import 'package:markaai/modules/admin/widgets/admin_shops_widget.dart';
 import 'package:markaai/modules/admin/widgets/admin_support_widget.dart';
 import 'package:markaai/modules/support/admin_tickets_page.dart';
+import 'package:markaai/modules/admin/admin_banners_page.dart';
 
 class AdminDashboardPage extends StatefulWidget {
   const AdminDashboardPage({super.key});
@@ -98,6 +99,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 _buildSidebarItem(2, Icons.store_rounded),
                 _buildSidebarItem(3, Icons.handyman_rounded),
                 _buildSidebarItem(4, Icons.confirmation_number_rounded),
+                _buildSidebarItem(5, Icons.campaign_rounded),
                 const Spacer(),
                 IconButton(
                   icon: Icon(
@@ -186,6 +188,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         return const AdminSupportWidget();
       case 4:
         return const AdminTicketsPage(embedded: true);
+      case 5:
+        return const AdminBannersPage();
       default:
         return const Center(child: Text('Página não encontrada'));
     }
@@ -203,6 +207,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         return 'Ferramentas de Suporte';
       case 4:
         return 'Tickets de Suporte';
+      case 5:
+        return 'Banners de Marketing';
       default:
         return 'Admin Dashboard';
     }

@@ -170,7 +170,7 @@ class _EditAppointmentConfirmPageState
 
     for (var d in snap) {
       final status = (d['status'] ?? '').toString().toLowerCase();
-      if (status == 'cancelado' || status == 'recusado' || status == 'excluido') {
+      if (status == 'cancelado' || status == 'rejeitado' || status == 'recusado' || status == 'excluido') {
         continue;
       }
 
@@ -279,6 +279,7 @@ class _EditAppointmentConfirmPageState
           if (d['id'] == widget.appointmentDoc['id']) continue;
           final status = (d['status'] ?? '').toString().toLowerCase();
           if (status == 'cancelado' ||
+              status == 'rejeitado' ||
               status == 'recusado' ||
               status == 'excluido') {
             continue;
@@ -308,6 +309,7 @@ class _EditAppointmentConfirmPageState
           if (d['id'] == widget.appointmentDoc['id']) continue;
           final status = (d['status'] ?? '').toString().toLowerCase();
           if (status == 'cancelado' ||
+              status == 'rejeitado' ||
               status == 'recusado' ||
               status == 'excluido') {
             continue;

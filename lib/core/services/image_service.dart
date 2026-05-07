@@ -13,6 +13,7 @@ class CompressionResult {
   final double quality;
   final int width;
   final int height;
+  final bool isJpeg;
 
   CompressionResult({
     required this.bytes,
@@ -20,11 +21,18 @@ class CompressionResult {
     required this.quality,
     required this.width,
     required this.height,
+    this.isJpeg = false,
   });
+
+  String get extension => isJpeg ? '.jpg' : '.webp';
+  String get contentType => isJpeg ? 'image/jpeg' : 'image/webp';
 }
 
 class ImageService {
   static final SupabaseClient _supabase = Supabase.instance.client;
+
+  /// Detecta iOS de forma segura (retorna false na Web)
+  static bool get _isIOS => !kIsWeb && Platform.isIOS;
 
   /// Função central para compressão inteligente
   static Future<CompressionResult> compressImage({
@@ -62,15 +70,20 @@ class ImageService {
         break;
     }
 
+    // Lê bytes IMEDIATAMENTE — no iOS o path temporário pode ser invalidado após qualquer await
     Uint8List originalBytes;
-    if (file is File) {
+    if (file is XFile) {
+      originalBytes = await file.readAsBytes();
+    } else if (file is File) {
       originalBytes = await file.readAsBytes();
     } else if (file is Uint8List) {
       originalBytes = file;
-    } else if (file is XFile) {
-      originalBytes = await file.readAsBytes();
     } else {
       throw Exception('Tipo de arquivo não suportado para compressão: ${file.runtimeType}');
+    }
+
+    if (originalBytes.isEmpty) {
+      throw Exception('Arquivo de imagem vazio — não foi possível ler os bytes.');
     }
 
     // 1. Processamento Inicial (Resize/Crop se necessário usando 'image' package)
@@ -108,7 +121,11 @@ class ImageService {
 
     Uint8List processedBytes = Uint8List.fromList(img.encodeJpg(processedImage)); // Usa JPG intermediário para o compress
     
-    // 2. Loop de Compressão Inteligente (Resize + Qualidade Combinados para WebP)
+    // 2. Loop de Compressão Inteligente
+    // No iOS, usar JPEG em vez de WebP (conversão HEIC→WebP falha silenciosamente)
+    final bool useJpeg = _isIOS;
+    final CompressFormat outputFormat = useJpeg ? CompressFormat.jpeg : CompressFormat.webp;
+
     final List<double> scales = [1.0, 0.75, 0.5];
     final List<double> qualities = [targetQuality, 0.60, 0.40, 0.20];
     
@@ -132,7 +149,7 @@ class ImageService {
           minWidth: currentWidth,
           minHeight: currentHeight,
           quality: (quality * 100).toInt(),
-          format: CompressFormat.webp,
+          format: outputFormat,
         );
 
         final currentSize = compressed.length;
@@ -166,12 +183,17 @@ class ImageService {
       bestEffortSize = compressedBytes.length;
     }
 
+    if (compressedBytes.isEmpty) {
+      throw Exception('Compressão resultou em imagem vazia.');
+    }
+
     return CompressionResult(
-      bytes: compressedBytes!,
+      bytes: compressedBytes,
       size: bestEffortSize,
       quality: finalQuality,
       width: finalWidth,
       height: finalHeight,
+      isJpeg: useJpeg,
     );
   }
 
@@ -180,9 +202,14 @@ class ImageService {
     required Uint8List bytes,
     required String path,
     required String bucket,
+    String contentType = 'image/webp',
     void Function(double)? onProgress,
   }) async {
     try {
+      if (bytes.isEmpty) {
+        throw Exception('Tentativa de upload com 0 bytes.');
+      }
+
       // Nota: O SDK do Supabase Flutter não fornece progresso nativo para uploadBinary ainda.
       // Para arquivos pequenos (< 1MB), simulamos o progresso para feedback visual do usuário.
       if (onProgress != null) {
@@ -194,9 +221,9 @@ class ImageService {
       await _supabase.storage.from(bucket).uploadBinary(
             path,
             bytes,
-            fileOptions: const FileOptions(
+            fileOptions: FileOptions(
               upsert: true,
-              contentType: 'image/webp',
+              contentType: contentType,
             ),
           );
 
@@ -222,11 +249,12 @@ class ImageService {
   ) async {
     try {
       final result = await compressImage(file: file, context: ImageContext.cover);
-      final path = '$storeId/cover.webp';
+      final path = '$storeId/cover${result.extension}';
       final url = await uploadImageToSupabase(
         bytes: result.bytes, 
         path: path, 
         bucket: 'stores',
+        contentType: result.contentType,
         onProgress: onProgress,
       );
 
@@ -246,11 +274,12 @@ class ImageService {
   ) async {
     try {
       final result = await compressImage(file: file, context: ImageContext.avatar);
-      final path = '$storeId/logo.webp';
+      final path = '$storeId/logo${result.extension}';
       final url = await uploadImageToSupabase(
         bytes: result.bytes, 
         path: path, 
         bucket: 'stores',
+        contentType: result.contentType,
         onProgress: onProgress,
       );
 
@@ -270,11 +299,12 @@ class ImageService {
   ) async {
     try {
       final result = await compressImage(file: file, context: ImageContext.avatar);
-      final path = '$userId/avatar.webp';
+      final path = '$userId/avatar${result.extension}';
       final url = await uploadImageToSupabase(
         bytes: result.bytes, 
         path: path, 
         bucket: 'profiles',
+        contentType: result.contentType,
         onProgress: onProgress,
       );
 
@@ -301,12 +331,13 @@ class ImageService {
     for (int i = 0; i < files.length; i++) {
       final result = await compressImage(file: files[i], context: ImageContext.service);
       final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final path = '$serviceId/$timestamp-$i.webp';
+      final path = '$serviceId/$timestamp-$i${result.extension}';
       
       final url = await uploadImageToSupabase(
         bytes: result.bytes, 
         path: path, 
         bucket: 'services',
+        contentType: result.contentType,
         onProgress: (p) {
           if (onProgress != null) {
             // Calcula o progresso total baseado na média dos arquivos

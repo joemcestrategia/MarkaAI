@@ -42,14 +42,205 @@ class _PurchasesPageState extends State<PurchasesPage> {
   }
 
   void _addLine() {
-    setState(() {
-      lines.add({
-        'productId': null,
-        'qty': 1,
-        'price': 0.0,
-        'name': '',
-      });
-    });
+    _showProductPicker();
+  }
+
+  void _showProductPicker() {
+    String search = '';
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) => Container(
+          height: MediaQuery.of(ctx).size.height * 0.80,
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Column(
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(top: 12, bottom: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+                child: Row(
+                  children: [
+                    const Text(
+                      'Selecionar Produto',
+                      style: TextStyle(
+                          fontSize: 17, fontWeight: FontWeight.bold),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      icon: Icon(Icons.close, color: Colors.grey.shade600),
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: TextField(
+                  autofocus: true,
+                  decoration: InputDecoration(
+                    hintText: 'Buscar produto...',
+                    prefixIcon:
+                        const Icon(Icons.search, color: Colors.grey),
+                    filled: true,
+                    fillColor: const Color(0xFFF8F9FD),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey.shade200),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey.shade200),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(
+                          color: AppColors.primaryPurple, width: 1.5),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 12),
+                  ),
+                  onChanged: (v) => setSheet(() => search = v.toLowerCase()),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: products.isEmpty
+                    ? Center(
+                        child: Text(
+                          'Nenhum produto cadastrado',
+                          style: TextStyle(color: Colors.grey.shade500),
+                        ),
+                      )
+                    : ListView.builder(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 4),
+                        itemCount: products
+                            .where((p) => search.isEmpty ||
+                                (p['name'] ?? '')
+                                    .toLowerCase()
+                                    .contains(search))
+                            .length,
+                        itemBuilder: (context, i) {
+                          final filtered = products
+                              .where((p) => search.isEmpty ||
+                                  (p['name'] ?? '')
+                                      .toLowerCase()
+                                      .contains(search))
+                              .toList();
+                          final p = filtered[i];
+                          final color = p['color'] as String?;
+                          final weight = p['weight'];
+                          final unit =
+                              (p['weight_unit'] as String?) ?? 'g';
+                          final stock = (p['stock_quantity'] ??
+                              p['qty'] ??
+                              0) as num;
+                          final price = (p['price'] ?? 0.0) as num;
+
+                          return InkWell(
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              setState(() {
+                                lines.add({
+                                  'productId': p['id'],
+                                  'name': p['name'] ?? '',
+                                  'color': color,
+                                  'weight': weight,
+                                  'weight_unit': unit,
+                                  'qty': 1,
+                                  'price': price.toDouble(),
+                                });
+                              });
+                            },
+                            borderRadius: BorderRadius.circular(12),
+                            child: Container(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF8F9FD),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                    color: Colors.grey.shade100),
+                              ),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 40,
+                                    height: 40,
+                                    decoration: BoxDecoration(
+                                      color: AppColors.primaryPurple
+                                          .withValues(alpha: 0.1),
+                                      borderRadius:
+                                          BorderRadius.circular(10),
+                                    ),
+                                    child: const Icon(
+                                        Icons.inventory_2_outlined,
+                                        color: AppColors.primaryPurple,
+                                        size: 20),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          p['name'] ?? '',
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 14),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          [
+                                            if (color != null &&
+                                                color.isNotEmpty)
+                                              'Cor: $color',
+                                            if (weight != null)
+                                              '$weight$unit',
+                                            'Estoque: $stock',
+                                          ].join(' • '),
+                                          style: TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.grey.shade600),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Text(
+                                    'R\$ ${price.toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: AppColors.primaryPurple,
+                                        fontSize: 13),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   double _calculateTotal() {
@@ -75,7 +266,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
 
       // Criar a compra
       final purchaseData = {
-        'shopId': shopId,
+        'shop_id': shopId,
         'items': lines,
         'total': _calculateTotal(),
         'created_at': DateTime.now().toIso8601String(),
@@ -87,16 +278,17 @@ class _PurchasesPageState extends State<PurchasesPage> {
       // Atualizar estoque e criar movimentações
       for (var item in lines) {
         final pDoc = await productsRef.select().eq('id', item['productId']).single();
-        final currentQty = (pDoc['qty'] ?? 0) as int;
+        final currentQty = ((pDoc['stock_quantity'] ?? pDoc['qty'] ?? 0) as num).toInt();
+        final newQty = currentQty + (item['qty'] as int);
 
-        await productsRef.update({'qty': currentQty + item['qty']}).eq('id', item['productId']);
+        await productsRef.update({'stock_quantity': newQty, 'qty': newQty}).eq('id', item['productId']);
 
         await supabase.from('stock_movements').insert({
-          'shopId': shopId,
-          'productId': item['productId'],
+          'shop_id': shopId,
+          'product_id': item['productId'],
           'type': 'purchase',
           'delta': item['qty'],
-          'refId': purchaseId,
+          'ref_id': purchaseId,
           'created_at': DateTime.now().toIso8601String(),
         });
       }
@@ -123,173 +315,424 @@ class _PurchasesPageState extends State<PurchasesPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = MediaQuery.of(context).size.width < 768;
     return Scaffold(
+      backgroundColor: const Color(0xFFF8F9FD),
       appBar: AppBar(
-        title: const Text('Entradas de Estoque',
+        title: const Text('Compras',
             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
         backgroundColor: AppColors.primaryPurple,
         foregroundColor: Colors.white,
         elevation: 0,
       ),
-      body: Row(
-        children: [
-          Expanded(
-            flex: 2,
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Itens da Compra',
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                      ElevatedButton.icon(
-                        onPressed: _addLine,
-                        icon: const Icon(Icons.add),
-                        label: const Text('Adicionar Item'),
-                        style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primaryPurple,
-                            foregroundColor: Colors.white),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  Expanded(child: _buildLinesList()),
-                ],
-              ),
-            ),
-          ),
-          Container(
-            width: 350,
-            decoration: BoxDecoration(
-              color: const Color(0xFFF8F9FA),
-              border: Border(left: BorderSide(color: Colors.grey.shade200)),
-            ),
-            child: Column(
-              children: [
-                const Padding(
-                  padding: EdgeInsets.all(20),
-                  child: Text('Histórico Recente',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                ),
-                Expanded(child: _buildPurchasesHistory()),
-                Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                        color: Colors.white, borderRadius: BorderRadius.circular(16)),
-                    child: Column(
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text('Total:',
-                                style: TextStyle(fontWeight: FontWeight.bold)),
-                            Text('R\$ ${_calculateTotal().toStringAsFixed(2)}',
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 20,
-                                    color: Colors.blue)),
-                          ],
-                        ),
-                        const SizedBox(height: 20),
-                        SizedBox(
-                          width: double.infinity,
-                          height: 50,
-                          child: ElevatedButton(
-                            onPressed: (_isSaving || lines.isEmpty) ? null : _finalizePurchase,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.blue,
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12)),
-                            ),
-                            child: _isSaving
-                                ? const CircularProgressIndicator(color: Colors.white)
-                                : const Text('SALVAR ENTRADA',
-                                    style: TextStyle(fontWeight: FontWeight.bold)),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+      body: SafeArea(
+        bottom: true,
+        child: isMobile ? _buildMobileLayout() : _buildDesktopLayout(),
       ),
     );
   }
 
-  Widget _buildLinesList() {
-    if (_isLoadingProducts) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
-    return ListView.builder(
-      itemCount: lines.length,
-      itemBuilder: (context, i) {
-        final line = lines[i];
-        final subtotal = (line['qty'] * line['price']).toStringAsFixed(2);
-
-        return Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          padding: const EdgeInsets.all(16),
+  Widget _buildMobileLayout() {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Itens da Compra',
+                  style:
+                      TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              ElevatedButton.icon(
+                onPressed: _addLine,
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('Adicionar'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primaryPurple,
+                  foregroundColor: Colors.white,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(child: _buildLinesList(isMobile: true)),
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.grey.shade100),
+            border: Border(top: BorderSide(color: Colors.grey.shade200)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 10,
+                offset: const Offset(0, -4),
+              ),
+            ],
           ),
           child: Row(
             children: [
               Expanded(
-                flex: 3,
-                child: DropdownButtonFormField<String>(
-                  decoration: const InputDecoration(labelText: 'Produto'),
-                  value: line['productId'],
-                  items: products.map((p) {
-                    return DropdownMenuItem<String>(
-                      value: p['id'],
-                      child: Text(p['name'] ?? ''),
-                    );
-                  }).toList(),
-                  onChanged: (val) {
-                    final p = products.firstWhere((element) => element['id'] == val);
-                    setState(() {
-                      lines[i]['productId'] = val;
-                      lines[i]['name'] = p['name'];
-                      // Opcional: sugerir preço de custo se houver
-                    });
-                  },
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Total',
+                        style: TextStyle(fontSize: 11, color: Colors.grey)),
+                    Text(
+                      'R\$ ${_calculateTotal().toStringAsFixed(2)}',
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18,
+                          color: AppColors.primaryPurple),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: TextFormField(
-                  decoration: const InputDecoration(labelText: 'Qtd'),
-                  keyboardType: TextInputType.number,
-                  initialValue: line['qty'].toString(),
-                  onChanged: (v) => setState(() => lines[i]['qty'] = int.tryParse(v) ?? 1),
+              ElevatedButton(
+                onPressed:
+                    (_isSaving || lines.isEmpty) ? null : _finalizePurchase,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primaryPurple,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 24, vertical: 14),
+                ),
+                child: _isSaving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                            color: Colors.white, strokeWidth: 2))
+                    : const Text('Salvar',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDesktopLayout() {
+    return Row(
+      children: [
+        Expanded(
+          flex: 2,
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('Itens da Compra',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 16)),
+                    ElevatedButton.icon(
+                      onPressed: _addLine,
+                      icon: const Icon(Icons.add),
+                      label: const Text('Adicionar Item'),
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primaryPurple,
+                          foregroundColor: Colors.white),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                Expanded(child: _buildLinesList()),
+              ],
+            ),
+          ),
+        ),
+        Container(
+          width: 350,
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8F9FA),
+            border: Border(left: BorderSide(color: Colors.grey.shade200)),
+          ),
+          child: Column(
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(20),
+                child: Text('Histórico Recente',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+              ),
+              Expanded(child: _buildPurchasesHistory()),
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16)),
+                  child: Column(
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('Total:',
+                              style: TextStyle(fontWeight: FontWeight.bold)),
+                          Text(
+                              'R\$ ${_calculateTotal().toStringAsFixed(2)}',
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 20,
+                                  color: Colors.blue)),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 50,
+                        child: ElevatedButton(
+                          onPressed: (_isSaving || lines.isEmpty)
+                              ? null
+                              : _finalizePurchase,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                          child: _isSaving
+                              ? const CircularProgressIndicator(
+                                  color: Colors.white)
+                              : const Text('SALVAR ENTRADA',
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: TextFormField(
-                  decoration: const InputDecoration(labelText: 'Preço Un.'),
-                  keyboardType: TextInputType.number,
-                  initialValue: line['price'].toString(),
-                  onChanged: (v) => setState(() => lines[i]['price'] = double.tryParse(v) ?? 0.0),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLinesList({bool isMobile = false}) {
+    if (_isLoadingProducts) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (lines.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.add_shopping_cart_outlined,
+                size: 64, color: Colors.grey[300]),
+            const SizedBox(height: 16),
+            Text(
+              'Toque em "Adicionar" para selecionar um produto',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey[500], fontSize: 14),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      itemCount: lines.length,
+      itemBuilder: (context, i) {
+        final line = lines[i];
+        final qty = (line['qty'] as int? ?? 1);
+        final price = (line['price'] as double? ?? 0.0);
+        final subtotal = (qty * price).toStringAsFixed(2);
+        final color = line['color'] as String?;
+        final weight = line['weight'];
+        final unit = (line['weight_unit'] as String?) ?? 'g';
+        final details = [
+          if (color != null && color.isNotEmpty) 'Cor: $color',
+          if (weight != null) '$weight$unit',
+        ].join(' • ');
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: Colors.grey.shade100),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.03),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding:
+                    const EdgeInsets.fromLTRB(12, 12, 8, 0),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryPurple.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(9),
+                      ),
+                      child: const Icon(Icons.inventory_2_outlined,
+                          color: AppColors.primaryPurple, size: 18),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            line['name'] ?? 'Produto',
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 14),
+                          ),
+                          if (details.isNotEmpty)
+                            Text(
+                              details,
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey.shade500),
+                            ),
+                        ],
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        setState(() => lines.removeAt(i));
+                        _showProductPicker();
+                      },
+                      style: TextButton.styleFrom(
+                          padding: EdgeInsets.zero,
+                          minimumSize: const Size(0, 0),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                      child: Text('Trocar',
+                          style: TextStyle(
+                              color: Colors.grey.shade500, fontSize: 12)),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline,
+                          color: Colors.red, size: 20),
+                      padding: const EdgeInsets.all(4),
+                      constraints: const BoxConstraints(),
+                      onPressed: () => setState(() => lines.removeAt(i)),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(width: 12),
-              Text('R\$ $subtotal', style: const TextStyle(fontWeight: FontWeight.bold)),
-              IconButton(
-                icon: const Icon(Icons.delete, color: Colors.red),
-                onPressed: () => setState(() => lines.removeAt(i)),
+              const Divider(height: 16, indent: 12, endIndent: 12),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Quantidade',
+                              style: TextStyle(
+                                  fontSize: 11, color: Colors.grey.shade500)),
+                          const SizedBox(height: 4),
+                          TextFormField(
+                            key: ValueKey('qty_$i'),
+                            initialValue: qty.toString(),
+                            keyboardType: TextInputType.number,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 15),
+                            decoration: InputDecoration(
+                              isDense: true,
+                              filled: true,
+                              fillColor: const Color(0xFFF8F9FD),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                                borderSide:
+                                    BorderSide(color: Colors.grey.shade200),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                                borderSide:
+                                    BorderSide(color: Colors.grey.shade200),
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 8),
+                            ),
+                            onChanged: (v) => setState(
+                                () => lines[i]['qty'] = int.tryParse(v) ?? 1),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Preço unit. (R\$)',
+                              style: TextStyle(
+                                  fontSize: 11, color: Colors.grey.shade500)),
+                          const SizedBox(height: 4),
+                          TextFormField(
+                            key: ValueKey('price_$i'),
+                            initialValue: price.toStringAsFixed(2),
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 15),
+                            decoration: InputDecoration(
+                              isDense: true,
+                              filled: true,
+                              fillColor: const Color(0xFFF8F9FD),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                                borderSide:
+                                    BorderSide(color: Colors.grey.shade200),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                                borderSide:
+                                    BorderSide(color: Colors.grey.shade200),
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 8),
+                            ),
+                            onChanged: (v) => setState(() =>
+                                lines[i]['price'] =
+                                    double.tryParse(v.replaceAll(',', '.')) ??
+                                        0.0),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text('Subtotal',
+                            style: TextStyle(
+                                fontSize: 11, color: Colors.grey.shade500)),
+                        const SizedBox(height: 6),
+                        Text(
+                          'R\$ $subtotal',
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15,
+                              color: AppColors.primaryPurple),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -324,7 +767,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
             final data = sortedDocs[i];
             final items = (data['items'] as List<dynamic>?) ?? [];
             final dateStr = (data['created_at'] ?? '').toString();
-            final dateDisplay = dateStr.isNotEmpty ? dateStr.substring(8, 10) + '/' + dateStr.substring(5, 7) : '-';
+            final dateDisplay = dateStr.isNotEmpty ? '${dateStr.substring(8, 10)}/${dateStr.substring(5, 7)}' : '-';
 
             return Container(
               margin: const EdgeInsets.all(8),

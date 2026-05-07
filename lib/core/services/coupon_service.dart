@@ -1,5 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/foundation.dart';
+import '../widgets/coupon_invalid_modal.dart';
 
 /// Resultado da validação de um cupom
 class CouponValidationResult {
@@ -7,17 +8,56 @@ class CouponValidationResult {
   final String? message;
   final double? discountPercent;
   final String? couponId;
+  final Map<String, dynamic>? couponData;
+  final CouponErrorType? errorType;
 
   CouponValidationResult({
     required this.isValid,
     this.message,
     this.discountPercent,
     this.couponId,
+    this.couponData,
+    this.errorType,
   });
+
+  factory CouponValidationResult.invalid(
+    CouponErrorType type,
+    String message,
+  ) =>
+      CouponValidationResult(
+        isValid: false,
+        message: message,
+        errorType: type,
+      );
 }
 
 class CouponService {
   static final _supabase = Supabase.instance.client;
+
+  /// Verifica se um cliente é novo na loja (nunca teve agendamento confirmado e sem classificação manual)
+  static Future<bool> checkIsNewClient({
+    required String clientId,
+    required String shopId,
+    String? currentClassification,
+  }) async {
+    try {
+      if (currentClassification != null && currentClassification.trim().isNotEmpty) {
+        return false;
+      }
+      final result = await _supabase
+          .from('appointments')
+          .select('id')
+          .eq('shop_id', shopId)
+          .eq('client_id', clientId)
+          .neq('status', 'cancelado')
+          .neq('status', 'recusado')
+          .limit(1);
+      return (result as List).isEmpty;
+    } catch (e) {
+      if (kDebugMode) print('Erro ao verificar novo cliente: $e');
+      return false;
+    }
+  }
 
   /// Valida um cupom para um determinado usuário e loja
   static Future<CouponValidationResult> validateCoupon({
@@ -25,6 +65,11 @@ class CouponService {
     required String code,
     required String userId,
     String? serviceId,
+    String? clientClassification,
+    List<String>? clientManualTags,
+    bool isNewClient = false,
+    bool isVipClient = false,
+    String? selectedPaymentMethod,
   }) async {
     try {
       final normalizedCode = code.trim().toUpperCase();
@@ -43,7 +88,9 @@ class CouponService {
 
       if (response == null) {
         return CouponValidationResult(
-            isValid: false, message: 'Cupom inválido.');
+            isValid: false,
+            message: 'Cupom inválido.',
+            errorType: CouponErrorType.notFound);
       }
 
       final couponData = response;
@@ -52,7 +99,9 @@ class CouponService {
       // 2. Verifica se está ativo
       if (couponData['is_active'] != true) {
         return CouponValidationResult(
-            isValid: false, message: 'Este cupom não está mais ativo.');
+            isValid: false,
+            message: 'Este cupom não está mais ativo.',
+            errorType: CouponErrorType.inactive);
       }
 
       // 3. Verifica restrição de serviço
@@ -61,7 +110,8 @@ class CouponService {
         if (serviceId == null || !serviceIds.contains(serviceId)) {
           return CouponValidationResult(
               isValid: false,
-              message: 'Este cupom não é válido para o serviço selecionado.');
+              message: 'Este cupom não é válido para o serviço selecionado.',
+              errorType: CouponErrorType.notForService);
         }
       }
  
@@ -69,7 +119,9 @@ class CouponService {
       final double discountValue = (couponData['discount_percent'] as num?)?.toDouble() ?? 0.0;
       if (discountValue <= 0 || discountValue > 100) {
         return CouponValidationResult(
-            isValid: false, message: 'Cupom com desconto inválido.');
+            isValid: false,
+            message: 'Cupom com desconto inválido.',
+            errorType: CouponErrorType.generic);
       }
 
       // 4. Verifica validade (data) — usa fim do dia para incluir o dia inteiro
@@ -79,7 +131,9 @@ class CouponService {
         final endOfDay = DateTime(validUntil.year, validUntil.month, validUntil.day, 23, 59, 59);
         if (endOfDay.isBefore(DateTime.now())) {
           return CouponValidationResult(
-              isValid: false, message: 'Este cupom expirou.');
+              isValid: false,
+              message: 'Este cupom expirou.',
+              errorType: CouponErrorType.expired);
         }
       }
  
@@ -87,7 +141,9 @@ class CouponService {
       final validMonth = int.tryParse(couponData['valid_month']?.toString() ?? '');
       if (validMonth != null && DateTime.now().month != validMonth) {
         return CouponValidationResult(
-            isValid: false, message: 'Este cupom não é válido neste mês.');
+            isValid: false,
+            message: 'Este cupom não é válido neste mês.',
+            errorType: CouponErrorType.notActiveMonth);
       }
  
       // 6. Verifica limite de uso global
@@ -96,7 +152,9 @@ class CouponService {
       
       if (maxUsage != null && maxUsage > 0 && usageCount >= maxUsage) {
         return CouponValidationResult(
-            isValid: false, message: 'Este cupom atingiu o limite de usos.');
+            isValid: false,
+            message: 'Este cupom atingiu o limite de usos.',
+            errorType: CouponErrorType.limitReached);
       }
  
       // 7. Verifica se o usuário já usou este cupom
@@ -109,13 +167,92 @@ class CouponService {
  
       if (usageResponse != null) {
         return CouponValidationResult(
-            isValid: false, message: 'Você já utilizou este cupom.');
+            isValid: false,
+            message: 'Você já utilizou este cupom.',
+            errorType: CouponErrorType.alreadyUsed);
       }
- 
+
+      // 8. Busca dados de shop_clients se classification não foi fornecida
+      String? resolvedClassification = clientClassification;
+      List<String> resolvedManualTags = clientManualTags ?? [];
+      if (resolvedClassification == null) {
+        try {
+          final shopClientData = await _supabase
+              .from('shop_clients')
+              .select('classification, manual_tags')
+              .eq('user_id', userId)
+              .eq('shop_id', shopId)
+              .maybeSingle();
+          if (shopClientData != null) {
+            resolvedClassification = shopClientData['classification']?.toString();
+            if (resolvedManualTags.isEmpty && shopClientData['manual_tags'] != null) {
+              resolvedManualTags = List<String>.from(shopClientData['manual_tags']);
+            }
+          }
+        } catch (e) {
+          if (kDebugMode) print('Aviso: não foi possível carregar shop_clients: $e');
+        }
+      }
+
+      // Verificação C — Forma de pagamento
+      final List<dynamic> validPaymentMethods =
+          couponData['valid_payment_methods'] as List<dynamic>? ?? [];
+      if (validPaymentMethods.isNotEmpty && selectedPaymentMethod != null) {
+        if (selectedPaymentMethod == 'local' ||
+            !validPaymentMethods.contains(selectedPaymentMethod)) {
+          return CouponValidationResult.invalid(
+            CouponErrorType.onlinePaymentOnly,
+            'Este cupom é válido apenas para pagamentos realizados online (Pix ou cartão). Selecione uma forma de pagamento online para utilizá-lo.',
+          );
+        }
+      }
+
+      // Verificação B — Categorias bloqueadas (comparação case-insensitive)
+      final List<dynamic> blockedClassificationsRaw =
+          couponData['blocked_classifications'] as List<dynamic>? ?? [];
+      if (blockedClassificationsRaw.isNotEmpty) {
+        final Set<String> blockedUpper = blockedClassificationsRaw
+            .map((c) => c.toString().trim().toUpperCase())
+            .where((c) => c.isNotEmpty)
+            .toSet();
+        if (resolvedClassification != null &&
+            blockedUpper.contains(resolvedClassification.trim().toUpperCase())) {
+          return CouponValidationResult.invalid(
+            CouponErrorType.classificationBlocked,
+            'Este cupom não está disponível para o seu perfil de cliente.',
+          );
+        }
+        final hasBlockedTag = resolvedManualTags
+            .any((tag) => blockedUpper.contains(tag.trim().toUpperCase()));
+        if (hasBlockedTag) {
+          return CouponValidationResult.invalid(
+            CouponErrorType.classificationBlocked,
+            'Este cupom não está disponível para o seu perfil de cliente.',
+          );
+        }
+      }
+
+      // Verificação A — Público-alvo
+      final String targetAudience =
+          couponData['target_audience']?.toString() ?? 'all';
+      if (targetAudience == 'new_clients' && !isNewClient) {
+        return CouponValidationResult.invalid(
+          CouponErrorType.newClientsOnly,
+          'Este cupom é válido apenas para quem está agendando pela primeira vez neste salão.',
+        );
+      }
+      if (targetAudience == 'vip_only' && !isVipClient) {
+        return CouponValidationResult.invalid(
+          CouponErrorType.vipOnly,
+          'Este cupom é válido apenas para clientes VIP do salão.',
+        );
+      }
+
       return CouponValidationResult(
         isValid: true,
         discountPercent: discountValue,
         couponId: couponId,
+        couponData: couponData,
       );
     } catch (e) {
       if (kDebugMode) print('Erro ao validar cupom: $e');

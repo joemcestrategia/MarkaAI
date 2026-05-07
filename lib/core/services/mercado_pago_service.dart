@@ -19,7 +19,10 @@ class MercadoPagoService {
     try {
       debugPrint("⚡ [Service] Chamando Supabase Function: create-pix-payment");
 
-      final response = await _supabase.functions.invoke('createPixPayment', body: {
+      final response = await _supabase.functions.invoke('createPixPayment', headers: {
+        'Authorization': 'Bearer ${_supabase.auth.currentSession?.accessToken ?? ''}',
+        'Content-Type': 'application/json',
+      }, body: {
         'shop_id': shopId,
         'amount': amount,
         'email': emailCliente,
@@ -57,7 +60,10 @@ class MercadoPagoService {
     required String paymentId,
   }) async {
     try {
-      final response = await _supabase.functions.invoke('getPaymentStatus', body: {
+      final response = await _supabase.functions.invoke('getPaymentStatus', headers: {
+        'Authorization': 'Bearer ${_supabase.auth.currentSession?.accessToken ?? ''}',
+        'Content-Type': 'application/json',
+      }, body: {
         'shop_id': shopId,
         'payment_id': paymentId,
       });
@@ -90,7 +96,10 @@ class MercadoPagoService {
     try {
       debugPrint("⚡ [Service] Chamando Supabase Function: cobrar-cartao");
 
-      final response = await _supabase.functions.invoke('cobrar-cartao', body: {
+      final response = await _supabase.functions.invoke('cobrar-cartao', headers: {
+        'Authorization': 'Bearer ${_supabase.auth.currentSession?.accessToken ?? ''}',
+        'Content-Type': 'application/json',
+      }, body: {
         'access_token': accessToken,
         'card_number': cardNumber,
         'card_holder': cardHolder,
@@ -121,7 +130,10 @@ class MercadoPagoService {
     required String bin, // 6 primeiros dígitos
   }) async {
     try {
-      final response = await _supabase.functions.invoke('get-installments', body: {
+      final response = await _supabase.functions.invoke('get-installments', headers: {
+        'Authorization': 'Bearer ${_supabase.auth.currentSession?.accessToken ?? ''}',
+        'Content-Type': 'application/json',
+      }, body: {
         'access_token': accessToken,
         'amount': amount,
         'bin': bin,
@@ -151,7 +163,10 @@ class MercadoPagoService {
     try {
       debugPrint("⚡ Chamando Supabase Function: cobrar-cartao-salvo");
 
-      final response = await _supabase.functions.invoke('cobrar-cartao-salvo', body: {
+      final response = await _supabase.functions.invoke('cobrar-cartao-salvo', headers: {
+        'Authorization': 'Bearer ${_supabase.auth.currentSession?.accessToken ?? ''}',
+        'Content-Type': 'application/json',
+      }, body: {
         'access_token': accessToken,
         'customer_id': customerId,
         'card_id': cardId,
@@ -199,6 +214,10 @@ class MercadoPagoService {
 
       final response = await _supabase.functions.invoke(
         'criar-pagamento',
+        headers: {
+          'Authorization': 'Bearer ${_supabase.auth.currentSession?.accessToken ?? ''}',
+          'Content-Type': 'application/json',
+        },
         body: {
           'shop_id': shopId,
           'card_token': cardToken,
@@ -342,6 +361,10 @@ class MercadoPagoService {
 
       final response = await _supabase.functions.invoke(
         'save-card',
+        headers: {
+          'Authorization': 'Bearer ${_supabase.auth.currentSession?.accessToken ?? ''}',
+          'Content-Type': 'application/json',
+        },
         body: {
           'shop_id': shopId,
           'card_token': cardToken,
@@ -406,6 +429,10 @@ class MercadoPagoService {
     try {
       final response = await Supabase.instance.client.functions.invoke(
         'refund-payment',
+        headers: {
+          'Authorization': 'Bearer ${_supabase.auth.currentSession?.accessToken ?? ''}',
+          'Content-Type': 'application/json',
+        },
         body: {
           'shop_id': shopId,
           'payment_id': paymentId,

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
 import 'dart:convert';
@@ -12,6 +13,8 @@ import '../../core/services/session_service.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/services/auth_error_handler.dart';
 import '../../core/utils/date_parsing_utils.dart';
+import '../../core/docs/legal_documents.dart';
+import '../../pages/legal_viewer_page.dart';
 import '../../widgets/app_info_modal.dart';
 
 // --- SERVIÇO AUXILIAR (MANTIDO) ---
@@ -60,7 +63,9 @@ class _LoginPageState extends State<LoginPage>
   bool _obscurePasswordConfirm = true;
   bool _acceptedTerms = false;
   bool _acceptedPrivacy = false;
+  bool _rememberMe = false;
   String? _selectedRole;
+  String? _birthError;
   int _currentStep =
       0; // 0: Credenciais, 1: Perfil, 2: Dados Pessoais, 3: Endereço
 
@@ -90,12 +95,52 @@ class _LoginPageState extends State<LoginPage>
   void initState() {
     super.initState();
     // Verificação inicial de sessão
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       final user = AuthService().currentUser;
       if (user != null) {
         _routeUser(user);
+        return;
       }
+      // Sessão expirada ou perdida - tenta auto-login com credenciais salvas
+      await _tryAutoLogin();
     });
+  }
+
+  Future<void> _tryAutoLogin() async {
+    final hasRemember = await SessionService.hasRememberMe();
+    if (!hasRemember) return;
+
+    final email = await SessionService.getSavedEmail();
+    final password = await SessionService.getSavedPassword();
+    if (email == null || password == null) return;
+
+    if (!mounted) return;
+    setState(() {
+      _emailCtrl.text = email;
+      _passCtrl.text = password;
+      _rememberMe = true;
+      _isLoading = true;
+    });
+
+    try {
+      final res = await AuthService().signIn(email: email, password: password);
+      if (res.user != null && mounted) {
+        await _routeUser(res.user!);
+      }
+    } on sb.AuthException {
+      // Credenciais inválidas (senha trocada remotamente) - limpa e mostra o formulário
+      await SessionService.clearCredentials();
+      if (mounted) {
+        setState(() {
+          _passCtrl.clear();
+          _rememberMe = false;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      // Erro de rede - mantém credenciais e exibe formulário pré-preenchido
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   @override
@@ -282,9 +327,39 @@ class _LoginPageState extends State<LoginPage>
         _showError("Por favor, insira seu telefone.");
         return;
       }
-      if (_selectedRole == 'cliente' && _birthCtrl.text.isEmpty) {
-        _showError("Por favor, insira sua data de nascimento.");
-        return;
+      if (_selectedRole == 'cliente') {
+        final birthText = _birthCtrl.text;
+        if (birthText.isEmpty) {
+          setState(() => _birthError = "Data de nascimento obrigatória");
+          _showError("Por favor, insira sua data de nascimento.");
+          return;
+        }
+        if (birthText.length < 10) {
+          setState(() => _birthError = "Use DD/MM/AAAA com 4 dígitos no ano");
+          _showError("Data incompleta. Use o formato DD/MM/AAAA.");
+          return;
+        }
+        final parts = birthText.split('/');
+        final day = int.tryParse(parts[0]);
+        final month = int.tryParse(parts[1]);
+        final year = int.tryParse(parts[2]);
+        final now = DateTime.now();
+        bool validDate = false;
+        if (day != null && month != null && year != null &&
+            year >= 1900 && year <= now.year &&
+            month >= 1 && month <= 12 &&
+            day >= 1 && day <= 31) {
+          try {
+            final date = DateTime(year, month, day);
+            if (!date.isAfter(now)) validDate = true;
+          } catch (_) {}
+        }
+        if (!validDate) {
+          setState(() => _birthError = "Data inválida. Verifique dia, mês e ano");
+          _showError("Data de nascimento inválida. Verifique os dados informados.");
+          return;
+        }
+        setState(() => _birthError = null);
       }
       if (_selectedRole == 'dono' && _bizCtrl.text.isEmpty) {
         _showError("Por favor, insira o nome da sua barbearia/salão.");
@@ -694,18 +769,37 @@ class _LoginPageState extends State<LoginPage>
               setState(() => _obscurePassword = !_obscurePassword),
         ),
         const SizedBox(height: 10),
-        Align(
-          alignment: Alignment.centerRight,
-          child: TextButton(
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const ForgotPasswordPage()),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Row(
+              children: [
+                SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: Checkbox(
+                    value: _rememberMe,
+                    onChanged: (v) => setState(() => _rememberMe = v ?? false),
+                    activeColor: AppColors.primaryPurple,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                const Text('Lembrar-me',
+                    style: TextStyle(fontSize: 14, color: Colors.black87)),
+              ],
             ),
-            child: const Text("Esqueceu a senha?",
-                style: TextStyle(
-                    color: AppColors.primaryPurple,
-                    fontWeight: FontWeight.w600)),
-          ),
+            TextButton(
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ForgotPasswordPage()),
+              ),
+              child: const Text('Esqueceu a senha?',
+                  style: TextStyle(
+                      color: AppColors.primaryPurple,
+                      fontWeight: FontWeight.w600)),
+            ),
+          ],
         ),
         const SizedBox(height: 20),
         _PrimaryButton(
@@ -753,6 +847,14 @@ class _LoginPageState extends State<LoginPage>
         password: _passCtrl.text,
       );
       if (res.user != null) {
+        if (_rememberMe) {
+          await SessionService.saveCredentials(
+            email: _emailCtrl.text.trim(),
+            password: _passCtrl.text,
+          );
+        } else {
+          await SessionService.clearCredentials();
+        }
         await _routeUser(res.user!);
       }
     } catch (e) {
@@ -1135,10 +1237,14 @@ class _LoginPageState extends State<LoginPage>
         if (_selectedRole == 'cliente')
           _ModernInput(
             controller: _birthCtrl,
-            label: "Data de Nascimento",
+            label: "Data de Nascimento (DD/MM/AAAA)",
             icon: Icons.cake,
             mask: _dateMask,
             keyboardType: TextInputType.number,
+            errorText: _birthError,
+            onChanged: (_) {
+              if (_birthError != null) setState(() => _birthError = null);
+            },
           )
         else
           _ModernInput(
@@ -1234,20 +1340,32 @@ class _LoginPageState extends State<LoginPage>
                       child: Padding(
                         padding: const EdgeInsets.only(top: 12),
                         child: RichText(
-                          text: const TextSpan(
+                          text: TextSpan(
                             style:
-                                TextStyle(fontSize: 13, color: Colors.black87),
+                                const TextStyle(fontSize: 13, color: Colors.black87),
                             children: [
-                              TextSpan(text: "Li e aceito os "),
+                              const TextSpan(text: "Li e aceito os "),
                               TextSpan(
                                 text: "Termos de Uso",
-                                style: TextStyle(
+                                style: const TextStyle(
                                   color: AppColors.primaryPurple,
                                   fontWeight: FontWeight.bold,
                                   decoration: TextDecoration.underline,
                                 ),
+                                recognizer: TapGestureRecognizer()
+                                  ..onTap = () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => const LegalViewerPage(
+                                          title: 'Termos de Uso',
+                                          markdownContent: LegalDocuments.termsOfUse,
+                                        ),
+                                      ),
+                                    );
+                                  },
                               ),
-                              TextSpan(text: " da plataforma"),
+                              const TextSpan(text: " da plataforma"),
                             ],
                           ),
                         ),
@@ -1276,18 +1394,30 @@ class _LoginPageState extends State<LoginPage>
                       child: Padding(
                         padding: const EdgeInsets.only(top: 12),
                         child: RichText(
-                          text: const TextSpan(
+                          text: TextSpan(
                             style:
-                                TextStyle(fontSize: 13, color: Colors.black87),
+                                const TextStyle(fontSize: 13, color: Colors.black87),
                             children: [
-                              TextSpan(text: "Li e aceito a "),
+                              const TextSpan(text: "Li e aceito a "),
                               TextSpan(
                                 text: "Política de Privacidade",
-                                style: TextStyle(
+                                style: const TextStyle(
                                   color: AppColors.primaryPurple,
                                   fontWeight: FontWeight.bold,
                                   decoration: TextDecoration.underline,
                                 ),
+                                recognizer: TapGestureRecognizer()
+                                  ..onTap = () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => const LegalViewerPage(
+                                          title: 'Política de Privacidade',
+                                          markdownContent: LegalDocuments.privacyPolicy,
+                                        ),
+                                      ),
+                                    );
+                                  },
                               ),
                             ],
                           ),
@@ -1340,6 +1470,7 @@ class _ModernInput extends StatelessWidget {
   final MaskTextInputFormatter? mask;
   final TextInputType? keyboardType;
   final Function(String)? onChanged;
+  final String? errorText;
 
   const _ModernInput({
     required this.controller,
@@ -1351,6 +1482,7 @@ class _ModernInput extends StatelessWidget {
     this.mask,
     this.keyboardType,
     this.onChanged,
+    this.errorText,
   });
 
   @override
@@ -1366,6 +1498,7 @@ class _ModernInput extends StatelessWidget {
       style: const TextStyle(color: Colors.black87),
       decoration: InputDecoration(
         labelText: label,
+        errorText: errorText,
         labelStyle: TextStyle(color: Colors.grey[600], fontSize: 14),
         prefixIcon: Icon(icon,
             color: AppColors.primaryPurple.withValues(alpha: 0.7), size: 20),

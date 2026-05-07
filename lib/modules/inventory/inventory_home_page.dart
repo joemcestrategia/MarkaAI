@@ -55,7 +55,7 @@ class _InventoryHomePageState extends State<InventoryHomePage> {
 
   void _showUpgradeDialog() {
     UpgradeModal.show(context,
-        featureName: 'Gestão de Estoque e PDV', requiredPlan: 'Plus');
+        featureName: 'Módulo de Produtos', requiredPlan: 'Plus');
   }
 
   @override
@@ -85,7 +85,7 @@ class _InventoryHomePageState extends State<InventoryHomePage> {
         return Scaffold(
           backgroundColor: const Color(0xFFF8F9FD),
           appBar: AppBar(
-            title: const Text('Inventário & Estoque',
+            title: const Text('Produtos',
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
             backgroundColor: AppColors.primaryPurple,
             foregroundColor: Colors.white,
@@ -122,37 +122,10 @@ class _InventoryHomePageState extends State<InventoryHomePage> {
                 children: [
                   Padding(
                     padding: EdgeInsets.fromLTRB(
-                      isMobile ? 20 : 40,
-                      24,
-                      isMobile ? 20 : 40,
-                      0,
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          "Módulos de Gestão",
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w900,
-                            color: Colors.black87,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          "Selecione uma categoria para gerenciar",
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.grey.shade500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Padding(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: isMobile ? 20 : 40,
-                      vertical: 20,
+                      isMobile ? 16 : 40,
+                      16,
+                      isMobile ? 16 : 40,
+                      16,
                     ),
                     child: isMobile
                         ? _buildMobileList(isGated)
@@ -172,8 +145,8 @@ class _InventoryHomePageState extends State<InventoryHomePage> {
       children: [
         _ModuleCard(
           icon: Icons.inventory_2_outlined,
-          title: 'Produtos e Serviços',
-          description: 'Cadastre e gerencie seu catálogo completo',
+          title: 'Produtos',
+          description: 'Adicione e controle os itens que você vende',
           color: AppColors.primaryPurple,
           isLocked: isGated,
           onTap: (context) {
@@ -190,8 +163,8 @@ class _InventoryHomePageState extends State<InventoryHomePage> {
         const SizedBox(height: 16),
         _ModuleCard(
           icon: Icons.point_of_sale_outlined,
-          title: 'Frente de Caixa (PDV)',
-          description: 'Realize vendas de forma rápida e integrada',
+          title: 'Registrar Venda',
+          description: 'Venda produtos diretamente para seus clientes',
           color: Colors.green,
           isLocked: isGated,
           onTap: (context) {
@@ -208,8 +181,8 @@ class _InventoryHomePageState extends State<InventoryHomePage> {
         const SizedBox(height: 16),
         _ModuleCard(
           icon: Icons.shopping_bag_outlined,
-          title: 'Entradas e Compras',
-          description: 'Registre novas aquisições para o estoque',
+          title: 'Compras',
+          description: 'Registre produtos que entraram no seu estoque',
           color: Colors.blue,
           isLocked: isGated,
           onTap: (context) {
@@ -226,8 +199,8 @@ class _InventoryHomePageState extends State<InventoryHomePage> {
         const SizedBox(height: 16),
         _ModuleCard(
           icon: Icons.analytics_outlined,
-          title: 'Fluxo e Histórico',
-          description: 'Acompanhe todas as entradas e saídas',
+          title: 'Histórico',
+          description: 'Veja tudo que entrou e saiu do seu estoque',
           color: Colors.orange,
           isLocked: isGated,
           onTap: (context) {
@@ -256,8 +229,8 @@ class _InventoryHomePageState extends State<InventoryHomePage> {
       children: [
         _ModuleCard(
           icon: Icons.inventory_2_outlined,
-          title: 'Produtos e Serviços',
-          description: 'Catálogo de itens para venda e uso profissional',
+          title: 'Produtos',
+          description: 'Adicione e controle os itens que você vende',
           color: AppColors.primaryPurple,
           isLocked: isGated,
           onTap: (context) {
@@ -273,8 +246,8 @@ class _InventoryHomePageState extends State<InventoryHomePage> {
         ),
         _ModuleCard(
           icon: Icons.point_of_sale_outlined,
-          title: 'Frente de Caixa (PDV)',
-          description: 'Sistema integrado para registro de vendas rápidas',
+          title: 'Registrar Venda',
+          description: 'Venda produtos diretamente para seus clientes',
           color: Colors.green,
           isLocked: isGated,
           onTap: (context) {
@@ -290,8 +263,8 @@ class _InventoryHomePageState extends State<InventoryHomePage> {
         ),
         _ModuleCard(
           icon: Icons.shopping_bag_outlined,
-          title: 'Entradas e Compras',
-          description: 'Gestão de fornecedores e reposição de estoque',
+          title: 'Compras',
+          description: 'Registre produtos que entraram no seu estoque',
           color: Colors.blue,
           isLocked: isGated,
           onTap: (context) {
@@ -307,8 +280,8 @@ class _InventoryHomePageState extends State<InventoryHomePage> {
         ),
         _ModuleCard(
           icon: Icons.analytics_outlined,
-          title: 'Fluxo e Histórico',
-          description: 'Relatórios detalhados de movimentação de itens',
+          title: 'Histórico',
+          description: 'Veja tudo que entrou e saiu do seu estoque',
           color: Colors.orange,
           isLocked: isGated,
           onTap: (context) {

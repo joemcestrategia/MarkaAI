@@ -47,6 +47,8 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
 
   PlanFeatures _currentFeatures = planFeaturesConfig[PlanKey.free]!;
 
+  Future<List<Map<String, dynamic>>>? _historyFuture;
+
   @override
   void initState() {
     super.initState();
@@ -128,12 +130,104 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
       if (id != null) {
         _loadTags(id);
         _loadFeatures(id);
+        _refreshHistory();
       }
     }
   }
 
   Future<void> _loadFeatures(String sid) async {
     // Features are now handled by StreamBuilder in build()
+  }
+
+  void _refreshHistory() {
+    if (shopId == null) return;
+    setState(() {
+      _historyFuture = _loadClientHistory();
+    });
+  }
+
+  DateTime _parseEventDate(Map<String, dynamic> event) {
+    try {
+      final type = event['_type'] as String? ?? 'appointment';
+      final raw = type == 'activity' ? event['created_at'] : event['scheduled_at'];
+      if (raw is DateTime) return raw;
+      if (raw is String) return DateTime.parse(raw);
+    } catch (_) {}
+    return DateTime(2000);
+  }
+
+  Future<List<Map<String, dynamic>>> _loadClientHistory() async {
+    if (shopId == null) return [];
+    final supabase = Supabase.instance.client;
+    final List<Map<String, dynamic>> combined = [];
+
+    try {
+      // 1. Busca agendamentos do cliente com filtro server-side
+      List<dynamic> apptRows = [];
+      if (widget.clientData['origem'] == 'manual') {
+        final tel = (widget.clientData['telefone'] ?? '').toString();
+        final nome = (widget.clientData['nome'] ?? widget.clientData['name'] ?? '').toString();
+        if (tel.isNotEmpty && tel != 'Não informado') {
+          apptRows = await supabase
+              .from('appointments')
+              .select('id, scheduled_at, status, service_name, professional_name, total_price, payment_method, payment_status, paid_amount')
+              .eq('shop_id', shopId!)
+              .eq('client_phone', tel)
+              .order('scheduled_at', ascending: false)
+              .limit(60);
+        } else {
+          apptRows = await supabase
+              .from('appointments')
+              .select('id, scheduled_at, status, service_name, professional_name, total_price, payment_method, payment_status, paid_amount')
+              .eq('shop_id', shopId!)
+              .eq('client_name', nome)
+              .order('scheduled_at', ascending: false)
+              .limit(60);
+        }
+      } else {
+        apptRows = await supabase
+            .from('appointments')
+            .select('id, scheduled_at, status, service_name, professional_name, total_price, payment_method, payment_status, paid_amount')
+            .eq('shop_id', shopId!)
+            .eq('client_id', widget.clientId)
+            .order('scheduled_at', ascending: false)
+            .limit(60);
+      }
+
+      for (final a in apptRows) {
+        combined.add(Map<String, dynamic>.from(a as Map)..['_type'] = 'appointment');
+      }
+
+      // 2. Busca log de atividades para estes agendamentos
+      final apptIds = apptRows
+          .map((a) => (a as Map)['id']?.toString())
+          .where((id) => id != null && id.isNotEmpty)
+          .cast<String>()
+          .toList();
+
+      if (apptIds.isNotEmpty) {
+        final logs = await supabase
+            .from('shop_activity_log')
+            .select()
+            .eq('shop_id', shopId!)
+            .inFilter('appointment_id', apptIds)
+            .order('created_at', ascending: false)
+            .limit(120);
+
+        for (final l in logs) {
+          final et = (l['event_type'] as String? ?? '');
+          // Exibe apenas reagendamentos e pagamentos (cancelamento e criação já visíveis via appointments)
+          if (et == 'reagendamento' || et == 'pagamento_confirmado') {
+            combined.add(Map<String, dynamic>.from(l as Map)..['_type'] = 'activity');
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[ClientHistory] Erro ao carregar: $e');
+    }
+
+    combined.sort((a, b) => _parseEventDate(b).compareTo(_parseEventDate(a)));
+    return combined;
   }
 
   static const _kTagNormalize = {
@@ -491,8 +585,10 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
         final Color themeColor = isManual ? Colors.orange : AppColors.primaryPurple;
         final initials = nome.isNotEmpty ? nome[0].toUpperCase() : '?';
 
-        return Column(
-          children: [
+        return SizedBox(
+      height: MediaQuery.of(context).size.height * 0.85,
+      child: Column(
+        children: [
         // ── HEADER COMPACTO ──────────────────────────────────────────
         Container(
           color: Colors.white,
@@ -962,26 +1058,34 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
             controller: _tabController,
             children: [
               // ABA 1: HISTÓRICO
-              StreamBuilder<List<Map<String, dynamic>>>(
-                stream: _getHistoryStream(),
+              FutureBuilder<List<Map<String, dynamic>>>(
+                future: _historyFuture,
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator());
+                    return const Center(child: CircularProgressIndicator(color: AppColors.primaryPurple));
                   }
-                  final docs = snapshot.data ?? [];
-                  if (docs.isEmpty) {
+                  final events = snapshot.data ?? [];
+                  if (events.isEmpty) {
                     return _emptyState(
                         icon: Icons.history,
                         message: 'Nenhum histórico encontrado');
                   }
-                  return ListView.separated(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 12),
-                    itemCount: docs.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
-                    itemBuilder: (context, i) {
-                      return _buildHistoryCard(docs[i]);
-                    },
+                  return RefreshIndicator(
+                    color: AppColors.primaryPurple,
+                    onRefresh: () async => _refreshHistory(),
+                    child: ListView.separated(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 12),
+                      itemCount: events.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (context, i) {
+                        final ev = events[i];
+                        if (ev['_type'] == 'activity') {
+                          return _buildActivityEventCard(ev);
+                        }
+                        return _buildHistoryCard(ev);
+                      },
+                    ),
                   );
                 },
               ),
@@ -1014,6 +1118,7 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
           ),
         ),
       ],
+    ),
     );
   },
 );
@@ -1173,6 +1278,96 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
     );
   }
 
+  Widget _buildActivityEventCard(Map<String, dynamic> data) {
+    final eventType = data['event_type'] as String? ?? '';
+    final description = data['description'] as String? ?? '';
+    final actorName = data['actor_name'] as String? ?? '';
+    DateTime date;
+    try {
+      final raw = data['created_at'];
+      date = raw is DateTime ? raw : DateTime.parse(raw.toString());
+    } catch (_) {
+      date = DateTime.now();
+    }
+
+    final bool isReschedule = eventType == 'reagendamento';
+    final bool isPayment = eventType == 'pagamento_confirmado';
+
+    final Color accentColor = isPayment
+        ? Colors.green
+        : isReschedule
+            ? AppColors.primaryPurple
+            : Colors.orange;
+
+    final IconData icon = isPayment
+        ? Icons.credit_card_rounded
+        : isReschedule
+            ? Icons.swap_horiz_rounded
+            : Icons.info_outline;
+
+    final String label = isPayment
+        ? 'PAGAMENTO'
+        : isReschedule
+            ? 'REAGENDADO'
+            : 'ATUALIZAÇÃO';
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Ícone de evento
+          Container(
+            width: 42,
+            height: 48,
+            decoration: BoxDecoration(
+              color: accentColor.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 18, color: accentColor),
+                Text(DateFormat('dd').format(date),
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: accentColor)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: accentColor.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(label,
+                          style: TextStyle(fontSize: 9, color: accentColor, fontWeight: FontWeight.bold)),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(DateFormat('dd/MM/yy HH:mm').format(date),
+                        style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(description,
+                    style: const TextStyle(fontSize: 12, color: Colors.black87, decoration: TextDecoration.none)),
+                if (actorName.isNotEmpty)
+                  Text(actorName,
+                      style: TextStyle(fontSize: 10, color: Colors.grey[500], decoration: TextDecoration.none)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildHistoryCard(Map<String, dynamic> data) {
     final currency = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     DateTime date;
@@ -1244,10 +1439,10 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
               children: [
                 Text(servico,
                     style: const TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 13)),
+                        fontWeight: FontWeight.bold, fontSize: 13, decoration: TextDecoration.none, color: Colors.black)),
                 if (profissional.isNotEmpty)
                   Text(profissional,
-                      style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+                      style: TextStyle(fontSize: 11, color: Colors.grey[500], decoration: TextDecoration.none)),
                 const SizedBox(height: 4),
                 Row(
                   children: [
@@ -1364,7 +1559,7 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
                     Expanded(
                       child: Text(servico,
                           style: const TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 13),
+                              fontWeight: FontWeight.bold, fontSize: 13, decoration: TextDecoration.none, color: Colors.black),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis),
                     ),

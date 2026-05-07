@@ -55,7 +55,7 @@ class _SalesPageState extends State<SalesPage> {
       final supabase = Supabase.instance.client;
       
       final saleData = {
-        'shopId': shopId,
+        'shop_id': shopId,
         'items': cart,
         'total': _calculateTotal(),
         'created_at': DateTime.now().toIso8601String(),
@@ -66,16 +66,17 @@ class _SalesPageState extends State<SalesPage> {
 
       for (var item in cart) {
         final pDoc = await productsRef.select().eq('id', item['id']).single();
-        final currentQty = (pDoc['qty'] ?? 0) as int;
+        final currentQty = ((pDoc['stock_quantity'] ?? pDoc['qty'] ?? 0) as num).toInt();
+        final newQty = (currentQty - (item['qty'] as int)).clamp(0, 999999);
         
-        await productsRef.update({'qty': currentQty - item['qty']}).eq('id', item['id']);
+        await productsRef.update({'stock_quantity': newQty, 'qty': newQty}).eq('id', item['id']);
 
         await supabase.from('stock_movements').insert({
-          'shopId': shopId,
-          'productId': item['id'],
+          'shop_id': shopId,
+          'product_id': item['id'],
           'type': 'sale',
           'delta': -item['qty'],
-          'refId': saleId,
+          'ref_id': saleId,
           'created_at': DateTime.now().toIso8601String(),
         });
       }
@@ -102,69 +103,243 @@ class _SalesPageState extends State<SalesPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = MediaQuery.of(context).size.width < 768;
     return Scaffold(
+      backgroundColor: const Color(0xFFF8F9FD),
       appBar: AppBar(
-        title: const Text('Vendas / PDV',
+        title: const Text('Registrar Venda',
             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
         backgroundColor: AppColors.primaryPurple,
         foregroundColor: Colors.white,
         elevation: 0,
         centerTitle: false,
       ),
-      body: Row(
+      body: SafeArea(
+        bottom: true,
+        child: isMobile ? _buildMobileLayout() : _buildDesktopLayout(),
+      ),
+    );
+  }
+
+  Widget _buildMobileLayout() {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: _buildSearchField(),
+        ),
+        Expanded(child: _buildProductsList()),
+        if (cart.isNotEmpty) _buildMobileCartBar(),
+      ],
+    );
+  }
+
+  Widget _buildMobileCartBar() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: Colors.grey.shade200)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 12,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      child: Row(
         children: [
-          Expanded(
-            flex: 2,
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
+          GestureDetector(
+            onTap: _showCartBottomSheet,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppColors.primaryPurple.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
                 children: [
-                  _buildSearchField(),
-                  const SizedBox(height: 20),
-                  Expanded(child: _buildProductsList()),
+                  const Icon(Icons.shopping_cart_outlined,
+                      color: AppColors.primaryPurple, size: 18),
+                  const SizedBox(width: 6),
+                  Text(
+                    '${cart.length} ${cart.length == 1 ? "item" : "itens"}',
+                    style: const TextStyle(
+                        color: AppColors.primaryPurple,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13),
+                  ),
                 ],
               ),
             ),
           ),
-          Container(
-            width: 350,
-            decoration: BoxDecoration(
-              color: const Color(0xFFF8F9FA),
-              border: Border(left: BorderSide(color: Colors.grey.shade200)),
-            ),
+          const SizedBox(width: 12),
+          Expanded(
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Padding(
-                  padding: EdgeInsets.all(20),
-                  child: Text('Carrinho',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                ),
-                Expanded(child: _buildCart()),
-                Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: SizedBox(
-                    width: double.infinity,
-                    height: 55,
-                    child: ElevatedButton(
-                      onPressed: (_isSaving || cart.isEmpty) ? null : _finalizeSale,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16)),
-                      ),
-                      child: _isSaving
-                          ? const CircularProgressIndicator(color: Colors.white)
-                          : const Text('FINALIZAR VENDA',
-                              style: TextStyle(fontWeight: FontWeight.bold)),
-                    ),
-                  ),
+                const Text('Total',
+                    style: TextStyle(fontSize: 11, color: Colors.grey)),
+                Text(
+                  'R\$ ${_calculateTotal().toStringAsFixed(2)}',
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                      color: Colors.green),
                 ),
               ],
             ),
           ),
+          ElevatedButton(
+            onPressed: (_isSaving || cart.isEmpty) ? null : _finalizeSale,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+            child: _isSaving
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                        color: Colors.white, strokeWidth: 2))
+                : const Text('Finalizar',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
         ],
       ),
+    );
+  }
+
+  void _showCartBottomSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.75),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(top: 12, bottom: 4),
+                decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(4)),
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: [
+                  Icon(Icons.shopping_cart_outlined,
+                      color: AppColors.primaryPurple),
+                  SizedBox(width: 8),
+                  Text('Carrinho',
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 18)),
+                ],
+              ),
+            ),
+            Flexible(child: _buildCart()),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: (_isSaving || cart.isEmpty)
+                      ? null
+                      : () {
+                          Navigator.pop(ctx);
+                          _finalizeSale();
+                        },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: const Text('FINALIZAR VENDA',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDesktopLayout() {
+    return Row(
+      children: [
+        Expanded(
+          flex: 2,
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              children: [
+                _buildSearchField(),
+                const SizedBox(height: 20),
+                Expanded(child: _buildProductsList()),
+              ],
+            ),
+          ),
+        ),
+        Container(
+          width: 350,
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8F9FA),
+            border: Border(left: BorderSide(color: Colors.grey.shade200)),
+          ),
+          child: Column(
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(20),
+                child: Text('Carrinho',
+                    style:
+                        TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+              ),
+              Expanded(child: _buildCart()),
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: SizedBox(
+                  width: double.infinity,
+                  height: 55,
+                  child: ElevatedButton(
+                    onPressed:
+                        (_isSaving || cart.isEmpty) ? null : _finalizeSale,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16)),
+                    ),
+                    child: _isSaving
+                        ? const CircularProgressIndicator(color: Colors.white)
+                        : const Text('FINALIZAR VENDA',
+                            style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 

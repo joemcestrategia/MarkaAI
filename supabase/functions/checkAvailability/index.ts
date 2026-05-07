@@ -40,7 +40,7 @@ serve(async (req) => {
     // 1. Buscar Dados da Loja e Profissional
     const [{ data: shop }, { data: prof }] = await Promise.all([
       supabase.from('shops').select('config, configured_holidays, pending_holidays').eq('id', shop_id).maybeSingle(),
-      supabase.from('employees').select('work_start, work_end, work_days').eq('id', professional_id).maybeSingle()
+      supabase.from('employees').select('name, work_start, work_end, work_days').eq('id', professional_id).maybeSingle()
     ])
 
     if (!prof) throw new Error('Profissional não encontrado')
@@ -66,7 +66,12 @@ serve(async (req) => {
     // Converter getDay() para o padrão do Marcai (1=Seg, 7=Dom?) No JS 0=Dom, 6=Sab.
     // No booking_page.dart, weekday do Dart é 1=Seg, 7=Dom.
     const dartWeekday = dayOfWeek === 0 ? 7 : dayOfWeek
-    const workDays = Array.isArray(prof.work_days) ? prof.work_days.map(Number) : [1,2,3,4,5,6]
+    // fix: bloquear dias sem equipe ativa para qualquer estabelecimento
+    // work_days NULL ou vazio → profissional sem dias configurados → rejeitar
+    const workDays = Array.isArray(prof.work_days) ? prof.work_days.map(Number) : []
+    if (workDays.length === 0) {
+      return new Response(JSON.stringify({ available: false, error: 'Profissional sem dias de trabalho configurados' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    }
     if (!workDays.includes(dartWeekday)) {
       return new Response(JSON.stringify({ available: false, error: 'Profissional não trabalha neste dia' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
@@ -83,7 +88,16 @@ serve(async (req) => {
     dayEnd.setHours(endH, endM, 0, 0)
 
     if (reqStart < dayStart || reqEnd > dayEnd) {
-      return new Response(JSON.stringify({ available: false, error: 'Fora do horário de expediente do profissional' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+      const profName = prof.name || 'Profissional'
+      const fmt = (d: Date) => d.toISOString().slice(11, 16)
+      const expedienteReasons: string[] = []
+      if (reqStart < dayStart) {
+        expedienteReasons.push(`O serviço inicia às ${fmt(reqStart)}, mas o expediente de ${profName} começa às ${fmt(dayStart)}.`)
+      }
+      if (reqEnd > dayEnd) {
+        expedienteReasons.push(`O serviço termina às ${fmt(reqEnd)}, mas o expediente de ${profName} encerra às ${fmt(dayEnd)}.`)
+      }
+      return new Response(JSON.stringify({ available: false, error: 'Fora do horário de expediente do profissional', reasons: expedienteReasons }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 
     // 6. Validação: Feriados (Configurados ou Pendentes com Bloqueio Automático)
@@ -102,9 +116,9 @@ serve(async (req) => {
     // 7. Validação: Conflitos de Horário (Agendamentos Existentes)
     const { data: appointments, error: fetchError } = await supabase
       .from('appointments')
-      .select('scheduled_at, duration_min')
+      .select('scheduled_at, duration_min, client_name')
       .eq('professional_id', professional_id)
-      .not('status', 'in', '("cancelado","rejeitado","excluido","pendente_pix")')
+      .not('status', 'in', '("cancelado","rejeitado","recusado","excluido","pendente_pix")')
       .gte('scheduled_at', new Date(reqStart.getTime() - 2 * 60 * 60 * 1000).toISOString())
       .lte('scheduled_at', new Date(reqEnd.getTime() + 2 * 60 * 60 * 1000).toISOString())
 
@@ -117,10 +131,19 @@ serve(async (req) => {
       return reqStart < apptEnd && reqEnd > apptStart
     })
 
+    const fmt = (d: Date) => d.toISOString().slice(11, 16)
+    const conflictReasons: string[] = conflicting.map((appt) => {
+      const apptStart = new Date(appt.scheduled_at)
+      const apptEnd = new Date(apptStart.getTime() + (appt.duration_min || 30) * 60000)
+      const clientName = appt.client_name || 'cliente'
+      return `Conflito com agendamento de ${clientName} das ${fmt(apptStart)} às ${fmt(apptEnd)}.`
+    })
+
     return new Response(
       JSON.stringify({
         available: conflicting.length === 0,
         conflicts: conflicting.length,
+        ...(conflicting.length > 0 ? { reasons: conflictReasons } : {}),
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )

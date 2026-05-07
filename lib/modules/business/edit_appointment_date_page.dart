@@ -71,8 +71,8 @@ class _EditAppointmentDatePageState extends State<EditAppointmentDatePage> {
     final svcData = widget.serviceDoc;
     final int serviceDuration =
         int.tryParse(svcData['tempo_min']?.toString() ?? '') ?? 30;
-    final String profStart = profData['work_start'] ?? '08:00';
-    final String profEnd = profData['work_end'] ?? '18:00';
+    final String profStart = profData['work_start'] ?? profData['start_time'] ?? '08:00';
+    final String profEnd = profData['work_end'] ?? profData['end_time'] ?? '18:00';
 
     final today = DateTime.now();
     final firstDate = DateTime(today.year, today.month, today.day);

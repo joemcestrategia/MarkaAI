@@ -52,9 +52,10 @@ class AvailabilityUtils {
       
       final status = data['status']?.toString().toLowerCase() ?? '';
 
-      // Ignorar agendamentos cancelados ou rejeitados
+      // Ignorar agendamentos cancelados ou rejeitados (ambas as grafias)
       if (status == 'cancelado' ||
           status == 'rejeitado' ||
+          status == 'recusado' ||
           status == 'excluido') {
         continue;
       }
@@ -159,48 +160,71 @@ class AvailabilityUtils {
       busyIntervals.sort((a, b) => a['start']!.compareTo(b['start']!));
 
       if (preventGaps) {
-        Set<int> anchorPoints = {startDayMin};
-        for (var busy in busyIntervals) {
-          if (busy['end']! < endDayMin) {
-            anchorPoints.add(busy['end']!);
-          }
-        }
-
-        List<int> sortedAnchors = anchorPoints.toList()..sort();
-
-        for (int anchor in sortedAnchors) {
-          int current = anchor;
+        if (busyIntervals.isEmpty) {
+          // Sem agendamentos existentes: oferece apenas o PRIMEIRO slot disponível.
+          // Regra: o cliente só pode agendar no início do expediente (ou no primeiro
+          // horário disponível após o limite de antecedência mínima).
+          // O serviço nunca pode ultrapassar o horário final do funcionário (endDayMin).
+          int current = startDayMin;
           while (current + serviceDuration <= endDayMin) {
-            int slotEnd = current + serviceDuration;
-            bool hasCollision = false;
-            int jumpTo = current + interval;
-
-            for (var busy in busyIntervals) {
-              if (current < busy['end']! && slotEnd > busy['start']!) {
-                hasCollision = true;
-                jumpTo = busy['end']!;
-                break;
-              }
-            }
-
-            if (hasCollision) {
-              current = jumpTo;
-              continue;
-            }
-
-            bool isPast = false;
             final now = DateTime.now();
             final slotDt = DateTime(selectedDate.year, selectedDate.month,
                 selectedDate.day, current ~/ 60, current % 60);
             final minAllowedTime = now.add(Duration(hours: minAdvanceHours));
-            if (slotDt.isBefore(minAllowedTime)) isPast = true;
-
-            if (!isPast) {
-              String timeString =
+            if (!slotDt.isBefore(minAllowedTime)) {
+              final String timeString =
                   "${(current ~/ 60).toString().padLeft(2, '0')}:${(current % 60).toString().padLeft(2, '0')}";
-              if (!validSlots.contains(timeString)) validSlots.add(timeString);
+              validSlots.add(timeString);
+              break; // ← apenas o primeiro slot válido é retornado
             }
-            break;
+            current += interval;
+          }
+        } else {
+          // Com agendamentos existentes: oferece apenas slots que não criam buracos.
+          // Regra: cada âncora é o ponto exato em que o próximo serviço pode começar.
+          // Âncoras válidas: startDayMin (se livre) + fim de cada agendamento existente.
+          // Cada âncora é avaliada atomicamente — sem avançar além do ponto âncora.
+          Set<int> anchorPoints = {};
+
+          // startDayMin só é âncora se não há colisão nesse horário exato
+          final startSlotEnd = startDayMin + serviceDuration;
+          final startIsFree = busyIntervals.every(
+            (b) => !(startDayMin < b['end']! && startSlotEnd > b['start']!),
+          );
+          if (startIsFree) {
+            anchorPoints.add(startDayMin);
+          }
+
+          // Fim de cada agendamento existente é uma âncora em potencial
+          for (var busy in busyIntervals) {
+            if (busy['end']! < endDayMin) {
+              anchorPoints.add(busy['end']!);
+            }
+          }
+
+          List<int> sortedAnchors = anchorPoints.toList()..sort();
+
+          for (int anchor in sortedAnchors) {
+            // Verifica se o slot exato nesse anchor está livre (sem colisão)
+            final anchorSlotEnd = anchor + serviceDuration;
+            final hasCollision = busyIntervals.any(
+              (b) => anchor < b['end']! && anchorSlotEnd > b['start']!,
+            );
+            if (hasCollision) continue;
+
+            // Verifica se o slot não ultrapassa o fim do expediente
+            if (anchorSlotEnd > endDayMin) continue;
+
+            // Verifica restrição de antecedência mínima
+            final now = DateTime.now();
+            final slotDt = DateTime(selectedDate.year, selectedDate.month,
+                selectedDate.day, anchor ~/ 60, anchor % 60);
+            final minAllowedTime = now.add(Duration(hours: minAdvanceHours));
+            if (slotDt.isBefore(minAllowedTime)) continue;
+
+            final String timeString =
+                "${(anchor ~/ 60).toString().padLeft(2, '0')}:${(anchor % 60).toString().padLeft(2, '0')}";
+            if (!validSlots.contains(timeString)) validSlots.add(timeString);
           }
         }
       } else {

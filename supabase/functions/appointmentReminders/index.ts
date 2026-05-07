@@ -300,13 +300,16 @@ async function processReminder(supabase: any, appt: any, type: '48h' | '1h') {
     }
 
     const scheduledAt = new Date(appt.scheduled_at)
-    const day   = scheduledAt.getDate().toString().padStart(2, '0')
-    const month = (scheduledAt.getMonth() + 1).toString().padStart(2, '0')
-    const year  = scheduledAt.getFullYear()
-    const hours = scheduledAt.getHours().toString().padStart(2, '0')
-    const mins  = scheduledAt.getMinutes().toString().padStart(2, '0')
-    const dateStr = `${day}/${month}/${year}`
-    const timeStr = `${hours}:${mins}`
+
+    // Formata data/hora no fuso horário de Brasília (UTC-3)
+    const tzParts = new Intl.DateTimeFormat('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    }).formatToParts(scheduledAt)
+    const p = (type: string) => tzParts.find(x => x.type === type)?.value ?? '00'
+    const dateStr = `${p('day')}/${p('month')}/${p('year')}`
+    const timeStr = `${p('hour')}:${p('minute')}`
 
     const durationMin = appt.duration_min || 60
     const endAt = new Date(scheduledAt.getTime() + durationMin * 60 * 1000)

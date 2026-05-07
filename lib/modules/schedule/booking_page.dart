@@ -237,11 +237,13 @@ class _BookingPageState extends State<BookingPage> {
               child: CircularProgressIndicator(color: AppColors.primaryPurple));
         }
 
-        final profs = (snapshot.data ?? []).where((d) {
+        final profs = ((snapshot.data ?? []).where((d) {
           final List<dynamic> skills = d['services_ids'] ?? [];
           final String targetId = widget.serviceId.toString();
           return skills.map((id) => id.toString()).contains(targetId);
-        }).toList();
+        }).toList())
+          ..sort((a, b) => ((a['schedule_priority'] ?? 0) as int)
+              .compareTo((b['schedule_priority'] ?? 0) as int));
 
         if (profs.isEmpty) {
           return const Center(
@@ -414,8 +416,27 @@ class _BookingPageState extends State<BookingPage> {
           message: "Esta loja exige que o cliente tenha CPF cadastrado antes de prosseguir, para fins de emissão de Nota Fiscal.\n\nPor favor, atualize o seu perfil e tente novamente.",
           icon: Icons.badge_outlined,
           actionLabel: "ATUALIZAR PERFIL",
-          onCustomAction: () {
-            Navigator.of(context).pushNamed('/profile'); // ou rota correspondente do perfil
+          onCustomAction: () async {
+            final user = Supabase.instance.client.auth.currentUser;
+            await Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => ClientRegisterPage(
+                  user: user,
+                  isBusinessAdding: false,
+                  returnOnSuccess: true,
+                ),
+              ),
+            );
+            if (mounted) {
+              setState(() {
+                _clientStatus = null;
+                _isRestricted = false;
+                _restrictionReason = null;
+                _loadingRestriction = true;
+              });
+              await _checkRestriction();
+            }
           },
           onRefresh: () async {
             setState(() {
@@ -508,6 +529,11 @@ class _BookingTimePageState extends State<BookingTimePage> {
   Map<DateTime, bool> _dayAvailability = {};
   List<dynamic> _nationalHolidays = [];
   bool _isLoadingAvailability = false;
+  // fix: bloquear dias sem equipe ativa para qualquer estabelecimento
+  // _availabilityReady: calendário só renderiza quando verdadeiro
+  // _availabilityVersion: incrementado após cada fetch completo para forçar rebuild do TableCalendar
+  bool _availabilityReady = false;
+  int _availabilityVersion = 0;
 
   @override
   void initState() {
@@ -527,6 +553,14 @@ class _BookingTimePageState extends State<BookingTimePage> {
 
     _bookingWindowDays = widget.shopConfig['janela_agendamento_dias'] ?? 90;
     _vipExtraDays = (widget.shopConfig['vip_extra_booking_days'] ?? 0).toInt();
+
+    // fix: bloquear dias sem equipe ativa para qualquer estabelecimento
+    // Pré-popula work_days de forma SÍNCRONA antes do primeiro build.
+    // Isso garante que o calendário aparece imediatamente com o padrão correto
+    // (dias de trabalho habilit., não-trabalho bloqueados) sem depender de Supabase.
+    // O _fetchMonthAvailability depois refina com contagem real de slots disponíveis.
+    _prePopulateWorkDays(DateTime.now());
+
     _checkVipStatus();
     _checkRestriction();
     _fetchNationalHolidays(DateTime.now());
@@ -545,6 +579,26 @@ class _BookingTimePageState extends State<BookingTimePage> {
     } catch (e) {
       debugPrint("Erro ao buscar feriados nacionais: $e");
     }
+  }
+
+  // fix: bloquear dias sem equipe ativa para qualquer estabelecimento
+  // Pré-popula��o síncrona: só verifica work_days (sem Supabase, sem slots).
+  // Chamado em initState antes do primeiro build.
+  void _prePopulateWorkDays(DateTime month) {
+    try {
+      final profData = widget.professionalDoc;
+      final rawWorkDays = profData['work_days'] ?? [];
+      final workDays = (rawWorkDays as List).map((e) => int.parse(e.toString())).toList();
+      final endOfMonth = DateTime(month.year, month.month + 1, 0);
+      for (int day = 1; day <= endOfMonth.day; day++) {
+        final date = DateTime(month.year, month.month, day);
+        _dayAvailability[date] = workDays.contains(date.weekday);
+      }
+    } catch (_) {
+      // Se falhar, _dayAvailability fica vazio mas _availabilityReady ainda será true
+    }
+    _availabilityReady = true;
+    _availabilityVersion = 1;
   }
 
   Future<void> _fetchMonthAvailability(DateTime month) async {
@@ -568,6 +622,7 @@ class _BookingTimePageState extends State<BookingTimePage> {
         final status = data['status']?.toString().toLowerCase() ?? '';
         if (status == 'cancelado' ||
             status == 'rejeitado' ||
+            status == 'recusado' ||
             status == 'excluido') {
           continue;
         }
@@ -590,9 +645,10 @@ class _BookingTimePageState extends State<BookingTimePage> {
       }
 
       final profData = widget.professionalDoc;
-      final startStr = profData['work_start'] ?? "08:00";
-      final endStr = profData['work_end'] ?? "18:00";
-      final rawWorkDays = profData['work_days'] ?? [1, 2, 3, 4, 5, 6];
+      final startStr = profData['work_start'] ?? profData['start_time'] ?? "08:00";
+      final endStr = profData['work_end'] ?? profData['end_time'] ?? "18:00";
+      // fix: bloquear dias sem equipe ativa para qualquer estabelecimento
+      final rawWorkDays = profData['work_days'] ?? [];
       final workDays = rawWorkDays.map((e) => int.parse(e.toString())).toList();
       final preventGaps = widget.shopConfig['evitar_buracos_agenda'] ?? false;
 
@@ -656,11 +712,15 @@ class _BookingTimePageState extends State<BookingTimePage> {
         setState(() {
           _dayAvailability.addAll(newAvail);
           _isLoadingAvailability = false;
+          _availabilityReady = true;
+          _availabilityVersion++;  // força rebuild do TableCalendar via ValueKey
         });
       }
     } catch (e) {
       debugPrint("Erro ao buscar disponibilidade mensal: $e");
-      if (mounted) setState(() => _isLoadingAvailability = false);
+      // Em caso de erro, o calendário já está visível (pré-populado em initState).
+      // Apenas para o indicador de carregamento.
+      if (mounted) setState(() { _isLoadingAvailability = false; });
     }
   }
 
@@ -747,8 +807,31 @@ class _BookingTimePageState extends State<BookingTimePage> {
           message: "Esta loja exige que o cliente tenha CPF cadastrado antes de prosseguir, para fins de emissão de Nota Fiscal.\n\nPor favor, atualize o seu perfil e tente novamente.",
           icon: Icons.badge_outlined,
           actionLabel: "ATUALIZAR PERFIL",
-          onCustomAction: () {
-            Navigator.of(context).pushNamed('/profile');
+          onCustomAction: () async {
+            final user = Supabase.instance.client.auth.currentUser;
+            await Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => ClientRegisterPage(
+                  user: user,
+                  isBusinessAdding: false,
+                  returnOnSuccess: true,
+                ),
+              ),
+            );
+            if (mounted && user != null) {
+              final shopIdStr = (widget.shop['id'] ?? '').toString();
+              final status = await ClientVerificationService.getClientStatus(user.id, shopIdStr);
+              final planFeatures = PlanFeaturesService.getFeaturesForShop(widget.shop);
+              final requireCpf = widget.shopConfig['require_cpf'] == true;
+              final isCpfRestricted = planFeatures.requireCpfForBooking && requireCpf && status['hasCpf'] == false;
+              if (mounted) {
+                setState(() {
+                  _isRestricted = isCpfRestricted;
+                  _restrictionReason = isCpfRestricted ? 'cpf_missing' : null;
+                });
+              }
+            }
           },
           onRefresh: () async {
             setState(() {
@@ -826,7 +909,13 @@ class _BookingTimePageState extends State<BookingTimePage> {
                               AppColors.primaryPurple),
                         ),
                       const SizedBox(height: 16),
+                      // fix: bloquear dias sem equipe ativa para qualquer estabelecimento
+                      // _availabilityReady é true desde initState (pré-população síncrona).
+                      // ValueKey com _availabilityVersion força rebuild do TableCalendar
+                      // após o fetch async com dados refinados de slots.
+                      if (_availabilityReady)
                       TableCalendar(
+                        key: ValueKey('cal_${_focusedDay.year}_${_focusedDay.month}_$_availabilityVersion'),
                         firstDay: firstDateBound,
                         lastDay: lastAllowedDay,
                         focusedDay: _focusedDay.isBefore(firstDateBound)
@@ -845,6 +934,9 @@ class _BookingTimePageState extends State<BookingTimePage> {
                         onPageChanged: (focusedDay) {
                           setState(() {
                             _focusedDay = focusedDay;
+                            // Pré-popula work_days imediatamente para evitar dias
+                            // piscando como bloqueados enquanto o fetch async carrega
+                            _prePopulateWorkDays(focusedDay);
                           });
                           _fetchMonthAvailability(focusedDay);
                         },
@@ -874,14 +966,16 @@ class _BookingTimePageState extends State<BookingTimePage> {
                         ),
                         enabledDayPredicate: (day) {
                           final dateKey = DateTime(day.year, day.month, day.day);
-                          return _dayAvailability[dateKey] ?? true;
+                          // fix: bloquear dias sem equipe ativa para qualquer estabelecimento
+                          return _dayAvailability[dateKey] ?? false;
                         },
                         calendarBuilders: CalendarBuilders(
                           defaultBuilder: (context, day, focusedDay) {
                             final dateKey =
                                 DateTime(day.year, day.month, day.day);
-                            final isAvailable =
-                                _dayAvailability[dateKey] ?? true;
+                            // fix: bloquear dias sem equipe ativa para qualquer estabelecimento
+                          final isAvailable =
+                                _dayAvailability[dateKey] ?? false;
 
                             if (!isAvailable) {
                               return Center(
@@ -1284,7 +1378,7 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                           .select('id, scheduled_at, duration_min')
                                           .eq('professional_id', widget.professionalDoc['id'])
                                           .neq('id', widget.appointmentId!) // EXCLUIR O ATUAL
-                                          .not('status', 'in', '("cancelado","rejeitado","excluido")')
+                                          .not('status', 'in', '("cancelado","rejeitado","recusado","excluido")')
                                           // Busca uma janela de tempo ao redor do horário desejado
                                           .gte('scheduled_at', newDateTime.subtract(const Duration(hours: 4)).toIso8601String())
                                           .lte('scheduled_at', newDateTime.add(const Duration(hours: 4)).toIso8601String());
@@ -1477,6 +1571,7 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
       final status = (data['status'] ?? '').toString().toLowerCase();
 
       if (status == 'cancelado' ||
+          status == 'rejeitado' ||
           status == 'recusado' ||
           status == 'excluido') {
         continue;
@@ -1566,8 +1661,8 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
         if (isOwnerMode) {
           // Gera todos os slots do turno, sem filtro de horário passado.
           // Slots que colidem com um serviço em andamento são marcados como occupied.
-          final startStr = profData['work_start'] ?? "08:00";
-          final endStr = profData['work_end'] ?? "18:00";
+          final startStr = profData['work_start'] ?? profData['start_time'] ?? "08:00";
+          final endStr = profData['work_end'] ?? profData['end_time'] ?? "18:00";
           int startDayMin = int.parse(startStr.split(':')[0]) * 60 +
               int.parse(startStr.split(':')[1]);
           int endDayMin = int.parse(endStr.split(':')[0]) * 60 +
@@ -1582,8 +1677,8 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
           slots = allSlots;
         } else {
           slots = AvailabilityUtils.generateSmartSlots(
-            startStr: profData['work_start'] ?? "08:00",
-            endStr: profData['work_end'] ?? "18:00",
+            startStr: profData['work_start'] ?? profData['start_time'] ?? "08:00",
+            endStr: profData['work_end'] ?? profData['end_time'] ?? "18:00",
             interval: widget.intervalMinutes,
             serviceDuration: duration,
             busyIntervals: busyIntervals,

@@ -212,7 +212,7 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
           .select('id, scheduled_at, status')
           .eq('client_id', user.id)
           .eq('shop_id', shopDoc['id'])
-          .not('status', 'in', '("cancelado","rejeitado","excluido","pendente_pix")')
+          .not('status', 'in', '("cancelado","rejeitado","recusado","excluido","pendente_pix")')
           .gte('scheduled_at', now.toIso8601String())
           .limit(1);
 
@@ -317,8 +317,8 @@ class _ClientServiceDetailPageState extends State<ClientServiceDetailPage> {
       cleanPhone = '55$cleanPhone';
     }
 
-    final String serviceName = widget.serviceData['nome'] ?? 'Serviço';
-    final String shopName = shopData['nome'] ?? 'loja';
+    final String serviceName = widget.serviceData['name'] ?? 'Serviço';
+    final String shopName = shopData['name'] ?? 'loja';
     final String message =
         "Olá, vim pelo App MarkaAI e gostaria de agendar o serviço $serviceName na $shopName.";
 

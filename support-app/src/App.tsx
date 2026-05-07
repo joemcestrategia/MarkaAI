@@ -9,6 +9,7 @@ import SupportListPage from './pages/admin/support/SupportListPage'
 import SupportDetailPage from './pages/admin/support/SupportDetailPage'
 import SupportNewPage from './pages/admin/support/SupportNewPage'
 import SupportReportsPage from './pages/admin/support/SupportReportsPage'
+import BannersPage from './pages/admin/banners/BannersPage'
 
 import LoginPage from './pages/LoginPage'
 
@@ -44,6 +45,7 @@ function AppRoutes() {
       <Route path="/admin/support/novo" element={<SupportNewPage />} />
       <Route path="/admin/support/relatorios" element={<SupportReportsPage />} />
       <Route path="/admin/support/:id" element={<SupportDetailPage />} />
+      <Route path="/admin/banners" element={<BannersPage />} />
 
       {/* Default redirect */}
       <Route path="/" element={<Navigate to="/app/suporte" replace />} />
