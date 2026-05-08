@@ -42,10 +42,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       return const SplashLoadingWidget(message: "Verificando permissões...");
     }
 
-    final Color bgColor = _isDarkMode ? const Color(0xFF0F1117) : const Color(0xFFF8FAFC);
-    final Color cardColor = _isDarkMode ? const Color(0xFF1A1D27) : Colors.white;
-    final Color textColor = _isDarkMode ? Colors.white : const Color(0xFF1E293B);
-    final Color borderColor = _isDarkMode ? Colors.white.withValues(alpha: 0.06) : Colors.black.withValues(alpha: 0.06);
+    final theme = Theme.of(context);
+    final isMobile = MediaQuery.of(context).size.width < 900;
+    final bgColor = theme.scaffoldBackgroundColor;
+    final cardColor = theme.cardColor;
+    final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
+    final borderColor = theme.dividerColor.withValues(alpha: 0.1);
 
     if (!_isAdmin) {
       return Scaffold(
@@ -82,68 +84,77 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
     return Scaffold(
       backgroundColor: bgColor,
+      drawer: isMobile ? _buildDrawer() : null,
+      appBar: isMobile 
+        ? AppBar(
+            title: Text(_getTitleForIndex(_selectedIndex), style: const TextStyle(fontSize: 18)),
+            backgroundColor: cardColor,
+            elevation: 0,
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.refresh_rounded, color: Colors.grey),
+                onPressed: () => setState(() {}),
+              ),
+            ],
+          )
+        : null,
       body: Row(
         children: [
-          // Sidebar
-          Container(
-            width: 80,
-            decoration: BoxDecoration(
-              color: cardColor,
-              border: Border(right: BorderSide(color: borderColor)),
+          // Sidebar (Desktop only)
+          if (!isMobile)
+            Container(
+              width: 80,
+              decoration: BoxDecoration(
+                color: cardColor,
+                border: Border(right: BorderSide(color: borderColor)),
+              ),
+              child: Column(
+                children: [
+                  const SizedBox(height: 40),
+                  _buildSidebarItem(0, Icons.grid_view_rounded),
+                  _buildSidebarItem(1, Icons.people_rounded),
+                  _buildSidebarItem(2, Icons.store_rounded),
+                  _buildSidebarItem(3, Icons.handyman_rounded),
+                  _buildSidebarItem(4, Icons.confirmation_number_rounded),
+                  _buildSidebarItem(5, Icons.campaign_rounded),
+                  const Spacer(),
+                  const SizedBox(height: 24),
+                ],
+              ),
             ),
-            child: Column(
-              children: [
-                const SizedBox(height: 40),
-                _buildSidebarItem(0, Icons.grid_view_rounded),
-                _buildSidebarItem(1, Icons.people_rounded),
-                _buildSidebarItem(2, Icons.store_rounded),
-                _buildSidebarItem(3, Icons.handyman_rounded),
-                _buildSidebarItem(4, Icons.confirmation_number_rounded),
-                _buildSidebarItem(5, Icons.campaign_rounded),
-                const Spacer(),
-                IconButton(
-                  icon: Icon(
-                    _isDarkMode ? Icons.light_mode_rounded : Icons.dark_mode_rounded,
-                    color: Colors.grey,
-                  ),
-                  onPressed: () => setState(() => _isDarkMode = !_isDarkMode),
-                ),
-                const SizedBox(height: 24),
-              ],
-            ),
-          ),
 
           // Main Content
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Header
-                Container(
-                  padding: const EdgeInsets.all(24),
-                  child: Row(
-                    children: [
-                      Text(
-                        _getTitleForIndex(_selectedIndex),
-                        style: TextStyle(
-                          color: textColor,
-                          fontSize: 28,
-                          fontWeight: FontWeight.bold,
+                // Header (Desktop only)
+                if (!isMobile)
+                  Container(
+                    padding: const EdgeInsets.all(24),
+                    child: Row(
+                      children: [
+                        Text(
+                          _getTitleForIndex(_selectedIndex),
+                          style: TextStyle(
+                            color: textColor,
+                            fontSize: 28,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                      ),
-                      const Spacer(),
-                      IconButton(
-                        icon: const Icon(Icons.refresh_rounded, color: Colors.grey),
-                        onPressed: () => setState(() {}),
-                      ),
-                    ],
+                        const Spacer(),
+                        IconButton(
+                          icon: const Icon(Icons.refresh_rounded, color: Colors.grey),
+                          onPressed: () => setState(() {}),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
 
                 // Content Area
                 Expanded(
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    padding: EdgeInsets.symmetric(horizontal: isMobile ? 12 : 24),
                     child: _buildContent(),
                   ),
                 ),
@@ -152,6 +163,47 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildDrawer() {
+    return Drawer(
+      child: Column(
+        children: [
+          DrawerHeader(
+            decoration: const BoxDecoration(color: AppColors.primaryPurple),
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.admin_panel_settings, color: Colors.white, size: 48),
+                  const SizedBox(height: 8),
+                  Text('MarkaAI Admin', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                ],
+              ),
+            ),
+          ),
+          _buildDrawerItem(0, Icons.grid_view_rounded, 'Overview'),
+          _buildDrawerItem(1, Icons.people_rounded, 'Usuários'),
+          _buildDrawerItem(2, Icons.store_rounded, 'Negócios'),
+          _buildDrawerItem(3, Icons.handyman_rounded, 'Suporte'),
+          _buildDrawerItem(4, Icons.confirmation_number_rounded, 'Tickets'),
+          _buildDrawerItem(5, Icons.campaign_rounded, 'Banners'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDrawerItem(int index, IconData icon, String title) {
+    final isSelected = _selectedIndex == index;
+    return ListTile(
+      leading: Icon(icon, color: isSelected ? AppColors.primaryPurple : Colors.grey),
+      title: Text(title, style: TextStyle(color: isSelected ? AppColors.primaryPurple : null, fontWeight: isSelected ? FontWeight.bold : null)),
+      selected: isSelected,
+      onTap: () {
+        setState(() => _selectedIndex = index);
+        Navigator.pop(context);
+      },
     );
   }
 
@@ -164,7 +216,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         height: 48,
         margin: const EdgeInsets.symmetric(vertical: 8),
         decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFF6366F1) : Colors.transparent,
+          color: isSelected ? AppColors.primaryPurple : Colors.transparent,
           borderRadius: BorderRadius.circular(12),
         ),
         child: Icon(

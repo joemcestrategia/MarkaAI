@@ -213,12 +213,39 @@ class MarkaAIApp extends StatelessWidget {
       ],
       theme: ThemeData(
         useMaterial3: true,
+        brightness: Brightness.light,
         colorScheme: ColorScheme.fromSeed(
           seedColor: AppColors.primaryPurple,
+          primary: AppColors.primaryPurple,
           secondary: AppColors.gold,
+          surface: AppColors.surface,
         ),
         scaffoldBackgroundColor: AppColors.background,
+        appBarTheme: const AppBarTheme(
+          backgroundColor: AppColors.primaryPurple,
+          foregroundColor: Colors.white,
+          elevation: 0,
+        ),
       ),
+      darkTheme: ThemeData(
+        useMaterial3: true,
+        brightness: Brightness.dark,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: AppColors.primaryPurple,
+          brightness: Brightness.dark,
+          primary: AppColors.primaryPurple,
+          secondary: AppColors.gold,
+          surface: AppColors.darkSurface,
+          background: AppColors.darkBackground,
+        ),
+        scaffoldBackgroundColor: AppColors.darkBackground,
+        appBarTheme: const AppBarTheme(
+          backgroundColor: AppColors.darkSurface,
+          foregroundColor: Colors.white,
+          elevation: 0,
+        ),
+      ),
+      themeMode: ThemeMode.system,
       // Roteamento personalizado para suportar slugs
       onGenerateRoute: AppRouter.generateRoute,
     );

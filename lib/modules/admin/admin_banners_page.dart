@@ -196,22 +196,6 @@ class _AdminBannersPageState extends State<AdminBannersPage> {
                         )
                       : null,
                 ),
-                Positioned.fill(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: imgUrl.isNotEmpty
-                            ? [
-                                const Color(0xFF6A1B9A).withValues(alpha: 0.75),
-                                const Color(0xFF1A0033).withValues(alpha: 0.75),
-                              ]
-                            : [const Color(0xFF6A1B9A), const Color(0xFF4A0080)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                    ),
-                  ),
-                ),
                 Positioned(
                   bottom: 12, left: 12, right: 12,
                   child: Column(
@@ -220,30 +204,8 @@ class _AdminBannersPageState extends State<AdminBannersPage> {
                     children: [
                       Text(title,
                           style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 15,
-                              fontWeight: FontWeight.bold,
-                              shadows: [Shadow(blurRadius: 6, color: Colors.black54)])),
-                      if (subtitle.isNotEmpty) ...[
-                        const SizedBox(height: 2),
-                        Text(subtitle,
-                            style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.85), fontSize: 11),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis),
-                      ],
-                      const SizedBox(height: 6),
-                      if (ctaText.isNotEmpty)
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-                          decoration: BoxDecoration(
-                              color: Colors.white, borderRadius: BorderRadius.circular(20)),
-                          child: Text(ctaText,
-                              style: const TextStyle(
-                                  color: Color(0xFF6A1B9A),
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 11)),
-                        ),
+                              color: Colors.transparent,
+                              fontSize: 1)),
                     ],
                   ),
                 ),
@@ -279,7 +241,7 @@ class _AdminBannersPageState extends State<AdminBannersPage> {
 
             // ── Métricas de performance ────────────────────────────────────
             Container(
-              color: Colors.grey[50],
+              color: Theme.of(context).brightness == Brightness.light ? Colors.grey[50] : Colors.white.withValues(alpha: 0.05),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
               child: Row(
                 children: [
@@ -437,10 +399,10 @@ class _BannerFormDialogState extends State<_BannerFormDialog> {
   void initState() {
     super.initState();
     final e = widget.existing;
-    _title = TextEditingController(text: e?['title'] ?? 'MarkaAI');
+    _title = TextEditingController(text: e?['title'] ?? 'Novo Banner');
     _subtitle = TextEditingController(text: e?['subtitle'] ?? '');
     _imageUrl = TextEditingController(text: e?['image_url'] ?? '');
-    _ctaText = TextEditingController(text: e?['cta_text'] ?? 'Saiba mais');
+    _ctaText = TextEditingController(text: e?['cta_text'] ?? '');
     _ctaUrl = TextEditingController(text: e?['cta_url'] ?? 'https://markaai.com.br');
     _sortOrder = TextEditingController(text: (e?['sort_order'] ?? 0).toString());
     _advertiserName = TextEditingController(text: e?['advertiser_name'] ?? '');
@@ -448,7 +410,7 @@ class _BannerFormDialogState extends State<_BannerFormDialog> {
     _isActive = e?['is_active'] as bool? ?? true;
 
     // Atualiza preview ao digitar
-    for (final c in [_title, _subtitle, _ctaText, _imageUrl]) {
+    for (final c in [_imageUrl]) {
       c.addListener(() { if (mounted) setState(() {}); });
     }
   }
@@ -561,11 +523,7 @@ class _BannerFormDialogState extends State<_BannerFormDialog> {
   // Preview mobile ao vivo
   // ---------------------------------------------------------------------------
   Widget _buildMobilePreview() {
-    final title =
-        _title.text.trim().isEmpty ? 'Título do Banner' : _title.text.trim();
-    final subtitle = _subtitle.text.trim();
-    final ctaText =
-        _ctaText.text.trim().isEmpty ? 'Saiba mais' : _ctaText.text.trim();
+    final title = _title.text.trim().isEmpty ? 'Banner' : _title.text.trim();
     final imgUrl = _imageUrl.text.trim();
     final hasImage = _pickedImageBytes != null || imgUrl.isNotEmpty;
 
@@ -574,8 +532,8 @@ class _BannerFormDialogState extends State<_BannerFormDialog> {
       children: [
         Row(
           children: [
-            const Icon(Icons.phone_iphone, size: 15, color: Colors.grey),
-            const SizedBox(width: 4),
+            const Icon(Icons.phone_iphone, size: 14, color: Colors.grey),
+            const SizedBox(width: 6),
             const Text('Preview mobile (tamanho real)',
                 style: TextStyle(fontSize: 12, color: Colors.grey)),
             const Spacer(),
@@ -603,7 +561,7 @@ class _BannerFormDialogState extends State<_BannerFormDialog> {
               fit: StackFit.expand,
               children: [
                 // Imagem de fundo
-                Container(color: const Color(0xFF4A148C)),
+                Container(color: const Color(0xFFE2E8F0)),
                 if (_pickedImageBytes != null)
                   Image.memory(_pickedImageBytes!, fit: BoxFit.cover)
                 else if (imgUrl.isNotEmpty)
@@ -611,64 +569,6 @@ class _BannerFormDialogState extends State<_BannerFormDialog> {
                     imageUrl: imgUrl,
                     fit: BoxFit.cover,
                     errorWidget: (_, __, ___) => const SizedBox(),
-                  ),
-                // Gradiente overlay
-                Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: hasImage
-                          ? [
-                              const Color(0xFF6A1B9A).withValues(alpha: 0.82),
-                              const Color(0xFF1A0033).withValues(alpha: 0.82),
-                            ]
-                          : [
-                              const Color(0xFF6A1B9A),
-                              const Color(0xFF4A0080),
-                            ],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                  ),
-                ),
-                // Conteúdo
-                Positioned(
-                  bottom: 12, left: 12, right: 12,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(title,
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 15,
-                              fontWeight: FontWeight.bold,
-                              shadows: [
-                                Shadow(blurRadius: 6, color: Colors.black54)
-                              ])),
-                      if (subtitle.isNotEmpty) ...[
-                        const SizedBox(height: 2),
-                        Text(subtitle,
-                            style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.85),
-                                fontSize: 11),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis),
-                      ],
-                      const SizedBox(height: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 5),
-                        decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(20)),
-                        child: Text(ctaText,
-                            style: const TextStyle(
-                                color: Color(0xFF6A1B9A),
-                                fontWeight: FontWeight.bold,
-                                fontSize: 11)),
-                      ),
-                    ],
-                  ),
                 ),
               ],
             ),
@@ -784,8 +684,8 @@ class _BannerFormDialogState extends State<_BannerFormDialog> {
       title: Text(widget.existing == null ? 'Novo Banner' : 'Editar Banner'),
       titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
       contentPadding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-      content: SizedBox(
-        width: 520,
+      content: Container(
+        constraints: const BoxConstraints(maxWidth: 520),
         child: Form(
           key: _formKey,
           child: SingleChildScrollView(
@@ -803,10 +703,8 @@ class _BannerFormDialogState extends State<_BannerFormDialog> {
                 const SizedBox(height: 16),
                 const Divider(height: 1),
                 const SizedBox(height: 14),
-                // Campos de texto
-                _field(_title, 'Título', required: true),
-                _field(_subtitle, 'Subtítulo (opcional)'),
-                _field(_ctaText, 'Texto do botão', required: true),
+                // Campos de texto escondemos subtitulo e cta da interface, pois a imagem será total
+                _field(_title, 'Título (Apenas para seu controle interno)', required: true),
                 _field(_ctaUrl, 'Link ao clicar no banner', required: true),
                 _field(_sortOrder, 'Ordem de exibição (número)'),
                 const SizedBox(height: 14),

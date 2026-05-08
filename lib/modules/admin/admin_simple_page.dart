@@ -65,27 +65,20 @@ class _AdminSimplePageState extends State<AdminSimplePage> {
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Painel Admin'),
-          backgroundColor: AppColors.primaryPurple,
-          foregroundColor: Colors.white,
-          actions: [
-            IconButton(
-              tooltip: 'Categorias',
-              icon: const Icon(Icons.category),
-              onPressed: () => Navigator.push(
-                  context, MaterialPageRoute(builder: (_) => CategoriesPage())),
-            )
-          ],
-          bottom: const TabBar(tabs: [
-            Tab(text: 'Resumo'),
-            Tab(text: 'Negócios'),
-            Tab(text: 'Categorias'),
-            Tab(text: 'Usuários'),
-            Tab(text: 'Funcionários'),
-            Tab(text: 'Agendamentos'),
-            Tab(text: 'Feriados'),
-            Tab(text: 'Planos'),
-            Tab(text: 'Banners'),
-          ]),
+          bottom: const TabBar(
+            isScrollable: true,
+            tabs: [
+              Tab(text: 'Resumo'),
+              Tab(text: 'Negócios'),
+              Tab(text: 'Categorias'),
+              Tab(text: 'Usuários'),
+              Tab(text: 'Funcionários'),
+              Tab(text: 'Agendamentos'),
+              Tab(text: 'Feriados'),
+              Tab(text: 'Planos'),
+              Tab(text: 'Banners'),
+            ],
+          ),
         ),
         body: TabBarView(children: [
           _summaryTab(),
@@ -114,25 +107,34 @@ class _AdminSimplePageState extends State<AdminSimplePage> {
             return const Center(child: CircularProgressIndicator());
           }
           final c = snap.data!;
-          return Padding(
+          return SingleChildScrollView(
             padding: const EdgeInsets.all(16),
-            child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            child: Wrap(
+                spacing: 16,
+                runSpacing: 16,
+                alignment: WrapAlignment.center,
                 children: [
-                  _statCard('Lojas', c[0]),
-                  _statCard('Usuários', c[1]),
-                  _statCard('Agendamentos', c[2]),
+                  _statCard('Lojas', c[0], Icons.store),
+                  _statCard('Usuários', c[1], Icons.people),
+                  _statCard('Agendamentos', c[2], Icons.calendar_today),
                 ]),
           );
         });
   }
 
-  Widget _statCard(String title, int v) => Card(
-      child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(children: [
-            Text('$v', style: const TextStyle(fontSize: 18))
-          ])));
+  Widget _statCard(String title, int v, IconData icon) => Card(
+      child: Container(
+          width: 150,
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: AppColors.primaryPurple, size: 24),
+              const SizedBox(height: 8),
+              Text('$v', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+              Text(title, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            ],
+          )));
 
   Widget _categoriesTab() => StreamBuilder<List<Map<String, dynamic>>>(
       stream: Supabase.instance.client
