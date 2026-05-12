@@ -1,13 +1,31 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:markaai/core/services/session_service.dart';
-import 'package:markaai/core/widgets/splash_loading_widget.dart';
 import 'package:markaai/modules/admin/widgets/admin_overview_widget.dart';
-import 'package:markaai/modules/admin/widgets/admin_users_widget.dart';
+import 'package:markaai/modules/admin/widgets/admin_metrics_widget.dart';
 import 'package:markaai/modules/admin/widgets/admin_shops_widget.dart';
+import 'package:markaai/modules/admin/widgets/admin_users_widget.dart';
 import 'package:markaai/modules/admin/widgets/admin_support_widget.dart';
 import 'package:markaai/modules/support/admin_tickets_page.dart';
 import 'package:markaai/modules/admin/admin_banners_page.dart';
+import 'package:markaai/modules/admin/widgets/admin_finance_widget.dart';
+import 'package:markaai/modules/admin/widgets/admin_notifications_widget.dart';
+import 'package:markaai/modules/admin/widgets/admin_monitoring_widget.dart';
+import 'package:markaai/modules/admin/widgets/admin_feature_flags_widget.dart';
+import 'package:markaai/core/theme/app_colors.dart';
+
+enum AdminSection {
+  overview,
+  metrics,
+  tenants,
+  users,
+  finance,
+  notifications,
+  monitoring,
+  featureFlags,
+  support,
+  tickets,
+  banners,
+}
 
 class AdminDashboardPage extends StatefulWidget {
   const AdminDashboardPage({super.key});
@@ -20,7 +38,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   bool _loading = true;
   bool _isAdmin = false;
   bool _isDarkMode = true;
-  int _selectedIndex = 0;
+  AdminSection _currentSection = AdminSection.overview;
 
   @override
   void initState() {
@@ -38,231 +56,300 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) {
-      return const SplashLoadingWidget(message: "Verificando permissões...");
-    }
+    if (_loading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
 
     final theme = Theme.of(context);
-    final isMobile = MediaQuery.of(context).size.width < 900;
-    final bgColor = theme.scaffoldBackgroundColor;
-    final cardColor = theme.cardColor;
-    final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
-    final borderColor = theme.dividerColor.withValues(alpha: 0.1);
+    final cs = theme.colorScheme;
 
     if (!_isAdmin) {
       return Scaffold(
-        backgroundColor: bgColor,
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.lock_outline, size: 64, color: Colors.red[400]),
-              const SizedBox(height: 24),
-              Text(
-                'Acesso Negado',
-                style: TextStyle(
-                  color: textColor,
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Você não tem permissão para acessar esta área.',
-                style: TextStyle(color: textColor.withValues(alpha: 0.6)),
-              ),
-              const SizedBox(height: 32),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Voltar'),
-              ),
-            ],
+        backgroundColor: cs.surface,
+        body: SafeArea(
+          child: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.lock_outline, size: 64, color: cs.error),
+                const SizedBox(height: 16),
+                Text('Acesso Restrito', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: cs.onSurface)),
+                const SizedBox(height: 8),
+                Text('Você não tem permissão para acessar esta área.', style: TextStyle(color: cs.onSurface.withValues(alpha: 0.6))),
+              ],
+            ),
           ),
         ),
       );
     }
 
-    return Scaffold(
-      backgroundColor: bgColor,
-      drawer: isMobile ? _buildDrawer() : null,
-      appBar: isMobile 
-        ? AppBar(
-            title: Text(_getTitleForIndex(_selectedIndex), style: const TextStyle(fontSize: 18)),
-            backgroundColor: cardColor,
+    final isMobile = MediaQuery.of(context).size.width < 1100;
+    
+    final localTheme = _isDarkMode 
+      ? ThemeData(
+          useMaterial3: true,
+          brightness: Brightness.dark,
+          primaryColor: AppColors.primaryPurple,
+          scaffoldBackgroundColor: const Color(0xFF0A0C10),
+          cardColor: const Color(0xFF141820),
+          dividerColor: Colors.white10,
+          textTheme: const TextTheme(
+            bodyLarge: TextStyle(color: Colors.white, fontSize: 16),
+            bodyMedium: TextStyle(color: Colors.white70, fontSize: 14),
+            titleLarge: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          appBarTheme: const AppBarTheme(
+            backgroundColor: Color(0xFF141820),
+            foregroundColor: Colors.white,
             elevation: 0,
-            actions: [
-              IconButton(
-                icon: const Icon(Icons.refresh_rounded, color: Colors.grey),
-                onPressed: () => setState(() {}),
-              ),
-            ],
-          )
-        : null,
-      body: Row(
-        children: [
-          // Sidebar (Desktop only)
-          if (!isMobile)
-            Container(
-              width: 80,
-              decoration: BoxDecoration(
-                color: cardColor,
-                border: Border(right: BorderSide(color: borderColor)),
-              ),
-              child: Column(
-                children: [
-                  const SizedBox(height: 40),
-                  _buildSidebarItem(0, Icons.grid_view_rounded),
-                  _buildSidebarItem(1, Icons.people_rounded),
-                  _buildSidebarItem(2, Icons.store_rounded),
-                  _buildSidebarItem(3, Icons.handyman_rounded),
-                  _buildSidebarItem(4, Icons.confirmation_number_rounded),
-                  _buildSidebarItem(5, Icons.campaign_rounded),
-                  const Spacer(),
-                  const SizedBox(height: 24),
-                ],
-              ),
-            ),
+            iconTheme: IconThemeData(color: Colors.white),
+          ),
+          colorScheme: const ColorScheme.dark(
+            primary: AppColors.primaryPurple,
+            surface: Color(0xFF141820),
+            onSurface: Colors.white,
+            secondary: AppColors.gold,
+          ),
+        )
+      : ThemeData(
+          useMaterial3: true,
+          brightness: Brightness.light,
+          primaryColor: AppColors.primaryPurple,
+          scaffoldBackgroundColor: const Color(0xFFF0F2F5),
+          cardColor: Colors.white,
+          dividerColor: Colors.black12,
+          textTheme: const TextTheme(
+            bodyLarge: TextStyle(color: Color(0xFF1A1A1A), fontSize: 16),
+            bodyMedium: TextStyle(color: Color(0xFF4A4A4A), fontSize: 14),
+            titleLarge: TextStyle(color: Color(0xFF1A1A1A), fontWeight: FontWeight.bold),
+          ),
+          appBarTheme: const AppBarTheme(
+            backgroundColor: Colors.white,
+            foregroundColor: Color(0xFF1A1A1A),
+            elevation: 0,
+            iconTheme: IconThemeData(color: Color(0xFF1A1A1A)),
+          ),
+          colorScheme: const ColorScheme.light(
+            primary: AppColors.primaryPurple,
+            surface: Colors.white,
+            onSurface: Color(0xFF1A1A1A),
+            secondary: AppColors.gold,
+          ),
+        );
 
-          // Main Content
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Header (Desktop only)
-                if (!isMobile)
-                  Container(
-                    padding: const EdgeInsets.all(24),
-                    child: Row(
-                      children: [
-                        Text(
-                          _getTitleForIndex(_selectedIndex),
-                          style: TextStyle(
-                            color: textColor,
-                            fontSize: 28,
-                            fontWeight: FontWeight.bold,
+    return Theme(
+      data: localTheme,
+      child: Scaffold(
+        backgroundColor: localTheme.scaffoldBackgroundColor,
+        drawer: isMobile ? _buildSidebar(isMobile: true) : null,
+        appBar: isMobile
+            ? AppBar(
+                iconTheme: IconThemeData(color: localTheme.colorScheme.onSurface),
+                title: Text(_getSectionTitle(_currentSection), style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: localTheme.colorScheme.onSurface)),
+                backgroundColor: localTheme.scaffoldBackgroundColor,
+                elevation: 0,
+                actions: [
+                  IconButton(
+                    icon: Icon(_isDarkMode ? Icons.light_mode : Icons.dark_mode, color: localTheme.colorScheme.onSurface),
+                    onPressed: () => setState(() => _isDarkMode = !_isDarkMode),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+              )
+            : null,
+        body: Container(
+          color: localTheme.scaffoldBackgroundColor,
+          child: Row(
+            children: [
+              if (!isMobile) _buildSidebar(isMobile: false),
+              Expanded(
+                child: Column(
+                  children: [
+                    if (!isMobile) _buildHeader(localTheme.colorScheme),
+                    Expanded(
+                      child: Container(
+                        margin: isMobile ? EdgeInsets.zero : const EdgeInsets.only(left: 0, right: 24, bottom: 24),
+                        decoration: BoxDecoration(
+                          color: localTheme.scaffoldBackgroundColor,
+                          borderRadius: isMobile ? BorderRadius.zero : BorderRadius.circular(24),
+                        ),
+                        child: ClipRRect(
+                          borderRadius: isMobile ? BorderRadius.zero : BorderRadius.circular(24),
+                          child: Container(
+                            color: localTheme.cardColor,
+                            child: _buildContent(),
                           ),
                         ),
-                        const Spacer(),
-                        IconButton(
-                          icon: const Icon(Icons.refresh_rounded, color: Colors.grey),
-                          onPressed: () => setState(() {}),
-                        ),
-                      ],
+                      ),
                     ),
-                  ),
-
-                // Content Area
-                Expanded(
-                  child: Container(
-                    padding: EdgeInsets.symmetric(horizontal: isMobile ? 12 : 24),
-                    child: _buildContent(),
-                  ),
+                  ],
                 ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader(ColorScheme cs) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+      child: Row(
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(_getSectionTitle(_currentSection), style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: cs.onSurface)),
+              Text('Painel de Controle Administrativo', style: TextStyle(color: cs.onSurface.withValues(alpha: 0.6), fontSize: 14)),
+            ],
+          ),
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: cs.primary.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: cs.primary.withValues(alpha: 0.2)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.shield_outlined, size: 14, color: cs.primary),
+                const SizedBox(width: 6),
+                Text('Admin Mode', style: TextStyle(color: cs.primary, fontSize: 12, fontWeight: FontWeight.bold)),
               ],
             ),
           ),
+          const SizedBox(width: 16),
+          IconButton(
+            icon: Icon(_isDarkMode ? Icons.light_mode : Icons.dark_mode, color: cs.onSurface.withValues(alpha: 0.5)),
+            onPressed: () => setState(() => _isDarkMode = !_isDarkMode),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            icon: Icon(Icons.refresh_rounded, color: cs.onSurface.withValues(alpha: 0.5)),
+            onPressed: () => setState(() {}),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildDrawer() {
+  Widget _buildSidebar({required bool isMobile}) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final cardColor = cs.surface;
+    final textColor = cs.onSurface;
+
     return Drawer(
-      child: Column(
-        children: [
-          DrawerHeader(
-            decoration: const BoxDecoration(color: AppColors.primaryPurple),
-            child: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
+      backgroundColor: cardColor,
+      child: Container(
+        width: isMobile ? null : 280,
+        color: cardColor,
+        child: Column(
+          children: [
+            if (!isMobile) ...[
+              const SizedBox(height: 40),
+              Icon(Icons.auto_awesome, size: 40, color: cs.primary),
+              const SizedBox(height: 12),
+              Text('MarkaAI', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: textColor)),
+              const SizedBox(height: 40),
+            ],
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
                 children: [
-                  const Icon(Icons.admin_panel_settings, color: Colors.white, size: 48),
-                  const SizedBox(height: 8),
-                  Text('MarkaAI Admin', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                  _buildSidebarGroup('MÉTRICAS'),
+                  _buildSidebarItem(AdminSection.overview, Icons.grid_view_rounded, 'Overview'),
+                  _buildSidebarItem(AdminSection.metrics, Icons.analytics_outlined, 'KPIs Financeiros'),
+                  
+                  const SizedBox(height: 24),
+                  _buildSidebarGroup('OPERAÇÕES'),
+                  _buildSidebarItem(AdminSection.tenants, Icons.store_rounded, 'Tenants'),
+                  _buildSidebarItem(AdminSection.users, Icons.people_outline, 'Usuários'),
+                  _buildSidebarItem(AdminSection.finance, Icons.payments_outlined, 'Financeiro'),
+                  
+                  const SizedBox(height: 24),
+                  _buildSidebarGroup('COMUNICAÇÃO'),
+                  _buildSidebarItem(AdminSection.notifications, Icons.campaign_outlined, 'Notificações'),
+                  _buildSidebarItem(AdminSection.banners, Icons.photo_library_outlined, 'Banners'),
+                  
+                  const SizedBox(height: 24),
+                  _buildSidebarGroup('SISTEMA'),
+                  _buildSidebarItem(AdminSection.monitoring, Icons.monitor_heart_outlined, 'Monitoramento'),
+                  _buildSidebarItem(AdminSection.featureFlags, Icons.flag_outlined, 'Feature Flags'),
+                  
+                  const SizedBox(height: 24),
+                  _buildSidebarGroup('SUPORTE'),
+                  _buildSidebarItem(AdminSection.tickets, Icons.confirmation_number_outlined, 'Tickets'),
+                  _buildSidebarItem(AdminSection.support, Icons.handyman_outlined, 'Ferramentas'),
                 ],
               ),
             ),
-          ),
-          _buildDrawerItem(0, Icons.grid_view_rounded, 'Overview'),
-          _buildDrawerItem(1, Icons.people_rounded, 'Usuários'),
-          _buildDrawerItem(2, Icons.store_rounded, 'Negócios'),
-          _buildDrawerItem(3, Icons.handyman_rounded, 'Suporte'),
-          _buildDrawerItem(4, Icons.confirmation_number_rounded, 'Tickets'),
-          _buildDrawerItem(5, Icons.campaign_rounded, 'Banners'),
-        ],
+            Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text('v1.2.0 • Prod', style: TextStyle(color: cs.onSurface.withValues(alpha: 0.5), fontSize: 10)),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildDrawerItem(int index, IconData icon, String title) {
-    final isSelected = _selectedIndex == index;
-    return ListTile(
-      leading: Icon(icon, color: isSelected ? AppColors.primaryPurple : Colors.grey),
-      title: Text(title, style: TextStyle(color: isSelected ? AppColors.primaryPurple : null, fontWeight: isSelected ? FontWeight.bold : null)),
-      selected: isSelected,
-      onTap: () {
-        setState(() => _selectedIndex = index);
-        Navigator.pop(context);
-      },
+  Widget _buildSidebarGroup(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 12, bottom: 8),
+      child: Text(title, style: TextStyle(color: Colors.grey.withValues(alpha: 0.5), fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1.1)),
     );
   }
 
-  Widget _buildSidebarItem(int index, IconData icon) {
-    final isSelected = _selectedIndex == index;
-    return InkWell(
-      onTap: () => setState(() => _selectedIndex = index),
-      child: Container(
-        width: 48,
-        height: 48,
-        margin: const EdgeInsets.symmetric(vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? AppColors.primaryPurple : Colors.transparent,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Icon(
-          icon,
-          size: 16,
-          color: isSelected ? Colors.white : Colors.grey,
-        ),
+  Widget _buildSidebarItem(AdminSection section, IconData icon, String title) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final isSelected = _currentSection == section;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 4),
+      child: ListTile(
+        onTap: () {
+          setState(() => _currentSection = section);
+          if (MediaQuery.of(context).size.width < 1100) Navigator.pop(context);
+        },
+        leading: Icon(icon, color: isSelected ? cs.primary : cs.onSurface.withValues(alpha: 0.5), size: 20),
+        title: Text(title, style: TextStyle(color: isSelected ? cs.primary : null, fontWeight: isSelected ? FontWeight.bold : null, fontSize: 14)),
+        selected: isSelected,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        selectedTileColor: cs.primary.withValues(alpha: 0.05),
       ),
     );
   }
 
   Widget _buildContent() {
-    switch (_selectedIndex) {
-      case 0:
-        return const AdminOverviewWidget();
-      case 1:
-        return const AdminUsersWidget();
-      case 2:
-        return const AdminShopsWidget();
-      case 3:
-        return const AdminSupportWidget();
-      case 4:
-        return const AdminTicketsPage(embedded: true);
-      case 5:
-        return const AdminBannersPage();
-      default:
-        return const Center(child: Text('Página não encontrada'));
+    switch (_currentSection) {
+      case AdminSection.overview: return const AdminOverviewWidget();
+      case AdminSection.metrics: return const AdminMetricsWidget();
+      case AdminSection.tenants: return const AdminShopsWidget();
+      case AdminSection.users: return const AdminUsersWidget();
+      case AdminSection.finance: return const AdminFinanceWidget();
+      case AdminSection.notifications: return const AdminNotificationsWidget();
+      case AdminSection.monitoring: return const AdminMonitoringWidget();
+      case AdminSection.featureFlags: return const AdminFeatureFlagsWidget();
+      case AdminSection.support: return const AdminSupportWidget();
+      case AdminSection.tickets: return const AdminTicketsPage(embedded: true);
+      case AdminSection.banners: return const AdminBannersPage();
     }
   }
 
-  String _getTitleForIndex(int index) {
-    switch (index) {
-      case 0:
-        return 'Overview';
-      case 1:
-        return 'Gerenciar Usuários';
-      case 2:
-        return 'Gerenciar Negócios';
-      case 3:
-        return 'Ferramentas de Suporte';
-      case 4:
-        return 'Tickets de Suporte';
-      case 5:
-        return 'Banners de Marketing';
-      default:
-        return 'Admin Dashboard';
+  String _getSectionTitle(AdminSection section) {
+    switch (section) {
+      case AdminSection.overview: return 'Overview';
+      case AdminSection.metrics: return 'KPIs Financeiros';
+      case AdminSection.tenants: return 'Gestão de Tenants';
+      case AdminSection.users: return 'Usuários';
+      case AdminSection.finance: return 'Financeiro';
+      case AdminSection.notifications: return 'Comunicação';
+      case AdminSection.monitoring: return 'Monitoramento';
+      case AdminSection.featureFlags: return 'Feature Flags';
+      case AdminSection.support: return 'Suporte';
+      case AdminSection.tickets: return 'Tickets';
+      case AdminSection.banners: return 'Marketing Banners';
     }
   }
 }

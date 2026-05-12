@@ -252,6 +252,8 @@ class _CategoriesPageState extends State<CategoriesPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Categorias'),
+        backgroundColor: AppColors.primaryPurple,
+        foregroundColor: Colors.white,
       ),
       body: Padding(
         padding: const EdgeInsets.all(12.0),
@@ -295,6 +297,8 @@ class CategoriesListPage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Todas as categorias'),
+        backgroundColor: AppColors.primaryPurple,
+        foregroundColor: Colors.white,
       ),
       body: StreamBuilder<List<Map<String, dynamic>>>(
           stream: Supabase.instance.client

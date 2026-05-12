@@ -9,6 +9,7 @@ class AppColors {
   // Tema Claro
   static const Color background = Colors.white;
   static const Color surface = Color(0xFFF5F7FA);
+  static const Color softGrey = surface; // Alias para compatibilidade
   static const Color textPrimary = Color(0xFF212121);
   static const Color textSecondary = Color(0xFF757575);
   static const Color border = Color(0xFFE0E0E0);

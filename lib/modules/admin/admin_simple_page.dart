@@ -65,6 +65,8 @@ class _AdminSimplePageState extends State<AdminSimplePage> {
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Painel Admin'),
+          backgroundColor: AppColors.primaryPurple,
+          foregroundColor: Colors.white,
           bottom: const TabBar(
             isScrollable: true,
             tabs: [

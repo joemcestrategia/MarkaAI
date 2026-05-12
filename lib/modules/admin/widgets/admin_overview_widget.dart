@@ -9,9 +9,10 @@ class AdminOverviewWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final cardColor = theme.cardColor;
-    final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
-    final subTextColor = theme.textTheme.bodyMedium?.color?.withValues(alpha: 0.7) ?? Colors.grey;
+    final cs = theme.colorScheme;
+    final cardColor = cs.surface;
+    final textColor = cs.onSurface;
+    final subTextColor = cs.onSurface.withValues(alpha: 0.6);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
@@ -82,6 +83,7 @@ class AdminOverviewWidget extends StatelessWidget {
                           cardColor,
                           textColor,
                           subTextColor,
+                          cs,
                         ),
                         _buildPremiumStatCard(
                           'Negócios',
@@ -92,6 +94,7 @@ class AdminOverviewWidget extends StatelessWidget {
                           cardColor,
                           textColor,
                           subTextColor,
+                          cs,
                         ),
                         _buildPremiumStatCard(
                           'Agendamentos',
@@ -102,6 +105,7 @@ class AdminOverviewWidget extends StatelessWidget {
                           cardColor,
                           textColor,
                           subTextColor,
+                          cs,
                         ),
                         _buildPremiumStatCard(
                           'Movimentação',
@@ -112,6 +116,7 @@ class AdminOverviewWidget extends StatelessWidget {
                           cardColor,
                           textColor,
                           subTextColor,
+                          cs,
                         ),
                         _buildPremiumStatCard(
                           'Recorrência Dev',
@@ -122,6 +127,7 @@ class AdminOverviewWidget extends StatelessWidget {
                           cardColor,
                           textColor,
                           subTextColor,
+                          cs,
                         ),
                       ],
                     );
@@ -165,13 +171,13 @@ class AdminOverviewWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildPremiumStatCard(String title, String value, IconData icon, Color color, String trend, Color cardColor, Color textColor, Color subTextColor) {
+  Widget _buildPremiumStatCard(String title, String value, IconData icon, Color color, String trend, Color cardColor, Color textColor, Color subTextColor, ColorScheme cs) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: cardColor,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: textColor.withValues(alpha: 0.04)),
+        border: Border.all(color: cs.onSurface.withValues(alpha: 0.1)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -191,10 +197,10 @@ class AdminOverviewWidget extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: Colors.green.withValues(alpha: 0.1),
+                  color: cs.tertiary.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(6),
                 ),
-                child: Text(trend, style: const TextStyle(color: Colors.green, fontSize: 10, fontWeight: FontWeight.bold)),
+                child: Text(trend, style: TextStyle(color: cs.tertiary, fontSize: 10, fontWeight: FontWeight.bold)),
               ),
             ],
           ),
@@ -491,7 +497,7 @@ class AdminOverviewWidget extends StatelessWidget {
           child: Column(
             children: [
               _buildPlanRow('PLANO', 'TOTAL', 'PAGOS', 'MANUAL', subTextColor, textColor, isHeader: true),
-              const Divider(height: 24, color: Colors.white10),
+              Divider(height: 24, color: textColor.withValues(alpha: 0.1)),
               ...stats.values.map((s) => _buildPlanRow(
                     s['name'],
                     (s['paidCount'] + s['manualCount']).toString(),

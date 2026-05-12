@@ -15,9 +15,10 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final cardColor = theme.cardColor;
-    final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
-    final borderColor = textColor.withValues(alpha: 0.06);
+    final cs = theme.colorScheme;
+    final cardColor = cs.surface;
+    final textColor = cs.onSurface;
+    final borderColor = cs.onSurface.withValues(alpha: 0.1);
 
     return Column(
       children: [
@@ -29,7 +30,7 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
             decoration: InputDecoration(
               hintText: 'Buscar por nome, email ou CPF...',
               hintStyle: TextStyle(color: textColor.withValues(alpha: 0.4), fontSize: 14),
-              prefixIcon: const Icon(Icons.search, color: Color(0xFF4F8EF7), size: 20),
+              prefixIcon: Icon(Icons.search, color: cs.primary, size: 20),
               filled: true,
               fillColor: cardColor,
               contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
@@ -43,7 +44,7 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Color(0xFF4F8EF7), width: 1.5),
+                borderSide: BorderSide(color: cs.primary, width: 1.5),
               ),
             ),
             onChanged: (value) => setState(() => _searchQuery = value),
@@ -97,9 +98,9 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
                         tag: 'avatar-$id',
                         child: CircleAvatar(
                           radius: 18,
-                          backgroundColor: const Color(0xFF4F8EF7).withValues(alpha: 0.1),
+                          backgroundColor: cs.primary.withValues(alpha: 0.1),
                           child: Text(nome.isNotEmpty ? nome[0].toUpperCase() : '?',
-                              style: const TextStyle(color: Color(0xFF4F8EF7), fontWeight: FontWeight.bold, fontSize: 14)),
+                              style: TextStyle(color: cs.primary, fontWeight: FontWeight.bold, fontSize: 14)),
                         ),
                       ),
                       title: Text(nome, style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 14)),
@@ -111,14 +112,14 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                             decoration: BoxDecoration(
                               color: (tipo == 'dono' || tipo == 'business')
-                                  ? const Color(0xFF7C5CFC).withValues(alpha: 0.1)
+                                  ? cs.tertiary.withValues(alpha: 0.1)
                                   : textColor.withValues(alpha: 0.05),
                               borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text(
                               tipo.toUpperCase(),
                               style: TextStyle(
-                                color: (tipo == 'dono' || tipo == 'business') ? const Color(0xFF7C5CFC) : textColor.withValues(alpha: 0.5),
+                                color: (tipo == 'dono' || tipo == 'business') ? cs.tertiary : textColor.withValues(alpha: 0.5),
                                 fontSize: 9,
                                 fontWeight: FontWeight.bold,
                               ),
@@ -141,9 +142,10 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
 
   Future<void> _showUserDetails(Map<String, dynamic> data) async {
     final theme = Theme.of(context);
-    final cardColor = theme.cardColor;
-    final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
-    final borderColor = textColor.withValues(alpha: 0.06);
+    final cs = theme.colorScheme;
+    final cardColor = cs.surface;
+    final textColor = cs.onSurface;
+    final borderColor = cs.onSurface.withValues(alpha: 0.1);
 
     final id = data['id'];
     final nomeController = TextEditingController(text: data['name'] ?? '');
@@ -177,10 +179,10 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
                       tag: 'avatar-$id',
                       child: CircleAvatar(
                         radius: 24,
-                        backgroundColor: const Color(0xFF4F8EF7).withValues(alpha: 0.1),
+                        backgroundColor: cs.primary.withValues(alpha: 0.1),
                         child: Text(
                           (data['name'] as String? ?? '?').isNotEmpty ? data['name'][0].toUpperCase() : '?',
-                          style: const TextStyle(color: Color(0xFF4F8EF7), fontSize: 20, fontWeight: FontWeight.bold),
+                          style: TextStyle(color: cs.primary, fontSize: 20, fontWeight: FontWeight.bold),
                         ),
                       ),
                     ),
@@ -225,8 +227,8 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
                           icon: const Icon(Icons.edit_outlined, size: 16),
                           label: const Text('EDITAR DADOS', style: TextStyle(fontSize: 12)),
                           style: OutlinedButton.styleFrom(
-                            foregroundColor: const Color(0xFF4F8EF7),
-                            side: const BorderSide(color: Color(0xFF4F8EF7)),
+                            foregroundColor: cs.primary,
+                            side: BorderSide(color: cs.primary),
                             padding: const EdgeInsets.symmetric(vertical: 12),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                           ),
@@ -307,8 +309,8 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
                             }
                           },
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF4F8EF7),
-                            foregroundColor: Colors.white,
+                            backgroundColor: cs.primary,
+                            foregroundColor: cs.onPrimary,
                             padding: const EdgeInsets.symmetric(vertical: 12),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                             elevation: 0,
@@ -328,11 +330,12 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
   }
 
   Widget _buildDetailRow(String label, String value, IconData icon, Color textColor) {
+    final cs = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         children: [
-          Icon(icon, size: 16, color: const Color(0xFF4F8EF7).withValues(alpha: 0.6)),
+          Icon(icon, size: 16, color: cs.primary.withValues(alpha: 0.6)),
           const SizedBox(width: 10),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,

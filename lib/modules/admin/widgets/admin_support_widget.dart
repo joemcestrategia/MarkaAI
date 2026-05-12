@@ -10,109 +10,103 @@ class AdminSupportWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Theme(
-      data: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: const Color(0xFF0F1117),
-        cardColor: const Color(0xFF1A1D27),
-      ),
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // --- Painel de Tickets ---
-            _buildTicketsBanner(context),
-            const SizedBox(height: 32),
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final textColor = cs.onSurface;
 
-            const Text(
-              'Ações Rápidas de Suporte',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Gerenciamento manual, exportação de dados e utilitários administrativos.',
-              style: TextStyle(color: Colors.grey[500], fontSize: 14),
-            ),
-            const SizedBox(height: 32),
-  
-            LayoutBuilder(builder: (context, constraints) {
-              final cols = constraints.maxWidth > 1000 ? 4 : (constraints.maxWidth > 600 ? 2 : 1);
-              return GridView.count(
-                crossAxisCount: cols,
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                crossAxisSpacing: 20,
-                mainAxisSpacing: 20,
-                childAspectRatio: 1.5,
-                children: [
-                  _buildActionCard(
-                    context,
-                    'Gerenciar Assinatura',
-                    Icons.card_membership_rounded,
-                    const Color(0xFF4F8EF7),
-                    () => _showSubscriptionOverride(context),
-                  ),
-                  _buildActionCard(
-                    context,
-                    'Exportar Usuários',
-                    Icons.people_alt_rounded,
-                    const Color(0xFF22C55E),
-                    () => _exportUsers(context),
-                  ),
-                  _buildActionCard(
-                    context,
-                    'Exportar Negócios',
-                    Icons.storefront_rounded,
-                    const Color(0xFF7C5CFC),
-                    () => _exportShops(context),
-                  ),
-                  _buildActionCard(
-                    context,
-                    'Estatísticas Base',
-                    Icons.analytics_rounded,
-                    const Color(0xFFF59E0B),
-                    () => _showGeneralStats(context),
-                  ),
-                ],
-              );
-            }),
-  
-            const SizedBox(height: 40),
-            const Text(
-              'Ferramentas de Intervenção',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
-            ),
-            const SizedBox(height: 16),
-  
-            _buildListItem(
-              context,
-              'Buscar Usuário por Email',
-              'Encontrar e modificar dados de usuário específicos.',
-              Icons.search_rounded,
-              const Color(0xFF4F8EF7),
-              () => _searchUserByEmail(context),
-            ),
-            const SizedBox(height: 12),
-            _buildListItem(
-              context,
-              'Enviar Notificação Manual',
-              'Enviar push notification para usuários selecionados.',
-              Icons.notifications_active_rounded,
-              const Color(0xFFF59E0B),
-              () => _sendManualNotification(context),
-            ),
-          ],
-        ),
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildTicketsBanner(context),
+          const SizedBox(height: 32),
+          Text(
+            'Ações Rápidas de Suporte',
+            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: textColor),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Gerenciamento manual, exportação de dados e utilitários administrativos.',
+            style: TextStyle(color: textColor.withValues(alpha: 0.6), fontSize: 14),
+          ),
+          const SizedBox(height: 32),
+          LayoutBuilder(builder: (context, constraints) {
+            final cols = constraints.maxWidth > 1000 ? 4 : (constraints.maxWidth > 600 ? 2 : 1);
+            return GridView.count(
+              crossAxisCount: cols,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisSpacing: 20,
+              mainAxisSpacing: 20,
+              childAspectRatio: 1.5,
+              children: [
+                _buildActionCard(
+                  context,
+                  'Gerenciar Assinatura',
+                  Icons.card_membership_rounded,
+                  const Color(0xFF4F8EF7),
+                  () => _showSubscriptionOverride(context),
+                ),
+                _buildActionCard(
+                  context,
+                  'Exportar Usuários',
+                  Icons.people_alt_rounded,
+                  const Color(0xFF22C55E),
+                  () => _exportUsers(context),
+                ),
+                _buildActionCard(
+                  context,
+                  'Exportar Negócios',
+                  Icons.storefront_rounded,
+                  const Color(0xFF7C5CFC),
+                  () => _exportShops(context),
+                ),
+                _buildActionCard(
+                  context,
+                  'Estatísticas Base',
+                  Icons.analytics_rounded,
+                  const Color(0xFFF59E0B),
+                  () => _showGeneralStats(context),
+                ),
+              ],
+            );
+          }),
+          const SizedBox(height: 40),
+          Text(
+            'Ferramentas de Intervenção',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: textColor),
+          ),
+          const SizedBox(height: 16),
+          _buildListItem(
+            context,
+            'Buscar Usuário por Email',
+            'Encontrar e modificar dados de usuário específicos.',
+            Icons.search_rounded,
+            const Color(0xFF4F8EF7),
+            () => _searchUserByEmail(context),
+          ),
+          const SizedBox(height: 12),
+          _buildListItem(
+            context,
+            'Enviar Notificação Manual',
+            'Enviar push notification para usuários selecionados.',
+            Icons.notifications_active_rounded,
+            const Color(0xFFF59E0B),
+            () => _sendManualNotification(context),
+          ),
+        ],
       ),
     );
   }
-  
+
   Widget _buildListItem(BuildContext context, String title, String sub, IconData icon, Color color, VoidCallback onTap) {
+    final cs = Theme.of(context).colorScheme;
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFF1A1D27),
+        color: cs.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
+        border: Border.all(color: cs.onSurface.withValues(alpha: 0.1)),
       ),
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
@@ -121,14 +115,14 @@ class AdminSupportWidget extends StatelessWidget {
           decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12)),
           child: Icon(icon, color: color),
         ),
-        title: Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-        subtitle: Text(sub, style: const TextStyle(color: Colors.grey, fontSize: 12)),
-        trailing: const Icon(Icons.chevron_right_rounded, color: Colors.grey),
+        title: Text(title, style: TextStyle(color: cs.onSurface, fontWeight: FontWeight.bold)),
+        subtitle: Text(sub, style: TextStyle(color: cs.onSurface.withValues(alpha: 0.6), fontSize: 12)),
+        trailing: Icon(Icons.chevron_right_rounded, color: cs.onSurface.withValues(alpha: 0.3)),
         onTap: onTap,
       ),
     );
   }
-  
+
   Widget _buildTicketsBanner(BuildContext context) {
     return InkWell(
       onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminTicketsPage())),
@@ -191,15 +185,16 @@ class AdminSupportWidget extends StatelessWidget {
   }
 
   Widget _buildActionCard(BuildContext context, String title, IconData icon, Color color, VoidCallback onTap) {
+    final cs = Theme.of(context).colorScheme;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(20),
       child: Container(
         padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
-          color: const Color(0xFF1A1D27),
+          color: cs.surface,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
+          border: Border.all(color: cs.onSurface.withValues(alpha: 0.1)),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -213,7 +208,9 @@ class AdminSupportWidget extends StatelessWidget {
             Text(
               title,
               textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: cs.onSurface, fontWeight: FontWeight.bold, fontSize: 13),
             ),
           ],
         ),
@@ -223,7 +220,7 @@ class AdminSupportWidget extends StatelessWidget {
 
   void _showSubscriptionOverride(BuildContext context) async {
     final emailController = TextEditingController();
-    String? selectedPlan = 'premium';
+    String? selectedPlan = 'pro';
 
     await showDialog(
       context: context,
@@ -264,48 +261,23 @@ class AdminSupportWidget extends StatelessWidget {
             ElevatedButton(
               onPressed: () async {
                 final email = emailController.text.trim();
-                if (email.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Digite um email válido')),
-                  );
-                  return;
-                }
+                if (email.isEmpty) return;
 
                 try {
                   final supabase = Supabase.instance.client;
-                  final res = await supabase
-                      .from('users')
-                      .select()
-                      .eq('email', email)
-                      .maybeSingle();
+                  final res = await supabase.from('users').select().eq('email', email).maybeSingle();
 
-                  if (res == null) {
-                    if (ctx.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Usuário não encontrado')),
-                      );
-                    }
-                    return;
-                  }
+                  if (res == null) return;
 
                   await supabase.from('users').update({
                     'plan': selectedPlan,
-                    'role': 'business', // Ensuring they are business if they have a plan
+                    'role': 'business',
                     'plano_expira': DateTime.now().add(const Duration(days: 365)).toIso8601String(),
                   }).eq('id', res['id']);
 
                   if (ctx.mounted) Navigator.pop(ctx);
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Plano alterado para $selectedPlan!')),
-                    );
-                  }
                 } catch (e) {
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Erro ao alterar plano: $e')),
-                    );
-                  }
+                  debugPrint('Erro: $e');
                 }
               },
               child: const Text('Aplicar'),
@@ -320,55 +292,19 @@ class AdminSupportWidget extends StatelessWidget {
     try {
       final supabase = Supabase.instance.client;
       final users = await supabase.from('users').select();
-
-      List<List<dynamic>> rows = [
-        ['Nome', 'Email', 'Telefone', 'Tipo', 'Plano', 'Data Cadastro']
-      ];
-
-      for (var data in users) {
-        rows.add([
-          data['name'] ?? data['nome'] ?? '',
-          data['email'] ?? '',
-          data['phone'] ?? data['telefone'] ?? '',
-          data['role'] ?? data['tipo'] ?? '',
-          data['plan'] ?? data['plano'] ?? 'free',
-          (data['created_at'] ?? data['criado_em'])?.toString() ?? '',
-        ]);
-      }
-
       final buffer = StringBuffer();
-      for (var row in rows) {
-        buffer.writeln(row.map((e) {
-          final str = e.toString().replaceAll('"', '""');
-          return '"$str"';
-        }).join(','));
+      buffer.writeln('Nome,Email,Telefone,Tipo,Plano,Data Cadastro');
+      for (var data in users) {
+        buffer.writeln('${data['name']},${data['email']},${data['phone']},${data['role']},${data['plan']},${data['created_at']}');
       }
 
-      if (kIsWeb) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Exportação não disponível na Web por este método.')),
-          );
-        }
-        return;
-      }
+      if (kIsWeb) return;
 
       final directory = await getApplicationDocumentsDirectory();
-      final file = io.File(
-          '${directory.path}/usuarios_${DateTime.now().millisecondsSinceEpoch}.csv');
+      final file = io.File('${directory.path}/usuarios_${DateTime.now().millisecondsSinceEpoch}.csv');
       await file.writeAsString(buffer.toString());
-
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Usuários exportados para: ${file.path}')),
-        );
-      }
     } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao exportar: $e')),
-        );
-      }
+      debugPrint('Erro: $e');
     }
   }
 
@@ -376,61 +312,19 @@ class AdminSupportWidget extends StatelessWidget {
     try {
       final supabase = Supabase.instance.client;
       final shops = await supabase.from('shops').select();
-
-      List<List<dynamic>> rows = [
-        ['Nome', 'Categoria', 'Telefone', 'Plano', 'Boost Ativo']
-      ];
-
-      for (var data in shops) {
-        final boostExpiresStr = data['boost_expires_at'] as String?;
-        bool isBoosted = false;
-        if (boostExpiresStr != null) {
-          final expiresAt = DateTime.tryParse(boostExpiresStr);
-          isBoosted = expiresAt != null && expiresAt.isAfter(DateTime.now());
-        }
-
-        rows.add([
-          data['name'] ?? data['nome'] ?? '',
-          data['categoria'] ?? '',
-          data['phone'] ?? data['telefone'] ?? '',
-          data['plan_id'] ?? data['plan'] ?? 'free',
-          isBoosted ? 'Sim' : 'Não',
-        ]);
-      }
-
       final buffer = StringBuffer();
-      for (var row in rows) {
-        buffer.writeln(row.map((e) {
-          final str = e.toString().replaceAll('"', '""');
-          return '"$str"';
-        }).join(','));
+      buffer.writeln('Nome,Categoria,Telefone,Plano,Boost Ativo');
+      for (var data in shops) {
+        buffer.writeln('${data['name']},${data['categoria']},${data['phone']},${data['plan_id']},false');
       }
 
-      if (kIsWeb) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Exportação não disponível na Web por este método.')),
-          );
-        }
-        return;
-      }
+      if (kIsWeb) return;
 
       final directory = await getApplicationDocumentsDirectory();
-      final file = io.File(
-          '${directory.path}/negocios_${DateTime.now().millisecondsSinceEpoch}.csv');
+      final file = io.File('${directory.path}/negocios_${DateTime.now().millisecondsSinceEpoch}.csv');
       await file.writeAsString(buffer.toString());
-
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Negócios exportados para: ${file.path}')),
-        );
-      }
     } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao exportar: $e')),
-        );
-      }
+      debugPrint('Erro: $e');
     }
   }
 
@@ -442,10 +336,6 @@ class AdminSupportWidget extends StatelessWidget {
       supabase.from('appointments').count(CountOption.exact),
     ]);
 
-    final totalUsers = results[0];
-    final totalShops = results[1];
-    final totalAppts = results[2];
-
     if (context.mounted) {
       showDialog(
         context: context,
@@ -453,18 +343,14 @@ class AdminSupportWidget extends StatelessWidget {
           title: const Text('Estatísticas Gerais'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Total de usuários: $totalUsers'),
-              Text('Total de negócios: $totalShops'),
-              Text('Total de agendamentos: $totalAppts'),
+              Text('Total de usuários: ${results[0]}'),
+              Text('Total de negócios: ${results[1]}'),
+              Text('Total de agendamentos: ${results[2]}'),
             ],
           ),
           actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Fechar'),
-            ),
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Fechar')),
           ],
         ),
       );
@@ -473,67 +359,28 @@ class AdminSupportWidget extends StatelessWidget {
 
   void _searchUserByEmail(BuildContext context) async {
     final emailController = TextEditingController();
-
     await showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Buscar Usuário'),
-        content: TextField(
-          controller: emailController,
-          decoration: const InputDecoration(
-            labelText: 'Email',
-            hintText: 'usuario@example.com',
-          ),
-        ),
+        content: TextField(controller: emailController, decoration: const InputDecoration(labelText: 'Email')),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancelar'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
           ElevatedButton(
             onPressed: () async {
               final email = emailController.text.trim();
               if (email.isEmpty) return;
-
-              final res = await Supabase.instance.client
-                  .from('users')
-                  .select()
-                  .eq('email', email)
-                  .maybeSingle();
-
+              final res = await Supabase.instance.client.from('users').select().eq('email', email).maybeSingle();
               if (ctx.mounted) Navigator.pop(ctx);
-
-              if (res == null) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Usuário não encontrado')),
-                  );
-                }
-              } else {
-                if (context.mounted) {
-                  showDialog(
-                    context: context,
-                    builder: (c) => AlertDialog(
-                      title: const Text('Usuário Encontrado'),
-                      content: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Nome: ${res['name'] ?? res['nome'] ?? 'N/A'}'),
-                          Text('Email: ${res['email'] ?? 'N/A'}'),
-                          Text('Tipo: ${res['role'] ?? res['tipo'] ?? 'cliente'}'),
-                          Text('Plano: ${res['plan'] ?? res['plano'] ?? 'free'}'),
-                        ],
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(c),
-                          child: const Text('Fechar'),
-                        ),
-                      ],
-                    ),
-                  );
-                }
+              if (res != null && context.mounted) {
+                showDialog(
+                  context: context,
+                  builder: (c) => AlertDialog(
+                    title: const Text('Usuário Encontrado'),
+                    content: Text('Nome: ${res['name']}\nEmail: ${res['email']}\nPlano: ${res['plan']}'),
+                    actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('Fechar'))],
+                  ),
+                );
               }
             },
             child: const Text('Buscar'),
@@ -544,8 +391,6 @@ class AdminSupportWidget extends StatelessWidget {
   }
 
   void _sendManualNotification(BuildContext context) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Funcionalidade de notificação em desenvolvimento')),
-    );
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Em desenvolvimento')));
   }
 }

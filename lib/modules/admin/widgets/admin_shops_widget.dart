@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:markaai/core/theme/app_colors.dart';
+import 'package:markaai/core/utils/format_utils.dart';
+import 'package:markaai/modules/admin/services/admin_service.dart';
 
 class AdminShopsWidget extends StatefulWidget {
   const AdminShopsWidget({super.key});
@@ -9,68 +12,91 @@ class AdminShopsWidget extends StatefulWidget {
 }
 
 class _AdminShopsWidgetState extends State<AdminShopsWidget> {
+  final _adminService = AdminService();
   String _searchQuery = '';
+  String _selectedPlan = 'all';
+  bool _showBlocked = false;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final cardColor = theme.cardColor;
-    final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
-    final borderColor = textColor.withValues(alpha: 0.06);
+    final cs = theme.colorScheme;
+    final cardColor = cs.surface;
+    final textColor = cs.onSurface;
+    final borderColor = cs.onSurface.withValues(alpha: 0.1);
 
     return Column(
       children: [
-        // Search Bar - Slightly more compact
+        // Filtros e Busca
         Padding(
           padding: const EdgeInsets.all(20.0),
-          child: TextField(
-            style: TextStyle(color: textColor, fontSize: 14),
-            decoration: InputDecoration(
-              hintText: 'Buscar por nome, slug ou plano...',
-              hintStyle: TextStyle(color: textColor.withValues(alpha: 0.4), fontSize: 14),
-              prefixIcon: const Icon(Icons.search, color: Color(0xFF4F8EF7), size: 20),
-              filled: true,
-              fillColor: cardColor,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: borderColor),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: TextField(
+                  style: TextStyle(color: textColor, fontSize: 14),
+                  decoration: InputDecoration(
+                    hintText: 'Buscar por nome, email ou telefone...',
+                    hintStyle: TextStyle(color: textColor.withValues(alpha: 0.4), fontSize: 14),
+                    prefixIcon: Icon(Icons.search, color: cs.primary, size: 20),
+                    filled: true,
+                    fillColor: cardColor,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: borderColor)),
+                    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: borderColor)),
+                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: cs.primary, width: 1.5)),
+                  ),
+                  onChanged: (value) => setState(() => _searchQuery = value),
+                ),
               ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: borderColor),
+              const SizedBox(width: 16),
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  value: _selectedPlan,
+                  dropdownColor: cardColor,
+                  style: TextStyle(color: textColor, fontSize: 14),
+                  decoration: InputDecoration(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    filled: true,
+                    fillColor: cardColor,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: borderColor)),
+                    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: borderColor)),
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'all', child: Text('Todos Planos')),
+                    DropdownMenuItem(value: 'free', child: Text('Free')),
+                    DropdownMenuItem(value: 'start', child: Text('Start')),
+                    DropdownMenuItem(value: 'plus', child: Text('Plus')),
+                    DropdownMenuItem(value: 'pro', child: Text('Pro')),
+                  ],
+                  onChanged: (value) => setState(() => _selectedPlan = value!),
+                ),
               ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Color(0xFF4F8EF7), width: 1.5),
+              const SizedBox(width: 16),
+              FilterChip(
+                label: const Text('Bloqueados'),
+                selected: _showBlocked,
+                onSelected: (value) => setState(() => _showBlocked = value),
+                selectedColor: cs.error.withValues(alpha: 0.2),
+                checkmarkColor: cs.error,
+                labelStyle: TextStyle(color: _showBlocked ? cs.error : cs.onSurface),
               ),
-            ),
-            onChanged: (value) => setState(() => _searchQuery = value),
+            ],
           ),
         ),
 
-        // Shops List
+        // Listagem
         Expanded(
           child: StreamBuilder<List<Map<String, dynamic>>>(
-            stream: Supabase.instance.client.from('shops').stream(primaryKey: ['id']).order('name'),
+            stream: _buildQuery().asStream(),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
               }
-              if (snapshot.hasError) {
-                return Center(child: Text('Erro: ${snapshot.error}'));
-              }
+              if (snapshot.hasError) return Center(child: Text('Erro: ${snapshot.error}'));
 
-              var shops = snapshot.data ?? [];
-              if (_searchQuery.isNotEmpty) {
-                final query = _searchQuery.toLowerCase();
-                shops = shops.where((data) {
-                  final nome = (data['name'] ?? data['nome'] ?? '').toString().toLowerCase();
-                  final slug = (data['slug'] ?? '').toString().toLowerCase();
-                  final plan = (data['plan_id'] ?? data['plan'] ?? '').toString().toLowerCase();
-                  return nome.contains(query) || slug.contains(query) || plan.contains(query);
-                }).toList();
-              }
+              final shops = snapshot.data ?? [];
 
               return Container(
                 margin: const EdgeInsets.symmetric(horizontal: 20),
@@ -83,76 +109,29 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
                   itemCount: shops.length,
                   separatorBuilder: (context, index) => Divider(color: borderColor, height: 1),
                   itemBuilder: (context, index) {
-                    final data = shops[index];
-                    final id = data['id'];
-                    final nome = data['name'] ?? data['nome'] ?? 'Sem nome';
-                    final slug = data['slug'] ?? '';
-                    final plan = (data['plan_id'] ?? data['plan'] ?? 'free').toString();
-                    final isTrial = data['trial_active'] == true;
-                    final photoUrl = data['logoUrl'];
-                    
-                    final boostExpiresStr = data['boost_expires_at'] as String?;
-                    bool isBoosted = false;
-                    if (boostExpiresStr != null) {
-                      final expiresAt = DateTime.tryParse(boostExpiresStr);
-                      isBoosted = expiresAt != null && expiresAt.isAfter(DateTime.now());
-                    }
+                    final shop = shops[index];
+                    final owner = shop['users'] as Map<String, dynamic>?;
+                    final subscription = shop['subscription'] as Map<String, dynamic>?;
+                    final plan = subscription?['plano'] ?? 'free';
+                    final isActive = owner?['is_active'] ?? true;
 
                     return ListTile(
-                      onTap: () => _showShopDetails(data),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-                      leading: Hero(
-                        tag: 'shop-logo-$id',
-                        child: CircleAvatar(
-                          radius: 18,
-                          backgroundColor: const Color(0xFF4F8EF7).withValues(alpha: 0.1),
-                          backgroundImage: photoUrl != null ? NetworkImage(photoUrl) : null,
-                          child: photoUrl == null ? const Icon(Icons.storefront_rounded, color: Color(0xFF4F8EF7), size: 18) : null,
-                        ),
+                      onTap: () => _showShopDetails(shop),
+                      leading: CircleAvatar(
+                        backgroundColor: AppColors.primaryPurple.withValues(alpha: 0.1),
+                        backgroundImage: shop['logo_url'] != null ? NetworkImage(shop['logo_url']) : null,
+                        child: shop['logo_url'] == null ? const Icon(Icons.store_rounded, color: AppColors.primaryPurple) : null,
                       ),
-                      title: Row(
-                        children: [
-                          Text(nome, style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 14)),
-                          if (isBoosted) ...[
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
-                              decoration: BoxDecoration(
-                                color: Colors.amber.withValues(alpha: 0.1),
-                                borderRadius: BorderRadius.circular(4),
-                                border: Border.all(color: Colors.amber.withValues(alpha: 0.3)),
-                              ),
-                              child: const Text(
-                                'BOOST',
-                                style: TextStyle(color: Colors.amber, fontSize: 7, fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                      subtitle: Text('/$slug', style: TextStyle(color: textColor.withValues(alpha: 0.5), fontSize: 11)),
+                      title: Text(shop['name'] ?? 'Sem nome', style: const TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: Text(owner?['email'] ?? 'Sem dono', style: TextStyle(color: textColor.withValues(alpha: 0.6), fontSize: 12)),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: (plan != 'free')
-                                  ? const Color(0xFF22C55E).withValues(alpha: 0.1)
-                                  : textColor.withValues(alpha: 0.05),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              isTrial ? 'TRIAL' : plan.toUpperCase(),
-                              style: TextStyle(
-                                color: (plan != 'free') ? const Color(0xFF22C55E) : textColor.withValues(alpha: 0.5),
-                                fontSize: 9,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
+                          _buildPlanChip(plan),
                           const SizedBox(width: 8),
-                          Icon(Icons.chevron_right, color: textColor.withValues(alpha: 0.3), size: 18),
+                          if (!isActive)
+                            Icon(Icons.block, color: cs.error, size: 16),
+                          Icon(Icons.chevron_right, color: cs.onSurface.withValues(alpha: 0.3)),
                         ],
                       ),
                     );
@@ -166,192 +145,143 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
     );
   }
 
-  Future<void> _showShopDetails(Map<String, dynamic> data) async {
-    final theme = Theme.of(context);
-    final cardColor = theme.cardColor;
-    final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
-    final borderColor = textColor.withValues(alpha: 0.06);
+  Future<List<Map<String, dynamic>>> _buildQuery() async {
+    var query = Supabase.instance.client
+        .from('shops')
+        .select('*, users!inner(email, is_active, id)');
 
-    final id = data['id'];
-    final nomeController = TextEditingController(text: data['name'] ?? data['nome'] ?? '');
-    final telefoneController = TextEditingController(text: data['phone'] ?? data['telefone'] ?? '');
-    final slugController = TextEditingController(text: data['slug'] ?? '');
-    bool isEditing = false;
-    final photoUrl = data['logoUrl'];
+    if (_selectedPlan != 'all') {
+      query = query.filter('subscription->>plano', 'eq', _selectedPlan);
+    }
+    
+    if (_showBlocked) {
+      query = query.eq('users.is_active', false);
+    }
 
-    await showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setModalState) => AlertDialog(
-          backgroundColor: cardColor,
-          surfaceTintColor: Colors.transparent,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-            side: BorderSide(color: borderColor),
-          ),
-          titlePadding: EdgeInsets.zero,
-          contentPadding: const EdgeInsets.all(24),
-          content: SizedBox(
-            width: 550,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Hero(
-                        tag: 'shop-logo-$id',
-                        child: CircleAvatar(
-                          radius: 28,
-                          backgroundColor: const Color(0xFF4F8EF7).withValues(alpha: 0.1),
-                          backgroundImage: photoUrl != null ? NetworkImage(photoUrl) : null,
-                          child: photoUrl == null ? const Icon(Icons.storefront_rounded, color: Color(0xFF4F8EF7), size: 24) : null,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              data['name'] ?? data['nome'] ?? 'Sem nome',
-                              style: TextStyle(color: textColor, fontSize: 18, fontWeight: FontWeight.bold),
-                            ),
-                            Text(
-                              '/${data['slug'] ?? 'sem-slug'}',
-                              style: const TextStyle(color: Color(0xFF4F8EF7), fontSize: 13, fontWeight: FontWeight.w600),
-                            ),
-                          ],
-                        ),
-                      ),
-                      IconButton(
-                        icon: Icon(Icons.close, color: textColor.withValues(alpha: 0.4)),
-                        onPressed: () => Navigator.pop(context),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 24),
-                  Divider(color: borderColor),
-                  const SizedBox(height: 16),
+    if (_searchQuery.isNotEmpty) {
+      query = query.or('name.ilike.%$_searchQuery%,slug.ilike.%$_searchQuery%,users.email.ilike.%$_searchQuery%');
+    }
 
-                  if (!isEditing) ...[
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _buildDetailRow('UID', id.toString(), Icons.vpn_key_outlined, textColor),
-                              _buildDetailRow('Telefone', data['phone'] ?? data['telefone'] ?? 'Não informado', Icons.phone_outlined, textColor),
-                              _buildDetailRow('Email', data['email'] ?? 'Não informado', Icons.email_outlined, textColor),
-                              _buildDetailRow('Plano Atual', (data['plan_id'] ?? data['plan'] ?? 'free').toString().toUpperCase(), Icons.stars_outlined, textColor),
-                            ],
-                          ),
-                        ),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _buildDetailRow('Endereço', data['address'] ?? data['endereco'] ?? 'Não informado', Icons.location_on_outlined, textColor),
-                              _buildDetailRow('Criado em', (data['created_at'] ?? data['criado_em'])?.toString().split('.')[0] ?? 'N/A', Icons.calendar_today_outlined, textColor),
-                              _buildDetailRow('Trial Ativo', (data['trial_active'] == true ? 'SIM' : 'NÃO'), Icons.timer_outlined, textColor),
-                              if (data['trial_end_date'] != null)
-                                _buildDetailRow('Fim do Trial', data['trial_end_date'].toString().split('.')[0], Icons.event_busy_outlined, textColor),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 24),
-                    Text('AÇÕES RÁPIDAS', style: TextStyle(color: textColor.withValues(alpha: 0.4), fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
-                    const SizedBox(height: 12),
-                    Builder(builder: (context) {
-                      final boostExpiresStr = data['boost_expires_at'] as String?;
-                      final isBoostedNow = boostExpiresStr != null &&
-                          DateTime.tryParse(boostExpiresStr)?.isAfter(DateTime.now()) == true;
-                      return Wrap(
-                        spacing: 12,
-                        runSpacing: 12,
-                        children: [
-                          _buildActionButton('Editar', Icons.edit_outlined, textColor.withValues(alpha: 0.05), textColor, () => setModalState(() => isEditing = true)),
-                          _buildActionButton('Plano', Icons.stars_outlined, const Color(0xFF22C55E).withValues(alpha: 0.1), const Color(0xFF22C55E), () => _changePlan(data)),
-                          _buildActionButton('Boost', Icons.rocket_launch_outlined, Colors.amber.withValues(alpha: 0.1), Colors.amber, () => _addBoost(data)),
-                          if (isBoostedNow)
-                            _buildActionButton('Cancelar Boost', Icons.rocket_outlined, Colors.orange.withValues(alpha: 0.1), Colors.orange, () => _cancelBoost(data)),
-                          _buildActionButton('Trial', Icons.timer_outlined, const Color(0xFF7C5CFC).withValues(alpha: 0.1), const Color(0xFF7C5CFC), () => _liberarTrial(data)),
-                          _buildActionButton('Excluir', Icons.delete_outline, Colors.red.withValues(alpha: 0.1), Colors.redAccent, () => _deleteShop(data)),
-                        ],
-                      );
-                    }),
-                  ] else ...[
-                    _buildEditField('Nome do Negócio', nomeController, textColor),
-                    _buildEditField('Slug (URL)', slugController, textColor),
-                    _buildEditField('Telefone', telefoneController, textColor),
-                    const SizedBox(height: 24),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextButton(
-                            onPressed: () => setModalState(() => isEditing = false),
-                            child: Text('CANCELAR', style: TextStyle(color: textColor.withValues(alpha: 0.5), fontSize: 13)),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: () async {
-                              await Supabase.instance.client.from('shops').update({
-                                'name': nomeController.text,
-                                'slug': slugController.text,
-                                'phone': telefoneController.text,
-                              }).eq('id', id);
-                              
-                              setModalState(() => isEditing = false);
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('Negócio atualizado com sucesso!')),
-                                );
-                              }
-                            },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF4F8EF7),
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                              elevation: 0,
-                            ),
-                            child: const Text('SALVAR', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ),
+    final response = await query.order('name');
+    return List<Map<String, dynamic>>.from(response);
+  }
+
+  Widget _buildPlanChip(String plan) {
+    Color color;
+    switch (plan.toLowerCase()) {
+      case 'pro': color = Colors.purple; break;
+      case 'plus': color = Colors.blue; break;
+      case 'start': color = AppColors.gold; break;
+      default: color = Colors.grey;
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
+      child: Text(plan.toUpperCase(), style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold)),
     );
   }
 
-  Widget _buildDetailRow(String label, String value, IconData icon, Color textColor) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  void _showShopDetails(Map<String, dynamic> shop) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _ShopDetailsDrawer(shop: shop),
+    );
+  }
+}
+
+class _ShopDetailsDrawer extends StatefulWidget {
+  final Map<String, dynamic> shop;
+  const _ShopDetailsDrawer({required this.shop});
+
+  @override
+  State<_ShopDetailsDrawer> createState() => _ShopDetailsDrawerState();
+}
+
+class _ShopDetailsDrawerState extends State<_ShopDetailsDrawer> with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+  final _adminService = AdminService();
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 4, vsync: this);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final bgColor = cs.surface;
+    final textColor = cs.onSurface;
+
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.85,
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: Column(
         children: [
-          Icon(icon, size: 16, color: const Color(0xFF4F8EF7).withValues(alpha: 0.6)),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          // Header
+          Container(
+            padding: const EdgeInsets.all(24),
+            child: Row(
               children: [
-                Text(label, style: TextStyle(color: textColor.withValues(alpha: 0.4), fontSize: 10, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 1),
-                Text(value, style: TextStyle(color: textColor, fontSize: 12, height: 1.4)),
+                CircleAvatar(
+                  radius: 30,
+                  backgroundColor: AppColors.primaryPurple.withValues(alpha: 0.1),
+                  backgroundImage: widget.shop['logo_url'] != null ? NetworkImage(widget.shop['logo_url']) : null,
+                  child: widget.shop['logo_url'] == null ? const Icon(Icons.store_rounded, size: 30, color: AppColors.primaryPurple) : null,
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(widget.shop['name'] ?? 'Sem nome', 
+                           overflow: TextOverflow.ellipsis,
+                           maxLines: 1,
+                           style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                      Text('/${widget.shop['slug']}', 
+                           overflow: TextOverflow.ellipsis,
+                           maxLines: 1,
+                           style: TextStyle(color: cs.primary, fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                ),
+                IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
+              ],
+            ),
+          ),
+          
+          TabBar(
+            controller: _tabController,
+            isScrollable: true,
+            labelColor: cs.primary,
+            unselectedLabelColor: cs.onSurface.withValues(alpha: 0.5),
+            indicatorColor: cs.primary,
+            tabs: const [
+              Tab(text: 'Visão Geral'),
+              Tab(text: 'Assinatura'),
+              Tab(text: 'WhatsApp'),
+              Tab(text: 'Ações'),
+            ],
+          ),
+          
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _buildOverviewTab(),
+                _buildSubscriptionTab(),
+                _buildWhatsAppTab(),
+                _buildActionsTab(),
               ],
             ),
           ),
@@ -360,435 +290,191 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
     );
   }
 
-  Widget _buildEditField(String label, TextEditingController controller, Color textColor) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: TextField(
-        controller: controller,
-        style: TextStyle(color: textColor, fontSize: 13),
-        decoration: InputDecoration(
-          labelText: label,
-          labelStyle: TextStyle(color: textColor.withValues(alpha: 0.5), fontSize: 11),
-          enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: textColor.withValues(alpha: 0.1))),
-          focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF4F8EF7))),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildActionButton(String label, IconData icon, Color bgColor, Color iconColor, VoidCallback onTap) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(10),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: bgColor,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: iconColor.withValues(alpha: 0.1)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
+  Widget _buildOverviewTab() {
+    final owner = widget.shop['users'] as Map<String, dynamic>?;
+    return ListView(
+      padding: const EdgeInsets.all(24),
+      children: [
+        _buildInfoTile('Proprietário', owner?['email'] ?? 'N/A', Icons.person_outline),
+        _buildInfoTile('Telefone', widget.shop['phone'] ?? 'N/A', Icons.phone_outlined),
+        _buildInfoTile('Endereço', widget.shop['address'] ?? 'N/A', Icons.location_on_outlined),
+        _buildInfoTile('Cidade/UF', '${widget.shop['city'] ?? 'N/A'} - ${widget.shop['state'] ?? 'N/A'}', Icons.map_outlined),
+        _buildInfoTile('Cadastro', widget.shop['created_at'] != null ? FormatUtils.formatDate(DateTime.parse(widget.shop['created_at'])) : 'N/A', Icons.calendar_today_outlined),
+        const Divider(height: 40),
+        const Text('Estatísticas (30 dias)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+        const SizedBox(height: 16),
+        Row(
           children: [
-            Icon(icon, size: 14, color: iconColor),
-            const SizedBox(width: 8),
-            Text(label, style: TextStyle(color: iconColor, fontSize: 12, fontWeight: FontWeight.bold)),
+            _buildStatCard('Agendamentos', '24', Colors.blue),
+            const SizedBox(width: 16),
+            _buildStatCard('Profissionais', '3', Colors.purple),
           ],
         ),
-      ),
+      ],
     );
   }
 
-  Future<void> _addBoost(Map<String, dynamic> data) async {
-    String? selectedDuration = '7';
-    final theme = Theme.of(context);
-    final cardColor = theme.cardColor;
-    final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
-    final id = data['id'];
-
-    await showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setModalState) => AlertDialog(
-          backgroundColor: cardColor,
-          surfaceTintColor: Colors.transparent,
-          title: Text('Adicionar Boost', style: TextStyle(color: textColor)),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('Selecione a duração do boost:',
-                  style: TextStyle(color: textColor.withValues(alpha: 0.6))),
-              const SizedBox(height: 16),
-              DropdownButtonFormField<String>(
-                dropdownColor: cardColor,
-                style: TextStyle(color: textColor),
-                value: selectedDuration,
-                items: const [
-                  DropdownMenuItem(value: '7', child: Text('7 dias')),
-                  DropdownMenuItem(value: '14', child: Text('14 dias')),
-                  DropdownMenuItem(value: '30', child: Text('30 dias')),
-                ],
-                onChanged: (value) =>
-                    setModalState(() => selectedDuration = value),
-                decoration: InputDecoration(
-                  labelText: 'Duração',
-                  labelStyle: TextStyle(color: textColor.withValues(alpha: 0.4)),
-                  enabledBorder: UnderlineInputBorder(
-                      borderSide:
-                          BorderSide(color: textColor.withValues(alpha: 0.1))),
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text('CANCELAR',
-                  style: TextStyle(color: textColor.withValues(alpha: 0.5))),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                try {
-                  final days = int.parse(selectedDuration!);
-                  final expiresAt = DateTime.now().add(Duration(days: days));
-
-                  await Supabase.instance.client
-                      .from('shops')
-                      .update({
-                    'boost_expires_at': expiresAt.toIso8601String(),
-                    'is_boosted': true,
-                  }).eq('id', id);
-
-                  if (context.mounted) {
-                    Navigator.pop(context);
-                  }
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Boost de $days dias adicionado!')),
-                    );
-                  }
-                } catch (e) {
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Erro ao adicionar boost: $e')),
-                    );
-                  }
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF4F8EF7), elevation: 0),
-              child: const Text('ADICIONAR'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _cancelBoost(Map<String, dynamic> data) async {
-    final id = data['id'];
-    final nome = data['name'] ?? data['nome'] ?? 'este negócio';
-    final theme = Theme.of(context);
-    final cardColor = theme.cardColor;
-    final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
-
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: cardColor,
-        surfaceTintColor: Colors.transparent,
-        title: Text('Cancelar Boost?', style: TextStyle(color: textColor)),
-        content: Text(
-          'Tem certeza que deseja cancelar o boost ativo de "$nome"? O destaque será removido imediatamente.',
-          style: TextStyle(color: textColor.withValues(alpha: 0.6)),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text('NÃO', style: TextStyle(color: textColor.withValues(alpha: 0.5))),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange, foregroundColor: Colors.white, elevation: 0),
-            child: const Text('CANCELAR BOOST'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm == true) {
-      try {
-        await Supabase.instance.client.from('shops').update({
-          'boost_expires_at': null,
-          'is_boosted': false,
-        }).eq('id', id);
-
-        if (mounted) {
-          Navigator.pop(context);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Boost cancelado com sucesso.')),
-          );
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Erro ao cancelar boost: $e')),
-          );
-        }
-      }
-    }
-  }
-
-  Future<void> _changePlan(Map<String, dynamic> data) async {
-    String? selectedPlan = data['plan_id'] ?? data['plan'] ?? 'free';
-    final theme = Theme.of(context);
-    final cardColor = theme.cardColor;
-    final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
-    final id = data['id'];
-
-    await showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setModalState) => AlertDialog(
-          backgroundColor: cardColor,
-          surfaceTintColor: Colors.transparent,
-          title: Text('Alterar Plano', style: TextStyle(color: textColor)),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('Selecione o novo plano:',
-                  style: TextStyle(color: textColor.withValues(alpha: 0.6))),
-              const SizedBox(height: 16),
-              DropdownButtonFormField<String>(
-                dropdownColor: cardColor,
-                style: TextStyle(color: textColor),
-                value: selectedPlan,
-                items: const [
-                  DropdownMenuItem(value: 'free', child: Text('Free')),
-                  DropdownMenuItem(value: 'start', child: Text('Start')),
-                  DropdownMenuItem(value: 'plus', child: Text('Plus')),
-                  DropdownMenuItem(value: 'pro', child: Text('Pro')),
-                ],
-                onChanged: (value) => setModalState(() => selectedPlan = value),
-                decoration: InputDecoration(
-                  labelText: 'Plano',
-                  labelStyle: TextStyle(color: textColor.withValues(alpha: 0.4)),
-                  enabledBorder: UnderlineInputBorder(
-                      borderSide:
-                          BorderSide(color: textColor.withValues(alpha: 0.1))),
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text('CANCELAR',
-                  style: TextStyle(color: textColor.withValues(alpha: 0.5))),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                try {
-                  await Supabase.instance.client
-                      .from('shops')
-                      .update({
-                    'plan_id': selectedPlan,
-                    'trial_active': false,
-                    'subscription': null,
-                  }).eq('id', id);
-
-                  if (context.mounted) {
-                    Navigator.pop(context);
-                  }
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                          content: Text(
-                              'Plano alterado para ${selectedPlan!.toUpperCase()}!')),
-                    );
-                  }
-                } catch (e) {
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Erro ao alterar plano: $e')),
-                    );
-                  }
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF4F8EF7), elevation: 0),
-              child: const Text('SALVAR'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _deleteShop(Map<String, dynamic> data) async {
-    final id = data['id'];
-    final nome = data['name'] ?? data['nome'] ?? 'este negócio';
-    final theme = Theme.of(context);
-    final cardColor = theme.cardColor;
-    final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
+  Widget _buildSubscriptionTab() {
+    final sub = widget.shop['subscription'] as Map<String, dynamic>?;
+    final plan = sub?['plano'] ?? 'free';
     
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: cardColor,
-        surfaceTintColor: Colors.transparent,
-        title: Text('Excluir Negócio?', style: TextStyle(color: textColor)),
-        content: Text('Tem certeza que deseja excluir permanetemente o negócio "$nome"? Esta ação não pode ser desfeita.', style: TextStyle(color: textColor.withValues(alpha: 0.6))),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text('CANCELAR', style: TextStyle(color: textColor.withValues(alpha: 0.5))),
+    return ListView(
+      padding: const EdgeInsets.all(24),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: AppColors.primaryPurple.withValues(alpha: 0.05),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppColors.primaryPurple.withValues(alpha: 0.1)),
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white, elevation: 0),
-            child: const Text('EXCLUIR'),
+          child: Column(
+            children: [
+              const Text('Plano Atual', style: TextStyle(color: Colors.grey)),
+              const SizedBox(height: 8),
+              Text(plan.toUpperCase(), style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.primaryPurple)),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: _showChangePlanDialog,
+                style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryPurple, foregroundColor: Colors.white),
+                child: const Text('Alterar Plano'),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        const Text('Histórico de Alterações', style: TextStyle(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 16),
+        StreamBuilder<List<Map<String, dynamic>>>(
+          stream: Supabase.instance.client.from('subscription_history').stream(primaryKey: ['id']).eq('shop_id', widget.shop['id']).order('changed_at'),
+          builder: (context, snapshot) {
+            if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+            final history = snapshot.data!;
+            if (history.isEmpty) return const Text('Nenhum histórico encontrado', style: TextStyle(color: Colors.grey, fontSize: 12));
+            
+            return Column(
+              children: history.map((h) => ListTile(
+                dense: true,
+                title: Text('${h['old_plan']} → ${h['new_plan']}'),
+                subtitle: Text(FormatUtils.formatDateTime(DateTime.parse(h['changed_at']))),
+                trailing: Text(h['source'] ?? 'manual', style: const TextStyle(fontSize: 10)),
+              )).toList(),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildWhatsAppTab() {
+    return const Center(child: Text('Configurações de WhatsApp em breve'));
+  }
+
+  Widget _buildActionsTab() {
+    final owner = widget.shop['users'] as Map<String, dynamic>?;
+    final isActive = owner?['is_active'] ?? true;
+
+    return ListView(
+      padding: const EdgeInsets.all(24),
+      children: [
+        ListTile(
+          title: Text(isActive ? 'Bloquear Loja' : 'Desbloquear Loja'),
+          subtitle: Text(isActive ? 'Impede o acesso do dono e agendamentos' : 'Restaura o acesso total'),
+          leading: Icon(isActive ? Icons.block : Icons.check_circle_outline, color: isActive ? Colors.red : Colors.green),
+          onTap: () async {
+            final admin = Supabase.instance.client.auth.currentUser;
+            if (admin == null) return;
+            await _adminService.toggleShopBlock(widget.shop['id'], owner!['id'], isActive, admin.id);
+            if (mounted) Navigator.pop(context);
+          },
+        ),
+        const Divider(),
+        ListTile(
+          title: const Text('Enviar Comunicado Direto'),
+          leading: const Icon(Icons.campaign_outlined),
+          onTap: () {
+            // TODO: Implementar envio de comunicado
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildInfoTile(String label, String value, IconData icon) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: Colors.grey),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+              Text(value, style: const TextStyle(fontWeight: FontWeight.w500)),
+            ],
           ),
         ],
       ),
     );
-
-    if (confirm == true) {
-      await Supabase.instance.client.from('shops').delete().eq('id', id);
-      if (mounted) {
-        Navigator.pop(context); // Close details modal
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Negócio excluído com sucesso.')),
-        );
-      }
-    }
   }
 
-  Future<void> _liberarTrial(Map<String, dynamic> data) async {
-    String? selectedPlan = 'start';
-    String? selectedDuration = '30';
-    final theme = Theme.of(context);
-    final cardColor = theme.cardColor;
-    final textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
-    final id = data['id'];
-
-    await showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setModalState) => AlertDialog(
-          backgroundColor: cardColor,
-          surfaceTintColor: Colors.transparent,
-          title: Text('Liberar Trial Customizado',
-              style: TextStyle(color: textColor)),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('Escolha o plano e a duração do teste gratuito.',
-                  style: TextStyle(color: textColor.withValues(alpha: 0.6))),
-              const SizedBox(height: 16),
-              DropdownButtonFormField<String>(
-                dropdownColor: cardColor,
-                style: TextStyle(color: textColor),
-                value: selectedPlan,
-                items: const [
-                  DropdownMenuItem(value: 'start', child: Text('Start')),
-                  DropdownMenuItem(value: 'plus', child: Text('Plus')),
-                  DropdownMenuItem(value: 'pro', child: Text('Pro')),
-                ],
-                onChanged: (value) => setModalState(() => selectedPlan = value),
-                decoration: InputDecoration(
-                  labelText: 'Plano',
-                  labelStyle: TextStyle(color: textColor.withValues(alpha: 0.4)),
-                  enabledBorder: UnderlineInputBorder(
-                      borderSide:
-                          BorderSide(color: textColor.withValues(alpha: 0.1))),
-                ),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                dropdownColor: cardColor,
-                style: TextStyle(color: textColor),
-                value: selectedDuration,
-                items: const [
-                  DropdownMenuItem(value: '7', child: Text('7 dias')),
-                  DropdownMenuItem(value: '15', child: Text('15 dias')),
-                  DropdownMenuItem(value: '30', child: Text('30 dias (1 mês)')),
-                  DropdownMenuItem(value: '60', child: Text('60 dias (2 meses)')),
-                  DropdownMenuItem(value: '90', child: Text('90 dias (3 meses)')),
-                ],
-                onChanged: (value) =>
-                    setModalState(() => selectedDuration = value),
-                decoration: InputDecoration(
-                  labelText: 'Duração',
-                  labelStyle: TextStyle(color: textColor.withValues(alpha: 0.4)),
-                  enabledBorder: UnderlineInputBorder(
-                      borderSide:
-                          BorderSide(color: textColor.withValues(alpha: 0.1))),
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text('CANCELAR',
-                  style: TextStyle(color: textColor.withValues(alpha: 0.5))),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                try {
-                  final days = int.parse(selectedDuration!);
-                  final endDate = DateTime.now().add(Duration(days: days));
-
-                  await Supabase.instance.client
-                      .from('shops')
-                      .update({
-                    'plan_id': selectedPlan,
-                    'trial_active': true,
-                    'trial_plan': selectedPlan,
-                    'trial_end_date': endDate.toIso8601String(),
-                    'trial_used': true,
-                    'subscription': null,
-                  }).eq('id', id);
-
-                  if (context.mounted) {
-                    Navigator.pop(context);
-                  }
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                          content: Text(
-                              'Trial de $days dias do plano ${selectedPlan!.toUpperCase()} liberado!')),
-                    );
-                  }
-                } catch (e) {
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Erro ao liberar trial: $e')),
-                    );
-                  }
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF4F8EF7), elevation: 0),
-              child: const Text('CONFIRMAR'),
-            ),
+  Widget _buildStatCard(String label, String value, Color color) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.05),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: color.withValues(alpha: 0.1)),
+        ),
+        child: Column(
+          children: [
+            Text(value, style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: color)),
+            Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
           ],
         ),
       ),
     );
   }
 
-  IconData _getStatusIcon(String status) {
-    if (status.contains('confirmado')) return Icons.check_circle_outline;
-    if (status.contains('concluido')) return Icons.done_all;
-    if (status.contains('cancelado')) return Icons.cancel_outlined;
-    return Icons.schedule;
-  }
+  void _showChangePlanDialog() {
+    final sub = widget.shop['subscription'] as Map<String, dynamic>?;
+    final currentPlan = sub?['plano'] ?? 'free';
+    String selectedPlan = currentPlan;
 
-  Color _getStatusColor(String status) {
-    if (status.contains('confirmado') || status.contains('concluido')) return Colors.green;
-    if (status.contains('cancelado')) return Colors.red;
-    return Colors.orange;
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('Trocar Plano'),
+          content: DropdownButtonFormField<String>(
+            value: selectedPlan,
+            items: const [
+              DropdownMenuItem(value: 'free', child: Text('Free')),
+              DropdownMenuItem(value: 'start', child: Text('Start')),
+              DropdownMenuItem(value: 'plus', child: Text('Plus')),
+              DropdownMenuItem(value: 'pro', child: Text('Pro')),
+            ],
+            onChanged: (v) => setState(() => selectedPlan = v!),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
+            ElevatedButton(
+              onPressed: () async {
+                final admin = Supabase.instance.client.auth.currentUser;
+                if (admin == null) return;
+                await _adminService.changeShopPlan(widget.shop['id'], currentPlan, selectedPlan, admin.id);
+                if (mounted) {
+                  Navigator.pop(context);
+                  Navigator.pop(context);
+                }
+              },
+              child: const Text('Confirmar'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

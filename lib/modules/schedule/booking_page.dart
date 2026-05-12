@@ -275,6 +275,9 @@ class _BookingPageState extends State<BookingPage> {
                       oldProfessional: widget.oldProfessional,
                       oldServiceName: widget.oldServiceName,
                       clientStatus: _clientStatus,
+                      // fix: passa todos os profissionais qualificados para que o calendário
+                      // mostre disponibilidade combinada (não apenas a do profissional prioridade 0)
+                      qualifiedProfessionals: profs,
                     ),
                   ),
                 );
@@ -490,6 +493,12 @@ class BookingTimePage extends StatefulWidget {
   final String? oldProfessional;
   final String? oldServiceName;
 
+  /// Lista de todos os profissionais qualificados para o serviço.
+  /// Quando não nula (modo sem escolha do cliente), o calendário verifica
+  /// a disponibilidade de TODOS eles antes de marcar um dia como indisponível.
+  /// Quando nula (modo com escolha), o calendário usa apenas professionalDoc.
+  final List<Map<String, dynamic>>? qualifiedProfessionals;
+
   const BookingTimePage({
     super.key,
     required this.shop,
@@ -506,6 +515,7 @@ class BookingTimePage extends StatefulWidget {
     this.oldProfessional,
     this.oldServiceName,
     this.clientStatus,
+    this.qualifiedProfessionals,
   });
  
   final Map<String, bool>? clientStatus;
@@ -534,6 +544,15 @@ class _BookingTimePageState extends State<BookingTimePage> {
   // _availabilityVersion: incrementado após cada fetch completo para forçar rebuild do TableCalendar
   bool _availabilityReady = false;
   int _availabilityVersion = 0;
+
+  // ── SHADOW MODE ──────────────────────────────────────────────────────────
+  // Quando false (padrão): usa apenas a lógica local (código Dart).
+  // Quando true: tenta a Edge Function primeiro; se falhar, cai no código local.
+  // Para ativar o log de comparação, ligue _shadowModeCompare = true também.
+  // ATENÇÃO: Mude apenas para testes via USB. Não suba 'true' sem validação.
+  static const bool _useEdgeFunction = false;
+  static const bool _shadowModeCompare = false; // true → executa os dois e loga divergências
+  // ─────────────────────────────────────────────────────────────────────────
 
   @override
   void initState() {
@@ -582,17 +601,26 @@ class _BookingTimePageState extends State<BookingTimePage> {
   }
 
   // fix: bloquear dias sem equipe ativa para qualquer estabelecimento
-  // Pré-popula��o síncrona: só verifica work_days (sem Supabase, sem slots).
+  // Pré-população síncrona: só verifica work_days (sem Supabase, sem slots).
+  // Quando qualifiedProfessionals existe, um dia é habilitado se QUALQUER profissional trabalha nele.
   // Chamado em initState antes do primeiro build.
   void _prePopulateWorkDays(DateTime month) {
     try {
-      final profData = widget.professionalDoc;
-      final rawWorkDays = profData['work_days'] ?? [];
-      final workDays = (rawWorkDays as List).map((e) => int.parse(e.toString())).toList();
       final endOfMonth = DateTime(month.year, month.month + 1, 0);
+
+      // Coleta os work_days de todos os profissionais relevantes (OR lógico)
+      final profsToCheck = widget.qualifiedProfessionals ?? [widget.professionalDoc];
+      final Set<int> allWorkDays = {};
+      for (final prof in profsToCheck) {
+        final rawWorkDays = prof['work_days'] ?? [];
+        final days = (rawWorkDays as List).map((e) => int.parse(e.toString()));
+        allWorkDays.addAll(days);
+      }
+
       for (int day = 1; day <= endOfMonth.day; day++) {
         final date = DateTime(month.year, month.month, day);
-        _dayAvailability[date] = workDays.contains(date.weekday);
+        // Disponível se qualquer profissional trabalha neste dia da semana
+        _dayAvailability[date] = allWorkDays.contains(date.weekday);
       }
     } catch (_) {
       // Se falhar, _dayAvailability fica vazio mas _availabilityReady ainda será true
@@ -601,111 +629,229 @@ class _BookingTimePageState extends State<BookingTimePage> {
     _availabilityVersion = 1;
   }
 
-  Future<void> _fetchMonthAvailability(DateTime month) async {
-    if (mounted) setState(() => _isLoadingAvailability = true);
-
+  /// Chama a Edge Function `getCalendarAvailability` e retorna o mapa de disponibilidade.
+  /// Retorna null se a função falhar (rede, timeout, erro 500), permitindo o fallback local.
+  Future<Map<DateTime, bool>?> _fetchEdgeFunctionAvailability(DateTime month) async {
     try {
-      final startOfMonth = DateTime(month.year, month.month, 1);
-      final endOfMonth = DateTime(month.year, month.month + 1, 0, 23, 59, 59);
+      final serviceId = (widget.serviceDoc['id'] ?? '').toString();
+      final shopId = (widget.shop['id'] ?? '').toString();
+      final profId = widget.qualifiedProfessionals == null
+          ? (widget.professionalDoc['id'] ?? '').toString()
+          : null; // null = verifica todos os qualificados
+      final monthStr =
+          '${month.year}-${month.month.toString().padLeft(2, '0')}';
 
-      final snapshot = await Supabase.instance.client
-          .from('appointments')
-          .select()
-          .eq('shop_id', (widget.shop['id'] ?? '').toString())
-          .eq('professional_id', (widget.professionalDoc['id'] ?? '').toString())
-          .gte('scheduled_at', startOfMonth.toIso8601String())
-          .lte('scheduled_at', endOfMonth.toIso8601String());
+      final payload = <String, dynamic>{
+        'shop_id': shopId,
+        'service_id': serviceId,
+        'month': monthStr,
+        if (profId != null) 'professional_id': profId,
+      };
 
-      // Agrupar appointments por dia
-      Map<int, List<Map<String, int>>> groupedByDay = {};
-      for (var data in snapshot) {
-        final status = data['status']?.toString().toLowerCase() ?? '';
-        if (status == 'cancelado' ||
-            status == 'rejeitado' ||
-            status == 'recusado' ||
-            status == 'excluido') {
-          continue;
-        }
+      debugPrint('🌐 [EdgeFunction] Chamando getCalendarAvailability | payload: $payload');
 
-        // Se for reagendamento, ignoramos o agendamento atual do próprio cliente
-        if (widget.isReschedule && data['id'].toString() == widget.appointmentId.toString()) {
-          continue;
-        }
+      final response = await Supabase.instance.client.functions
+          .invoke('getCalendarAvailability', body: payload)
+          .timeout(const Duration(seconds: 10));
 
-        final dt = DateTime.parse(data['scheduled_at']);
-        final day = dt.day;
-
-        int startMin = dt.hour * 60 + dt.minute;
-        int duration = int.tryParse(data['duration_min']?.toString() ?? '') ?? 30;
-
-        groupedByDay.putIfAbsent(day, () => []).add({
-          'start': startMin,
-          'end': startMin + duration,
-        });
+      if (response.status != 200 || response.data == null) {
+        debugPrint('⚠️ [EdgeFunction] Status inesperado: ${response.status}');
+        return null;
       }
 
-      final profData = widget.professionalDoc;
-      final startStr = profData['work_start'] ?? profData['start_time'] ?? "08:00";
-      final endStr = profData['work_end'] ?? profData['end_time'] ?? "18:00";
-      // fix: bloquear dias sem equipe ativa para qualquer estabelecimento
-      final rawWorkDays = profData['work_days'] ?? [];
-      final workDays = rawWorkDays.map((e) => int.parse(e.toString())).toList();
-      final preventGaps = widget.shopConfig['evitar_buracos_agenda'] ?? false;
+      final rawAvail = response.data['availability'] as Map<String, dynamic>?;
+      if (rawAvail == null) {
+        debugPrint('⚠️ [EdgeFunction] Resposta sem campo availability');
+        return null;
+      }
 
-      Map<DateTime, bool> newAvail = {};
-      // Calcular para cada dia do mês
-      for (int day = 1; day <= endOfMonth.day; day++) {
-        final date = DateTime(month.year, month.month, day);
-        
-        // Se não for dia de trabalho, já marca como indisponível
-        if (!workDays.contains(date.weekday)) {
+      // Converte { "2026-05-19": true, ... } → { DateTime: bool }
+      final Map<DateTime, bool> result = {};
+      rawAvail.forEach((key, value) {
+        final parts = key.split('-').map(int.parse).toList();
+        if (parts.length == 3) {
+          result[DateTime(parts[0], parts[1], parts[2])] = value as bool;
+        }
+      });
+
+      debugPrint('✅ [EdgeFunction] Recebeu ${result.length} dias de disponibilidade');
+      return result;
+    } catch (e) {
+      debugPrint('❌ [EdgeFunction] Falha ao chamar Edge Function: $e');
+      return null; // Sinaliza para usar o fallback local
+    }
+  }
+
+  /// Calcula disponibilidade localmente (lógica Dart original).
+  /// Retorna o mapa de disponibilidade SEM aplicar ao estado.
+  /// Chamado tanto no modo local direto quanto no Shadow Mode para comparação.
+  Future<Map<DateTime, bool>> _fetchLocalAvailability(DateTime month) async {
+    final startOfMonth = DateTime(month.year, month.month, 1);
+    final endOfMonth = DateTime(month.year, month.month + 1, 0, 23, 59, 59);
+    final shopData = widget.shop;
+    final configurados = shopData['configured_holidays'] ?? {};
+    final pendentes = shopData['pending_holidays'] ?? [];
+    final autoBlock = widget.shopConfig['auto_block_holidays'] ?? false;
+    final preventGaps = widget.shopConfig['evitar_buracos_agenda'] ?? false;
+    final serviceDuration =
+        int.tryParse(widget.serviceData['duration_min'].toString()) ?? 30;
+    final shopId = (widget.shop['id'] ?? '').toString();
+    final profsToCheck =
+        widget.qualifiedProfessionals ?? [widget.professionalDoc];
+
+    final snapshot = await Supabase.instance.client
+        .from('appointments')
+        .select()
+        .eq('shop_id', shopId)
+        .gte('scheduled_at', startOfMonth.toIso8601String())
+        .lte('scheduled_at', endOfMonth.toIso8601String());
+
+    Map<String, List<Map<String, int>>> groupedByProfDay = {};
+    for (var data in snapshot) {
+      final status = data['status']?.toString().toLowerCase() ?? '';
+      if (status == 'cancelado' ||
+          status == 'rejeitado' ||
+          status == 'recusado' ||
+          status == 'excluido') continue;
+      if (widget.isReschedule &&
+          data['id'].toString() == widget.appointmentId.toString()) continue;
+
+      final profId = data['professional_id']?.toString() ?? '';
+      final dt = DateTime.parse(data['scheduled_at']);
+      final key = '${profId}_${dt.day}';
+      final startMin = dt.hour * 60 + dt.minute;
+      final duration =
+          int.tryParse(data['duration_min']?.toString() ?? '') ?? 30;
+      groupedByProfDay
+          .putIfAbsent(key, () => [])
+          .add({'start': startMin, 'end': startMin + duration});
+    }
+
+    Map<DateTime, bool> newAvail = {};
+    for (int day = 1; day <= endOfMonth.day; day++) {
+      final date = DateTime(month.year, month.month, day);
+      final iso = date.toIso8601String().split('T')[0];
+
+      if (autoBlock) {
+        bool isNational = _nationalHolidays.any((f) => f['date'] == iso);
+        if (pendentes.contains(iso) || isNational) {
           newAvail[date] = false;
           continue;
         }
+      }
 
-        // NOVO: Verifica Decisões de Feriados/Folgas
-        final iso = date.toIso8601String().split('T')[0];
-        final shopData = widget.shop;
-        final configurados = shopData['configured_holidays'] ?? {};
-        final pendentes = shopData['pending_holidays'] ?? [];
-        final autoBlock = widget.shopConfig['auto_block_holidays'] ?? false;
-        if (autoBlock) {
-          // Bloqueia se for feriado pendente OU feriado nacional da BrasilAPI
-          bool isNational = _nationalHolidays.any((f) => f['date'] == iso);
-          if (pendentes.contains(iso) || isNational) {
-            newAvail[date] = false;
-            continue;
-          }
+      if (configurados.containsKey(iso)) {
+        final config = configurados[iso];
+        if (config == 'fechado') {
+          newAvail[date] = false;
+          continue;
         }
+      }
+
+      bool dayHasSlot = false;
+      for (final prof in profsToCheck) {
+        final profId = prof['id']?.toString() ?? '';
+        final rawWorkDays = prof['work_days'] ?? [];
+        final workDays =
+            (rawWorkDays as List).map((e) => int.parse(e.toString())).toList();
+        if (!workDays.contains(date.weekday)) continue;
 
         if (configurados.containsKey(iso)) {
           final config = configurados[iso];
-          if (config == 'fechado') {
-            newAvail[date] = false;
-            continue;
-          } else if (config is Map && config.containsKey('escala')) {
+          if (config is Map && config.containsKey('escala')) {
             final List escala = config['escala'] ?? [];
-            if (!escala.contains(widget.professionalDoc['id'])) {
-              newAvail[date] = false;
-              continue;
-            }
+            if (!escala.contains(profId)) continue;
           }
         }
 
-        final busy = groupedByDay[day] ?? [];
+        final startStr = prof['work_start'] ?? prof['start_time'] ?? '08:00';
+        final endStr = prof['work_end'] ?? prof['end_time'] ?? '18:00';
+        final key = '${profId}_$day';
+        final busy = groupedByProfDay[key] ?? [];
+
         final slots = AvailabilityUtils.generateSmartSlots(
           startStr: startStr,
           endStr: endStr,
           interval: widget.intervalMinutes,
-          serviceDuration:
-              int.tryParse(widget.serviceData['duration_min'].toString()) ?? 30,
+          serviceDuration: serviceDuration,
           busyIntervals: busy,
           preventGaps: preventGaps,
           minAdvanceHours: widget.minAdvanceHours,
           selectedDate: date,
         );
 
-        newAvail[date] = slots.isNotEmpty;
+        if (slots.isNotEmpty) {
+          dayHasSlot = true;
+          break;
+        }
+      }
+      newAvail[date] = dayHasSlot;
+    }
+    return newAvail;
+  }
+
+  Future<void> _fetchMonthAvailability(DateTime month) async {
+    if (mounted) setState(() => _isLoadingAvailability = true);
+
+    try {
+      Map<DateTime, bool> newAvail;
+
+      if (_useEdgeFunction) {
+        // ── MODO EDGE FUNCTION ───────────────────────────────────────────────
+        debugPrint('🟢 [Availability] Usando Edge Function como fonte primária.');
+        final edgeResult = await _fetchEdgeFunctionAvailability(month);
+
+        if (edgeResult != null) {
+          // Edge Function respondeu com sucesso.
+          newAvail = edgeResult;
+          debugPrint('✅ [Availability] Edge Function entregou ${edgeResult.length} dias.');
+        } else {
+          // Fallback: Edge Function falhou → usa lógica local.
+          debugPrint('⚠️ [Availability] Fallback para lógica LOCAL (Edge falhou).');
+          newAvail = await _fetchLocalAvailability(month);
+        }
+      } else if (_shadowModeCompare) {
+        // ── MODO SOMBRA (COMPARAÇÃO) ─────────────────────────────────────────
+        // Executa os DOIS modos em paralelo e loga divergências.
+        // O resultado aplicado ao calendário é SEMPRE o local (seguro).
+        debugPrint('🔬 [ShadowMode] Executando comparação Local vs Edge Function...');
+        final results = await Future.wait([
+          _fetchLocalAvailability(month),
+          _fetchEdgeFunctionAvailability(month).then((v) => v ?? <DateTime, bool>{}),
+        ]);
+        final localResult = results[0];
+        final edgeResult = results[1];
+
+        // Compara os mapas e loga divergências dia a dia
+        int divergencias = 0;
+        for (final entry in localResult.entries) {
+          final dateKey = entry.key;
+          final localVal = entry.value;
+          final edgeVal = edgeResult[dateKey];
+          if (edgeVal == null) {
+            debugPrint('🔍 [ShadowMode] Dia ${dateKey.day}/${dateKey.month}: Edge não retornou este dia.');
+          } else if (localVal != edgeVal) {
+            divergencias++;
+            final localStr = localVal ? 'DISPONÍVEL' : 'INDISPONÍVEL';
+            final edgeStr = edgeVal ? 'DISPONÍVEL' : 'INDISPONÍVEL';
+            debugPrint(
+              '🚨 [ShadowMode] DIVERGÊNCIA no dia ${dateKey.day}/${dateKey.month}: '
+              'Local=$localStr | Edge=$edgeStr',
+            );
+          }
+        }
+        if (divergencias == 0) {
+          debugPrint('✅ [ShadowMode] Resultado IDÊNTICO entre Local e Edge Function (${localResult.length} dias).');
+        } else {
+          debugPrint('⚠️ [ShadowMode] $divergencias divergência(s) encontrada(s). Revise os logs acima.');
+        }
+
+        // Calendário usa o resultado LOCAL (mais seguro)
+        newAvail = localResult;
+      } else {
+        // ── MODO LOCAL (PADRÃO) ──────────────────────────────────────────────
+        debugPrint('📱 [Availability] Usando lógica LOCAL (padrão).');
+        newAvail = await _fetchLocalAvailability(month);
       }
 
       if (mounted) {
@@ -713,13 +859,12 @@ class _BookingTimePageState extends State<BookingTimePage> {
           _dayAvailability.addAll(newAvail);
           _isLoadingAvailability = false;
           _availabilityReady = true;
-          _availabilityVersion++;  // força rebuild do TableCalendar via ValueKey
+          _availabilityVersion++; // força rebuild do TableCalendar via ValueKey
         });
       }
     } catch (e) {
-      debugPrint("Erro ao buscar disponibilidade mensal: $e");
+      debugPrint('❌ [Availability] Erro geral ao buscar disponibilidade: $e');
       // Em caso de erro, o calendário já está visível (pré-populado em initState).
-      // Apenas para o indicador de carregamento.
       if (mounted) setState(() { _isLoadingAvailability = false; });
     }
   }
@@ -1087,6 +1232,7 @@ class _BookingTimePageState extends State<BookingTimePage> {
                                     isReschedule: widget.isReschedule,
                                     appointmentId: widget.appointmentId,
                                     fromSubdomain: widget.fromSubdomain,
+                                    qualifiedProfessionals: widget.qualifiedProfessionals,
                                   ),
                                 ),
                               );
@@ -1132,6 +1278,12 @@ class BookingSlotsPage extends StatefulWidget {
   final String? appointmentId;
   final bool fromSubdomain;
 
+  /// Lista de todos os profissionais qualificados (modo sem escolha do cliente).
+  /// Quando informada, a tela de horários itera sobre todos para encontrar
+  /// o primeiro com disponibilidade no dia. O profissional escolhido é
+  /// salvo internamente e passado para o checkout.
+  final List<Map<String, dynamic>>? qualifiedProfessionals;
+
   // ── Props opcionais para o modo de edição do dono ──────────────────────
   // Nenhuma dessas props afeta o comportamento padrão (cliente).
   /// Id do agendamento sendo editado — excluído do cálculo de ocupação.
@@ -1174,6 +1326,7 @@ class BookingSlotsPage extends StatefulWidget {
     this.isReschedule = false,
     this.appointmentId,
     this.fromSubdomain = false,
+    this.qualifiedProfessionals,
     // Modo dono — todos opcionais
     this.ownerExcludeAppointmentId,
     this.ownerHighlightedSlotTime,
@@ -1198,6 +1351,10 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
 
   /// Dados do último conflito detectado ao selecionar um slot no modo dono.
   Map<String, dynamic>? _lastConflictData;
+
+  /// Profissional resolvido para o dia (o primeiro com disponibilidade).
+  /// Usado no checkout para garantir que o agendamento vá para o profissional correto.
+  Map<String, dynamic>? _resolvedProfessional;
 
   Future<List<Map<String, dynamic>>>? _slotsFuture;
 
@@ -1283,7 +1440,9 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                   )
                               // ── Modo cliente: fluxo original inalterado ──
                               : () async {
-                                  final profData = widget.professionalDoc;
+                                  // Usa o profissional resolvido pelo dia (se disponível),
+                                  // caso contrário usa o professionalDoc original.
+                                  final profData = _resolvedProfessional ?? widget.professionalDoc;
 
                                   String finalName = widget.serviceData['name'] ?? '';
                                   double finalPrice = double.tryParse(widget
@@ -1535,13 +1694,19 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
 
   Future<List<Map<String, dynamic>>> _fetchAppointmentsAndIntervals(
       DateTime startDay, DateTime endDay, bool isOwnerMode) async {
-      final querySnapshot = await Supabase.instance.client
-          .from('appointments')
-          .select()
-          .eq('shop_id', (widget.shop['id'] ?? '').toString())
-          .eq('professional_id', (widget.professionalDoc['id'] ?? '').toString())
-          .gte('scheduled_at', startDay.toIso8601String())
-          .lte('scheduled_at', endDay.toIso8601String());
+
+    // Busca agendamentos de TODOS os profissionais qualificados para o dia.
+    // Quando qualifiedProfessionals é nulo, usa apenas o professionalDoc (modo com escolha).
+    final profsToCheck = widget.qualifiedProfessionals ?? [widget.professionalDoc];
+    final profIds = profsToCheck.map((p) => (p['id'] ?? '').toString()).toList();
+
+    final querySnapshot = await Supabase.instance.client
+        .from('appointments')
+        .select()
+        .eq('shop_id', (widget.shop['id'] ?? '').toString())
+        .inFilter('professional_id', profIds)
+        .gte('scheduled_at', startDay.toIso8601String())
+        .lte('scheduled_at', endDay.toIso8601String());
 
     List<Map<String, dynamic>> results = [];
 
@@ -1608,12 +1773,8 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
   }
 
   Widget _buildSlotsList() {
-    final profData = widget.professionalDoc;
     int duration =
         int.tryParse(widget.serviceData['duration_min']?.toString() ?? '30') ?? 30;
-    final startDay = DateTime(widget.selectedDate.year,
-        widget.selectedDate.month, widget.selectedDate.day);
-    final endDay = startDay.add(const Duration(hours: 23, minutes: 59));
     final isOwnerMode = widget.ownerExcludeAppointmentId != null ||
         widget.allowOccupiedSelection;
 
@@ -1653,14 +1814,17 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
         }
 
         final preventGaps = widget.shopConfig['evitar_buracos_agenda'] ?? false;
+        final profsToCheck = widget.qualifiedProfessionals ?? [widget.professionalDoc];
 
-        // Modo dono: gera TODOS os slots do turno (livres + ocupados visíveis)
-        // Modo cliente: comportamento original (apenas livres)
-        List<String> slots;
+        // Modo dono: usa sempre o professionalDoc (sem iterar sobre qualificados)
+        // Modo cliente sem escolha: itera sobre todos os qualificados por prioridade
+        List<String> slots = [];
         List<String> allSlots = [];
+
         if (isOwnerMode) {
-          // Gera todos os slots do turno, sem filtro de horário passado.
-          // Slots que colidem com um serviço em andamento são marcados como occupied.
+          // Modo dono: gera TODOS os slots do turno (livres + ocupados visíveis)
+          // Usa sempre o professionalDoc (contexto do dono é sempre 1 profissional)
+          final profData = widget.professionalDoc;
           final startStr = profData['work_start'] ?? profData['start_time'] ?? "08:00";
           final endStr = profData['work_end'] ?? profData['end_time'] ?? "18:00";
           int startDayMin = int.parse(startStr.split(':')[0]) * 60 +
@@ -1675,21 +1839,95 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
             current += widget.intervalMinutes;
           }
           slots = allSlots;
+          _resolvedProfessional = widget.professionalDoc;
         } else {
-          slots = AvailabilityUtils.generateSmartSlots(
-            startStr: profData['work_start'] ?? profData['start_time'] ?? "08:00",
-            endStr: profData['work_end'] ?? profData['end_time'] ?? "18:00",
-            interval: widget.intervalMinutes,
-            serviceDuration: duration,
-            busyIntervals: busyIntervals,
-            preventGaps: preventGaps,
-            minAdvanceHours: widget.minAdvanceHours,
-            selectedDate: widget.selectedDate,
+          // ── DISTRIBUIÇÃO POR CARGA ────────────────────────────────────────
+          // Reordena os profissionais pelo menor número de minutos já agendados
+          // no dia, usando a prioridade da loja como desempate.
+          // Isso evita que um profissional fique sobrecarregado enquanto outro
+          // está ocioso (ex: Dionathan 3h agendado → Edmara 0h vai na frente).
+          //
+          // A prioridade original (índice em profsToCheck) é o desempate:
+          // se dois profissionais tiverem a mesma carga, o de maior prioridade
+          // (menor índice) é preferido.
+
+          // 1. Calcula carga de cada profissional (minutos totais no dia)
+          final Map<String, int> profLoad = {};
+          for (int i = 0; i < profsToCheck.length; i++) {
+            final profId = (profsToCheck[i]['id'] ?? '').toString();
+            int totalMin = 0;
+            for (var data in docs) {
+              if ((data['professional_id'] ?? '').toString() != profId) continue;
+              totalMin += (data['computed_duration'] as int? ?? 0);
+            }
+            profLoad[profId] = totalMin;
+          }
+
+          // 2. Cria lista ordenada: menor carga primeiro; índice original como desempate
+          final List<Map<String, dynamic>> sortedProfs = List.from(profsToCheck);
+          sortedProfs.sort((a, b) {
+            final idA = (a['id'] ?? '').toString();
+            final idB = (b['id'] ?? '').toString();
+            final loadDiff = (profLoad[idA] ?? 0).compareTo(profLoad[idB] ?? 0);
+            if (loadDiff != 0) return loadDiff;
+            // Empate de carga → respeita prioridade original da loja
+            return profsToCheck.indexOf(a).compareTo(profsToCheck.indexOf(b));
+          });
+
+          debugPrint(
+            '⚖️ [SlotsPage] Ordem de distribuição por carga: '
+            '${sortedProfs.map((p) => "${p['nome'] ?? p['name']}=${profLoad[(p['id'] ?? '').toString()]}min").join(", ")}',
           );
-          
-          // Se for reagendamento e o horário original não apareceu (por minAdvanceHours), 
-          // o usuário agora orientou que deve ser respeitada a política de antecedência.
+
+          // 3. Itera na nova ordem: o mais livre com disponibilidade é escolhido
+          for (final prof in sortedProfs) {
+            final profId = (prof['id'] ?? '').toString();
+
+            // Verifica dia de trabalho deste profissional
+            final rawWorkDays = prof['work_days'] ?? [];
+            final workDays = (rawWorkDays as List).map((e) => int.parse(e.toString())).toList();
+            if (!workDays.contains(widget.selectedDate.weekday)) continue;
+
+            // Filtra os busyIntervals apenas deste profissional
+            final profBusy = <Map<String, int>>[];
+            for (var data in docs) {
+              if ((data['professional_id'] ?? '').toString() != profId) continue;
+              final dt = DateTime.parse(data['scheduled_at']);
+              final startMin = dt.hour * 60 + dt.minute;
+              final agDuration = data['computed_duration'] as int;
+              profBusy.add({'start': startMin, 'end': startMin + agDuration});
+            }
+
+            final profStartStr = prof['work_start'] ?? prof['start_time'] ?? '08:00';
+            final profEndStr = prof['work_end'] ?? prof['end_time'] ?? '18:00';
+
+            final profSlots = AvailabilityUtils.generateSmartSlots(
+              startStr: profStartStr,
+              endStr: profEndStr,
+              interval: widget.intervalMinutes,
+              serviceDuration: duration,
+              busyIntervals: profBusy,
+              preventGaps: preventGaps,
+              minAdvanceHours: widget.minAdvanceHours,
+              selectedDate: widget.selectedDate,
+            );
+
+            if (profSlots.isNotEmpty) {
+              slots = profSlots;
+              _resolvedProfessional = prof;
+              debugPrint(
+                '✅ [SlotsPage] Profissional escolhido: ${prof['nome'] ?? prof['name']} '
+                '(carga=${profLoad[profId]}min) | slots: $slots',
+              );
+              break; // Mais livre com disponibilidade → escolhido
+            }
+          }
+
+          if (slots.isEmpty) {
+            debugPrint('⚠️ [SlotsPage] Nenhum profissional qualificado tem slot disponível neste dia.');
+          }
         }
+
 
         if (slots.isEmpty) {
           return const Center(

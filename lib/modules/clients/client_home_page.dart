@@ -2705,24 +2705,7 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
                 fit: BoxFit.cover,
                 errorWidget: (_, __, ___) => const SizedBox(),
               ),
-            // Overlay gradiente roxo (sempre presente)
-            Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: imgUrl.isNotEmpty
-                      ? [
-                          const Color(0xFF6A1B9A).withValues(alpha: 0.82),
-                          const Color(0xFF1A0033).withValues(alpha: 0.82),
-                        ]
-                      : [
-                          const Color(0xFF6A1B9A),
-                          const Color(0xFF4A0080),
-                        ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-              ),
-            ),
+            // Sem overlay, pois os banners comerciais devem exibir a imagem pura.
             // Logo branco centralizado (somente quando não há imagem de fundo)
             if (imgUrl.isEmpty)
               Positioned(
@@ -2735,44 +2718,6 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
                   ),
                 ),
               ),
-            // Conteúdo inferior: título, subtítulo e CTA
-            Positioned(
-              bottom: 14, left: 14, right: 14,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(title,
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          shadows: [Shadow(blurRadius: 6, color: Colors.black54)])),
-                  if (subtitle.isNotEmpty) ...[
-                    const SizedBox(height: 3),
-                    Text(subtitle,
-                        style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.85),
-                            fontSize: 11),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis),
-                  ],
-                  const SizedBox(height: 8),
-                  if (ctaText.isNotEmpty)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                      decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(20)),
-                      child: Text(ctaText,
-                          style: const TextStyle(
-                              color: Color(0xFF6A1B9A),
-                              fontWeight: FontWeight.bold,
-                              fontSize: 11)),
-                    ),
-                ],
-              ),
-            ),
           ]),
     );
   }
