@@ -7,7 +7,7 @@ import '../../core/services/session_service.dart';
 import '../../core/services/plan_features_service.dart';
 import '../../core/constants/plan_features.dart';
 import '../../widgets/upgrade_modal.dart';
-import 'edit_client_page.dart';
+
 
 // Tags pré-definidas para classificação de clientes
 const _kPresetTags = [
@@ -347,34 +347,7 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
     }
   }
 
-  Future<void> _editClientDetails() async {
-    final result = await Navigator.push<Map<String, dynamic>>(
-      context,
-      MaterialPageRoute(
-        builder: (context) => EditClientPage(
-          clientData: widget.clientData,
-          clientId: widget.clientId,
-        ),
-      ),
-    );
 
-    if (result != null && mounted) {
-      setState(() {
-        // Atualiza os dados locais com o que voltou da página de edição
-        widget.clientData['nome'] = result['name'];
-        widget.clientData['name'] = result['name'];
-        widget.clientData['telefone'] = result['phone'];
-        widget.clientData['cpf'] = result['cpf'];
-        widget.clientData['birthDate'] = result['birth_date'];
-        widget.clientData['zipCode'] = result['zip_code'];
-        widget.clientData['street'] = result['street'];
-        widget.clientData['neighborhood'] = result['neighborhood'];
-        widget.clientData['city'] = result['city'];
-        widget.clientData['state'] = result['state'];
-        widget.clientData['number'] = result['number'];
-      });
-    }
-  }
 
   // Stream de histórico (passado)
   Stream<List<Map<String, dynamic>>> _getHistoryStream() {
@@ -723,15 +696,7 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      IconButton(
-                        onPressed: _editClientDetails,
-                        icon: const Icon(Icons.edit_outlined,
-                            size: 20, color: AppColors.primaryPurple),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                        tooltip: 'Editar cadastro',
-                      ),
-                      const SizedBox(width: 12),
+
                       // Botão fechar
                       IconButton(
                         icon: const Icon(Icons.close,

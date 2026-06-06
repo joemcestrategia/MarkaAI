@@ -125,6 +125,8 @@ class _ExcelImportPageState extends State<ExcelImportPage> {
         }
 
         await supabase.from('appointments').insert({
+          // Importação histórica: dados antigos podem sobrepor entre si
+          'bypass_overlap_check': true,
           'shopId': shopId,
           'client_name': _getCellValue(cellCliente),
           'service_name': nomeServico,

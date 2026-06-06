@@ -1,9 +1,18 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:async';
 
 import '../constants/plan_features.dart';
 import '../../modules/business/subscription_service.dart' show SubscriptionPlan;
 
 class PlanFeaturesService {
+  static Stream<Map<String, dynamic>?>? _sharedRawStream;
+  static String? _sharedStreamShopId;
+  static Map<String, dynamic>? _lastShopData;
+  static String? _lastShopDataId;
+
+  static PlanFeatures? get cachedFeatures => 
+      _lastShopDataId != null ? getFeaturesForShop(_lastShopData) : null;
+
   /// Retorna as features do usuário logado baseado em seu userMetadata do Supabase.
   /// 
   /// PRIORIDADE: Supabase metadata > Default Free
@@ -106,6 +115,12 @@ class PlanFeaturesService {
     return null;
   }
 
+  /// Extrai o identificador do plano do JSONB de subscription, lendo tanto
+  /// 'plan_id' (inglês) quanto 'plano' (português - admin panel legado).
+  static String? _planKeyFromSub(Map<String, dynamic> sub) {
+    return sub['plan_id'] as String? ?? sub['plano'] as String?;
+  }
+
   /// Detecta o plano e se o trial está ativo de forma centralizada
   static Map<String, dynamic> detectPlan(Map<String, dynamic>? shopData) {
     if (shopData == null) return {'plan': SubscriptionPlan.free, 'trial': false};
@@ -119,7 +134,7 @@ class PlanFeaturesService {
     if (trialActive && sub != null) {
       final end = _toDateTime(sub['trial_end_date'] ?? sub['trial_ends_at']);
       if (end != null && end.isAfter(DateTime.now())) {
-        currentPlan = parseSubscriptionPlan(sub['plan_id'] as String?);
+        currentPlan = parseSubscriptionPlan(_planKeyFromSub(sub));
         isTrial = true;
       }
     }
@@ -136,14 +151,12 @@ class PlanFeaturesService {
               isTrial = true;
             }
           } else {
-            final planId = sub['plan_id'] as String?;
-            currentPlan = parseSubscriptionPlan(planId);
+            currentPlan = parseSubscriptionPlan(_planKeyFromSub(sub));
           }
         } else if (status == 'canceled' || status == 'cancelled') {
-          // Acesso após cancelamento
           final accessUntil = _toDateTime(sub['access_until']);
           if (accessUntil != null && accessUntil.isAfter(DateTime.now())) {
-            currentPlan = parseSubscriptionPlan(sub['plan_id'] as String?);
+            currentPlan = parseSubscriptionPlan(_planKeyFromSub(sub));
           }
         }
       }
@@ -190,22 +203,42 @@ class PlanFeaturesService {
     }
   }
 
-  /// Retorna um Stream do plano atual da loja (Supabase Realtime)
-  static Stream<SubscriptionPlan> streamPlanByShopId(String shopId) {
-    return Supabase.instance.client
-        .from('shops')
-        .stream(primaryKey: ['id'])
-        .eq('id', shopId)
-        .map((data) => detectPlan(data.isNotEmpty ? data.first : null)['plan'] as SubscriptionPlan);
+  /// Retorna um Stream do plano atual da loja (Supabase Realtime - compartilhado)
+  static Stream<SubscriptionPlan> streamPlanByShopId(String shopId) async* {
+    if (_lastShopDataId == shopId) {
+      yield detectPlan(_lastShopData)['plan'] as SubscriptionPlan;
+    }
+    yield* _sharedShopStream(shopId).map((data) => detectPlan(data)['plan'] as SubscriptionPlan);
   }
 
-  /// Retorna um Stream das features da loja (Supabase Realtime)
-  static Stream<PlanFeatures> streamFeaturesByShopId(String shopId) {
-    return Supabase.instance.client
+  /// Retorna um Stream das features da loja (Supabase Realtime - compartilhado)
+  /// Novos assinantes recebem o último valor conhecido imediatamente.
+  static Stream<PlanFeatures> streamFeaturesByShopId(String shopId) async* {
+    if (_lastShopDataId == shopId) {
+      yield getFeaturesForShop(_lastShopData);
+    }
+    yield* _sharedShopStream(shopId).map((data) => getFeaturesForShop(data));
+  }
+
+  /// Stream compartilhado da tabela shops — apenas UMA assinatura Supabase Realtime
+  /// é criada por shopId, reutilizada entre todos os widgets que consomem features.
+  static Stream<Map<String, dynamic>?> _sharedShopStream(String shopId) {
+    if (_sharedStreamShopId == shopId && _sharedRawStream != null) {
+      return _sharedRawStream!;
+    }
+    _sharedStreamShopId = shopId;
+    _sharedRawStream = Supabase.instance.client
         .from('shops')
         .stream(primaryKey: ['id'])
         .eq('id', shopId)
-        .map((data) => getFeaturesForShop(data.isNotEmpty ? data.first : null));
+        .map((data) {
+          final row = data.isNotEmpty ? data.first : null;
+          _lastShopData = row;
+          _lastShopDataId = shopId;
+          return row;
+        })
+        .asBroadcastStream();
+    return _sharedRawStream!;
   }
 
   /// Extensão que permite carregar diretamente do cache/documento recebido (Supabase)

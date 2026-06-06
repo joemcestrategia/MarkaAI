@@ -24,6 +24,7 @@ class NfseConfig {
   final double descontoIncondicional;
   final double descontoCondicional;
   final bool emitirAutomaticoDinheiro;
+  final bool emitirAutomaticoCartao; // ✨ NFS-e automática via webhook MP
   final bool ativo;
 
   const NfseConfig({
@@ -43,6 +44,7 @@ class NfseConfig {
     this.descontoIncondicional = 0.0,
     this.descontoCondicional = 0.0,
     this.emitirAutomaticoDinheiro = false,
+    this.emitirAutomaticoCartao = false,
     this.ativo = true,
   });
 
@@ -64,6 +66,7 @@ class NfseConfig {
       descontoIncondicional: (map['desconto_incondicional'] as num?)?.toDouble() ?? 0.0,
       descontoCondicional: (map['desconto_condicional'] as num?)?.toDouble() ?? 0.0,
       emitirAutomaticoDinheiro: map['emitir_automatico_dinheiro'] as bool? ?? false,
+      emitirAutomaticoCartao: map['emitir_automatico_cartao'] as bool? ?? false,
       ativo: map['ativo'] as bool? ?? true,
     );
   }
@@ -85,6 +88,7 @@ class NfseConfig {
       'desconto_incondicional': descontoIncondicional,
       'desconto_condicional': descontoCondicional,
       'emitir_automatico_dinheiro': emitirAutomaticoDinheiro,
+      'emitir_automatico_cartao': emitirAutomaticoCartao,
       'ativo': ativo,
     };
   }
@@ -106,6 +110,7 @@ class NfseConfig {
     double? descontoIncondicional,
     double? descontoCondicional,
     bool? emitirAutomaticoDinheiro,
+    bool? emitirAutomaticoCartao,
     bool? ativo,
   }) {
     return NfseConfig(
@@ -125,6 +130,7 @@ class NfseConfig {
       descontoIncondicional: descontoIncondicional ?? this.descontoIncondicional,
       descontoCondicional: descontoCondicional ?? this.descontoCondicional,
       emitirAutomaticoDinheiro: emitirAutomaticoDinheiro ?? this.emitirAutomaticoDinheiro,
+      emitirAutomaticoCartao: emitirAutomaticoCartao ?? this.emitirAutomaticoCartao,
       ativo: ativo ?? this.ativo,
     );
   }
@@ -558,6 +564,108 @@ class NfseService {
   }
 
   // ─── HELPERS ───────────────────────────────
+
+  // ✨ Retorna o número da NFS-e autorizada para o agendamento, ou null se não houver.
+  // Safe para uso em FutureBuilder — nunca lança exceção.
+  Future<String?> getNfseNumero(String appointmentId) async {
+    try {
+      final data = await _client
+          .from('nfse_emissoes')
+          .select('numero_nfse')
+          .eq('appointment_id', appointmentId)
+          .eq('status', 'autorizada')
+          .maybeSingle();
+      return data?['numero_nfse'] as String?;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ✨ Verifica se o cliente do agendamento tem CPF cadastrado.
+  // Busca primeiro no campo client_user_cpf do agendamento, depois no perfil users.
+  // Retorna false em caso de erro — nunca lança exceção.
+  Future<bool> clienteTemCpf(String appointmentId) async {
+    try {
+      final appt = await _client
+          .from('appointments')
+          .select('client_user_cpf, client_id')
+          .eq('id', appointmentId)
+          .maybeSingle();
+      if (appt == null) return false;
+      // 1. CPF diretamente no agendamento
+      final cpfDireto = appt['client_user_cpf']?.toString().replaceAll(RegExp(r'\D'), '') ?? '';
+      if (cpfDireto.isNotEmpty) return true;
+      // 2. Busca no perfil do usuário
+      final clientId = appt['client_id']?.toString();
+      if (clientId == null || clientId.isEmpty) return false;
+      final user = await _client
+          .from('users')
+          .select('cpf, document_cpf')
+          .eq('id', clientId)
+          .maybeSingle();
+      final cpfUser = (user?['cpf'] ?? user?['document_cpf'])?.toString().replaceAll(RegExp(r'\D'), '') ?? '';
+      return cpfUser.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // ✨ Pré-validação de dados no Flutter antes de chamar a Supabase Function.
+  // Retorna lista de erros legíveis para o usuário.
+  // Espelha as validações do emitir-nfse/index.ts para dar feedback rápido.
+  Future<List<String>> validarDadosParaEmissao(String appointmentId, String shopId) async {
+    final erros = <String>[];
+    try {
+      // 1. Verificar configuração fiscal ativa
+      final cfg = await _client
+          .from('nfse_config')
+          .select('cnpj, inscricao_municipal, codigo_servico_lc116, codigo_municipio, ativo')
+          .eq('shop_id', shopId)
+          .eq('ativo', true)
+          .maybeSingle();
+
+      if (cfg == null) {
+        erros.add('Módulo fiscal não configurado para esta loja. Acesse Configurações > Nota Fiscal.');
+        return erros; // Sem config, não adianta continuar
+      }
+
+      final cnpj = (cfg['cnpj'] as String? ?? '').replaceAll(RegExp(r'\D'), '');
+      if (cnpj.isEmpty) erros.add('CNPJ da empresa não configurado no módulo fiscal.');
+
+      final im = (cfg['inscricao_municipal'] as String? ?? '').trim();
+      if (im.isEmpty) erros.add('Inscrição Municipal não configurada.');
+
+      final codSvc = (cfg['codigo_servico_lc116'] as String? ?? '').trim();
+      if (codSvc.isEmpty) erros.add('Código de serviço LC 116 não configurado.');
+
+      final codMun = (cfg['codigo_municipio'] as String? ?? '').trim();
+      if (codMun.isEmpty) erros.add('Código IBGE do município não configurado.');
+
+      // 2. Verificar dados do agendamento
+      final appt = await _client
+          .from('appointments')
+          .select('client_name, client_user_cpf, client_id')
+          .eq('id', appointmentId)
+          .maybeSingle();
+
+      if (appt == null) {
+        erros.add('Agendamento não encontrado.');
+        return erros;
+      }
+
+      final clientName = (appt['client_name'] as String? ?? '').trim();
+      if (clientName.isEmpty) erros.add('Nome do cliente não informado no agendamento.');
+
+      // 3. CPF do cliente (campo direto ou perfil)
+      final temCpf = await clienteTemCpf(appointmentId);
+      if (!temCpf) erros.add('CPF do cliente não cadastrado. Acesse o perfil do cliente e adicione o CPF.');
+
+    } catch (e) {
+      debugPrint('⚠️ [NfseService] validarDadosParaEmissao: $e');
+      // Não bloqueia — erros de validação local não impedem a tentativa
+    }
+    return erros;
+  }
 
   /// Executa um GET e retorna apenas o status HTTP.
   /// Usado pelo dashboard para verificar se a API gov.br está operacional.

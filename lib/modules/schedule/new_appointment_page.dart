@@ -5,6 +5,7 @@ import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 import '../../core/services/shop_data_cache_service.dart';
 import '../../core/utils/availability_utils.dart';
+import '../../core/utils/work_schedule.dart';
 import '../../core/models/appointment_model.dart';
 
 class NewAppointmentPage extends StatefulWidget {
@@ -325,8 +326,13 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
       );
     }
 
-    String startStr = profData['work_start'] ?? profData['start_time'] ?? "08:00";
-    String endStr = profData['work_end'] ?? profData['end_time'] ?? "19:00";
+    final wsProf = WorkSchedule.fromEmployeeRow(profData);
+    final dayCfg = wsProf.forWeekday(_selectedDate!.weekday);
+    String startStr = dayCfg?.start ?? (profData['work_start'] ?? profData['start_time'] ?? "08:00");
+    String endStr = dayCfg?.end ?? (profData['work_end'] ?? profData['end_time'] ?? "19:00");
+    final Map<String, int>? breakI = dayCfg?.breakInterval == null
+        ? null
+        : {'start': dayCfg!.breakInterval!.startMin, 'end': dayCfg.breakInterval!.endMin};
 
     DateTime startOfDay = DateTime(
         _selectedDate!.year, _selectedDate!.month, _selectedDate!.day, 0, 0);
@@ -385,6 +391,7 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
             preventGaps: _shopConfig!['evitar_buracos_agenda'] == true,
             minAdvanceHours: 0,
             selectedDate: _selectedDate!,
+            breakInterval: breakI,
           );
         } else {
           slots = _generateProfessionalSlotsWithDuration(startStr, endStr, duracaoServico);
@@ -521,10 +528,11 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
 
     int duration =
         int.tryParse(servData['duration_min']?.toString() ?? "30") ?? 30;
-    // fix: bloquear dias sem equipe ativa para qualquer estabelecimento
-    List<dynamic> workDays = profData['work_days'] ?? [];
-    String startStr = profData['work_start'] ?? profData['start_time'] ?? "08:00";
-    String endStr = profData['work_end'] ?? profData['end_time'] ?? "19:00";
+    // fix: per-day schedule
+    final wsProf = WorkSchedule.fromEmployeeRow(profData);
+    List<dynamic> workDays = wsProf.workDays.isNotEmpty
+        ? wsProf.workDays
+        : (profData['work_days'] ?? []);
 
     final daysInMonth = DateTime(month.year, month.month + 1, 0).day;
 
@@ -552,6 +560,12 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
         }
       }
 
+      final dayCfg = wsProf.forWeekday(dayOfWeek);
+      final String startStr = dayCfg?.start ?? (profData['work_start'] ?? profData['start_time'] ?? "08:00");
+      final String endStr = dayCfg?.end ?? (profData['work_end'] ?? profData['end_time'] ?? "19:00");
+      final Map<String, int>? breakI = dayCfg?.breakInterval == null
+          ? null
+          : {'start': dayCfg!.breakInterval!.startMin, 'end': dayCfg.breakInterval!.endMin};
       final List<String> slots;
       if (_shopConfig != null) {
         slots = AvailabilityUtils.generateSmartSlots(
@@ -563,6 +577,7 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
           preventGaps: _shopConfig!['evitar_buracos_agenda'] == true,
           minAdvanceHours: 0,
           selectedDate: date,
+          breakInterval: breakI,
         );
       } else {
         slots = _generateProfessionalSlotsWithDuration(startStr, endStr, duration);
@@ -723,9 +738,12 @@ class _NewAppointmentPageState extends State<NewAppointmentPage> {
         if (mounted) setState(() => _isLoading = true);
       }
 
+      // Dono já confirmou conflito (se houver) via _showConflictDialog
+      final apptData = appointment.toMap();
+      apptData['bypass_overlap_check'] = true;
       await sb.Supabase.instance.client
           .from('appointments')
-          .insert(appointment.toMap());
+          .insert(apptData);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(

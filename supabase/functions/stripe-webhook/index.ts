@@ -87,7 +87,37 @@ serve(async (req: Request) => {
             },
           }).eq('id', shopId)
         } else if (session.mode === 'payment') {
-          console.log(`Boost One-time payment concluded for shop ${session.metadata?.shop_id}`)
+          const shopId = session.metadata?.shop_id
+          const description = session.metadata?.description || ''
+          const boostDays = parseInt(session.metadata?.boost_days || '0', 10)
+          
+          if (shopId && boostDays > 0) {
+            const now = new Date()
+            const expiresAt = new Date(now.getTime() + boostDays * 86400000)
+            
+            console.log(`🚀 Boost ativado: Shop ${shopId} por ${boostDays} dias, expira em ${expiresAt.toISOString()}`)
+            
+            const { data: existing } = await supabaseAdmin.from('shops').select('boost').eq('id', shopId).maybeSingle()
+            let currentExpires: Date | null = null
+            if (existing?.boost?.expires_at) {
+              const cur = new Date(existing.boost.expires_at)
+              if (cur > now) currentExpires = cur
+            }
+            const start = currentExpires || now
+            const newExpiration = new Date(start.getTime() + boostDays * 86400000)
+            
+            await supabaseAdmin.from('shops').update({
+              is_boosted: true,
+              boost_expires_at: newExpiration.toISOString(),
+              boost: {
+                is_active: true,
+                expires_at: newExpiration.toISOString(),
+                updated_at: now.toISOString(),
+              },
+            }).eq('id', shopId)
+          } else {
+            console.log(`💳 One-time payment concluído para shop ${shopId}`)
+          }
         }
         break
       }
@@ -98,7 +128,7 @@ serve(async (req: Request) => {
         
         if (subscriptionId) {
           const subscription = await stripe.subscriptions.retrieve(subscriptionId)
-          const shopId = subscription.metadata?.shop_id
+          const shopId = subscription.metadata?.shop_id || subscription.metadata?.store_id
           
           if (shopId) {
             console.log(`💰 Fatura Paga: Renovação para ${shopId}`)

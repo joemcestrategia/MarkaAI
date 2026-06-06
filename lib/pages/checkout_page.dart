@@ -31,6 +31,7 @@ class CheckoutPage extends StatefulWidget {
   final double? servicePriceOverride;
   final bool fromSubdomain;
   final String? rescheduleId; // Novo parâmetro para evitar duplicação
+  final String? preReservaId; // ID do lock temporário criado pelo booking_page
 
   Map<String, dynamic> get serviceData => serviceDoc;
 
@@ -49,17 +50,19 @@ class CheckoutPage extends StatefulWidget {
     this.selectedVariation,
     this.clientStatus,
     this.rescheduleId,
+    this.preReservaId,
   });
 
   final Map<String, dynamic>? selectedVariation;
- 
+
   final Map<String, bool>? clientStatus;
 
   @override
   State<CheckoutPage> createState() => _CheckoutPageState();
 }
 
-class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMixin {
+class _CheckoutPageState extends State<CheckoutPage>
+    with TickerProviderStateMixin {
   final _currencyFormat = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
 
   bool _isLoading = false;
@@ -100,7 +103,7 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
   bool _birthdayGiftAccepted = false;
   double _cardTaxPercent = 0.0;
   String? _userCpf;
- 
+
   // Cupons
   final _couponController = TextEditingController();
   bool _couponApplied = false;
@@ -113,7 +116,7 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
   bool _isConfirmingPayment = false;
 
   Timer? _timerPolling;
-  
+
   // Controladores de Animação
   late AnimationController _couponAnimationController;
   late Animation<double> _couponScaleAnimation;
@@ -124,7 +127,7 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
     super.initState();
     debugPrint(
         '🚀 CheckoutPage: initState | shopId: ${widget.shopId} | serviceId: ${widget.serviceDoc['id']}');
-        
+
     _couponAnimationController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 600),
@@ -132,7 +135,8 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
     _couponScaleAnimation = TweenSequence<double>([
       TweenSequenceItem(tween: Tween(begin: 1.0, end: 1.05), weight: 50),
       TweenSequenceItem(tween: Tween(begin: 1.05, end: 1.0), weight: 50),
-    ]).animate(CurvedAnimation(parent: _couponAnimationController, curve: Curves.easeInOut));
+    ]).animate(CurvedAnimation(
+        parent: _couponAnimationController, curve: Curves.easeInOut));
 
     _initializeCheckout();
   }
@@ -158,12 +162,13 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
           .select()
           .eq('id', widget.shopId)
           .maybeSingle();
-          
+
       if (doc == null) return;
 
       final data = doc as Map<String, dynamic>;
       final mpData = data['mercadopago'] as Map<String, dynamic>? ?? {};
-      final config = data['config'] as Map<String, dynamic>? ?? widget.shopConfig;
+      final config =
+          data['config'] as Map<String, dynamic>? ?? widget.shopConfig;
 
       final percentualFromDb = config['percentual_sinal'];
       int percentualFinal = 30;
@@ -191,9 +196,10 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
       final double birthdayPercent = double.tryParse(
               config['birthday_pix_discount_percent']?.toString() ?? "0.0") ??
           0.0;
-      
+
       // 🆕 Pega as features completas do plano da loja
-      final PlanFeatures shopFeatures = PlanFeaturesService.getFeaturesForShop(data);
+      final PlanFeatures shopFeatures =
+          PlanFeaturesService.getFeaturesForShop(data);
       final double cardTax = double.tryParse(
               (config['tax_percent'] ?? config['porcentagem_a_vista'] ?? "0.0")
                   .toString()) ??
@@ -202,10 +208,12 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
 
       // Pre-calcula as flags da loja antes de disparar o VIP check
       // isValidToken: MP must be connected for online methods to be available
-      final bool baseAceitaPix =
-          planAllowsOnline && isValidToken && (config['pagamento_pix'] ?? false);
-      final bool baseAceitaCartao =
-          planAllowsOnline && isValidToken && (config['pagamento_cartao'] ?? false);
+      final bool baseAceitaPix = planAllowsOnline &&
+          isValidToken &&
+          (config['pagamento_pix'] ?? false);
+      final bool baseAceitaCartao = planAllowsOnline &&
+          isValidToken &&
+          (config['pagamento_cartao'] ?? false);
       bool baseAceitaDinheiro = config['pagamento_dinheiro'] ?? true;
       final bool baseExigeSinal = config['exigir_sinal'] ?? false;
       final bool trustedOnly = config['trusted_only_pay_in_person'] ?? false;
@@ -219,8 +227,9 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
       // _userPhone is set by _loadAuthStatus
 
       if (user != null) {
-        final status = widget.clientStatus ?? await ClientVerificationService.getClientStatus(
-            user.id, widget.shopId);
+        final status = widget.clientStatus ??
+            await ClientVerificationService.getClientStatus(
+                user.id, widget.shopId);
         isProblematic = status['isProblematic'] ?? false;
         isVip = status['isVip'] ?? false;
 
@@ -234,7 +243,7 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
               .maybeSingle();
           _shopClientData = shopClientResult;
         } catch (_) {}
-        
+
         // 🆕 Verifica aniversário focado no mês do agendamento (regra de negócio confirmada)
         if (shopFeatures.birthdayDiscount) {
           isBirthday = await ClientVerificationService.isBirthdayMonth(user.id,
@@ -268,17 +277,22 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
 
         if (userDoc != null) {
           _userPhone = userDoc['phone']?.toString();
-          if (_userPhone != null && _userPhone!.trim().isEmpty) _userPhone = null;
+          if (_userPhone != null && _userPhone!.trim().isEmpty)
+            _userPhone = null;
           _userCpf = userDoc['cpf']?.toString();
           if (_userCpf != null && _userCpf!.trim().isEmpty) _userCpf = null;
           _userPhotoUrl = userDoc['photo_url']?.toString();
-          if (_userPhotoUrl != null && _userPhotoUrl!.trim().isEmpty) _userPhotoUrl = null;
+          if (_userPhotoUrl != null && _userPhotoUrl!.trim().isEmpty)
+            _userPhotoUrl = null;
           final dbName = userDoc['name']?.toString();
-          if (dbName != null && dbName.trim().isNotEmpty) _userName = dbName.trim();
+          if (dbName != null && dbName.trim().isNotEmpty)
+            _userName = dbName.trim();
         }
         // Foto do Google vinda dos metadados de auth (prioridade)
-        final authPhoto = user.userMetadata?['avatar_url']?.toString() ?? user.userMetadata?['picture']?.toString();
-        if (authPhoto != null && authPhoto.isNotEmpty) _userPhotoUrl = authPhoto;
+        final authPhoto = user.userMetadata?['avatar_url']?.toString() ??
+            user.userMetadata?['picture']?.toString();
+        if (authPhoto != null && authPhoto.isNotEmpty)
+          _userPhotoUrl = authPhoto;
         _userEmail = user.email;
       }
 
@@ -289,7 +303,8 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
 
         setState(() {
           shopAccessToken = token;
-          _shopPublicKey = mpData['public_key']?.toString() ?? data['mp_public_key']?.toString();
+          _shopPublicKey = mpData['public_key']?.toString() ??
+              data['mp_public_key']?.toString();
           aceitaPix = baseAceitaPix;
           aceitaCartao = baseAceitaCartao;
           aceitaDinheiro = baseAceitaDinheiro;
@@ -313,7 +328,8 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
           // Automação do Desconto de Aniversário
           if (_isBirthdayMonth && _birthdayDiscountEnabled) {
             _birthdayGiftAccepted = true;
-            debugPrint('🎂 [Checkout] Desconto de aniversário aplicado automaticamente.');
+            debugPrint(
+                '🎂 [Checkout] Desconto de aniversário aplicado automaticamente.');
           }
 
           // Lógica VIP: Se a loja restringe local apenas para VIPs
@@ -343,12 +359,13 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
 
         // Se for aniversário e tiver desconto, mostra a modal bonita
         debugPrint('🎂 [REGRAS DE ANIVERSÁRIO]');
-        debugPrint('   - Mês de Nascimento do Cliente: (Verifique log [BirthdayCheck] acima)');
+        debugPrint(
+            '   - Mês de Nascimento do Cliente: (Verifique log [BirthdayCheck] acima)');
         debugPrint('   - Mês Escolhido para Agendamento: ${widget.date.month}');
         debugPrint('   - Loja Habilitou Desconto? $birthdayEnabled');
         debugPrint('   - Cliente já usou este ano? (Verifique log abaixo)');
         debugPrint('   - RESULTADO FINAL: isBirthday=$isBirthday');
-        
+
         if (isBirthday && birthdayEnabled) {
           final hasUsed =
               await ClientVerificationService.hasUsedBirthdayDiscountInYear(
@@ -360,10 +377,12 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
               _showBirthdayModal();
             });
           } else {
-            debugPrint('   - Modal NOT triggered: Discount already used this year.');
+            debugPrint(
+                '   - Modal NOT triggered: Discount already used this year.');
           }
         } else {
-          debugPrint('   - Modal NOT triggered: isBirthday=$isBirthday, birthdayEnabled=$birthdayEnabled');
+          debugPrint(
+              '   - Modal NOT triggered: isBirthday=$isBirthday, birthdayEnabled=$birthdayEnabled');
         }
       }
     } catch (e) {
@@ -401,7 +420,8 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
       // (gateways rejeitam transações com valor zero)
       final bool isOnlinePayment = _selectedPaymentType != 'local';
       final double maxDiscount = isOnlinePayment ? 99.0 : 100.0;
-      if (totalDiscountPercent > maxDiscount) totalDiscountPercent = maxDiscount;
+      if (totalDiscountPercent > maxDiscount)
+        totalDiscountPercent = maxDiscount;
 
       base = base * (1 - (totalDiscountPercent / 100.0));
 
@@ -413,7 +433,8 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
       // Segurança: nunca permite valor negativo
       if (base < 0) base = 0;
 
-      debugPrint('💰 [Recalculate] Método: $_selectedMethod, Taxa: $_cardTaxPercent%, Base: $base');
+      debugPrint(
+          '💰 [Recalculate] Método: $_selectedMethod, Taxa: $_cardTaxPercent%, Base: $base');
       valorFinalComJuros = base;
       debugPrint('✅ [Recalculate] Valor Final: $valorFinalComJuros');
     });
@@ -427,7 +448,8 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
     if (_couponApplied) return;
 
     // 🆕 Verifica se o plano permite cupons antes de validar
-    final shopFeatures = PlanFeaturesService.getFeaturesForShop(widget.shopData);
+    final shopFeatures =
+        PlanFeaturesService.getFeaturesForShop(widget.shopData);
     if (!shopFeatures.coupons) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -449,13 +471,12 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
     // legível via RLS para o cliente (ex: acesso bloqueado por política).
     final String? effectiveClassification =
         _shopClientData?['classification']?.toString() ??
-            (_isVip
-                ? 'VIP'
-                : (_isProblematic ? 'Problemático' : null));
+            (_isVip ? 'VIP' : (_isProblematic ? 'Problemático' : null));
     final List<String> effectiveTags = [
       ...List<String>.from(_shopClientData?['manual_tags'] ?? []),
       if (_isVip && effectiveClassification != 'VIP') 'VIP',
-      if (_isProblematic && effectiveClassification != 'Problemático') 'Problemático',
+      if (_isProblematic && effectiveClassification != 'Problemático')
+        'Problemático',
     ];
 
     final result = await CouponService.validateCoupon(
@@ -481,17 +502,18 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
         _appliedCoupon = result.couponData;
       });
       _recalculateTotals();
-      
+
       // Dispara animação de sucesso
       _couponAnimationController.forward(from: 0.0);
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text("Cupom '$_appliedCouponCode' aplicado com sucesso!"),
             backgroundColor: Colors.green,
             behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           ),
         );
       }
@@ -563,7 +585,7 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
       _showMissingPhoneDialog();
       return;
     }
- 
+
     // 3. Bloqueia sem CPF (se a loja exigir)
     final bool requireCpf = (widget.shopConfig['require_cpf'] == true);
     if (requireCpf && (_userCpf == null || _userCpf!.trim().isEmpty)) {
@@ -782,12 +804,19 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
                           } else {
                             tituloPagamento = "Cartão de Crédito";
                             if (_storedCardData != null) {
-                              final inst = (_storedCardData!['installments'] as num?)?.toInt() ?? 1;
-                              final v = ((_storedCardData!['valor'] ?? valorFinalComJuros) as num).toDouble();
+                              final inst =
+                                  (_storedCardData!['installments'] as num?)
+                                          ?.toInt() ??
+                                      1;
+                              final v = ((_storedCardData!['valor'] ??
+                                      valorFinalComJuros) as num)
+                                  .toDouble();
                               final perInst = v / inst;
-                              detalhePagamento = "${inst}x de R\$ ${perInst.toStringAsFixed(2).replaceAll('.', ',')}";
+                              detalhePagamento =
+                                  "${inst}x de R\$ ${perInst.toStringAsFixed(2).replaceAll('.', ',')}";
                             } else {
-                              detalhePagamento = "Processamento seguro via Mercado Pago";
+                              detalhePagamento =
+                                  "Processamento seguro via Mercado Pago";
                             }
                           }
                         }
@@ -798,8 +827,12 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
                       const Divider(height: 30),
 
                       // CAMPO DE CUPOM (SOMENTE SE O PLANO PERMITIR, FOR PIX, TOTAL OU LOCAL)
-                      if ((_selectedMethod == 'pix' || _selectedPaymentType == 'local' || _selectedPaymentType == 'total') &&
-                          PlanFeaturesService.getFeaturesForShop(widget.shopData).coupons) ...[
+                      if ((_selectedMethod == 'pix' ||
+                              _selectedPaymentType == 'local' ||
+                              _selectedPaymentType == 'total') &&
+                          PlanFeaturesService.getFeaturesForShop(
+                                  widget.shopData)
+                              .coupons) ...[
                         const Text("Tem um cupom?",
                             style: TextStyle(
                                 fontWeight: FontWeight.bold, fontSize: 13)),
@@ -810,29 +843,32 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
                               child: SizedBox(
                                 height: 45,
                                 child: ScaleTransition(
-                                    scale: _couponScaleAnimation,
-                                    child: TextField(
-                                      controller: _couponController,
-                                      decoration: InputDecoration(
-                                        hintText: "Código do Cupom",
-                                        hintStyle: const TextStyle(fontSize: 13),
-                                        enabled: !_couponApplied,
-                                        contentPadding: const EdgeInsets.symmetric(
-                                            horizontal: 12, vertical: 8),
-                                        border: OutlineInputBorder(
-                                            borderRadius: BorderRadius.circular(8)),
-                                        fillColor: _couponApplied
-                                            ? Colors.green.withValues(alpha: 0.05)
-                                            : Colors.white,
-                                        filled: true,
-                                        suffixIcon: _couponApplied 
-                                          ? const Icon(Icons.check_circle, color: Colors.green, size: 20) 
+                                  scale: _couponScaleAnimation,
+                                  child: TextField(
+                                    controller: _couponController,
+                                    decoration: InputDecoration(
+                                      hintText: "Código do Cupom",
+                                      hintStyle: const TextStyle(fontSize: 13),
+                                      enabled: !_couponApplied,
+                                      contentPadding:
+                                          const EdgeInsets.symmetric(
+                                              horizontal: 12, vertical: 8),
+                                      border: OutlineInputBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(8)),
+                                      fillColor: _couponApplied
+                                          ? Colors.green.withValues(alpha: 0.05)
+                                          : Colors.white,
+                                      filled: true,
+                                      suffixIcon: _couponApplied
+                                          ? const Icon(Icons.check_circle,
+                                              color: Colors.green, size: 20)
                                           : null,
-                                      ),
-                                      textCapitalization:
-                                          TextCapitalization.characters,
                                     ),
+                                    textCapitalization:
+                                        TextCapitalization.characters,
                                   ),
+                                ),
                               ),
                             ),
                             const SizedBox(width: 8),
@@ -988,19 +1024,22 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
                                     style: TextStyle(
                                         fontWeight: FontWeight.bold,
                                         color: AppColors.primaryPurple)),
-                                  TweenAnimationBuilder<double>(
-                                    duration: const Duration(milliseconds: 500),
-                                    curve: Curves.easeOut,
-                                    tween: Tween<double>(begin: _animatedPrice, end: valorFinalComJuros),
-                                    onEnd: () => _animatedPrice = valorFinalComJuros,
-                                    builder: (context, value, child) {
-                                      return Text(_currencyFormat.format(value),
-                                          style: const TextStyle(
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 20,
-                                              color: AppColors.primaryPurple));
-                                    },
-                                  ),
+                                TweenAnimationBuilder<double>(
+                                  duration: const Duration(milliseconds: 500),
+                                  curve: Curves.easeOut,
+                                  tween: Tween<double>(
+                                      begin: _animatedPrice,
+                                      end: valorFinalComJuros),
+                                  onEnd: () =>
+                                      _animatedPrice = valorFinalComJuros,
+                                  builder: (context, value, child) {
+                                    return Text(_currencyFormat.format(value),
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 20,
+                                            color: AppColors.primaryPurple));
+                                  },
+                                ),
                               ],
                             ),
                           ),
@@ -1090,7 +1129,7 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
       debugPrint('→ Pagamento PIX');
       double valor = valorFinalComJuros;
       String desc = (_selectedPaymentType == 'sinal') ? "Sinal" : "Total";
-      
+
       // Pre-salva o agendamento com 'pendente_pix' antes de gerar o QR Code.
       // Garante que o horário fica reservado e o webhook confirma mesmo se o app fechar.
       final preSavedId = await _saveBooking(
@@ -1099,7 +1138,8 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
         valorPago: 0,
         isPreSave: true,
       );
-      if (preSavedId == null) return; // pre-save falhou (ex: horário indisponível)
+      if (preSavedId == null)
+        return; // pre-save falhou (ex: horário indisponível)
       _preSavedAppointmentId = preSavedId;
       _generatePix(valor, desc, externalRef: preSavedId);
     } else {
@@ -1163,7 +1203,9 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
           children: [
             Icon(Icons.credit_card_off_outlined, color: Colors.orange),
             SizedBox(width: 8),
-            Expanded(child: Text('Código de segurança inválido', style: TextStyle(fontSize: 16))),
+            Expanded(
+                child: Text('Código de segurança inválido',
+                    style: TextStyle(fontSize: 16))),
           ],
         ),
         content: Column(
@@ -1176,7 +1218,7 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
                   : 'O código de segurança (CVV/CVC) foi recusado. Volte e verifique os dados do cartão.',
               style: TextStyle(fontSize: 13, color: Colors.grey[700]),
             ),
-            if (isSavedCard) ...[  
+            if (isSavedCard) ...[
               const SizedBox(height: 16),
               TextField(
                 controller: cvvController,
@@ -1238,7 +1280,9 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
   }) async {
     setState(() => _isLoading = true);
     try {
-      try { await Supabase.instance.client.auth.refreshSession(); } catch (_) {}
+      try {
+        await Supabase.instance.client.auth.refreshSession();
+      } catch (_) {}
       final result = await MercadoPagoService.criarPagamentoCartao(
         shopId: widget.shopId,
         cardToken: cardToken,
@@ -1281,7 +1325,10 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
           _showCvvRetryDialog(
             errorMsg: errMsg,
             isSavedCard: false,
-            onEditCard: () => setState(() { _storedCardData = null; _currentStep = 1; }),
+            onEditCard: () => setState(() {
+              _storedCardData = null;
+              _currentStep = 1;
+            }),
           );
         } else {
           _showError(errMsg);
@@ -1306,7 +1353,8 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
     setState(() => _isLoading = true);
     try {
       if (_shopPublicKey == null) {
-        _showError('Esta loja não configurou os meios de pagamento online ainda.');
+        _showError(
+            'Esta loja não configurou os meios de pagamento online ainda.');
         return;
       }
 
@@ -1397,7 +1445,8 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
             });
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text("Presente ativado! O desconto foi aplicado ao seu valor total."),
+                content: Text(
+                    "Presente ativado! O desconto foi aplicado ao seu valor total."),
                 backgroundColor: Colors.green,
               ),
             );
@@ -1685,7 +1734,8 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
                                   fontWeight: FontWeight.bold,
                                   color: AppColors.errorRed)),
                           TextSpan(
-                              text: " poderá limitar seus agendamentos futuros."),
+                              text:
+                                  " poderá limitar seus agendamentos futuros."),
                         ],
                       ),
                       textAlign: TextAlign.center,
@@ -1763,7 +1813,8 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
                             : subtitle,
                         style: TextStyle(
                             fontSize: 12,
-                            color: disabled ? Colors.orange[800] : Colors.grey)),
+                            color:
+                                disabled ? Colors.orange[800] : Colors.grey)),
                   ],
                 ),
               ),
@@ -2068,7 +2119,8 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
 
     // We only show the "magic" if the gift was accepted and we are NOT in local payment
     // We only show the "magic" if the gift was accepted
-    bool isActuallyDiscounted = (_birthdayGiftAccepted || _couponApplied) && v < baseSemAniversario;
+    bool isActuallyDiscounted =
+        (_birthdayGiftAccepted || _couponApplied) && v < baseSemAniversario;
 
     double precoAntigo = baseSemAniversario;
     bool mostrarRiscado = isActuallyDiscounted;
@@ -2076,8 +2128,10 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
     // Se for cartão, o preço base sobe. Queremos mostrar:
     // R$ 100,00 (riscado) -> R$ 105,00 (se for apenas taxa)
     // R$ 100,00 (riscado) -> R$ 90,00 (se houver desconto maior que a taxa)
-    if (_selectedMethod == 'card' && (_selectedPaymentType == 'total' || _selectedPaymentType == 'sinal')) {
-      mostrarRiscado = true; // Sempre mostra o antigo no cartão para evidenciar a variação
+    if (_selectedMethod == 'card' &&
+        (_selectedPaymentType == 'total' || _selectedPaymentType == 'sinal')) {
+      mostrarRiscado =
+          true; // Sempre mostra o antigo no cartão para evidenciar a variação
       if (!isActuallyDiscounted) {
         precoAntigo = baseSemAniversario;
       } else {
@@ -2118,8 +2172,11 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
                   ),
                 ),
               TweenAnimationBuilder<double>(
-                key: ValueKey("price_${_selectedPaymentType}_${_selectedMethod}_$v"),
-                tween: Tween(begin: isActuallyDiscounted ? baseSemAniversario : v, end: v),
+                key: ValueKey(
+                    "price_${_selectedPaymentType}_${_selectedMethod}_$v"),
+                tween: Tween(
+                    begin: isActuallyDiscounted ? baseSemAniversario : v,
+                    end: v),
                 duration: const Duration(milliseconds: 1200),
                 curve: Curves.elasticOut,
                 builder: (context, value, child) {
@@ -2177,7 +2234,8 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
     );
   }
 
-  Future<void> _generatePix(double amount, String desc, {String? externalRef}) async {
+  Future<void> _generatePix(double amount, String desc,
+      {String? externalRef}) async {
     if (shopAccessToken == null) {
       _showError(
           'Esta loja não configurou os meios de pagamento online ainda.');
@@ -2204,9 +2262,11 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
         description: desc,
         externalReference: externalRef,
       );
-      
-      final qrCode64 = result['point_of_interaction']?['transaction_data']?['qr_code_base64'];
-      final copyPaste = result['point_of_interaction']?['transaction_data']?['qr_code'];
+
+      final qrCode64 = result['point_of_interaction']?['transaction_data']
+          ?['qr_code_base64'];
+      final copyPaste =
+          result['point_of_interaction']?['transaction_data']?['qr_code'];
       final paymentId = result['id']?.toString() ?? '';
 
       if (qrCode64 == null || copyPaste == null || paymentId.isEmpty) {
@@ -2215,9 +2275,8 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
 
       if (_preSavedAppointmentId != null) {
         try {
-          await Supabase.instance.client
-              .from('appointments')
-              .update({'payment_id': paymentId}).eq('id', _preSavedAppointmentId!);
+          await Supabase.instance.client.from('appointments').update(
+              {'payment_id': paymentId}).eq('id', _preSavedAppointmentId!);
         } catch (e) {
           debugPrint('Falha ao salvar paymentId no agendamento preventivo: $e');
         }
@@ -2350,20 +2409,31 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
 
       // Validação de Double-Booking via Cloud Function no Backend.
       // Pulada ao confirmar um pre-save (slot já foi validado na etapa de geração do PIX).
-      if (widget.rescheduleId != null || appointmentId == null) {
+      // Pulada também quando há pre_reserva: o slot já foi reservado atomicamente
+      // via RPC tentar_pre_reserva e o trigger do banco impede double-booking.
+      // Sem este skip, o checkAvailability detectaria a própria pre_reserva como
+      // conflito (regressão introduzida ao tratar pre_reserva como slot ocupado).
+      final bool hasPreReserva =
+          widget.preReservaId != null && widget.preReservaId!.isNotEmpty;
+      if ((widget.rescheduleId != null || appointmentId == null) &&
+          !hasPreReserva) {
         try {
-          final result = await Supabase.instance.client.functions.invoke('checkAvailability', body: {
+          final result = await Supabase.instance.client.functions
+              .invoke('checkAvailability', body: {
             'professional_id': widget.professionalDoc['id'],
             'shop_id': widget.shopId,
             'start_time': bookingDate.toIso8601String(),
             'duration': duration,
+            'is_vip': _isVip,
+            if (widget.rescheduleId != null)
+              'exclude_appointment_id': widget.rescheduleId,
           });
 
           if (result.data['available'] != true) {
             if (mounted) {
               // Fecha o loading de "Finalizando agendamento..." se ele estiver aberto
               if (Navigator.canPop(context)) Navigator.pop(context);
-              
+
               await showDialog(
                 context: context,
                 builder: (ctx) => AlertDialog(
@@ -2401,7 +2471,8 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
         final currentApptId = _preSavedAppointmentId ?? appointmentId;
         final conflicting = clientAppts.where((data) {
           // Pular o próprio agendamento que está sendo confirmado (update)
-          if (currentApptId != null && data['id']?.toString() == currentApptId) {
+          if (currentApptId != null &&
+              data['id']?.toString() == currentApptId) {
             return false;
           }
           final sId = data['shop_id']?.toString() ?? '';
@@ -2420,8 +2491,13 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
           if (sId != widget.shopId) {
             return false;
           }
-          if (!['agendado', 'confirmado', 'pendente', 'pendente_verificacao', 'pendente_pix']
-              .contains(status)) {
+          if (![
+            'agendado',
+            'confirmado',
+            'pendente',
+            'pendente_verificacao',
+            'pendente_pix'
+          ].contains(status)) {
             return false;
           }
           if (dt == null) {
@@ -2442,7 +2518,9 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
 
       // Calcula desconto total considerando se cada desconto está realmente ativo
       double activeDiscountPercent = 0.0;
-      if (_isBirthdayMonth && _birthdayDiscountEnabled && _birthdayGiftAccepted) {
+      if (_isBirthdayMonth &&
+          _birthdayDiscountEnabled &&
+          _birthdayGiftAccepted) {
         activeDiscountPercent += _birthdayDiscountPercent;
       }
       if (_couponApplied) {
@@ -2451,15 +2529,17 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
       // Para pagamentos online, limita a 99% (gateway rejeita R$0)
       final bool isOnline = _selectedPaymentType != 'local';
       final double maxDiscount = isOnline ? 99.0 : 100.0;
-      if (activeDiscountPercent > maxDiscount) activeDiscountPercent = maxDiscount;
+      if (activeDiscountPercent > maxDiscount)
+        activeDiscountPercent = maxDiscount;
 
-      final double totalDiscounted = valorTotal * (1 - (activeDiscountPercent / 100.0));
+      final double totalDiscounted =
+          valorTotal * (1 - (activeDiscountPercent / 100.0));
       double totalWithTax = totalDiscounted;
-      
+
       // Se for pagamento via cartão (online), a taxa configurada pela loja é aplicada sobre o valor pago
       if (_selectedMethod == 'card' && _selectedPaymentType != 'local') {
-        final double basePaid = (_selectedPaymentType == 'sinal') 
-            ? (valorSinal * (1 - (activeDiscountPercent / 100.0))) 
+        final double basePaid = (_selectedPaymentType == 'sinal')
+            ? (valorSinal * (1 - (activeDiscountPercent / 100.0)))
             : totalDiscounted;
         final double currentTax = basePaid * (_cardTaxPercent / 100.0);
         totalWithTax += currentTax;
@@ -2468,7 +2548,11 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
       final Map<String, dynamic> bookingData = {
         'shop_id': widget.shopId,
         'client_id': user.id,
-        'client_name': _userName ?? user.userMetadata?['full_name'] ?? user.userMetadata?['name'] ?? user.userMetadata?['nome'] ?? 'Cliente',
+        'client_name': _userName ??
+            user.userMetadata?['full_name'] ??
+            user.userMetadata?['name'] ??
+            user.userMetadata?['nome'] ??
+            'Cliente',
         'client_email': _userEmail ?? user.email,
         'client_phone': _userPhone,
         'client_photo': _userPhotoUrl,
@@ -2478,8 +2562,10 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
         'service_id': widget.serviceDoc['id'],
         'total_price': valorTotal,
         'total_value': valorTotal,
-        'valor_com_desconto': totalDiscounted, // Valor após CUPOM/NIVER (usado para mostrar o risquinho)
-        'total_payable': totalWithTax, // Valor final que o cliente deve pagar (incluindo taxas)
+        'valor_com_desconto':
+            totalDiscounted, // Valor após CUPOM/NIVER (usado para mostrar o risquinho)
+        'total_payable':
+            totalWithTax, // Valor final que o cliente deve pagar (incluindo taxas)
         'paid_amount': valorPago,
         'remaining_amount': (totalWithTax - valorPago).toDouble(),
         'duration_min': duration,
@@ -2491,11 +2577,15 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
         'payment_id': paymentId,
         'discount_amount': valorTotal - totalDiscounted,
         'birthday_discount_applied': _birthdayGiftAccepted,
-        'birthday_discount_percent': _birthdayGiftAccepted ? _birthdayDiscountPercent : 0,
+        'birthday_discount_percent':
+            _birthdayGiftAccepted ? _birthdayDiscountPercent : 0,
         'coupon_applied': _couponApplied,
         'coupon_code': _appliedCouponCode,
         'coupon_discount_percent': _couponApplied ? _couponDiscountPercent : 0,
-        'card_tax_percent': (_selectedMethod == 'card' && _selectedPaymentType != 'local') ? _cardTaxPercent : 0,
+        'card_tax_percent':
+            (_selectedMethod == 'card' && _selectedPaymentType != 'local')
+                ? _cardTaxPercent
+                : 0,
         'valor_sinal':
             (metodo.contains('Sinal') || _selectedPaymentType == 'sinal')
                 ? valorPago
@@ -2505,7 +2595,10 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
       String finalAppointmentId;
 
       // REGRA DE OURO: Priorizar o rescheduleId vindo do construtor para evitar duplicação (INSERT)
-      final String? effectiveRescheduleId = widget.rescheduleId ?? appointmentId;
+      // preReservaId (lock criado em booking_page) também é usado como base para UPDATE,
+      // garantindo que não se crie um segundo registro além do lock temporário.
+      final String? effectiveRescheduleId =
+          widget.rescheduleId ?? appointmentId ?? widget.preReservaId;
 
       if (effectiveRescheduleId != null && effectiveRescheduleId.isNotEmpty) {
         // Se já existe um ID (reagendamento ou presave prévio), atualiza o doc existente
@@ -2571,7 +2664,9 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
           final sName = shopD['name']?.toString() ?? '';
           final addrParts = [
             shopD['address'],
-            shopD['address_number'] != null ? 'nº ${shopD['address_number']}' : null,
+            shopD['address_number'] != null
+                ? 'nº ${shopD['address_number']}'
+                : null,
             shopD['city'],
           ].where((e) => e != null && e.toString().isNotEmpty).join(', ');
           Navigator.pushAndRemoveUntil(
@@ -2597,7 +2692,32 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
       try {
         if (mounted) Navigator.pop(context);
       } catch (_) {}
-      _showError("Erro salvar: $e");
+
+      // Trata violação da exclusion constraint (double-booking detectado pelo DB)
+      final errStr = e.toString();
+      final bool isExclusionViolation = errStr.contains('23P01') ||
+          errStr.contains('appointments_no_overlap') ||
+          errStr.contains('exclusion_violation') ||
+          errStr.toLowerCase().contains('conflicting key value');
+
+      if (isExclusionViolation && mounted) {
+        await showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Horário acabou de ser preenchido'),
+            content: const Text(
+                'Infelizmente este horário foi selecionado por outra pessoa enquanto você finalizava. Por favor, escolha outro horário.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+      } else {
+        _showError("Erro salvar: $e");
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -2726,8 +2846,8 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
               child: ElevatedButton.icon(
                 icon: const Icon(Icons.calendar_today_outlined, size: 18),
                 label: const Text('Ver Meus Agendamentos',
-                    style: TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 15)),
+                    style:
+                        TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primaryPurple,
                   foregroundColor: Colors.white,
@@ -2758,8 +2878,8 @@ class _CheckoutPageState extends State<CheckoutPage> with TickerProviderStateMix
                 ),
                 onPressed: () => Navigator.pop(ctx),
                 child: const Text('Fechar',
-                    style: TextStyle(
-                        fontSize: 15, fontWeight: FontWeight.w500)),
+                    style:
+                        TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
               ),
             ),
           ],
@@ -2922,8 +3042,11 @@ class _SavedCardsSheetState extends State<_SavedCardsSheet> {
                     itemCount: docs.length,
                     itemBuilder: (context, index) {
                       final data = docs[index];
-                      final brand = data['brand'] ?? data['paymentMethodName'] ?? 'Cartão';
-                      final last4 = data['last_4'] ?? data['lastFourDigits'] ?? '****';
+                      final brand = data['brand'] ??
+                          data['paymentMethodName'] ??
+                          'Cartão';
+                      final last4 =
+                          data['last_4'] ?? data['lastFourDigits'] ?? '****';
                       final cardId = (data['id'] ?? '').toString();
                       final isSelected = _selectedCardId == cardId;
 
@@ -2934,7 +3057,8 @@ class _SavedCardsSheetState extends State<_SavedCardsSheet> {
                           padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
                             color: isSelected
-                                ? AppColors.primaryPurple.withValues(alpha: 0.05)
+                                ? AppColors.primaryPurple
+                                    .withValues(alpha: 0.05)
                                 : Colors.white,
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(
@@ -2957,7 +3081,8 @@ class _SavedCardsSheetState extends State<_SavedCardsSheet> {
                                   const SizedBox(width: 16),
                                   Expanded(
                                     child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
                                         Text(
                                           brand.toUpperCase(),
@@ -3016,11 +3141,14 @@ class _SavedCardsSheetState extends State<_SavedCardsSheet> {
                                                         Text('CVV inválido.')));
                                             return;
                                           }
-                                          widget.onCardSelected(data,
-                                              _cvvController.text, _installments);
+                                          widget.onCardSelected(
+                                              data,
+                                              _cvvController.text,
+                                              _installments);
                                         },
                                         child: const Text("Usar Cartão",
-                                            style: TextStyle(color: Colors.white)),
+                                            style:
+                                                TextStyle(color: Colors.white)),
                                       ),
                                     ),
                                   ],

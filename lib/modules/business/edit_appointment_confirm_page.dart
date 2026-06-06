@@ -76,8 +76,11 @@ class _EditAppointmentConfirmPageState
 
       // Usa pendingUpdates se existir, fallback pro original
       final pending = widget.pendingUpdates ?? {};
-      final currentProfId = pending['professional_id'] as String? ??
-          currentApp['professional_id'] as String;
+      final currentProfId = (pending['professional_id'] ??
+              currentApp['professional_id'] ??
+              currentApp['profissional_id'] ??
+              currentApp['profissionalId'])
+          .toString();
       final newServiceId =
           pending['service_id'] as String? ?? currentApp['service_id'] as String;
       final int newServiceDuration = pending['duracao_min'] ??
@@ -192,6 +195,8 @@ class _EditAppointmentConfirmPageState
       final Map<String, dynamic> updatesToSave = {
         ...?widget.pendingUpdates,
         'scheduled_at': _newDateTime.toIso8601String(),
+        // Operação administrativa (readequação): dono autorizado a sobrepor
+        'bypass_overlap_check': true,
       };
 
       if (_selectedAction == 1 && _selectedReassignId != null) {
@@ -207,7 +212,10 @@ class _EditAppointmentConfirmPageState
 
         await Supabase.instance.client
           .from('appointments')
-          .update({'professional_id': _selectedSwapId})
+          .update({
+            'professional_id': _selectedSwapId,
+            'bypass_overlap_check': true,
+          })
           .eq('id', conflictId);
 
         await Supabase.instance.client
@@ -262,8 +270,11 @@ class _EditAppointmentConfirmPageState
       final newStartMin = _newDateTime.hour * 60 + _newDateTime.minute;
       final newEndMin = newStartMin + serviceDur;
 
-      final profId = pending['professional_id'] as String? ??
-          data['professional_id'] as String?;
+      final profId = (pending['professional_id'] ??
+              data['professional_id'] ??
+              data['profissional_id'] ??
+              data['profissionalId'])
+          ?.toString();
       final clientId =
           pending['client_id'] as String? ?? data['client_id'] as String?;
 

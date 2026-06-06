@@ -445,4 +445,27 @@ class MercadoPagoService {
       return false;
     }
   }
+
+  // ===========================================================================
+  // SALDO MERCADO PAGO (Via Edge Function — evita CORS)
+  // ===========================================================================
+  static Future<Map<String, dynamic>?> getSaldo(String shopId) async {
+    try {
+      final response = await _supabase.functions.invoke('getMpBalance', headers: {
+        'Authorization': 'Bearer ${_supabase.auth.currentSession?.accessToken ?? ''}',
+        'Content-Type': 'application/json',
+      }, body: {
+        'shop_id': shopId,
+      });
+
+      if (response.status == 200 && response.data != null) {
+        return Map<String, dynamic>.from(response.data);
+      }
+      debugPrint("⚠️ getSaldo: status ${response.status}");
+      return null;
+    } catch (e) {
+      debugPrint("❌ Erro getSaldo: $e");
+      return null;
+    }
+  }
 }

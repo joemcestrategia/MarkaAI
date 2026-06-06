@@ -17,6 +17,14 @@ class AdminService {
     return response;
   }
 
+  Future<Map<String, dynamic>> getAppointmentMetrics() async {
+    final response = await _supabase
+        .from('admin_appointment_metrics')
+        .select()
+        .single();
+    return response;
+  }
+
   Future<List<Map<String, dynamic>>> getGrowthDaily({int days = 90}) async {
     final response = await _supabase
         .from('admin_growth_daily')
@@ -31,6 +39,7 @@ class AdminService {
     // 1. Update shop subscription
     await _supabase.from('shops').update({
       'subscription': {
+        'plan_id': newPlan,
         'plano': newPlan,
         'status': 'active',
         'updated_at': DateTime.now().toIso8601String(),

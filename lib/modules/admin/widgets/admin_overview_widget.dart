@@ -3,9 +3,19 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:fl_chart/fl_chart.dart';
 
-class AdminOverviewWidget extends StatelessWidget {
+class AdminOverviewWidget extends StatefulWidget {
   const AdminOverviewWidget({super.key});
 
+  @override
+  State<AdminOverviewWidget> createState() => _AdminOverviewWidgetState();
+}
+
+class _AdminOverviewWidgetState extends State<AdminOverviewWidget> {
+  int? _selectedYear;
+  int? _selectedMonth;
+
+  final List<int> _years = List.generate(5, (index) => DateTime.now().year - index);
+  
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -19,6 +29,67 @@ class AdminOverviewWidget extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Filtros
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: cardColor,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: cs.onSurface.withValues(alpha: 0.1)),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<int?>(
+                      value: _selectedMonth,
+                      isExpanded: true,
+                      dropdownColor: cardColor,
+                      icon: Icon(Icons.calendar_month, color: cs.primary, size: 20),
+                      hint: Text('Mês: Todos', style: TextStyle(color: textColor, fontSize: 14)),
+                      items: [
+                        DropdownMenuItem<int?>(value: null, child: Text('Mês: Todos', style: TextStyle(color: textColor, fontSize: 14))),
+                        ...List.generate(12, (index) => DropdownMenuItem(
+                          value: index + 1,
+                          child: Text('Mês: ${index + 1}', style: TextStyle(color: textColor, fontSize: 14)),
+                        )),
+                      ],
+                      onChanged: (val) => setState(() => _selectedMonth = val),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: cardColor,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: cs.onSurface.withValues(alpha: 0.1)),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<int?>(
+                      value: _selectedYear,
+                      isExpanded: true,
+                      dropdownColor: cardColor,
+                      icon: Icon(Icons.calendar_today, color: cs.primary, size: 20),
+                      hint: Text('Ano: Todos', style: TextStyle(color: textColor, fontSize: 14)),
+                      items: [
+                        DropdownMenuItem<int?>(value: null, child: Text('Ano: Todos', style: TextStyle(color: textColor, fontSize: 14))),
+                        ..._years.map((year) => DropdownMenuItem(
+                          value: year,
+                          child: Text('Ano: $year', style: TextStyle(color: textColor, fontSize: 14)),
+                        )),
+                      ],
+                      onChanged: (val) => setState(() => _selectedYear = val),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
           // Stats Row
           FutureBuilder<List<List<Map<String, dynamic>>>>(
             future: _getStats(),
@@ -65,14 +136,14 @@ class AdminOverviewWidget extends StatelessWidget {
               return Column(
                 children: [
                   LayoutBuilder(builder: (context, constraints) {
-                    final cols = constraints.maxWidth > 1400 ? 5 : (constraints.maxWidth > 1000 ? 4 : (constraints.maxWidth > 600 ? 2 : 1));
+                    final cols = constraints.maxWidth > 1400 ? 5 : (constraints.maxWidth > 1000 ? 4 : (constraints.maxWidth > 600 ? 3 : 2));
                     return GridView.count(
                       crossAxisCount: cols,
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
                       crossAxisSpacing: 16,
                       mainAxisSpacing: 16,
-                      childAspectRatio: constraints.maxWidth > 1400 ? 2.0 : 1.6,
+                      childAspectRatio: constraints.maxWidth > 1400 ? 2.0 : (constraints.maxWidth > 600 ? 1.6 : 1.2),
                       children: [
                         _buildPremiumStatCard(
                           'Usuários',
@@ -209,9 +280,11 @@ class AdminOverviewWidget extends StatelessWidget {
             children: [
               Text(title, style: TextStyle(color: subTextColor, fontSize: 11, fontWeight: FontWeight.w500)),
               const SizedBox(height: 2),
-              Text(value, 
-                   overflow: TextOverflow.ellipsis,
-                   style: TextStyle(color: textColor, fontSize: 20, fontWeight: FontWeight.w800)),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(value, style: TextStyle(color: textColor, fontSize: 20, fontWeight: FontWeight.w800)),
+              ),
             ],
           ),
         ],
@@ -481,7 +554,8 @@ class AdminOverviewWidget extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text('Receita de Assinaturas (DEV)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: textColor)),
+            Expanded(child: Text('Receita de Assinaturas (DEV)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: textColor))),
+            const SizedBox(width: 8),
             Text('Estimativa: R\$${devRevenue.toStringAsFixed(2)}',
                 style: const TextStyle(color: Color(0xFF22C55E), fontWeight: FontWeight.bold)),
           ],
@@ -540,10 +614,30 @@ class AdminOverviewWidget extends StatelessWidget {
 
   Future<List<List<Map<String, dynamic>>>> _getStats() async {
     final supabase = Supabase.instance.client;
+    
+    var usersQuery = supabase.from('users').select();
+    var shopsQuery = supabase.from('shops').select();
+    var appointmentsQuery = supabase.from('appointments').select();
+    
+    if (_selectedYear != null || _selectedMonth != null) {
+      final now = DateTime.now();
+      final year = _selectedYear ?? now.year;
+      // Se tiver ano mas não mês, pegamos o ano todo. Se tiver mês mas não ano, assumimos o ano atual ou o selecionado.
+      final startMonth = _selectedMonth ?? 1;
+      final endMonth = _selectedMonth ?? 12;
+      
+      final startDate = DateTime(year, startMonth, 1).toIso8601String();
+      final endDate = DateTime(year, endMonth + 1, 1).toIso8601String();
+      
+      usersQuery = usersQuery.gte('created_at', startDate).lt('created_at', endDate);
+      shopsQuery = shopsQuery.gte('created_at', startDate).lt('created_at', endDate);
+      appointmentsQuery = appointmentsQuery.gte('created_at', startDate).lt('created_at', endDate);
+    }
+    
     final results = await Future.wait([
-      supabase.from('users').select(),
-      supabase.from('shops').select(),
-      supabase.from('appointments').select(),
+      usersQuery,
+      shopsQuery,
+      appointmentsQuery,
     ]);
     return [
       List<Map<String, dynamic>>.from(results[0]),

@@ -1,0 +1,12 @@
+Windows Registry Editor Version 5.00
+
+[HKEY_CURRENT_USER\Software\Classes\markaai]
+@="URL:markaai Protocol"
+"URL Protocol"=""
+
+[HKEY_CURRENT_USER\Software\Classes\markaai\shell]
+
+[HKEY_CURRENT_USER\Software\Classes\markaai\shell\open]
+
+[HKEY_CURRENT_USER\Software\Classes\markaai\shell\open\command]
+@="\"C:\\src\\MarkaAI\\build\\windows\\x64\\runner\\Debug\\markaai.exe\" \"%1\""

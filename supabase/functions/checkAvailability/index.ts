@@ -1,6 +1,7 @@
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
 import { corsHeaders } from '../_shared/cors.ts'
 import { createSupabaseClient } from '../_shared/supabase.ts'
+import { parseWorkSchedule, jsDowToDartWeekday, hhmmToMin } from '../_shared/workSchedule.ts'
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -24,7 +25,7 @@ serve(async (req) => {
       )
     }
 
-    const { professional_id, start_time, duration, shop_id } = await req.json()
+    const { professional_id, start_time, duration, shop_id, is_vip, exclude_appointment_id } = await req.json()
 
     if (!professional_id || !start_time || !duration) {
       return new Response(
@@ -40,48 +41,48 @@ serve(async (req) => {
     // 1. Buscar Dados da Loja e Profissional
     const [{ data: shop }, { data: prof }] = await Promise.all([
       supabase.from('shops').select('config, configured_holidays, pending_holidays').eq('id', shop_id).maybeSingle(),
-      supabase.from('employees').select('name, work_start, work_end, work_days').eq('id', professional_id).maybeSingle()
+      supabase.from('employees').select('name, work_start, work_end, start_time, end_time, work_days, work_schedule').eq('id', professional_id).maybeSingle()
     ])
 
     if (!prof) throw new Error('Profissional não encontrado')
     const config = shop?.config || {}
 
     // 2. Validação: Janela de Agendamento (Dias)
-    const janelaDias = config.janela_agendamento_dias || 90
-    const maxDate = new Date()
-    maxDate.setDate(now.getDate() + janelaDias)
-    if (reqStart > maxDate) {
-       return new Response(JSON.stringify({ available: false, error: 'Fora da janela de agendamento permitida' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    if (!is_vip) {
+      const janelaDias = config.janela_agendamento_dias || 90
+      const maxDate = new Date()
+      maxDate.setDate(now.getDate() + janelaDias)
+      if (reqStart > maxDate) {
+         return new Response(JSON.stringify({ available: false, error: 'Fora da janela de agendamento permitida' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+      }
     }
 
     // 3. Validação: Antecedência Mínima (Horas)
-    const minAdvanceHours = config.limite_minimo_agendamento_horas || 0
-    const minAllowedDate = new Date(now.getTime() + minAdvanceHours * 3600000)
-    if (reqStart < minAllowedDate) {
-      return new Response(JSON.stringify({ available: false, error: 'Tempo de antecedência insuficiente' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    if (!is_vip) {
+      const minAdvanceHours = config.limite_minimo_agendamento_horas || 0
+      const minAllowedDate = new Date(now.getTime() + minAdvanceHours * 3600000)
+      if (reqStart < minAllowedDate) {
+        return new Response(JSON.stringify({ available: false, error: 'Tempo de antecedência insuficiente' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+      }
     }
 
-    // 4. Validação: Dia de Trabalho
-    const dayOfWeek = reqStart.getDay() // 0 = Domingo, 1 = Segunda...
-    // Converter getDay() para o padrão do Marcai (1=Seg, 7=Dom?) No JS 0=Dom, 6=Sab.
-    // No booking_page.dart, weekday do Dart é 1=Seg, 7=Dom.
-    const dartWeekday = dayOfWeek === 0 ? 7 : dayOfWeek
-    // fix: bloquear dias sem equipe ativa para qualquer estabelecimento
-    // work_days NULL ou vazio → profissional sem dias configurados → rejeitar
-    const workDays = Array.isArray(prof.work_days) ? prof.work_days.map(Number) : []
-    if (workDays.length === 0) {
+    // 4. Validação: Dia de Trabalho (per-day schedule)
+    const dartWeekday = jsDowToDartWeekday(reqStart.getDay())
+    const schedule = parseWorkSchedule(prof as Record<string, unknown>)
+    if (schedule.size === 0) {
       return new Response(JSON.stringify({ available: false, error: 'Profissional sem dias de trabalho configurados' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
-    if (!workDays.includes(dartWeekday)) {
+    const dayCfg = schedule.get(dartWeekday)
+    if (!dayCfg) {
       return new Response(JSON.stringify({ available: false, error: 'Profissional não trabalha neste dia' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 
-    // 5. Validação: Horário de Expediente
-    const startStr = prof.work_start || "08:00"
-    const endStr = prof.work_end || "18:00"
+    // 5. Validação: Horário de Expediente (do dia da semana)
+    const startStr = dayCfg.start
+    const endStr = dayCfg.end
     const [startH, startM] = startStr.split(':').map(Number)
     const [endH, endM] = endStr.split(':').map(Number)
-    
+
     const dayStart = new Date(reqStart)
     dayStart.setHours(startH, startM, 0, 0)
     const dayEnd = new Date(reqStart)
@@ -100,6 +101,21 @@ serve(async (req) => {
       return new Response(JSON.stringify({ available: false, error: 'Fora do horário de expediente do profissional', reasons: expedienteReasons }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 
+    // 5b. Validação: Pausa diária (almoço, etc.)
+    if (dayCfg.break) {
+      const reqStartMin = reqStart.getHours() * 60 + reqStart.getMinutes()
+      const reqEndMin = reqStartMin + duration
+      const brStart = hhmmToMin(dayCfg.break.start)
+      const brEnd = hhmmToMin(dayCfg.break.end)
+      if (reqStartMin < brEnd && reqEndMin > brStart) {
+        return new Response(JSON.stringify({
+          available: false,
+          error: 'Conflito com a pausa do profissional',
+          reasons: [`O profissional está em pausa das ${dayCfg.break.start} às ${dayCfg.break.end}.`]
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+      }
+    }
+
     // 6. Validação: Feriados (Configurados ou Pendentes com Bloqueio Automático)
     const isoDate = reqStart.toISOString().split('T')[0]
     const configurados = shop?.configured_holidays || {}
@@ -109,22 +125,66 @@ serve(async (req) => {
     if (configurados[isoDate] === 'fechado') {
         return new Response(JSON.stringify({ available: false, error: 'Loja fechada (feriado)' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
+    if (configurados[isoDate] && typeof configurados[isoDate] === 'object') {
+      const config = configurados[isoDate] as Record<string, unknown>
+      if (Array.isArray(config['escala'])) {
+        const escala = config['escala'] as string[]
+        if (escala.length > 0 && !escala.includes(professional_id)) {
+          return new Response(
+            JSON.stringify({ available: false, error: 'Profissional não está na escala deste dia' }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          )
+        }
+      }
+    }
     if (autoBlock && pendentes.includes(isoDate)) {
         return new Response(JSON.stringify({ available: false, error: 'Loja fechada (feriado pendente)' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
+    if (autoBlock) {
+      try {
+        const year = reqStart.getFullYear()
+        const holidaysRes = await fetch(`https://brasilapi.com.br/api/feriados/v1/${year}`)
+        if (holidaysRes.ok) {
+          const nationalHolidays = await holidaysRes.json() as Array<{ date: string }>
+          const isNationalHoliday = nationalHolidays.some((h) => h.date === isoDate)
+          if (isNationalHoliday) {
+            return new Response(
+              JSON.stringify({ available: false, error: 'Feriado nacional' }),
+              { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            )
+          }
+        }
+      } catch (_) {
+        // BrasilAPI indisponível → fail-open intencional, não bloqueia o agendamento
+      }
+    }
 
     // 7. Validação: Conflitos de Horário (Agendamentos Existentes)
+    // IMPORTANTE: pendente_pix recente (< 20 min) também conta como ocupado
+    // para evitar double-booking enquanto o cliente está pagando.
+    // pre_reserva (lock de checkout) também é considerada ocupada.
+    const PENDING_PIX_TTL_MIN = 20
+    const pendingPixCutoff = new Date(Date.now() - PENDING_PIX_TTL_MIN * 60000).toISOString()
+
     const { data: appointments, error: fetchError } = await supabase
       .from('appointments')
-      .select('scheduled_at, duration_min, client_name')
+      .select('id, scheduled_at, duration_min, client_name, status, created_at')
       .eq('professional_id', professional_id)
-      .not('status', 'in', '("cancelado","rejeitado","recusado","excluido","pendente_pix")')
+      .not('status', 'in', '("cancelado","rejeitado","recusado","excluido")')
       .gte('scheduled_at', new Date(reqStart.getTime() - 2 * 60 * 60 * 1000).toISOString())
       .lte('scheduled_at', new Date(reqEnd.getTime() + 2 * 60 * 60 * 1000).toISOString())
 
     if (fetchError) throw fetchError
 
     const conflicting = (appointments || []).filter((appt) => {
+      // Ignorar o próprio agendamento (reagendamento / pre_reserva do mesmo cliente)
+      if (exclude_appointment_id && appt.id === exclude_appointment_id) return false
+      const status = (appt.status || '').toString().toLowerCase()
+      // Ignorar pendente_pix antigos (provavelmente abandonados)
+      if (status === 'pendente_pix') {
+        const createdAt = appt.created_at ? new Date(appt.created_at).toISOString() : ''
+        if (!createdAt || createdAt < pendingPixCutoff) return false
+      }
       const apptStart = new Date(appt.scheduled_at)
       const apptDuration = appt.duration_min || 30
       const apptEnd = new Date(apptStart.getTime() + apptDuration * 60000)

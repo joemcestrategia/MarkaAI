@@ -169,7 +169,7 @@ class _ClientSearchPageState extends State<ClientSearchPage> {
                     matchesLoc = dist <= _selectedRadius;
                   }
 
-                  return isActive && matchesText && matchesLoc;
+                  return isActive && (d['services_count'] ?? 0) > 0 && matchesText && matchesLoc;
                 }).toList();
 
                 filtered.sort((a, b) {

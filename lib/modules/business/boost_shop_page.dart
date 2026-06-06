@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import '../../core/theme/app_colors.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
@@ -114,6 +115,7 @@ class _BoostShopPageState extends State<BoostShopPage>
         currency: 'brl',
         description: description,
         shopId: shopId,
+        boostDays: daysToAdd,
       );
     } catch (e) {
       debugPrint("Erro no pagamento Stripe (boost): $e");
@@ -140,8 +142,27 @@ class _BoostShopPageState extends State<BoostShopPage>
 
     final newExpiration = start.add(Duration(days: daysToAdd));
 
+    // Web: o webhook do Stripe ativa o boost — não atualizamos localmente
+    if (kIsWeb) {
+      if (mounted) {
+        PremiumDialogs.hideLoading(context);
+        setState(() {
+          _currentBoostExpiration = newExpiration;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text("Pagamento confirmado! Seu destaque será ativado em instantes. 🚀"),
+          backgroundColor: AppColors.successGreen,
+        ));
+        Navigator.pop(context);
+      }
+      return;
+    }
+
+    // Mobile: pagamento confirmado via PaymentSheet, atualizar localmente
     try {
       await Supabase.instance.client.from('shops').update({
+        'is_boosted': true,
+        'boost_expires_at': newExpiration.toIso8601String(),
         'boost': {
           'expires_at': newExpiration.toIso8601String(),
           'is_active': true,

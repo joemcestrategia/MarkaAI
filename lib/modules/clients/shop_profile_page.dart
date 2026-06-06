@@ -26,6 +26,7 @@ class ShopProfilePage extends StatefulWidget {
 class _ShopProfilePageState extends State<ShopProfilePage> {
   bool _isFavorite = false;
   String? _selectedCategoryId;
+  int _selectedMainTab = 0; // 0 = Serviços, 1 = Produtos
 
   @override
   void initState() {
@@ -339,17 +340,53 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
 
           // (Reviews will be shown after services)
 
-          // Título "Serviços"
-          const SliverToBoxAdapter(
+          // TABS: Serviços / Produtos
+          SliverToBoxAdapter(
             child: Padding(
-              padding: EdgeInsets.fromLTRB(20, 20, 20, 10),
-              child: Text(
-                "Serviços",
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
+              child: Container(
+                height: 45,
+                decoration: BoxDecoration(
+                  color: Colors.grey[200],
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => setState(() => _selectedMainTab = 0),
+                        child: Container(
+                          margin: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: _selectedMainTab == 0 ? Colors.white : Colors.transparent,
+                            borderRadius: BorderRadius.circular(8),
+                            boxShadow: _selectedMainTab == 0 ? [BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 4)] : null,
+                          ),
+                          child: Center(child: Text("Serviços", style: TextStyle(fontWeight: FontWeight.bold, color: _selectedMainTab == 0 ? AppColors.textPrimary : Colors.grey[600]))),
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => setState(() => _selectedMainTab = 1),
+                        child: Container(
+                          margin: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: _selectedMainTab == 1 ? Colors.white : Colors.transparent,
+                            borderRadius: BorderRadius.circular(8),
+                            boxShadow: _selectedMainTab == 1 ? [BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 4)] : null,
+                          ),
+                          child: Center(child: Text("Produtos", style: TextStyle(fontWeight: FontWeight.bold, color: _selectedMainTab == 1 ? AppColors.textPrimary : Colors.grey[600]))),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
 
+          if (_selectedMainTab == 0) ...[
           // CATEGORY TAGS (Horizontal Scroll)
           SliverToBoxAdapter(
             child: StreamBuilder<List<Map<String, dynamic>>>(
@@ -601,6 +638,49 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
               );
             },
           ),
+          ] else ...[
+            // Lista de produtos
+            FutureBuilder<List<Map<String, dynamic>>>(
+              future: Supabase.instance.client
+                  .from('products')
+                  .select()
+                  .eq('shop_id', widget.shopDoc['id'])
+                  .eq('is_active', true),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const SliverToBoxAdapter(child: Center(child: CircularProgressIndicator()));
+                }
+                if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                  return const SliverToBoxAdapter(
+                    child: Padding(
+                      padding: EdgeInsets.all(40),
+                      child: Center(child: Text("Nenhum produto disponível.", style: TextStyle(color: Colors.grey))),
+                    ),
+                  );
+                }
+
+                final products = snapshot.data!;
+                return SliverPadding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                  sliver: SliverGrid(
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2,
+                      childAspectRatio: 0.58, // CORRIGIDO PARA NAO DAR OVERFLOW
+                      crossAxisSpacing: 16,
+                      mainAxisSpacing: 16,
+                    ),
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) {
+                        final p = products[index];
+                        return _buildProductCard(context, p, whatsapp);
+                      },
+                      childCount: products.length,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
           const SliverToBoxAdapter(child: SizedBox(height: 8)),
 
           // Mini-Mapa Novo
@@ -963,4 +1043,113 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
     final uri = Uri.parse('https://waze.com/ul?q=$query&navigate=yes');
     if (await canLaunchUrl(uri)) await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
+}
+
+// Card de Produto (Vitrine)
+Widget _buildProductCard(BuildContext context, Map<String, dynamic> product, String whatsapp) {
+  final isAffiliate = product['is_affiliate'] == true;
+  final imageUrl = product['image_url']?.toString();
+  final price = product['price'] as num?;
+  
+  String priceStr = '';
+  if (price != null && price > 0) {
+    priceStr = "R\$ ${price.toStringAsFixed(2).replaceAll('.', ',')}";
+  } else {
+    priceStr = isAffiliate ? "Ver Oferta" : "Consultar";
+  }
+  
+  return GestureDetector(
+    onTap: () async {
+      if (isAffiliate && product['affiliate_url'] != null) {
+        final uri = Uri.tryParse(product['affiliate_url']);
+        if (uri != null && await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        }
+      } else {
+        if (whatsapp.isNotEmpty) {
+          final phone = whatsapp.replaceAll(RegExp(r'[^0-9]'), '');
+          final priceText = (price != null && price > 0) ? "no valor de $priceStr" : "";
+          final msg = Uri.encodeComponent("Olá, tenho interesse no produto *${product['name']}* $priceText.");
+          final uri = Uri.parse('https://wa.me/$phone?text=$msg');
+          if (await canLaunchUrl(uri)) {
+            await launchUrl(uri, mode: LaunchMode.externalApplication);
+          }
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('WhatsApp da loja indisponível')));
+        }
+      }
+    },
+    child: Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: ClipRRect(
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+              child: Container(
+                color: Colors.grey[100],
+                child: imageUrl != null && imageUrl.isNotEmpty
+                    ? CachedNetworkImage(
+                        imageUrl: imageUrl,
+                        fit: BoxFit.cover,
+                        errorWidget: (context, url, error) => const Icon(Icons.image_not_supported, color: Colors.grey),
+                      )
+                    : const Icon(Icons.inventory_2, size: 40, color: Colors.grey),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min, // FIX OVERFLOW
+              children: [
+                Text(
+                  product['name'] ?? '',
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, height: 1.2),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  priceStr,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w900,
+                    color: (price != null && price > 0) ? AppColors.primaryPurple : Colors.grey[700],
+                    fontSize: (price != null && price > 0) ? 16 : 14,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryPurple,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Center(
+                    child: Text(
+                      isAffiliate ? "Ver Oferta" : "Comprar",
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 }

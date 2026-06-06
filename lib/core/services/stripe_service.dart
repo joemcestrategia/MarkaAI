@@ -120,6 +120,7 @@ class StripeService {
     required String currency,
     required String description,
     String? shopId,
+    int? boostDays,
   }) async {
     final appBaseUrl = _getAppBaseUrl();
     final successUrl =
@@ -139,6 +140,7 @@ class StripeService {
         'cancel_url': cancelUrl,
         if (shopId != null) 'shop_id': shopId,
         if (email != null) 'email': email,
+        if (boostDays != null) 'boost_days': boostDays,
       },
     );
 
@@ -252,6 +254,7 @@ class StripeService {
     required String currency,
     required String description,
     String? shopId,
+    int? boostDays,
   }) async {
     // ── WEB → Checkout Session com redirect ──────────────────
     if (kIsWeb) {
@@ -260,6 +263,7 @@ class StripeService {
         currency: currency,
         description: description,
         shopId: shopId,
+        boostDays: boostDays,
       );
     }
 

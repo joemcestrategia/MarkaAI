@@ -712,7 +712,7 @@ class _LoginPageState extends State<LoginPage>
                       ? _buildEmailSentView()
                       : _isRegistering
                           ? _buildRegistrationFlow()
-                          : _buildLoginForm(),
+                          : _buildLoginForm(isDesktop),
                   ),
                 ),
               ),
@@ -724,27 +724,23 @@ class _LoginPageState extends State<LoginPage>
   }
 
   // --- FORMULÁRIO DE LOGIN (SIMPLES E ELEGANTE) ---
-  Widget _buildLoginForm() {
+  Widget _buildLoginForm(bool isDesktop) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Mostrar logo no painel branco apenas em telas móveis (quando não é desktop)
-        Builder(builder: (context) {
-          final size = MediaQuery.of(context).size;
-          final isDesktop = size.width > 900;
-          if (!isDesktop) {
-            return Center(
-              child: Column(
-                children: [
-                  Image.asset('assets/images/logo_purple.png',
-                      height: 96, fit: BoxFit.contain),
-                  const SizedBox(height: 12),
-                ],
+        // Mostrar logo e nome do sistema no topo do formulário
+        Center(
+          child: Column(
+            children: [
+              Image.asset(
+                'assets/images/logo_purple.png',
+                height: isDesktop ? 80 : 96, 
+                fit: BoxFit.contain
               ),
-            );
-          }
-          return const SizedBox(height: 8);
-        }),
+              const SizedBox(height: 20),
+            ],
+          ),
+        ),
         const SizedBox(height: 20),
         const Text("Bem-vindo(a)!",
             style: TextStyle(

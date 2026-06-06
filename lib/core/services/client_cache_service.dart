@@ -3,16 +3,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class ClientCacheService {
   static const String _keyPrefix = 'cached_clients_';
+  static const Duration _maxAge = Duration(minutes: 10);
 
   /// Salva os dados processados na cache local
   static Future<void> saveClients(
       String shopId, Map<String, List<Map<String, dynamic>>> processedData) async {
     final prefs = await SharedPreferences.getInstance();
-    
-    // Serializa os dados, tratando DateTimes e Timestamps
+
     final serializedData = {
-      'app': _serializeList(processedData['app'] ?? []),
-      'manual': _serializeList(processedData['manual'] ?? []),
+      'clients': _serializeList(processedData['clients'] ?? []),
+      'visitors': _serializeList(processedData['visitors'] ?? []),
       'cachedAt': DateTime.now().toIso8601String(),
     };
 
@@ -29,9 +29,13 @@ class ClientCacheService {
 
     try {
       final decoded = jsonDecode(jsonStr) as Map<String, dynamic>;
+      final cachedAt = DateTime.tryParse(decoded['cachedAt']?.toString() ?? '');
+      if (cachedAt != null && DateTime.now().difference(cachedAt) > _maxAge) {
+        return null;
+      }
       return {
-        'app': _deserializeList(decoded['app'] as List),
-        'manual': _deserializeList(decoded['manual'] as List),
+        'clients': _deserializeList(decoded['clients'] as List),
+        'visitors': _deserializeList(decoded['visitors'] as List),
       };
     } catch (e) {
       return null;

@@ -30,6 +30,14 @@ class ServiceRegisterPage extends StatefulWidget {
   State<ServiceRegisterPage> createState() => _ServiceRegisterPageState();
 }
 
+class _ServicePhotoItem {
+  final String id;
+  final String? url;
+  final XFile? file;
+  
+  _ServicePhotoItem({this.url, this.file}) : id = const Uuid().v4();
+}
+
 class _ServiceRegisterPageState extends State<ServiceRegisterPage>
     with WidgetsBindingObserver {
   final _formKey = GlobalKey<FormState>();
@@ -44,8 +52,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
 
   final ScrollController _scrollController = ScrollController();
 
-  final List<XFile> _newImages = [];
-  List<String> _existingUrls = [];
+  List<_ServicePhotoItem> _photos = [];
 
   List<Map<String, dynamic>> _variations = [];
 
@@ -70,7 +77,9 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
       _custoController.text = data['cost']?.toString() ?? "0";
       _timeController.text = data['duration_min']?.toString() ?? "";
       _descriptionController.text = data['description'] ?? "";
-      _existingUrls = List<String>.from(data['photos_urls'] ?? []);
+      _photos = (data['photos_urls'] as List<dynamic>? ?? [])
+          .map((url) => _ServicePhotoItem(url: url.toString()))
+          .toList();
       _ativo = data['is_active'] ?? true;
       _isFeatured = data['is_featured'] ?? false;
 
@@ -243,25 +252,36 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
     ));
   }
 
-  Future<void> _editExistingImage(String url) async {
-    try {
-      setState(() => _isSaving = true);
-      final response = await http.get(Uri.parse(url));
-      final tempDir = await getTemporaryDirectory();
-      final file = io.File('${tempDir.path}/temp_crop_${DateTime.now().millisecondsSinceEpoch}.jpg');
-      await file.writeAsBytes(response.bodyBytes);
-      
-      final cropped = await _cropImage(XFile(file.path));
-      if (cropped != null) {
+  Future<void> _editPhoto(int index) async {
+    final photo = _photos[index];
+    if (photo.file != null) {
+      final croppedImage = await _cropImage(photo.file!);
+      if (croppedImage != null) {
         setState(() {
-          _existingUrls.remove(url);
-          _newImages.add(cropped);
+          _photos[index] = _ServicePhotoItem(file: croppedImage);
         });
+        _showSnackBar("Imagem atualizada!");
       }
-    } catch (e) {
-      _showSnackBar("Erro ao preparar imagem para recorte: $e", isError: true);
-    } finally {
-      setState(() => _isSaving = false);
+    } else if (photo.url != null) {
+      try {
+        setState(() => _isSaving = true);
+        final response = await http.get(Uri.parse(photo.url!));
+        final tempDir = await getTemporaryDirectory();
+        final file = io.File('${tempDir.path}/temp_crop_${DateTime.now().millisecondsSinceEpoch}.jpg');
+        await file.writeAsBytes(response.bodyBytes);
+        
+        final cropped = await _cropImage(XFile(file.path));
+        if (cropped != null) {
+          setState(() {
+            _photos[index] = _ServicePhotoItem(file: cropped);
+          });
+          _showSnackBar("Imagem atualizada!");
+        }
+      } catch (e) {
+        _showSnackBar("Erro ao preparar imagem para recorte: $e", isError: true);
+      } finally {
+        setState(() => _isSaving = false);
+      }
     }
   }
 
@@ -338,7 +358,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
   }
 
   Future<void> _pickImages() async {
-    if ((_newImages.length + _existingUrls.length) >= _currentFeatures.maxPhotosPerService) {
+    if (_photos.length >= _currentFeatures.maxPhotosPerService) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
             content: Text("Máximo de ${_currentFeatures.maxPhotosPerService} fotos."), backgroundColor: Colors.red),
@@ -354,7 +374,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
       );
 
       if (picked.isNotEmpty) {
-        int available = _currentFeatures.maxPhotosPerService - (_newImages.length + _existingUrls.length);
+        int available = _currentFeatures.maxPhotosPerService - _photos.length;
         int addedCount = 0;
 
         for (int i = 0; i < picked.length && i < available; i++) {
@@ -362,7 +382,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
           final croppedImage = await _cropImage(image);
 
           if (croppedImage != null) {
-            setState(() => _newImages.add(croppedImage));
+            setState(() => _photos.add(_ServicePhotoItem(file: croppedImage)));
             addedCount++;
           }
         }
@@ -383,18 +403,6 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
             content: Text("Erro ao selecionar imagens"),
             backgroundColor: Colors.red),
       );
-    }
-  }
-
-  Future<void> _editNewImage(int index) async {
-    final image = _newImages[index];
-    final croppedImage = await _cropImage(image);
-
-    if (croppedImage != null) {
-      setState(() {
-        _newImages[index] = croppedImage;
-      });
-      _showSnackBar("Imagem atualizada!");
     }
   }
 
@@ -432,12 +440,11 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
 
       final docId = widget.serviceToEdit?['id'] ??
           Uuid().v4();
-      List<String> uploadedUrls = List.from(_existingUrls);
-
-      // Upload das novas imagens com compressão inteligente e progresso unificado
-      if (_newImages.isNotEmpty) {
-        final List<String> newUrls = await ImageService.uploadServicePhotos(
-          _newImages, 
+      List<XFile> filesToUpload = _photos.where((p) => p.file != null).map((p) => p.file!).toList();
+      List<String> uploadedNewUrls = [];
+      if (filesToUpload.isNotEmpty) {
+        uploadedNewUrls = await ImageService.uploadServicePhotos(
+          filesToUpload,
           docId,
           onProgress: (p) {
             if (mounted) {
@@ -445,7 +452,19 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
             }
           },
         );
-        uploadedUrls.addAll(newUrls);
+      }
+
+      int newUrlIndex = 0;
+      List<String> finalPhotosUrls = [];
+      for (var photo in _photos) {
+        if (photo.url != null) {
+          finalPhotosUrls.add(photo.url!);
+        } else if (photo.file != null) {
+          if (newUrlIndex < uploadedNewUrls.length) {
+            finalPhotosUrls.add(uploadedNewUrls[newUrlIndex]);
+            newUrlIndex++;
+          }
+        }
       }
 
       final service = ServiceModel(
@@ -464,7 +483,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
           return double.tryParse(raw) ?? 0.0;
         }(),
         durationMin: int.tryParse(_timeController.text) ?? 30,
-        photosUrls: uploadedUrls,
+        photosUrls: finalPhotosUrls,
         categoryIds: _categoryIds,
         isActive: _ativo,
         isFeatured: _isFeatured,
@@ -509,8 +528,8 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
           _currentFeatures = snapshot.data!;
         }
 
-        final bool hasImages = _existingUrls.isNotEmpty || _newImages.isNotEmpty;
-        final int totalImages = _existingUrls.length + _newImages.length;
+        final bool hasImages = _photos.isNotEmpty;
+        final int totalImages = _photos.length;
 
         return DropTarget(
           onDragDone: (detail) async {
@@ -532,10 +551,10 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
 
             if (validFiles.isNotEmpty) {
               for (final file in validFiles) {
-                if ((_newImages.length + _existingUrls.length) >= _currentFeatures.maxPhotosPerService) break;
+                if (_photos.length >= _currentFeatures.maxPhotosPerService) break;
                 final croppedImage = await _cropImage(file);
                 if (croppedImage != null) {
-                  setState(() => _newImages.add(croppedImage));
+                  setState(() => _photos.add(_ServicePhotoItem(file: croppedImage)));
                 }
               }
               setState(() => _isDragging = false);
@@ -632,64 +651,62 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                                         ),
                                       ),
                                     )
-                                  : Stack(
-                                      alignment: Alignment.center,
-                                      children: [
-                                        ListView(
-                                          controller: _scrollController,
-                                          scrollDirection: Axis.horizontal,
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 40, vertical: 10),
-                                          children: [
-                                            if (totalImages < _currentFeatures.maxPhotosPerService)
-                                              GestureDetector(
-                                                onTap: _pickImages,
-                                                child: Container(
-                                                  width: 90,
-                                                  margin: const EdgeInsets.only(
-                                                      right: 12),
-                                                  decoration: BoxDecoration(
-                                                      color: Colors.white,
-                                                      borderRadius:
-                                                          BorderRadius.circular(12),
-                                                      border: Border.all(
-                                                          color: AppColors
-                                                              .primaryPurple
-                                                              .withValues(
-                                                                  alpha: 0.5),
-                                                          width: 2)),
-                                                  child: Column(
-                                                    mainAxisAlignment:
-                                                        MainAxisAlignment.center,
-                                                    children: [
-                                                      const Icon(
-                                                          Icons.add_photo_alternate,
-                                                          color: AppColors
-                                                              .primaryPurple,
-                                                          size: 32),
-                                                      const SizedBox(height: 4),
-                                                      Text("+${_currentFeatures.maxPhotosPerService - totalImages}",
-                                                          style: const TextStyle(
-                                                              fontSize: 11,
-                                                              color: Colors.grey,
-                                                              fontWeight:
-                                                                  FontWeight.bold)),
-                                                    ],
+                                  : Row(
+                                            children: [
+                                              if (totalImages < _currentFeatures.maxPhotosPerService)
+                                                Padding(
+                                                  padding: const EdgeInsets.only(left: 40, top: 10, bottom: 10),
+                                                  child: GestureDetector(
+                                                    onTap: _pickImages,
+                                                    child: Container(
+                                                      width: 90,
+                                                      margin: const EdgeInsets.only(right: 12),
+                                                      decoration: BoxDecoration(
+                                                          color: Colors.white,
+                                                          borderRadius: BorderRadius.circular(12),
+                                                          border: Border.all(
+                                                              color: AppColors.primaryPurple.withValues(alpha: 0.5),
+                                                              width: 2)),
+                                                      child: Column(
+                                                        mainAxisAlignment: MainAxisAlignment.center,
+                                                        children: [
+                                                          const Icon(Icons.add_photo_alternate,
+                                                              color: AppColors.primaryPurple, size: 32),
+                                                          const SizedBox(height: 4),
+                                                          Text("+${_currentFeatures.maxPhotosPerService - totalImages}",
+                                                              style: const TextStyle(
+                                                                  fontSize: 11,
+                                                                  color: Colors.grey,
+                                                                  fontWeight: FontWeight.bold)),
+                                                        ],
+                                                      ),
+                                                    ),
                                                   ),
                                                 ),
+                                              Expanded(
+                                                child: ReorderableListView(
+                                                  scrollController: _scrollController,
+                                                  scrollDirection: Axis.horizontal,
+                                                  padding: EdgeInsets.only(
+                                                      left: (totalImages < _currentFeatures.maxPhotosPerService) ? 0 : 40,
+                                                      right: 40,
+                                                      top: 10,
+                                                      bottom: 10),
+                                                  onReorder: (oldIndex, newIndex) {
+                                                    setState(() {
+                                                      if (oldIndex < newIndex) {
+                                                        newIndex -= 1;
+                                                      }
+                                                      final item = _photos.removeAt(oldIndex);
+                                                      _photos.insert(newIndex, item);
+                                                    });
+                                                  },
+                                                  children: [
+                                                    for (int i = 0; i < _photos.length; i++)
+                                                      _buildPhotoThumb(_photos[i], i, ValueKey(_photos[i].id)),
+                                                  ],
+                                                ),
                                               ),
-                                            ..._existingUrls.map((url) =>
-                                                _buildExistingImageThumb(url)),
-                                            ..._newImages.asMap().entries.map(
-                                                (entry) => _buildNewImageThumb(
-                                                    entry.value, entry.key)),
-                                          ],
-                                        ),
-                                        if (hasImages &&
-                                            _scrollController.hasClients &&
-                                            _scrollController
-                                                    .position.maxScrollExtent >
-                                                0)
                                           Positioned(
                                               left: 4,
                                               child: GestureDetector(
@@ -749,7 +766,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                                     Text("$totalImages de ${_currentFeatures.maxPhotosPerService} fotos",
                                         style: const TextStyle(
                                             fontSize: 12, color: Colors.grey)),
-                                    Text(" • Clique no âœ‚ï¸  para recortar",
+                                    Text(" • Segure para reordenar. Clique no âœ‚ï¸  para recortar.",
                                         style: TextStyle(
                                             fontSize: 11,
                                             color: Colors.grey.shade600,
@@ -1233,96 +1250,9 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
     );
   }
 
-  Widget _buildExistingImageThumb(String url) {
+  Widget _buildPhotoThumb(_ServicePhotoItem photo, int index, Key key) {
     return Stack(
-      children: [
-        Container(
-          width: 90,
-          height: 90,
-          margin: const EdgeInsets.only(right: 12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.grey.shade300),
-            color: Colors.grey.shade100,
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Image.network(
-              url,
-              fit: BoxFit.cover,
-              loadingBuilder: (context, child, loadingProgress) {
-                if (loadingProgress == null) return child;
-                return Center(
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    value: loadingProgress.expectedTotalBytes != null
-                        ? loadingProgress.cumulativeBytesLoaded /
-                            loadingProgress.expectedTotalBytes!
-                        : null,
-                  ),
-                );
-              },
-              errorBuilder: (context, error, stackTrace) {
-                return Container(
-                  color: Colors.red.shade50,
-                  child: const Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.error_outline, color: Colors.red, size: 30),
-                      SizedBox(height: 4),
-                      Text("Erro",
-                          style: TextStyle(fontSize: 10, color: Colors.red)),
-                    ],
-                  ),
-                );
-              },
-            ),
-          ),
-        ),
-        Positioned(
-          left: 4,
-          top: 4,
-          child: GestureDetector(
-            onTap: () => _editExistingImage(url),
-            child: Container(
-              padding: const EdgeInsets.all(4),
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                shape: BoxShape.circle,
-                boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 3)],
-              ),
-              child: const CircleAvatar(
-                  radius: 10,
-                  backgroundColor: AppColors.primaryPurple,
-                  child: Icon(Icons.crop, size: 12, color: Colors.white)),
-            ),
-          ),
-        ),
-        Positioned(
-          right: 16,
-          top: 4,
-          child: GestureDetector(
-            onTap: () => setState(() => _existingUrls.remove(url)),
-            child: Container(
-              padding: const EdgeInsets.all(4),
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                shape: BoxShape.circle,
-                boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 3)],
-              ),
-              child: const CircleAvatar(
-                  radius: 10,
-                  backgroundColor: Colors.red,
-                  child: Icon(Icons.close, size: 12, color: Colors.white)),
-            ),
-          ),
-        )
-      ],
-    );
-  }
-
-  Widget _buildNewImageThumb(XFile file, int index) {
-    return Stack(
+      key: key,
       children: [
         Container(
           width: 90,
@@ -1331,46 +1261,74 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-                color: AppColors.primaryPurple.withValues(alpha: 0.3),
-                width: 2),
+                color: photo.file != null 
+                    ? AppColors.primaryPurple.withValues(alpha: 0.3) 
+                    : Colors.grey.shade300,
+                width: photo.file != null ? 2 : 1),
             color: Colors.grey.shade100,
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(12),
-            child: FutureBuilder<Uint8List>(
-              future: file.readAsBytes(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(
-                      child: CircularProgressIndicator(strokeWidth: 2));
-                } else if (snapshot.hasError) {
-                  return Container(
-                    color: Colors.orange.shade50,
-                    child: const Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.warning_amber,
-                            color: Colors.orange, size: 30),
-                        Text("Erro",
-                            style:
-                                TextStyle(fontSize: 10, color: Colors.orange)),
-                      ],
-                    ),
-                  );
-                } else if (snapshot.hasData) {
-                  return Image.memory(snapshot.data!, fit: BoxFit.cover);
-                } else {
-                  return const Icon(Icons.image, color: Colors.grey, size: 30);
-                }
-              },
-            ),
+            child: photo.file != null 
+              ? FutureBuilder<Uint8List>(
+                  future: photo.file!.readAsBytes(),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+                    } else if (snapshot.hasError) {
+                      return Container(
+                        color: Colors.orange.shade50,
+                        child: const Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.warning_amber, color: Colors.orange, size: 30),
+                            Text("Erro", style: TextStyle(fontSize: 10, color: Colors.orange)),
+                          ],
+                        ),
+                      );
+                    } else if (snapshot.hasData) {
+                      return Image.memory(snapshot.data!, fit: BoxFit.cover);
+                    } else {
+                      return const Icon(Icons.image, color: Colors.grey, size: 30);
+                    }
+                  },
+                )
+              : Image.network(
+                  photo.url!,
+                  fit: BoxFit.cover,
+                  loadingBuilder: (context, child, loadingProgress) {
+                    if (loadingProgress == null) return child;
+                    return Center(
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        value: loadingProgress.expectedTotalBytes != null
+                            ? loadingProgress.cumulativeBytesLoaded /
+                                loadingProgress.expectedTotalBytes!
+                            : null,
+                      ),
+                    );
+                  },
+                  errorBuilder: (context, error, stackTrace) {
+                    return Container(
+                      color: Colors.red.shade50,
+                      child: const Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.error_outline, color: Colors.red, size: 30),
+                          SizedBox(height: 4),
+                          Text("Erro", style: TextStyle(fontSize: 10, color: Colors.red)),
+                        ],
+                      ),
+                    );
+                  },
+                ),
           ),
         ),
         Positioned(
           left: 4,
           top: 4,
           child: GestureDetector(
-            onTap: () => _editNewImage(index),
+            onTap: () => _editPhoto(index),
             child: Container(
               padding: const EdgeInsets.all(4),
               decoration: const BoxDecoration(
@@ -1390,7 +1348,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
           right: 16,
           top: 4,
           child: GestureDetector(
-            onTap: () => setState(() => _newImages.removeAt(index)),
+            onTap: () => setState(() => _photos.removeAt(index)),
             child: Container(
               padding: const EdgeInsets.all(4),
               decoration: const BoxDecoration(

@@ -16,6 +16,7 @@ class _AdminMetricsWidgetState extends State<AdminMetricsWidget> {
   bool _loading = true;
   Map<String, dynamic>? _metrics;
   List<Map<String, dynamic>> _growthData = [];
+  Map<String, dynamic>? _appointmentMetrics;
 
   @override
   void initState() {
@@ -29,10 +30,12 @@ class _AdminMetricsWidgetState extends State<AdminMetricsWidget> {
       final results = await Future.wait([
         _adminService.getRevenueMetrics(),
         _adminService.getGrowthDaily(days: 30),
+        _adminService.getAppointmentMetrics(),
       ]);
       setState(() {
         _metrics = results[0] as Map<String, dynamic>;
         _growthData = results[1] as List<Map<String, dynamic>>;
+        _appointmentMetrics = results[2] as Map<String, dynamic>;
         _loading = false;
       });
     } catch (e) {
@@ -63,6 +66,13 @@ class _AdminMetricsWidgetState extends State<AdminMetricsWidget> {
     final countPro = _metrics!['count_pro'] as int;
     final paidShops = countStart + countPlus + countPro;
     final arpu = paidShops > 0 ? mrr / paidShops : 0.0;
+
+    final totalAppointments = _appointmentMetrics?['total_appointments'] as int? ?? 0;
+    final totalVolume = (_appointmentMetrics?['total_volume'] as num?)?.toDouble() ?? 0.0;
+    final activeShopsAppt = _appointmentMetrics?['active_shops'] as int? ?? 0;
+    final activeClients = _appointmentMetrics?['active_clients'] as int? ?? 0;
+    final avgDaily = (_appointmentMetrics?['avg_daily_appointments'] as num?)?.toDouble() ?? 0.0;
+    final avgMonthly = (_appointmentMetrics?['avg_monthly_appointments'] as num?)?.toDouble() ?? 0.0;
 
     return SafeArea(
       child: RefreshIndicator(
@@ -112,6 +122,54 @@ class _AdminMetricsWidgetState extends State<AdminMetricsWidget> {
                         _buildKPI('Tenants', '$totalShops total', '$paidShops pagos', Icons.store_outlined, theme.colorScheme.tertiary),
                         const SizedBox(height: 16),
                         _buildKPI('ARR Estimado', FormatUtils.formatMoney(arr), 'ARPU: ${FormatUtils.formatMoney(arpu)}', Icons.trending_up_rounded, Colors.green),
+                      ],
+                    );
+                  }
+                }
+              ),
+              const SizedBox(height: 24),
+              
+              // Row 1.5: Schedule KPIs
+              Text('Métricas de Agendamento', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSurface)),
+              const SizedBox(height: 16),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final isWide = constraints.maxWidth > 900;
+                  final isMedium = constraints.maxWidth > 600;
+                  final theme = Theme.of(context);
+                  
+                  if (isWide) {
+                    return Row(
+                      children: [
+                        Expanded(child: _buildKPI('Total Agendado', '$totalAppointments', 'Média: ${avgDaily.toStringAsFixed(1)}/dia', Icons.calendar_month_outlined, theme.colorScheme.primary)),
+                        const SizedBox(width: 16),
+                        Expanded(child: _buildKPI('Volume Total', FormatUtils.formatMoney(totalVolume), 'Média: ${avgMonthly.toStringAsFixed(1)}/mês', Icons.attach_money_rounded, Colors.green)),
+                        const SizedBox(width: 16),
+                        Expanded(child: _buildKPI('Ativos', '$activeShopsAppt lojas', '$activeClients clientes', Icons.people_alt_outlined, theme.colorScheme.tertiary)),
+                      ],
+                    );
+                  } else if (isMedium) {
+                    return Column(
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(child: _buildKPI('Total Agendado', '$totalAppointments', 'Média: ${avgDaily.toStringAsFixed(1)}/dia', Icons.calendar_month_outlined, theme.colorScheme.primary)),
+                            const SizedBox(width: 16),
+                            Expanded(child: _buildKPI('Volume Total', FormatUtils.formatMoney(totalVolume), 'Média: ${avgMonthly.toStringAsFixed(1)}/mês', Icons.attach_money_rounded, Colors.green)),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        _buildKPI('Ativos', '$activeShopsAppt lojas', '$activeClients clientes', Icons.people_alt_outlined, theme.colorScheme.tertiary),
+                      ],
+                    );
+                  } else {
+                    return Column(
+                      children: [
+                        _buildKPI('Total Agendado', '$totalAppointments', 'Média: ${avgDaily.toStringAsFixed(1)}/dia', Icons.calendar_month_outlined, theme.colorScheme.primary),
+                        const SizedBox(height: 16),
+                        _buildKPI('Volume Total', FormatUtils.formatMoney(totalVolume), 'Média: ${avgMonthly.toStringAsFixed(1)}/mês', Icons.attach_money_rounded, Colors.green),
+                        const SizedBox(height: 16),
+                        _buildKPI('Ativos', '$activeShopsAppt lojas', '$activeClients clientes', Icons.people_alt_outlined, theme.colorScheme.tertiary),
                       ],
                     );
                   }

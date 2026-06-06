@@ -139,7 +139,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       data: localTheme,
       child: Scaffold(
         backgroundColor: localTheme.scaffoldBackgroundColor,
-        drawer: isMobile ? _buildSidebar(isMobile: true) : null,
+        drawer: isMobile ? _buildSidebar(isMobile: true, localTheme: localTheme) : null,
         appBar: isMobile
             ? AppBar(
                 iconTheme: IconThemeData(color: localTheme.colorScheme.onSurface),
@@ -159,7 +159,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           color: localTheme.scaffoldBackgroundColor,
           child: Row(
             children: [
-              if (!isMobile) _buildSidebar(isMobile: false),
+              if (!isMobile) _buildSidebar(isMobile: false, localTheme: localTheme),
               Expanded(
                 child: Column(
                   children: [
@@ -233,9 +233,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
-  Widget _buildSidebar({required bool isMobile}) {
-    final theme = Theme.of(context);
-    final cs = theme.colorScheme;
+  Widget _buildSidebar({required bool isMobile, required ThemeData localTheme}) {
+    final cs = localTheme.colorScheme;
     final cardColor = cs.surface;
     final textColor = cs.onSurface;
 
@@ -257,30 +256,30 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               child: ListView(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 children: [
-                  _buildSidebarGroup('MÉTRICAS'),
-                  _buildSidebarItem(AdminSection.overview, Icons.grid_view_rounded, 'Overview'),
-                  _buildSidebarItem(AdminSection.metrics, Icons.analytics_outlined, 'KPIs Financeiros'),
+                  _buildSidebarGroup('MÉTRICAS', localTheme),
+                  _buildSidebarItem(AdminSection.overview, Icons.grid_view_rounded, 'Overview', localTheme),
+                  _buildSidebarItem(AdminSection.metrics, Icons.analytics_outlined, 'KPIs Financeiros', localTheme),
                   
                   const SizedBox(height: 24),
-                  _buildSidebarGroup('OPERAÇÕES'),
-                  _buildSidebarItem(AdminSection.tenants, Icons.store_rounded, 'Tenants'),
-                  _buildSidebarItem(AdminSection.users, Icons.people_outline, 'Usuários'),
-                  _buildSidebarItem(AdminSection.finance, Icons.payments_outlined, 'Financeiro'),
+                  _buildSidebarGroup('OPERAÇÕES', localTheme),
+                  _buildSidebarItem(AdminSection.tenants, Icons.store_rounded, 'Lojas', localTheme),
+                  _buildSidebarItem(AdminSection.users, Icons.people_outline, 'Usuários', localTheme),
+                  _buildSidebarItem(AdminSection.finance, Icons.payments_outlined, 'Financeiro', localTheme),
                   
                   const SizedBox(height: 24),
-                  _buildSidebarGroup('COMUNICAÇÃO'),
-                  _buildSidebarItem(AdminSection.notifications, Icons.campaign_outlined, 'Notificações'),
-                  _buildSidebarItem(AdminSection.banners, Icons.photo_library_outlined, 'Banners'),
+                  _buildSidebarGroup('COMUNICAÇÃO', localTheme),
+                  _buildSidebarItem(AdminSection.notifications, Icons.campaign_outlined, 'Notificações', localTheme),
+                  _buildSidebarItem(AdminSection.banners, Icons.photo_library_outlined, 'Banners', localTheme),
                   
                   const SizedBox(height: 24),
-                  _buildSidebarGroup('SISTEMA'),
-                  _buildSidebarItem(AdminSection.monitoring, Icons.monitor_heart_outlined, 'Monitoramento'),
-                  _buildSidebarItem(AdminSection.featureFlags, Icons.flag_outlined, 'Feature Flags'),
+                  _buildSidebarGroup('SISTEMA', localTheme),
+                  _buildSidebarItem(AdminSection.monitoring, Icons.monitor_heart_outlined, 'Monitoramento', localTheme),
+                  _buildSidebarItem(AdminSection.featureFlags, Icons.flag_outlined, 'Feature Flags', localTheme),
                   
                   const SizedBox(height: 24),
-                  _buildSidebarGroup('SUPORTE'),
-                  _buildSidebarItem(AdminSection.tickets, Icons.confirmation_number_outlined, 'Tickets'),
-                  _buildSidebarItem(AdminSection.support, Icons.handyman_outlined, 'Ferramentas'),
+                  _buildSidebarGroup('SUPORTE', localTheme),
+                  _buildSidebarItem(AdminSection.tickets, Icons.confirmation_number_outlined, 'Tickets', localTheme),
+                  _buildSidebarItem(AdminSection.support, Icons.handyman_outlined, 'Ferramentas', localTheme),
                 ],
               ),
             ),
@@ -294,16 +293,15 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
-  Widget _buildSidebarGroup(String title) {
+  Widget _buildSidebarGroup(String title, ThemeData localTheme) {
     return Padding(
       padding: const EdgeInsets.only(left: 12, bottom: 8),
       child: Text(title, style: TextStyle(color: Colors.grey.withValues(alpha: 0.5), fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1.1)),
     );
   }
 
-  Widget _buildSidebarItem(AdminSection section, IconData icon, String title) {
-    final theme = Theme.of(context);
-    final cs = theme.colorScheme;
+  Widget _buildSidebarItem(AdminSection section, IconData icon, String title, ThemeData localTheme) {
+    final cs = localTheme.colorScheme;
     final isSelected = _currentSection == section;
     return Container(
       margin: const EdgeInsets.only(bottom: 4),
@@ -341,7 +339,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     switch (section) {
       case AdminSection.overview: return 'Overview';
       case AdminSection.metrics: return 'KPIs Financeiros';
-      case AdminSection.tenants: return 'Gestão de Tenants';
+      case AdminSection.tenants: return 'Lojas';
       case AdminSection.users: return 'Usuários';
       case AdminSection.finance: return 'Financeiro';
       case AdminSection.notifications: return 'Comunicação';

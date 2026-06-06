@@ -47,6 +47,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
   int _visitorsCount = 0;
 
   PlanFeatures _currentFeatures = planFeaturesConfig[PlanKey.free]!;
+  int _clientsCount = 0;
 
   @override
   void initState() {
@@ -60,6 +61,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
       if (id != null) {
         _loadFromCache(id);
         _loadFeatures(id);
+        _fetchInitialData(id);
       }
       setState(() {
         shopId = id;
@@ -68,6 +70,103 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
         }
         _isLoadingId = false;
       });
+    }
+  }
+
+  Future<void> _fetchInitialData(String shopId) async {
+    try {
+      final supabase = sb.Supabase.instance.client;
+
+      final results = await Future.wait([
+        supabase.from('appointments').select().eq('shop_id', shopId).order('scheduled_at', ascending: false).limit(500),
+        supabase.from('shops').select().eq('id', shopId).limit(1).maybeSingle(),
+        supabase.from('favorites').select().eq('shop_id', shopId),
+        supabase.from('shop_clients').select().eq('shop_id', shopId),
+        supabase.from('shop_views').select().eq('shop_id', shopId),
+      ]);
+
+      final appointments = (results[0] as List<dynamic>?)
+          ?.map((e) => e as Map<String, dynamic>)
+          .where((r) => (r['status'] ?? '').toString() != 'pre_reserva')
+          .toList() ?? [];
+      final shop = results[1] as Map<String, dynamic>?;
+      final favorites = (results[2] as List<dynamic>?)
+          ?.map((e) => e as Map<String, dynamic>).toList() ?? [];
+      final shopClients = (results[3] as List<dynamic>?)
+          ?.map((e) => e as Map<String, dynamic>).toList() ?? [];
+      final shopViews = (results[4] as List<dynamic>?)
+          ?.map((e) => e as Map<String, dynamic>).toList() ?? [];
+
+      final features = PlanFeaturesService.getFeaturesForShop(shop);
+
+      final allUserIds = <String>{};
+      final manualPhones = <String>{};
+      for (final a in appointments) {
+        final id = (a['client_id'] ?? a['clientId'])?.toString();
+        if (id != null && id.isNotEmpty) {
+          allUserIds.add(id);
+        } else {
+          final phone = (a['client_phone'] ?? a['client_telefone'])?.toString();
+          if (phone != null && phone.isNotEmpty) {
+            final cleanPhone = phone.replaceAll(RegExp(r'\D'), '');
+            if (cleanPhone.isNotEmpty) manualPhones.add(cleanPhone);
+          }
+        }
+      }
+      for (final f in favorites) {
+        final id = (f['user_id'] ?? f['userId'])?.toString();
+        if (id != null && id.isNotEmpty) allUserIds.add(id);
+      }
+      for (final v in shopViews) {
+        final id = (v['user_id'] ?? v['userId'])?.toString();
+        if (id != null && id.isNotEmpty) allUserIds.add(id);
+      }
+
+      List<dynamic> users = [];
+      if (allUserIds.isNotEmpty) {
+        try {
+          final directUsers = await supabase
+              .from('users')
+              .select('id, name, phone, email, photo_url, created_at, birth_date, city, state, street, neighborhood, number, zip_code, cpf')
+              .inFilter('id', allUserIds.toList());
+          users = List<dynamic>.from(directUsers);
+        } catch (_) {}
+      }
+      if (manualPhones.isNotEmpty) {
+        try {
+          final phoneUsers = await supabase
+              .from('users')
+              .select('id, name, phone, email, photo_url, created_at, birth_date, city, state, street, neighborhood, number, zip_code, cpf')
+              .inFilter('phone', manualPhones.toList());
+          if (phoneUsers.isNotEmpty) {
+            final existingIds = users.map((u) => u['id'].toString()).toSet();
+            for (var u in phoneUsers) {
+              if (!existingIds.contains(u['id'].toString())) users.add(u);
+            }
+          }
+        } catch (_) {}
+      }
+
+      final usersMap = <String, Map<String, dynamic>>{
+        for (var doc in users) doc['id']: doc as Map<String, dynamic>
+      };
+
+      final shopConfig = (shop?['config'] as Map?)?.cast<dynamic, dynamic>() ?? {};
+      final featuresForNow = features;
+
+      if (mounted) {
+        final processed = _processClientsData(
+            appointments, usersMap, shopConfig, favorites, shopClients, shopViews);
+        ClientCacheService.saveClients(shopId, processed);
+        setState(() {
+          _cachedData = processed;
+          _currentFeatures = featuresForNow;
+          _clientsCount = (processed['clients'] as List?)?.length ?? 0;
+          _visitorsCount = (processed['visitors'] as List?)?.length ?? 0;
+        });
+      }
+    } catch (e) {
+      debugPrint('_fetchInitialData error: $e');
     }
   }
 
@@ -138,7 +237,8 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
     final response = await sb.Supabase.instance.client
         .from('appointments')
         .select('client_id, client_phone')
-        .eq('shop_id', shopId!);
+        .eq('shop_id', shopId!)
+        .neq('status', 'pre_reserva');
 
     final uniqueClients =
         response.map((d) => d['client_id'] ?? d['client_phone']).toSet();
@@ -281,11 +381,16 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
 
     final supabase = sb.Supabase.instance.client;
 
+    // Stream Supabase não suporta neq, então filtramos no map abaixo
     final appointmentsStream = supabase
         .from('appointments')
         .stream(primaryKey: ['id'])
         .eq('shop_id', shopId!)
-        .order('scheduled_at', ascending: false);
+        .order('scheduled_at', ascending: false)
+        .limit(500)
+        .map((rows) => rows
+            .where((r) => (r['status'] ?? '').toString() != 'pre_reserva')
+            .toList());
 
     final shopStream = supabase
         .from('shops')
@@ -357,22 +462,27 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
 
       List<dynamic> users = [];
 
-      // 1. Busca usuários por UUID (RPC ou Select Direto)
+      // 1. Busca usuários por UUID (select direto no Supabase, com fallback chunked)
       if (allUserIds.isNotEmpty) {
         try {
-          final rpcResult = await supabase.rpc(
-            'get_visitor_profiles',
-            params: {'user_ids': allUserIds.toList()},
-          );
-          users = List<dynamic>.from(rpcResult as List? ?? []);
+          final directUsers = await supabase
+              .from('users')
+              .select('id, name, phone, email, photo_url, created_at, birth_date, city, state, street, neighborhood, number, zip_code, cpf')
+              .inFilter('id', allUserIds.toList());
+          users = List<dynamic>.from(directUsers);
         } catch (_) {
-          try {
-            final directUsers = await supabase
-                .from('users')
-                .select('id, name, phone, email, photo_url, created_at, birth_date, city, state, street, neighborhood, number, zip_code, cpf')
-                .inFilter('id', allUserIds.toList());
-            users = List<dynamic>.from(directUsers);
-          } catch (_) {}
+          // Fallback: busca em chunks de 50
+          final chunks = allUserIds.toList();
+          for (var i = 0; i < chunks.length; i += 50) {
+            try {
+              final chunk = chunks.sublist(i, (i + 50).clamp(0, chunks.length));
+              final chunkUsers = await supabase
+                  .from('users')
+                  .select('id, name, phone, email, photo_url, created_at, birth_date, city, state, street, neighborhood, number, zip_code, cpf')
+                  .inFilter('id', chunk);
+              users.addAll(List<dynamic>.from(chunkUsers));
+            } catch (_) {}
+          }
         }
       }
 
@@ -403,61 +513,45 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
   Widget build(BuildContext context) {
     if (_isLoadingId) return const Center(child: CircularProgressIndicator());
 
-    return StreamBuilder<Map<String, dynamic>>(
-      stream: _buildCombinedStream(),
-      builder: (context, snapshot) {
-        if (snapshot.hasData) {
-          final data = snapshot.data!;
-          _currentFeatures = data['features'] as PlanFeatures;
-        }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        bool isMobile = constraints.maxWidth < 850;
 
-        // ??? O GUARDIÃO DO LAYOUT: Verifica a largura da tela
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            // Se a largura for menor que 850px, consideramos "Mobile/Tablet Pequeno"
-            bool isMobile = constraints.maxWidth < 850;
-
-            if (isMobile) {
-              // --- LAYOUT MOBILE (Apenas Lista) ---
-              return Material(
-                color: const Color(0xFFF2F4F8),
-                child: _buildListContent(isMobile),
-              );
-            } else {
-              // --- LAYOUT DESKTOP (Split View) ---
-              return Material(
-                color: const Color(0xFFF2F4F8),
-                child: Row(
-                  children: [
-                    // COLUNA 2: LISTA DE CLIENTES
-                    Expanded(
-                      flex: 3,
-                      child: _buildListContent(isMobile),
-                    ),
-                    // COLUNA 3: PAINEL LATERAL
-                    VerticalDivider(width: 1, color: Colors.grey[300]),
-                    Expanded(
-                      flex: 2,
-                      child: Container(
-                        color: Colors.white,
-                        child: _showAddPanel
-                            ? const ClientRegisterPage(isBusinessAdding: true)
-                            : (_selectedClientData != null
-                                ? ClientDetailsPage(
-                                    key: ValueKey(_selectedClientId),
-                                    clientData: _selectedClientData!,
-                                    clientId: _selectedClientId!,
-                                    onClose: _closePanel,
-                                  )
-                                : _buildPlaceholder()),
-                      ),
-                    ),
-                  ],
+        if (isMobile) {
+          return Material(
+            color: const Color(0xFFF2F4F8),
+            child: _buildListContent(isMobile),
+          );
+        } else {
+          return Material(
+            color: const Color(0xFFF2F4F8),
+            child: Row(
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: _buildListContent(isMobile),
                 ),
-              );
-            }
-          },
-        );
+                VerticalDivider(width: 1, color: Colors.grey[300]),
+                Expanded(
+                  flex: 2,
+                  child: Container(
+                    color: Colors.white,
+                    child: _showAddPanel
+                        ? const ClientRegisterPage(isBusinessAdding: true)
+                        : (_selectedClientData != null
+                            ? ClientDetailsPage(
+                                key: ValueKey(_selectedClientId),
+                                clientData: _selectedClientData!,
+                                clientId: _selectedClientId!,
+                                onClose: _closePanel,
+                              )
+                            : _buildPlaceholder()),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
       },
     );
   }
@@ -466,7 +560,6 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
   Widget _buildListContent(bool isMobile) {
     return Column(
       children: [
-        // 1. BARRA DE PESQUISA
         Container(
           padding: const EdgeInsets.fromLTRB(24, 20, 24, 10),
           color: Colors.white,
@@ -503,9 +596,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
               ElevatedButton.icon(
                 onPressed: () => _handleNewClientTap(isMobile),
                 icon: const Icon(Icons.person_add, size: 18),
-                label: Text(isMobile
-                    ? "NOVO"
-                    : "NOVO CLIENTE"), // Texto menor no mobile
+                label: Text(isMobile ? "NOVO" : "NOVO CLIENTE"),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primaryPurple,
                   foregroundColor: Colors.white,
@@ -519,146 +610,69 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
           ),
         ),
 
-        // 2. ABAS (TABS) CUSTOMIZADAS
-        Container(
-          width: double.infinity, // Garante largura total
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            boxShadow: [
-              BoxShadow(
-                  color: Colors.black12, blurRadius: 4, offset: Offset(0, 2))
-            ],
-          ),
-          child: SingleChildScrollView(
-            // Permite rolar as abas em telas muito pequenas
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                _buildTabButton(0, "Clientes", Icons.people_outline),
-                const SizedBox(width: 15),
-                _buildTabButton(1, "Visitantes", Icons.visibility_outlined, 
-                    isLocked: !_currentFeatures.visitorsAnalytics, 
-                    count: _visitorsCount),
-                if (_selectedTabIndex == 1 && _visitorsCount > 0) ...[
-                  const SizedBox(width: 15),
-                  TextButton.icon(
-                    onPressed: _showClearVisitorsDialog,
-                    icon: const Icon(Icons.delete_sweep_outlined, size: 18, color: Colors.red),
-                    label: const Text("Limpar", style: TextStyle(color: Colors.red, fontSize: 13, fontWeight: FontWeight.bold)),
-                    style: TextButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      backgroundColor: Colors.red.withValues(alpha: 0.05),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-
-        // 2.5 FILTROS DE TAGS (VIP, SUMIDO, PROBLEMATICO)
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-          color: Colors.white,
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                _buildTagFilterChip("Todos"),
-                const SizedBox(width: 8),
-                _buildTagFilterChip("VIP", icon: Icons.star, color: Colors.amber, isLocked: !_currentFeatures.clientFilter),
-                const SizedBox(width: 8),
-                _buildTagFilterChip("Novo", icon: Icons.new_releases, color: Colors.green, isLocked: !_currentFeatures.clientFilter),
-                const SizedBox(width: 8),
-                _buildTagFilterChip("Sumido",
-                    icon: Icons.timer_off_outlined, color: Colors.grey, isLocked: !_currentFeatures.clientFilter),
-                const SizedBox(width: 8),
-                _buildTagFilterChip("Problemático",
-                    icon: Icons.warning_amber_rounded, color: Colors.red, isLocked: !_currentFeatures.clientFilter),
-              ],
-            ),
-          ),
-        ),
-
-        // 3. LISTA FILTRADA
         shopId == null
             ? const Center(child: Text("Erro: ID da Loja não encontrado"))
             : Expanded(
                 child: StreamBuilder<Map<String, dynamic>>(
                   stream: _buildCombinedStream(),
                   builder: (context, snapshot) {
-                    if (snapshot.hasError) {
-                      debugPrint("Erro no stream combinado: ${snapshot.error}");
-                      return const Center(child: Text("Erro ao carregar dados"));
-                    }
-                    if (!snapshot.hasData) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
+                    final bool useRealtime = snapshot.hasData && !snapshot.hasError;
+                    final data = useRealtime ? snapshot.data! : null;
 
-                    final data = snapshot.data!;
-                    final appointmentDocs = data['appointments'] as List<Map<String, dynamic>>;
-                    final usersDocs = data['users'] as List<dynamic>;
-                    final shopConfig = (data['shop'] as Map?)?['config'] as Map? ?? {};
-                    _currentFeatures = data['features'] as PlanFeatures;
+                    if (useRealtime && data != null) {
+                      try {
+                        _currentFeatures = (data['features'] as PlanFeatures?) ?? planFeaturesConfig[PlanKey.free]!;
+                        final appointmentDocs = (data['appointments'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+                        final usersDocs = (data['users'] as List?) ?? [];
+                        final shopConfig = (data['shop'] as Map?)?['config'] as Map? ?? {};
+                        final favoritesDocs = (data['favorites'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+                        final shopClientsDocs = (data['shopClients'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+                        final shopViewsDocs = (data['shopViews'] as List?)?.cast<Map<String, dynamic>>() ?? [];
 
-                    final favoritesDocs = data['favorites'] as List<Map<String, dynamic>>? ?? [];
-                    final shopClientsDocs = data['shopClients'] as List<Map<String, dynamic>>? ?? [];
-                    final shopViewsDocs = data['shopViews'] as List<Map<String, dynamic>>? ?? [];
+                        final Map<String, Map<String, dynamic>> usersMap = {
+                          for (var doc in usersDocs)
+                            if (doc is Map && doc['id'] != null)
+                              doc['id'].toString(): doc as Map<String, dynamic>
+                        };
 
-                    final Map<String, Map<String, dynamic>> usersMap = {
-                      for (var doc in usersDocs)
-                        doc['id']: doc as Map<String, dynamic>
-                    };
+                        final freshData = _processClientsData(
+                            appointmentDocs, usersMap, shopConfig,
+                            favoritesDocs, shopClientsDocs, shopViewsDocs);
 
-                    _cachedData = _processClientsData(
-                        appointmentDocs,
-                        usersMap,
-                        shopConfig,
-                        favoritesDocs,
-                        shopClientsDocs,
-                        shopViewsDocs);
-
-                    // Extrair contadores
-                    final int visitorsCount = _cachedData!['visitors']!.length;
-                    
-                    // Atualizar contador apenas quando mudar (evita loop infinito de rebuild)
-                    if (_visitorsCount != visitorsCount) {
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        if (mounted) {
-                          setState(() => _visitorsCount = visitorsCount);
+                        if (shopId != null) {
+                          ClientCacheService.saveClients(shopId!, freshData);
                         }
-                      });
+                        _cachedData = freshData;
+                        _clientsCount = (freshData['clients'] as List?)?.length ?? 0;
+                        _visitorsCount = (freshData['visitors'] as List?)?.length ?? 0;
+                      } catch (e) {
+                        debugPrint('StreamBuilder processing error: $e');
+                      }
+                    }
+
+                    final displayData = _cachedData;
+                    if (displayData == null) {
+                      return const Center(child: CircularProgressIndicator());
                     }
 
                     List<Map<String, dynamic>> targetList;
                     if (_selectedTabIndex == 0) {
-                      targetList = _cachedData!['clients']!;
+                      targetList = (displayData['clients'] as List?)?.cast<Map<String, dynamic>>() ?? [];
                     } else {
-                      targetList = _cachedData!['visitors']!;
+                      targetList = (displayData['visitors'] as List?)?.cast<Map<String, dynamic>>() ?? [];
                     }
 
                     final filteredDocs = targetList.where((client) {
-                      // Filtro de Texto
                       final nome = (client['name'] ?? "").toString();
                       final normalizedNome =
-                          StringUtils.removeDiacritics(nome)
-                              .toLowerCase();
+                          StringUtils.removeDiacritics(nome).toLowerCase();
                       final normalizedSearch =
-                          StringUtils.removeDiacritics(_searchText)
-                              .toLowerCase();
-                      bool matchesSearch = normalizedNome.contains(normalizedSearch);
-
-                      if (!matchesSearch) return false;
-
-                      // Filtro de Tags
+                          StringUtils.removeDiacritics(_searchText).toLowerCase();
+                      if (!normalizedNome.contains(normalizedSearch)) return false;
                       if (_selectedTagFilter == "Todos") return true;
-
                       final List tags = client['tags'] as List? ?? [];
-                      final String? classification = client['classification']?.toString().toLowerCase();
-
+                      final String? classification =
+                          client['classification']?.toString().toLowerCase();
                       if (_selectedTagFilter == "VIP") {
                         return tags.contains('vip') || classification == 'vip';
                       }
@@ -669,25 +683,135 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                         return tags.contains('sumido') || classification == 'sumido';
                       }
                       if (_selectedTagFilter == "Problemático") {
-                        return classification == 'problematico' || tags.contains('problematico');
+                        return tags.contains('problematico') ||
+                            tags.contains('problemático') ||
+                            classification == 'problematico' ||
+                            classification == 'problemático';
                       }
-
-                      return true;
+                      return tags.any((t) =>
+                          t.toString().toLowerCase() ==
+                          _selectedTagFilter.toLowerCase());
                     }).toList();
 
-                    if (filteredDocs.isEmpty) return _buildEmptyState();
+                    // Aba Clientes: remove quem nunca agendou (leads puros)
+                    if (_selectedTabIndex == 0) {
+                      filteredDocs.removeWhere((c) => (c['agendamentosCount'] ?? 0) == 0);
+                    }
+                    // Ordena alfabeticamente
+                    filteredDocs.sort((a, b) {
+                      final na = (a['name'] ?? '').toString().toLowerCase();
+                      final nb = (b['name'] ?? '').toString().toLowerCase();
+                      return na.compareTo(nb);
+                    });
 
-                    return ListView.builder(
-                      padding: const EdgeInsets.all(20),
-                      itemCount: filteredDocs.length,
-                      itemBuilder: (context, index) {
-                        final client = filteredDocs[index];
-                        bool isSelected = !isMobile &&
-                            _selectedClientId == client['id'];
-
-                        return _buildClientListItem(
-                            client, isSelected, isMobile);
-                      },
+                    return Column(
+                      children: [
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 24, vertical: 10),
+                          decoration: const BoxDecoration(
+                            color: Colors.white,
+                            boxShadow: [
+                              BoxShadow(
+                                  color: Colors.black12,
+                                  blurRadius: 4,
+                                  offset: Offset(0, 2))
+                            ],
+                          ),
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: [
+                                _buildTabButton(0, "Clientes",
+                                    Icons.people_outline,
+                                    count: _clientsCount),
+                                const SizedBox(width: 15),
+                                _buildTabButton(1, "Visitantes",
+                                    Icons.visibility_outlined,
+                                    isLocked: !_currentFeatures
+                                        .visitorsAnalytics,
+                                    count: _visitorsCount),
+                                if (_selectedTabIndex == 1 &&
+                                    _visitorsCount > 0) ...[
+                                  const SizedBox(width: 15),
+                                  TextButton.icon(
+                                    onPressed: _showClearVisitorsDialog,
+                                    icon: const Icon(
+                                        Icons.delete_sweep_outlined,
+                                        size: 18,
+                                        color: Colors.red),
+                                    label: const Text("Limpar",
+                                        style: TextStyle(
+                                            color: Colors.red,
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.bold)),
+                                    style: TextButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 12),
+                                      backgroundColor:
+                                          Colors.red.withValues(alpha: 0.05),
+                                      shape: RoundedRectangleBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(20)),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 24, vertical: 8),
+                          color: Colors.white,
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: [
+                                _buildTagFilterChip("Todos"),
+                                const SizedBox(width: 8),
+                                _buildTagFilterChip("VIP",
+                                    icon: Icons.star,
+                                    color: Colors.amber,
+                                    isLocked: !_currentFeatures.clientFilter),
+                                const SizedBox(width: 8),
+                                _buildTagFilterChip("Novo",
+                                    icon: Icons.new_releases,
+                                    color: Colors.green,
+                                    isLocked: !_currentFeatures.clientFilter),
+                                const SizedBox(width: 8),
+                                _buildTagFilterChip("Sumido",
+                                    icon: Icons.timer_off_outlined,
+                                    color: Colors.grey,
+                                    isLocked: !_currentFeatures.clientFilter),
+                                const SizedBox(width: 8),
+                                _buildTagFilterChip("Problemático",
+                                    icon: Icons.warning_amber_rounded,
+                                    color: Colors.red,
+                                    isLocked: !_currentFeatures.clientFilter),
+                              ],
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: filteredDocs.isEmpty
+                              ? _buildEmptyState()
+                              : ListView.builder(
+                                  padding: const EdgeInsets.fromLTRB(
+                                      24, 16, 24, 80),
+                                  itemCount: filteredDocs.length,
+                                  itemBuilder: (context, index) {
+                                    return _buildClientListItem(
+                                        filteredDocs[index],
+                                        (_selectedClientId ==
+                                            filteredDocs[index]['id']),
+                                        isMobile);
+                                  },
+                                ),
+                        ),
+                      ],
                     );
                   },
                 ),
@@ -696,7 +820,6 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
     );
   }
 
-  // ?? LÓGICA DE UNIFICAÇÃO DE CLIENTES
   Map<String, List<Map<String, dynamic>>> _processClientsData(
       List<Map<String, dynamic>> appointments,
       Map<String, Map<String, dynamic>> usersMap,
@@ -809,7 +932,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
       if (!allClientsMap.containsKey(uid) && uid.isNotEmpty) {
         // Para esses leads, tentamos pegar o nome básico se disponível no usersMap
         final user = usersMap[uid];
-        String nome = user?['name'] ?? "Cliente (Interesse)";
+        String nome = user?['name'] ?? "Visitante";
         
         allClientsMap[uid] = {
           'id': uid,
@@ -1045,7 +1168,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                 border: Border.all(color: Colors.white, width: 1.5),
               ),
               child: Text(
-                count > 99 ? '99+' : count.toString(),
+                count.toString(),
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 10,

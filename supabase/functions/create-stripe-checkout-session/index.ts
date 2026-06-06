@@ -54,6 +54,7 @@ serve(async (req: Request) => {
       amount,       // in centavos (only for mode=payment)
       currency,     // e.g. 'brl' (only for mode=payment)
       description,  // only for mode=payment
+      boost_days,  // only for mode=payment (boost)
       success_url,
       cancel_url,
     } = body
@@ -141,6 +142,7 @@ serve(async (req: Request) => {
           shop_id: shop_id || '',
           type: 'one_time',
           description: description || '',
+          ...(boost_days != null ? { boost_days: String(boost_days) } : {}),
         },
       }
 

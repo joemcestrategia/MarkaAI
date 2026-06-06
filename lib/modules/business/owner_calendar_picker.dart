@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/availability_utils.dart';
+import '../../core/utils/work_schedule.dart';
 
 /// Calendário customizado para o modo de edição do dono.
 ///
@@ -22,6 +23,10 @@ class OwnerCalendarPicker extends StatefulWidget {
   final String profStartTime;
   final String profEndTime;
 
+  /// Documento completo do profissional. Quando fornecido, permite resolver
+  /// o horário (e pausa) por dia da semana via `work_schedule`.
+  final Map<String, dynamic>? professionalDoc;
+
   /// Id do agendamento sendo editado — excluído do cálculo de ocupação.
   final String? excludeAppointmentId;
   final ValueChanged<DateTime> onDateSelected;
@@ -38,6 +43,7 @@ class OwnerCalendarPicker extends StatefulWidget {
     required this.serviceDurationMinutes,
     required this.profStartTime,
     required this.profEndTime,
+    this.professionalDoc,
     this.excludeAppointmentId,
     required this.onDateSelected,
   });
@@ -130,15 +136,38 @@ class _OwnerCalendarPickerState extends State<OwnerCalendarPicker> {
             _slotCache[key] = false;
           } else {
             final busy = busyByDay[key] ?? [];
+            String startStr = widget.profStartTime;
+            String endStr = widget.profEndTime;
+            Map<String, int>? breakI;
+            if (widget.professionalDoc != null) {
+              final ws = WorkSchedule.fromEmployeeRow(widget.professionalDoc!);
+              final dayCfg = ws.forWeekday(day.weekday);
+              if (dayCfg != null) {
+                startStr = dayCfg.start;
+                endStr = dayCfg.end;
+                if (dayCfg.breakInterval != null) {
+                  breakI = {
+                    'start': dayCfg.breakInterval!.startMin,
+                    'end': dayCfg.breakInterval!.endMin,
+                  };
+                }
+              } else {
+                // Dia desabilitado neste profissional
+                _slotCache[key] = false;
+                dayNum++;
+                continue;
+              }
+            }
             final freeSlots = AvailabilityUtils.generateSmartSlots(
-              startStr: widget.profStartTime,
-              endStr: widget.profEndTime,
+              startStr: startStr,
+              endStr: endStr,
               interval: widget.intervalMinutes,
               serviceDuration: widget.serviceDurationMinutes,
               busyIntervals: busy,
               preventGaps: false, // Dono tem total liberdade
               minAdvanceHours: 0,
               selectedDate: day,
+              breakInterval: breakI,
             );
             _slotCache[key] = freeSlots.isNotEmpty;
           }

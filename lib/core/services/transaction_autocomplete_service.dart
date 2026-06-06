@@ -1,5 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../utils/availability_utils.dart';
+import '../utils/work_schedule.dart';
 
 class TransactionAutocompleteService {
   static const double kMinJaccardScore = 0.40;
@@ -123,36 +124,42 @@ class TransactionAutocompleteService {
 
     final data = empDoc;
     
-    // 1. Check weekday
-    final List<int> workDays = List<int>.from(data['work_days'] ?? []);
+    // 1. Check weekday + per-day schedule
+    final ws = WorkSchedule.fromEmployeeRow(data);
     int weekday = targetDate.weekday; // 1=Seg...7=Dom
-    // Se a lista usa 0 para domingo, precisamos converter
-    if (!workDays.contains(weekday)) {
-       // Tenta o 0 se for 7
-       if (weekday == 7 && (workDays.contains(0) || workDays.contains(7))) {
-         // ok
-       } else {
-         return false;
-       }
-    }
-
-    // 2. Check business hours
-    final String startStr = data['work_start'] ?? "08:00";
-    final String endStr = data['work_end'] ?? "18:00";
-    int startDayMin = int.parse(startStr.split(':')[0]) * 60 + int.parse(startStr.split(':')[1]);
-    int endDayMin = int.parse(endStr.split(':')[0]) * 60 + int.parse(endStr.split(':')[1]);
-    
-    int targetStartMin = targetDate.hour * 60 + targetDate.minute;
-    if (targetDate.hour == 0 && targetDate.minute == 0) {
-      // Se for apenas data sem hora, assumimos que precisa estar aberto
-      // Critério relaxado: se ele trabalha no dia, está "possivelmente" disponível
-    } else {
-      if (targetStartMin < startDayMin || (targetStartMin + durationMin) > endDayMin) {
+    final dayCfg = ws.forWeekday(weekday);
+    if (dayCfg == null) {
+      // Compat: lista legada usando 0 para domingo
+      final List<int> legacy = List<int>.from(data['work_days'] ?? []);
+      if (!(weekday == 7 && (legacy.contains(0) || legacy.contains(7)))) {
         return false;
       }
     }
 
-    // 3. Check overlaps
+    // 2. Check business hours (per-day)
+    final String startStr = dayCfg?.start ?? (data['work_start'] ?? "08:00");
+    final String endStr = dayCfg?.end ?? (data['work_end'] ?? "18:00");
+    int startDayMin = int.parse(startStr.split(':')[0]) * 60 + int.parse(startStr.split(':')[1]);
+    int endDayMin = int.parse(endStr.split(':')[0]) * 60 + int.parse(endStr.split(':')[1]);
+
+    int targetStartMin = targetDate.hour * 60 + targetDate.minute;
+    if (targetDate.hour == 0 && targetDate.minute == 0) {
+      // Se for apenas data sem hora, assumimos que precisa estar aberto.
+    } else {
+      if (targetStartMin < startDayMin || (targetStartMin + durationMin) > endDayMin) {
+        return false;
+      }
+      // Pausa diária: rejeita se colide.
+      final br = dayCfg?.breakInterval;
+      if (br != null &&
+          targetStartMin < br.endMin &&
+          (targetStartMin + durationMin) > br.startMin) {
+        return false;
+      }
+    }
+
+    // 3. Check overlaps (incluindo pausa via breakInterval seria redundante:
+    // já validamos acima; aqui verificamos somente agendamentos reais).
     final busy = await AvailabilityUtils.getBusyIntervals(employeeId, targetDate, excludeDocId: excludeDocId);
     return AvailabilityUtils.isSlotAvailable(targetStartMin, durationMin, busy);
   }

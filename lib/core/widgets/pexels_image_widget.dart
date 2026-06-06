@@ -16,6 +16,7 @@ class _PexelsImageWidgetState extends State<PexelsImageWidget> {
   String? _imageUrl;
   static const String _pexelsApiKey =
       '1RYDlI3xTEeYwIHOfwh3MZCslQNj3XYeQ7MmyoBRTy6uRQxujW7nfvkf';
+  static final Map<String, List<String>> _queryCache = {};
 
   @override
   void initState() {
@@ -32,6 +33,12 @@ class _PexelsImageWidgetState extends State<PexelsImageWidget> {
   }
 
   Future<void> _loadImage() async {
+    final cachedUrls = _queryCache[widget.searchQuery];
+    if (cachedUrls != null && cachedUrls.isNotEmpty) {
+      _imageUrl = cachedUrls[widget.index % cachedUrls.length];
+      return;
+    }
+
     try {
       final url = Uri.parse(
           'https://api.pexels.com/v1/search?query=${Uri.encodeComponent(widget.searchQuery)}&per_page=15');
@@ -42,8 +49,9 @@ class _PexelsImageWidgetState extends State<PexelsImageWidget> {
         final data = json.decode(response.body);
         final photos = data['photos'] as List;
         if (photos.isNotEmpty && mounted) {
-          setState(() => _imageUrl =
-              photos[widget.index % photos.length]['src']['medium']);
+          final urls = photos.map<String>((p) => p['src']['medium'].toString()).toList();
+          _queryCache[widget.searchQuery] = urls;
+          setState(() => _imageUrl = urls[widget.index % urls.length]);
         }
       }
     } catch (e) {

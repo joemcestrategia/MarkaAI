@@ -8,6 +8,7 @@ import 'package:markaai/widgets/google_reviews_widget.dart';
 import 'package:markaai/core/utils/service_image_keywords.dart';
 import 'package:markaai/core/widgets/pexels_image_widget.dart';
 import 'package:markaai/modules/clients/client_service_detail_page.dart';
+import 'package:markaai/core/services/shop_data_cache_service.dart';
 import 'package:markaai/core/constants/api_keys.dart';
 
 class PublicShopPage extends StatefulWidget {
@@ -34,6 +35,7 @@ class PublicShopPage extends StatefulWidget {
 
 class _PublicShopPageState extends State<PublicShopPage> {
   String? _selectedCategoryId;
+  int _selectedMainTab = 0; // 0 for Serviços, 1 for Produtos
   
   Future<void> _launchWhatsApp(String whatsapp) async {
     final phone = whatsapp.replaceAll(RegExp(r'[^0-9]'), '');
@@ -92,14 +94,25 @@ class _PublicShopPageState extends State<PublicShopPage> {
     }
   }
 
+  Future<Map<String, dynamic>> _fetchShopData() async {
+    final shop = await Supabase.instance.client
+        .from('shops')
+        .select()
+        .eq('slug', widget.slug)
+        .maybeSingle();
+
+    if (shop == null) return {'shop': null};
+
+    final shopId = shop['id'] as String;
+    final services = await ShopDataCacheService().getServices(shopId);
+
+    return {'shop': shop, 'services': services};
+  }
+
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<Map<String, dynamic>?>(
-      future: Supabase.instance.client
-          .from('shops')
-          .select()
-          .eq('slug', widget.slug)
-          .maybeSingle(),
+    return FutureBuilder<Map<String, dynamic>>(
+      future: _fetchShopData(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
@@ -107,7 +120,7 @@ class _PublicShopPageState extends State<PublicShopPage> {
           );
         }
 
-        if (!snapshot.hasData || snapshot.data == null) {
+        if (!snapshot.hasData || snapshot.data == null || snapshot.data!['shop'] == null) {
           return Scaffold(
             backgroundColor: const Color(0xFFF5F7FA),
             body: Center(
@@ -132,7 +145,9 @@ class _PublicShopPageState extends State<PublicShopPage> {
           );
         }
 
-        final data = snapshot.data!;
+        final result = snapshot.data!;
+        final data = result['shop'] as Map<String, dynamic>;
+        final preloadedServices = result['services'] as List<Map<String, dynamic>>?;
         final shopId = data['id'];
         final whatsapp = data['whatsapp']?.toString() ?? '';
         final instagram = data['instagram']?.toString() ?? '';
@@ -289,26 +304,57 @@ class _PublicShopPageState extends State<PublicShopPage> {
 
               // Vitrine de Destaques
               SliverToBoxAdapter(
-                child: _buildServicesShowcase(shopId),
+                child: _buildServicesShowcase(preloadedServices, shopId),
               ),
 
-              // Título "Serviços"
-              const SliverToBoxAdapter(
+              // TABS: Serviços / Produtos
+              SliverToBoxAdapter(
                 child: Padding(
-                  padding: EdgeInsets.fromLTRB(20, 20, 20, 10),
-                  child: Text(
-                    "SERVIÇOS",
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 1.1,
-                      color: AppColors.textSecondary,
+                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
+                  child: Container(
+                    height: 45,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[200],
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () => setState(() => _selectedMainTab = 0),
+                            child: Container(
+                              margin: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: _selectedMainTab == 0 ? Colors.white : Colors.transparent,
+                                borderRadius: BorderRadius.circular(8),
+                                boxShadow: _selectedMainTab == 0 ? [BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 4)] : null,
+                              ),
+                              child: Center(child: Text("Serviços", style: TextStyle(fontWeight: FontWeight.bold, color: _selectedMainTab == 0 ? AppColors.textPrimary : Colors.grey[600]))),
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () => setState(() => _selectedMainTab = 1),
+                            child: Container(
+                              margin: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: _selectedMainTab == 1 ? Colors.white : Colors.transparent,
+                                borderRadius: BorderRadius.circular(8),
+                                boxShadow: _selectedMainTab == 1 ? [BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 4)] : null,
+                              ),
+                              child: Center(child: Text("Produtos", style: TextStyle(fontWeight: FontWeight.bold, color: _selectedMainTab == 1 ? AppColors.textPrimary : Colors.grey[600]))),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
               ),
 
               // CATEGORY TAGS (Sticky Horizontal Scroll)
+              if (_selectedMainTab == 0) ...[
               SliverPersistentHeader(
                 pinned: true,
                 delegate: _StickyCategoryDelegate(
@@ -324,14 +370,12 @@ class _PublicShopPageState extends State<PublicShopPage> {
 
               // Lista de serviços
               FutureBuilder<List<Map<String, dynamic>>>(
-                // ✅ FIX: Removido .eq('is_active', true) do banco.
-                // Dados migrados do Firebase NÃO têm essa coluna populada (null).
-                // O Supabase trata null != true, bloqueando todos os serviços.
-                // O filtro agora é feito localmente no Dart (null = ativo por padrão).
-                future: Supabase.instance.client
-                    .from('services')
-                    .select()
-                    .eq('shop_id', shopId),
+                future: preloadedServices != null
+                    ? Future.value(preloadedServices)
+                    : Supabase.instance.client
+                        .from('services')
+                        .select()
+                        .eq('shop_id', shopId),
                 builder: (context, snapshot) {
                   if (snapshot.hasError) {
                     debugPrint('PublicShopPage: Erro ao buscar serviços: ${snapshot.error}');
@@ -516,6 +560,49 @@ class _PublicShopPageState extends State<PublicShopPage> {
                   );
                 },
               ),
+              ] else ...[
+                // Lista de produtos
+                FutureBuilder<List<Map<String, dynamic>>>(
+                  future: Supabase.instance.client
+                      .from('products')
+                      .select()
+                      .eq('shop_id', shopId)
+                      .eq('is_active', true),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const SliverToBoxAdapter(child: Center(child: CircularProgressIndicator()));
+                    }
+                    if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                      return const SliverToBoxAdapter(
+                        child: Padding(
+                          padding: EdgeInsets.all(40),
+                          child: Center(child: Text("Nenhum produto disponível.", style: TextStyle(color: Colors.grey))),
+                        ),
+                      );
+                    }
+
+                    final products = snapshot.data!;
+                    return SliverPadding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                      sliver: SliverGrid(
+                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          childAspectRatio: 0.58,
+                          crossAxisSpacing: 16,
+                          mainAxisSpacing: 16,
+                        ),
+                        delegate: SliverChildBuilderDelegate(
+                          (context, index) {
+                            final p = products[index];
+                            return _buildProductCard(context, p, whatsapp);
+                          },
+                          childCount: products.length,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ],
 
               // Mini-Mapa
               SliverToBoxAdapter(
@@ -646,6 +733,116 @@ class _StickyCategoryDelegate extends SliverPersistentHeaderDelegate {
   }
 }
 
+// Card de Produto (Vitrine)
+Widget _buildProductCard(BuildContext context, Map<String, dynamic> product, String whatsapp) {
+  final isAffiliate = product['is_affiliate'] == true;
+  final imageUrl = product['image_url']?.toString();
+  final price = product['price'] as num?;
+  
+  String priceStr = '';
+  if (price != null && price > 0) {
+    priceStr = "R\$ ${price.toStringAsFixed(2).replaceAll('.', ',')}";
+  } else {
+    priceStr = isAffiliate ? "Ver Oferta" : "Consultar";
+  }
+  
+  return GestureDetector(
+    onTap: () async {
+      if (isAffiliate && product['affiliate_url'] != null) {
+        final uri = Uri.tryParse(product['affiliate_url']);
+        if (uri != null && await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        }
+      } else {
+        if (whatsapp.isNotEmpty) {
+          final phone = whatsapp.replaceAll(RegExp(r'[^0-9]'), '');
+          final priceText = (price != null && price > 0) ? "no valor de $priceStr" : "";
+          final msg = Uri.encodeComponent("Olá, tenho interesse no produto *${product['name']}* $priceText.");
+          final uri = Uri.parse('https://wa.me/$phone?text=$msg');
+          if (await canLaunchUrl(uri)) {
+            await launchUrl(uri, mode: LaunchMode.externalApplication);
+          }
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('WhatsApp da loja indisponível')));
+        }
+      }
+    },
+    child: Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: ClipRRect(
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+              child: Container(
+                color: Colors.grey[100],
+                child: imageUrl != null && imageUrl.isNotEmpty
+                    ? CachedNetworkImage(
+                        imageUrl: imageUrl,
+                        fit: BoxFit.cover,
+                        errorWidget: (context, url, error) => const Icon(Icons.image_not_supported, color: Colors.grey),
+                      )
+                    : const Icon(Icons.inventory_2, size: 40, color: Colors.grey),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                  Text(
+                    product['name'] ?? '',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, height: 1.2),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    priceStr,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      color: (price != null && price > 0) ? AppColors.primaryPurple : Colors.grey[700],
+                      fontSize: (price != null && price > 0) ? 16 : 14,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    decoration: BoxDecoration(
+                      color: AppColors.primaryPurple,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Center(
+                      child: Text(
+                        isAffiliate ? "Comprar" : "Pedir no WhatsApp",
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    ),
+  );
+}
+
 // Chip padronizado para redes sociais (linha cheia, cor da marca)
 Widget _buildSocialChipItem({required IconData icon, required String label, required VoidCallback onTap}) {
   return InkWell(
@@ -683,7 +880,82 @@ Widget _buildSocialChipItem({required IconData icon, required String label, requ
 }
 
 // Widget da Vitrine de Destaques
-Widget _buildServicesShowcase(String shopId) {
+Widget _buildServicesShowcase(List<Map<String, dynamic>>? preloadedServices, String shopId) {
+  if (preloadedServices != null && preloadedServices.isNotEmpty) {
+    final featured = preloadedServices.where((s) => (s['is_active'] == null || s['is_active'] == true) && (s['is_featured'] ?? false) == true).toList();
+    if (featured.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.fromLTRB(20, 20, 20, 15),
+          child: Row(
+            children: [
+              Icon(Icons.stars, color: Colors.amber, size: 20),
+              SizedBox(width: 8),
+              Text("Destaques da Vitrine", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            ],
+          ),
+        ),
+        SizedBox(
+          height: 160,
+          child: ListView.builder(
+            padding: const EdgeInsets.symmetric(horizontal: 15),
+            scrollDirection: Axis.horizontal,
+            itemCount: featured.length,
+            itemBuilder: (context, index) {
+              final data = featured[index];
+              dynamic fotosData = data['photos_urls'] ?? data['fotos_urls'] ?? data['fotos'] ?? data['imageUrl'] ?? data['imagens'];
+              String? thumb = fotosData is String ? fotosData : (fotosData is List && fotosData.isNotEmpty ? fotosData.first.toString() : null);
+
+              if (thumb == null) return const SizedBox.shrink();
+
+              return GestureDetector(
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => ClientServiceDetailPage(serviceDoc: data, fromSubdomain: true))),
+                child: Container(
+                  width: 140,
+                  margin: const EdgeInsets.only(right: 12),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 8, offset: const Offset(0, 4))],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        CachedNetworkImage(imageUrl: thumb, fit: BoxFit.cover),
+                        Positioned(
+                          bottom: 0, left: 0, right: 0,
+                          child: Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.bottomCenter, end: Alignment.topCenter,
+                                colors: [Colors.black.withValues(alpha: 0.8), Colors.transparent],
+                              ),
+                            ),
+                            child: Text(
+                              data['name'] ?? "Serviço",
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                              maxLines: 2, overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        )
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 10),
+      ],
+    );
+  }
+
   return FutureBuilder<List<Map<String, dynamic>>>(
     future: Supabase.instance.client
         .from('services')

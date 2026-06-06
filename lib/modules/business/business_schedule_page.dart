@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 import 'package:intl/intl.dart';
 import 'package:table_calendar/table_calendar.dart';
@@ -9,8 +9,11 @@ import 'transaction_details_page.dart';
 import '../../core/services/brasilapi_service.dart';
 import '../clients/client_details_page.dart';
 import '../../core/utils/availability_utils.dart';
+import '../../core/utils/work_schedule.dart';
 import '../../core/services/shop_data_cache_service.dart';
+import '../../core/services/schedule_cache_service.dart';
 import '../../core/services/transaction_autocomplete_service.dart';
+import '../fiscal/nfse_service.dart';
 
 class BusinessSchedulePage extends StatefulWidget {
   final String shopId;
@@ -58,6 +61,10 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
   bool _hasMore = true;
   bool _hasMorePast =
       true; // indica se há mais documentos no passado para carregar
+      
+  // ✨ Cache em memória para verificação de NFS-e já emitida, evitando N chamadas ao DB por rebuild
+  final Map<String, bool> _nfseEmitidaCache = {};
+
   Map<String, dynamic>? _lastDocument;
   Map<String, dynamic>? _firstDocument;
   final int _perPage = 20;
@@ -75,6 +82,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
   bool _isOpeningQuickEntry = false;
 
   late final Stream<List<Map<String, dynamic>>> _employeesStream;
+  List<Map<String, dynamic>> _professionals = [];
 
   // --- RECEITA CACHEADA (substitui streams ilimitados) ---
   double _weeklyRevenue = 0.0;
@@ -87,6 +95,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
   @override
   void initState() {
     super.initState();
+    _loadFromCache();
     // por padrão, começar a lista a partir da semana atual
     if (widget.initialDate != null) {
       final d = widget.initialDate!;
@@ -125,7 +134,16 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     _employeesStream = sb.Supabase.instance.client
         .from('employees')
         .stream(primaryKey: ['id'])
-        .eq('shop_id', widget.shopId);
+        .eq('shop_id', widget.shopId)
+        .asBroadcastStream();
+
+    _employeesStream.listen((data) {
+      if (mounted) {
+        setState(() {
+          _professionals = data;
+        });
+      }
+    });
 
     // Start periodic cache refresh to validate stale entries
     _cacheRefreshTimer = Timer.periodic(const Duration(minutes: 10), (_) {
@@ -134,6 +152,22 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     });
     _loadRevenueStats();
     _startRealtimeSubscription();
+  }
+
+  Future<void> _loadFromCache() async {
+    try {
+      final cached = await ScheduleCacheService.getCachedAppointments(widget.shopId);
+      if (cached != null && cached.isNotEmpty && mounted) {
+        setState(() {
+          _appointments = cached;
+          for (var d in cached) {
+            _addToCache(d);
+          }
+          _firstDocument = _appointments.first;
+          _lastDocument = _appointments.last;
+        });
+      }
+    } catch (_) {}
   }
 
   Future<void> _loadShopConfig() async {
@@ -166,18 +200,19 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
           .from('appointments')
           .select('id, scheduled_at, status')
           .eq('shop_id', widget.shopId)
-          .gte('scheduled_at', startOfMonth.toUtc().toIso8601String())
-          .lte('scheduled_at', endOfMonth.toUtc().toIso8601String());
+          .neq('status', 'pre_reserva')
+          .gte('scheduled_at', startOfMonth.toIso8601String())
+          .lte('scheduled_at', endOfMonth.toIso8601String());
 
       final Map<DateTime, List<String>> events = {};
       for (var data in snapshot) {
-        final dateStr = data['scheduled_at'] as String?;
-        if (dateStr == null) continue;
+        final rawSA = data['scheduled_at'];
+        if (rawSA == null) continue;
         
         final status = (data['status'] ?? '').toString().toLowerCase();
         if (status == 'cancelado') continue;
 
-        final date = DateTime.parse(dateStr);
+        final date = rawSA is DateTime ? rawSA : DateTime.parse(rawSA.toString());
         final dateKey = DateTime(date.year, date.month, date.day);
         events[dateKey] = (events[dateKey] ?? [])..add(data['id'].toString());
       }
@@ -226,8 +261,9 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
           .from('appointments')
           .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name, created_by')
           .eq('shop_id', widget.shopId)
-          .gte('scheduled_at', startOfMonth.toUtc().toIso8601String())
-          .lte('scheduled_at', endOfMonth.toUtc().toIso8601String())
+          .neq('status', 'pre_reserva')
+          .gte('scheduled_at', startOfMonth.toIso8601String())
+          .lte('scheduled_at', endOfMonth.toIso8601String())
           .order('scheduled_at', ascending: true)
           .limit(_perPage);
 
@@ -266,22 +302,22 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
 
     try {
       final client = sb.Supabase.instance.client;
-      var query = client.from('appointments').select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name, created_by').eq('shop_id', widget.shopId);
+      var query = client.from('appointments').select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name, created_by').eq('shop_id', widget.shopId).neq('status', 'pre_reserva');
 
       // Simple implementation: load first page
       if (_startFromSelectedDay && _startFromDate != null && _weekEndDate != null) {
         query = query
-          .gte('scheduled_at', _startFromDate!.toUtc().toIso8601String())
-          .lte('scheduled_at', _weekEndDate!.toUtc().toIso8601String());
+          .gte('scheduled_at', _startFromDate!.toIso8601String())
+          .lte('scheduled_at', _weekEndDate!.toIso8601String());
       } else if (_showOnlySelectedDay) {
         final start = DateTime(_selectedDay.year, _selectedDay.month, _selectedDay.day).subtract(const Duration(days: 7));
         final end = DateTime(_selectedDay.year, _selectedDay.month, _selectedDay.day).add(const Duration(days: 14, hours: 23, minutes: 59, seconds: 59));
         query = query
-          .gte('scheduled_at', start.toUtc().toIso8601String())
-          .lte('scheduled_at', end.toUtc().toIso8601String());
+          .gte('scheduled_at', start.toIso8601String())
+          .lte('scheduled_at', end.toIso8601String());
       } else {
         final start = DateTime(2020, 1, 1);
-        query = query.gte('scheduled_at', start.toUtc().toIso8601String());
+        query = query.gte('scheduled_at', start.toIso8601String());
       }
 
       final snapshot = await query.order('scheduled_at', ascending: true).limit(_perPage);
@@ -318,15 +354,21 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
         setState(() => _isLoading = false);
         return;
       }
+      final rawLastDate = _lastDocument!['scheduled_at'];
+      final lastDate = rawLastDate is DateTime ? rawLastDate.toIso8601String() : rawLastDate.toString();
       
-      final lastDate = _lastDocument!['scheduled_at'] as String;
-      
-      final snapshot = await sb.Supabase.instance.client
+      var query = sb.Supabase.instance.client
           .from('appointments')
           .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name, created_by')
           .eq('shop_id', widget.shopId)
-          .gt('scheduled_at', lastDate)
-          .order('scheduled_at', ascending: true)
+          .neq('status', 'pre_reserva')
+          .gt('scheduled_at', lastDate);
+      
+      if (_weekEndDate != null) {
+        query = query.lte('scheduled_at', _weekEndDate!.toIso8601String());
+      }
+
+      final snapshot = await query.order('scheduled_at', ascending: true)
           .limit(_perPage);
 
       await _enrichClientNames(snapshot);
@@ -364,14 +406,21 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
         return;
       }
 
-      final firstDate = _firstDocument!['scheduled_at'] as String;
+      final rawFirstDate = _firstDocument!['scheduled_at'];
+      final firstDate = rawFirstDate is DateTime ? rawFirstDate.toIso8601String() : rawFirstDate.toString();
 
-      final snapshot = await sb.Supabase.instance.client
+      var query = sb.Supabase.instance.client
           .from('appointments')
           .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name, created_by')
           .eq('shop_id', widget.shopId)
-          .lt('scheduled_at', firstDate)
-          .order('scheduled_at', ascending: false)
+          .neq('status', 'pre_reserva')
+          .lt('scheduled_at', firstDate);
+
+      if (_startFromDate != null) {
+        query = query.gte('scheduled_at', _startFromDate!.toIso8601String());
+      }
+
+      final snapshot = await query.order('scheduled_at', ascending: false)
           .limit(_perPage);
 
       await _enrichClientNames(snapshot);
@@ -438,16 +487,21 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     final now = DateTime.now();
     final startOfWeek = now.subtract(Duration(days: now.weekday - 1));
     final endOfWeek = startOfWeek.add(const Duration(days: 6));
+    
+    // Obter com seguranca se o layout é desktop
+    final bool isDesktop = MediaQuery.of(context).size.width > 900;
+
     setState(() {
       _selectedDay = now;
       _focusedDay = now;
-      _showOnlySelectedDay = false;
+      _showOnlySelectedDay = isDesktop;
       _startFromSelectedDay = true;
-      _startFromDate = DateTime(startOfWeek.year, startOfWeek.month, startOfWeek.day);
-      _weekEndDate = DateTime(endOfWeek.year, endOfWeek.month, endOfWeek.day, 23, 59, 59);
+      _startFromDate = DateTime(now.year, now.month, now.day);
+      _weekEndDate = isDesktop ? DateTime(now.year, now.month, now.day, 23, 59, 59) : DateTime(endOfWeek.year, endOfWeek.month, endOfWeek.day, 23, 59, 59);
     });
     _applyWeekFilterToCache();
-    _fetchWeekFromServer(_startFromDate!, _weekEndDate!);
+    final fetchStart = isDesktop ? _startFromDate! : DateTime(startOfWeek.year, startOfWeek.month, startOfWeek.day);
+    _fetchWeekFromServer(fetchStart, _weekEndDate!);
   }
 
   // 📍 Scroll automático até o topo (dia selecionado é sempre o primeiro item da lista)
@@ -514,8 +568,8 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     final TextEditingController paidController = TextEditingController(
         text: (data['valor_pago']?.toString() ?? '0').replaceAll('.', ','));
 
-    final dateStr = data['scheduled_at'] as String;
-    DateTime appointmentDate = DateTime.parse(dateStr);
+    final rawSA = data['scheduled_at'];
+    DateTime appointmentDate = rawSA is DateTime ? rawSA : DateTime.parse(rawSA.toString());
     TimeOfDay appointmentTime = TimeOfDay.fromDateTime(appointmentDate);
     String selectedStatus =
         data['status']?.toString().toLowerCase() ?? 'pendente';
@@ -815,11 +869,17 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                                             '30') ??
                                     30;
 
+                                final wsEmp = WorkSchedule.fromEmployeeRow(empData);
+                                final dayCfg = wsEmp.forWeekday(appointmentDate.weekday);
+                                final startStr = dayCfg?.start ?? (empData['work_start'] ?? empData['start_time'] ?? "08:00");
+                                final endStr = dayCfg?.end ?? (empData['work_end'] ?? empData['end_time'] ?? "18:00");
+                                final breakI = dayCfg?.breakInterval == null
+                                    ? null
+                                    : {'start': dayCfg!.breakInterval!.startMin, 'end': dayCfg.breakInterval!.endMin};
                                 final slots =
                                     AvailabilityUtils.generateSmartSlots(
-                                  startStr:
-                                      empData['work_start'] ?? empData['start_time'] ?? "08:00",
-                                  endStr: empData['work_end'] ?? empData['end_time'] ?? "18:00",
+                                  startStr: startStr,
+                                  endStr: endStr,
                                   interval:
                                       _shopConfig['intervalo_agenda_min'] ?? 30,
                                   serviceDuration: duration,
@@ -830,6 +890,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                                   minAdvanceHours:
                                       0, // Loja pode agendar para qualquer hora (passado/futuro)
                                   selectedDate: appointmentDate,
+                                  breakInterval: breakI,
                                 );
 
                                 if (slots.isEmpty) {
@@ -1103,9 +1164,9 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
       bool isPaid = (double.tryParse(editData?['paid_amount']?.toString() ?? '0') ?? 0) > 0.01;
       
       if (editData != null) {
-        final dateStr = editData['scheduled_at'] as String?;
-        if (dateStr != null) {
-          manualDate = DateTime.parse(dateStr);
+        final rawSAEdit = editData['scheduled_at'];
+        if (rawSAEdit != null) {
+          manualDate = rawSAEdit is DateTime ? rawSAEdit : DateTime.parse(rawSAEdit.toString());
           manualTime = TimeOfDay.fromDateTime(manualDate);
         }
         double val = _safeParseValue(appointment!);
@@ -1894,15 +1955,23 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                                         builder: (context, empSnapshot) {
                                           if (!empSnapshot.hasData) return const SizedBox();
                                           final empData = empSnapshot.data ?? {};
+                                          final wsEmp = WorkSchedule.fromEmployeeRow(empData);
+                                          final dayCfg = wsEmp.forWeekday(manualDate.weekday);
+                                          final startStr = dayCfg?.start ?? (empData['work_start'] ?? empData['start_time'] ?? "08:00");
+                                          final endStr = dayCfg?.end ?? (empData['work_end'] ?? empData['end_time'] ?? "18:00");
+                                          final breakI = dayCfg?.breakInterval == null
+                                              ? null
+                                              : {'start': dayCfg!.breakInterval!.startMin, 'end': dayCfg.breakInterval!.endMin};
                                           final slots = AvailabilityUtils.generateSmartSlots(
-                                            startStr: empData['work_start'] ?? empData['start_time'] ?? "08:00",
-                                            endStr: empData['work_end'] ?? empData['end_time'] ?? "18:00",
+                                            startStr: startStr,
+                                            endStr: endStr,
                                             interval: _shopConfig['intervalo_agenda_min'] ?? 30,
                                             serviceDuration: durationMin,
                                             busyIntervals: busySnapshot.data!,
                                             preventGaps: _shopConfig['evitar_buracos_agenda'] ?? false,
                                             minAdvanceHours: 0,
                                             selectedDate: manualDate,
+                                            breakInterval: breakI,
                                           );
                                           if (slots.isEmpty) return const Text("Sem horários.", style: TextStyle(fontSize: 11));
                                           return SizedBox(
@@ -1997,6 +2066,8 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                                     'total_price': valor,
                                     'total_payable': valor,
                                     'valor_com_desconto': valor,
+                                    // Dono autorizado a sobrepor agendamentos manualmente
+                                    'bypass_overlap_check': true,
                                   };
 
                                   try {
@@ -2190,25 +2261,14 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
 
                           return filteredAppointments.isEmpty
                               ? _buildEmptyState()
-                              : ListView.builder(
+                              : ListView(
                                   controller: _scrollController,
                                   padding: const EdgeInsets.only(
                                       top: 10, bottom: 20),
-                                  itemCount: filteredAppointments.length +
-                                      (_hasMore ? 1 : 0),
-                                  itemBuilder: (context, index) {
-                                    if (index == filteredAppointments.length) {
-                                      return const Center(
-                                        child: Padding(
-                                          padding: EdgeInsets.all(10),
-                                          child: CircularProgressIndicator(),
-                                        ),
-                                      );
-                                    }
-                                    return _buildAppointmentCard(
-                                        filteredAppointments[index],
-                                        isDesktop: true);
-                                  },
+                                  children: _buildGroupedListItems(
+                                    appointments: filteredAppointments,
+                                    isDesktop: true,
+                                  ),
                                 );
                         }(),
                 ),
@@ -2275,9 +2335,9 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
       final start = DateTime(
           _startFromDate!.year, _startFromDate!.month, _startFromDate!.day);
       filteredAppointments = filteredAppointments.where((doc) {
-        final dateStr = doc['scheduled_at'] as String?;
-        if (dateStr == null) return false;
-        final d = DateTime.parse(dateStr);
+        final dynamic scheduledAt = doc['scheduled_at'];
+        if (scheduledAt == null) return false;
+        final d = scheduledAt is DateTime ? scheduledAt : DateTime.parse(scheduledAt.toString());
         final dd = DateTime(d.year, d.month, d.day);
         return !dd.isBefore(start); // keep date >= start
       }).toList();
@@ -2286,13 +2346,28 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     if (filteredAppointments.isEmpty) {
       return SliverFillRemaining(child: _buildEmptyState());
     }
-    // Group by day and flatten into list of widgets (header + cards)
+
+    final flat = _buildGroupedListItems(
+      appointments: filteredAppointments,
+      isDesktop: false,
+    );
+
+    return SliverList(
+        delegate: SliverChildBuilderDelegate((context, index) {
+      return flat[index];
+    }, childCount: flat.length));
+  }
+
+  List<Widget> _buildGroupedListItems({
+    required List<Map<String, dynamic>> appointments,
+    required bool isDesktop,
+  }) {
+    // Group by day
     final Map<DateTime, List<Map<String, dynamic>>> grouped = {};
-    for (var doc in filteredAppointments) {
-      final data = doc;
-      final dateStr = data['scheduled_at'] as String?;
-      if (dateStr == null) continue;
-      final d = DateTime.parse(dateStr);
+    for (var doc in appointments) {
+      final dynamic scheduledAt = doc['scheduled_at'];
+      if (scheduledAt == null) continue;
+      final d = scheduledAt is DateTime ? scheduledAt : DateTime.parse(scheduledAt.toString());
       final key = DateTime(d.year, d.month, d.day);
       grouped.putIfAbsent(key, () => []).add(doc);
     }
@@ -2301,8 +2376,9 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     keys.sort((a, b) => a.compareTo(b));
 
     final List<Widget> flat = [];
-    // show top loader if there are older items to load
-    if (_hasMorePast) {
+
+    // Mobile: show top loader if there are older items to load
+    if (!isDesktop && _hasMorePast && !(_startFromSelectedDay && _weekEndDate != null)) {
       flat.add(const Padding(
         padding: EdgeInsets.symmetric(vertical: 8),
         child: Center(
@@ -2312,58 +2388,196 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                 child: CircularProgressIndicator(strokeWidth: 2))),
       ));
     }
-    // if week-view is active, don't show top loader (we only show that week's items)
-    if (_startFromSelectedDay && _weekEndDate != null) {
-      flat.clear();
-    }
-    for (final key in keys) {
-      // header with + button
-      final headerKey = _dayKeys.putIfAbsent(key, () => GlobalKey());
-      flat.add(Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
-        child: Container(
-          key: headerKey,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(DateFormat('EEEE, dd/MM/yyyy', 'pt_BR').format(key),
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold, color: Colors.grey)),
-              IconButton(
-                icon: const Icon(Icons.add_circle, color: Colors.green),
-                tooltip: 'Adicionar agendamento neste dia',
-                onPressed: () => _showQuickEntryModal(initialDate: key),
-              ),
-            ],
-          ),
-        ),
-      ));
 
-      for (final doc in grouped[key]!) {
-        final docId = doc['id']?.toString() ?? '';
-        final appointmentKey = docId.isNotEmpty
-            ? _appointmentKeys.putIfAbsent(docId, () => GlobalKey())
-            : null;
-        flat.add(Container(
-          key: appointmentKey,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: _buildAppointmentCard(
-              doc,
-              isDesktop: false,
-              highlighted: docId == _highlightedAppointmentId,
+      for (final key in keys) {
+        final dayAppointments = grouped[key]!;
+
+        // Calcular total do dia (especialmente para desktop)
+        double dayTotal = 0;
+        for (var appt in dayAppointments) {
+          dayTotal += _getDisplayTotal(appt);
+        }
+
+        // header with + button
+        final headerKey = _dayKeys.putIfAbsent(key, () => GlobalKey());
+        flat.add(Padding(
+          padding: isDesktop
+              ? const EdgeInsets.fromLTRB(0, 20, 0, 10)
+              : const EdgeInsets.fromLTRB(16, 12, 16, 6),
+          child: Container(
+            key: headerKey,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      DateFormat('EEEE, dd/MM/yyyy', 'pt_BR').format(key),
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, color: Colors.grey),
+                    ),
+                    if (isDesktop) ...[
+                      const SizedBox(width: 12),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: AppColors.primaryPurple.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          "Total: ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(dayTotal)}",
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.primaryPurple,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                if (!isDesktop)
+                  IconButton(
+                    icon: const Icon(Icons.add_circle, color: Colors.green),
+                    tooltip: 'Adicionar agendamento neste dia',
+                    onPressed: () => _showQuickEntryModal(initialDate: key),
+                  ),
+              ],
             ),
           ),
         ));
+
+        // 🆕 Layout em Colunas por Profissional (Apenas Desktop e quando clicou na data)
+        if (isDesktop && _showOnlySelectedDay) {
+          final Map<String, List<Map<String, dynamic>>> byPro = {};
+          for (var appt in dayAppointments) {
+            final proId = appt['professional_id']?.toString() ?? 'nao_definido';
+            byPro.putIfAbsent(proId, () => []).add(appt);
+          }
+
+          final proIds = byPro.keys.toList();
+
+          flat.add(
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  return Wrap(
+                    spacing: 20,
+                    runSpacing: 20,
+                    children: proIds.map((proId) {
+                      final proApps = byPro[proId]!;
+                      final proInfo = _professionals.firstWhere(
+                        (p) => p['id']?.toString() == proId,
+                        orElse: () => {},
+                      );
+                      final String proName = proInfo['name'] ??
+                          proApps.first['professional_name'] ??
+                          'Profissional';
+                      final String? proPhoto = proInfo['photo_url'];
+
+                      return SizedBox(
+                        width: proIds.length > 1
+                            ? (constraints.maxWidth - 20) / 2
+                            : constraints.maxWidth,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _buildProfessionalHeader(proName, proPhoto),
+                            const SizedBox(height: 12),
+                            ...proApps.map((doc) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 10),
+                                  child: _buildAppointmentCard(doc,
+                                      isDesktop: true),
+                                )),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                  );
+                },
+              ),
+            ),
+          );
+        } else {
+          // Layout Normal (Lista Vertical)
+          for (final doc in dayAppointments) {
+            final docId = doc['id']?.toString() ?? '';
+            final appointmentKey = docId.isNotEmpty
+                ? _appointmentKeys.putIfAbsent(docId, () => GlobalKey())
+                : null;
+            flat.add(Container(
+              key: appointmentKey,
+              child: Padding(
+                padding: isDesktop
+                    ? EdgeInsets.zero
+                    : const EdgeInsets.symmetric(horizontal: 16),
+                child: _buildAppointmentCard(
+                  doc,
+                  isDesktop: isDesktop,
+                  highlighted: docId == _highlightedAppointmentId,
+                ),
+              ),
+            ));
+          }
+        }
       }
+
+    // Desktop: show bottom loader if hasMore (only if not showing only selected day)
+    if (isDesktop && _hasMore && !_showOnlySelectedDay) {
+      flat.add(const Center(
+        child: Padding(
+          padding: EdgeInsets.all(10),
+          child: CircularProgressIndicator(),
+        ),
+      ));
     }
 
-    // NOTE: removed bottom loader to keep scrolling visual clean (preloading happens silently)
+    return flat;
+  }
 
-    return SliverList(
-        delegate: SliverChildBuilderDelegate((context, index) {
-      return flat[index];
-    }, childCount: flat.length));
+  Widget _buildProfessionalHeader(String name, String? photoUrl) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 18,
+            backgroundColor: AppColors.primaryPurple.withValues(alpha: 0.1),
+            backgroundImage: (photoUrl != null && photoUrl.isNotEmpty)
+                ? NetworkImage(photoUrl)
+                : null,
+            child: (photoUrl == null || photoUrl.isEmpty)
+                ? Text(name.isNotEmpty ? name[0].toUpperCase() : 'P',
+                    style: const TextStyle(
+                        color: AppColors.primaryPurple,
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold))
+                : null,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              name,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildEmptyState() {
@@ -2412,9 +2626,11 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
       conflicts.add("O profissional não trabalha neste dia da semana.");
     }
 
-    // 3. Check Working Hours
-    final String startStr = empDoc['work_start'] ?? empDoc['start_time'] ?? "08:00";
-    final String endStr = empDoc['work_end'] ?? empDoc['end_time'] ?? "18:00";
+    // 3. Check Working Hours (per-day schedule)
+    final wsEmp = WorkSchedule.fromEmployeeRow(empDoc);
+    final dayCfg = wsEmp.forWeekday(date.weekday);
+    final String startStr = dayCfg?.start ?? (empDoc['work_start'] ?? empDoc['start_time'] ?? "08:00");
+    final String endStr = dayCfg?.end ?? (empDoc['work_end'] ?? empDoc['end_time'] ?? "18:00");
     int startDayMin =
         int.parse(startStr.split(':')[0]) * 60 + int.parse(startStr.split(':')[1]);
     int endDayMin =
@@ -2429,6 +2645,12 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     if (targetEndMin > endDayMin) {
       conflicts.add(
           "O agendamento termina após o expediente do profissional ($endStr).");
+    }
+    // Pausa diária (almoço etc.)
+    final br = dayCfg?.breakInterval;
+    if (br != null && targetStartMin < br.endMin && targetEndMin > br.startMin) {
+      conflicts.add(
+          "O horário conflita com a pausa do profissional (${br.start}–${br.end}).");
     }
 
     // 4. Check Service Aptitude
@@ -2558,17 +2780,20 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
             final endOfWeek = startOfWeek.add(const Duration(days: 6));
             final weekStart = DateTime(startOfWeek.year, startOfWeek.month, startOfWeek.day);
             final weekEnd = DateTime(endOfWeek.year, endOfWeek.month, endOfWeek.day, 23, 59, 59);
+            
+            final bool isDesktop = MediaQuery.of(context).size.width > 900;
+
             setState(() {
               _selectedDay = selectedDay;
               _focusedDay = focusedDay;
-              _showOnlySelectedDay = false;
+              _showOnlySelectedDay = isDesktop; // No desktop, filtra apenas o dia
               _startFromSelectedDay = true;
               _startFromDate = DateTime(selectedDay.year, selectedDay.month, selectedDay.day); // lista começa no dia clicado
-              _weekEndDate = weekEnd;
+              _weekEndDate = isDesktop ? _startFromDate!.add(const Duration(hours: 23, minutes: 59, seconds: 59)) : weekEnd;
             });
             // Filtro imediato no cache + busca semana completa no servidor
             _applyWeekFilterToCache();
-            _fetchWeekFromServer(weekStart, weekEnd);
+            _fetchWeekFromServer(isDesktop ? _startFromDate! : weekStart, isDesktop ? _weekEndDate! : weekEnd);
           },
           onPageChanged: (focusedDay) {
             final oldYear = _focusedDay.year;
@@ -2692,17 +2917,18 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     final weekStart = DateTime(mondayOfWeek.year, mondayOfWeek.month, mondayOfWeek.day);
     final weekEnd = DateTime(mondayOfWeek.year, mondayOfWeek.month, mondayOfWeek.day + 6, 23, 59, 59);
     try {
-      final selectCols = 'total_payable, total_price, total_value, valor_com_desconto, labor_value, status';
+      final selectCols = 'total_payable, total_price, total_value, valor_com_desconto, labor_value, status, discount_amount, birthday_discount_applied, birthday_discount_percent, coupon_applied, coupon_discount_percent';
       final snap = await sb.Supabase.instance.client
           .from('appointments')
           .select(selectCols)
           .eq('shop_id', widget.shopId)
-          .gte('scheduled_at', weekStart.toUtc().toIso8601String())
-          .lte('scheduled_at', weekEnd.toUtc().toIso8601String());
+          .neq('status', 'pre_reserva')
+          .gte('scheduled_at', weekStart.toIso8601String())
+          .lte('scheduled_at', weekEnd.toIso8601String());
       double wSum = 0.0;
       for (final d in snap as List) {
         if ((d['status'] ?? '').toString().toLowerCase() == 'cancelado') continue;
-        wSum += _parseRevenueValue(d);
+        wSum += _getDisplayTotal(d as Map<String, dynamic>);
       }
       if (mounted) {
         setState(() => _weeklyRevenue = wSum);
@@ -2916,6 +3142,19 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     }
   }
 
+  // ✨ Helper para checar se a NFS-e já foi emitida, usando cache
+  Future<bool> _checkNfseEmitida(String appointmentId) async {
+    if (_nfseEmitidaCache.containsKey(appointmentId)) {
+      return _nfseEmitidaCache[appointmentId]!;
+    }
+    final numero = await NfseService().getNfseNumero(appointmentId);
+    final result = numero != null;
+    if (mounted) {
+      _nfseEmitidaCache[appointmentId] = result;
+    }
+    return result;
+  }
+
   @override
   void dispose() {
     _scheduleRealtimeChannel?.unsubscribe();
@@ -2985,8 +3224,9 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
           .from('appointments')
           .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, birthday_discount_applied, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name, created_by')
           .eq('shop_id', widget.shopId)
-          .gte('scheduled_at', start.toUtc().toIso8601String())
-          .lte('scheduled_at', end.toUtc().toIso8601String())
+          .neq('status', 'pre_reserva')
+          .gte('scheduled_at', start.toIso8601String())
+          .lte('scheduled_at', end.toIso8601String())
           .order('scheduled_at', ascending: true)
           .limit(200);
 
@@ -2994,9 +3234,9 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
       setState(() {
         // replace visible appointments with fresh week data
         _appointments = List<Map<String, dynamic>>.from(snap);
-        // Sempre permitir carregar mais (scroll infinito além da semana)
-        _hasMore = true;
-        _hasMorePast = true;
+        // Na visualizacao do dia ou da semana, so teremos paginacao se a query atingiu o limite maximo (200)
+        _hasMore = snap.length >= 200;
+        _hasMorePast = false; // Trazemos o range completo, o passado daquela janela esgotou
         // update cache and cursors
         for (var d in snap) {
           _addToCache(d);
@@ -3008,12 +3248,12 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
         // update events for this week
         for (var d in snap) {
           final data = d;
-          final dateStr = data['scheduled_at'] as String?;
-          if (dateStr == null) continue;
+          final rawSAEvt = data['scheduled_at'];
+          if (rawSAEvt == null) continue;
           final status = (data['status'] ?? '').toString().toLowerCase();
           if (status == 'cancelado') continue;
           
-          final date = DateTime.parse(dateStr);
+          final date = rawSAEvt is DateTime ? rawSAEvt : DateTime.parse(rawSAEvt.toString());
           final dateKey = DateTime(date.year, date.month, date.day);
           final existing = _events[dateKey] ?? [];
           final id = d['id'].toString();
@@ -3024,7 +3264,13 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
         }
       });
       // Recalcular faturamento semanal a partir dos dados frescos
-      _updateWeeklyRevenueFromAppointments();
+      if (!_showOnlySelectedDay) {
+        _updateWeeklyRevenueFromAppointments();
+      } else {
+        // No desktop, ao selecionar um dia, _appointments só tem aquele dia.
+        // Precisamos carregar o faturamento da semana inteira separadamente.
+        _loadRevenueStats();
+      }
       // Scroll: para agendamento específico no primeiro carregamento, senão para o topo do dia
       if (!_initialScrollDone && widget.initialAppointmentId != null) {
         _initialScrollDone = true;
@@ -3032,6 +3278,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
       } else {
         _scrollToSelectedDay();
       }
+      ScheduleCacheService.saveAppointments(widget.shopId, _appointments);
     } catch (e) {
       debugPrint('Erro ao buscar semana: $e');
     }
@@ -3050,17 +3297,19 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
         DateTime(_weekEndDate!.year, _weekEndDate!.month, _weekEndDate!.day, 23, 59, 59);
 
     final filtered = _docCache.values.where((data) {
-      final dateStr = data['scheduled_at'] as String?;
-      if (dateStr == null) return false;
-      final d = DateTime.parse(dateStr);
+      final rawSAFilter = data['scheduled_at'];
+      if (rawSAFilter == null) return false;
+      final d = rawSAFilter is DateTime ? rawSAFilter : DateTime.parse(rawSAFilter.toString());
       final dd = DateTime(d.year, d.month, d.day);
       return !dd.isBefore(start) && !dd.isAfter(end);
     }).toList();
 
     // sort by date asc
     filtered.sort((a, b) {
-      final da = DateTime.parse(a['scheduled_at'] as String);
-      final db = DateTime.parse(b['scheduled_at'] as String);
+      final rawA = a['scheduled_at'];
+      final da = rawA is DateTime ? rawA : DateTime.parse(rawA.toString());
+      final rawB = b['scheduled_at'];
+      final db = rawB is DateTime ? rawB : DateTime.parse(rawB.toString());
       return da.compareTo(db);
     });
 
@@ -3075,8 +3324,13 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
 
   Widget _buildAppointmentCard(Map<String, dynamic> data,
       {required bool isDesktop, bool highlighted = false}) {
-    final dateStr = data['scheduled_at'] as String;
-    DateTime hora = DateTime.parse(dateStr);
+    final rawScheduledAt = data['scheduled_at'];
+    DateTime hora;
+    if (rawScheduledAt is DateTime) {
+      hora = rawScheduledAt;
+    } else {
+      hora = DateTime.parse(rawScheduledAt.toString());
+    }
 
     double total = _getDisplayTotal(data);
     double pago = double.tryParse(
@@ -3087,6 +3341,15 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     String status = data['status']?.toString().toLowerCase() ?? '';
     String paymentMethod = data['payment_method']?.toString() ?? 'Não informado';
     bool hasOnlinePayment = data['metadata'] != null && data['metadata'] is Map && data['metadata']['payment_id'] != null;
+    final paymentIdRoot = data['payment_id']?.toString() ?? '';
+    
+    // Auto-correção visual para agendamentos antigos:
+    if ((hasOnlinePayment || paymentIdRoot.isNotEmpty) && 
+        (paymentMethod.toLowerCase().contains('pessoal') || 
+         paymentMethod.toLowerCase().contains('dinheiro') || 
+         paymentMethod.toLowerCase().contains('manual'))) {
+      paymentMethod = 'Pago no App';
+    }
 
     // Priorizar payment_status se existir, senão inferir
     String pStat = data['payment_status']?.toString().toLowerCase() ?? '';
@@ -3182,9 +3445,14 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
               ),
             ),
           );
+          // Limpa o cache de nota fiscal ao voltar, forçando uma re-validação imediata
+          final id = data['id'].toString();
+          setState(() {
+            _nfseEmitidaCache.remove(id);
+          });
+
           // Se o pop foi pelo botão Editar, o modal cuida do reload — não recarregar agora
           if (result != 'edit') {
-            final id = data['id'].toString();
             setState(() {
               _docCache.remove(id);
               _cacheAccess.remove(id);
@@ -3319,6 +3587,35 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                           crossAxisAlignment: CrossAxisAlignment.start,
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
+                            // ✨ Texto Superior: NFS-e Emitida
+                            if (pStat == 'pago' || hasOnlinePayment)
+                              FutureBuilder<bool>(
+                                future: _checkNfseEmitida(data['id'].toString()),
+                                builder: (ctx, snap) {
+                                  if (snap.data == true) {
+                                    return Padding(
+                                      padding: const EdgeInsets.only(bottom: 6.0),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(Icons.receipt_long, size: 10, color: Colors.teal),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            'NOTA FISCAL EMITIDA',
+                                            style: TextStyle(
+                                              fontSize: 9,
+                                              fontWeight: FontWeight.w800,
+                                              color: Colors.teal.shade700,
+                                              letterSpacing: 0.3,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                  }
+                                  return const SizedBox.shrink();
+                                },
+                              ),
                             Row(
                               children: [
                                 Flexible(
@@ -3402,21 +3699,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                                       borderRadius: BorderRadius.circular(4),
                                       border: Border.all(color: const Color(0xFF22C55E).withValues(alpha: 0.3)),
                                     ),
-                                    child: const Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Text('✅', style: TextStyle(fontSize: 8)),
-                                        SizedBox(width: 3),
-                                        Text(
-                                          'CONFIRMOU',
-                                          style: TextStyle(
-                                            fontSize: 8,
-                                            fontWeight: FontWeight.w800,
-                                            color: Color(0xFF16A34A),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
+                                    child: const Text('✅', style: TextStyle(fontSize: 10)),
                                   ),
                                 // Badge Manual / App
                                 Container(

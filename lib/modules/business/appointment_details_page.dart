@@ -7,6 +7,8 @@ import '../clients/client_details_page.dart';
 import 'edit_appointment_date_page.dart';
 import 'transaction_details_page.dart';
 import '../../core/services/mercado_pago_service.dart';
+import '../fiscal/nfse_service.dart';
+import '../../core/services/plan_features_service.dart';
 
 class AppointmentDetailsPage extends StatefulWidget {
   final Map<String, dynamic> appointmentDoc;
@@ -68,6 +70,10 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
   String? _clientBirthDate;
   bool _confirmationSent = false;
 
+  // ✨ Estado para emissão de NFS-e
+  bool _nfseEmitida = false;
+  String? _nfseNumero;
+
   @override
   void initState() {
     super.initState();
@@ -106,6 +112,14 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
           _isBirthdayDiscountApplied = _localDoc['birthday_discount_applied'] == true;
           _isCouponApplied = _localDoc['coupon_applied'] == true;
         });
+        // ✨ Verifica se já existe NFS-e autorizada para este agendamento
+        final numero = await NfseService().getNfseNumero(id);
+        if (mounted) {
+          setState(() {
+            _nfseNumero = numero;
+            _nfseEmitida = numero != null;
+          });
+        }
       }
     } catch (e) {
       debugPrint('Erro ao atualizar agendamento do DB: $e');
@@ -189,8 +203,8 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     _selectedTime = TimeOfDay.fromDateTime(_selectedDate!);
     _selectedServiceId = data['service_id'] ?? data['servicoId'];
     _selectedServiceName = (data['service_name'] ?? '').toString();
-    _selectedProfessionalId = data['professional_id']?.toString();
-    _selectedProfessionalName = (data['professional_name'] ?? 'Não definido').toString();
+    _selectedProfessionalId = (data['professional_id'] ?? data['profissional_id'] ?? data['profissionalId'])?.toString();
+    _selectedProfessionalName = (data['professional_name'] ?? data['profissional_nome'] ?? 'Não definido').toString();
     _selectedProfessionalFoto = data['professional_photo']?.toString();
     _selectedProfessionalCargo = data['professional_role']?.toString();
     _selectedClientId = data['client_id']?.toString();
@@ -351,6 +365,77 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     super.dispose();
   }
 
+  // ✨ Emite NFS-e através de um Modal interativo com feedback visual.
+  Future<void> _emitirNfse() async {
+    final shopId = _localDoc['shop_id']?.toString();
+    final appointmentId = _localDoc['id']?.toString();
+    if (shopId == null || appointmentId == null) return;
+
+    // 1. Verificar plano Pro (validação rápida sem travar UI com modal)
+    final features = await PlanFeaturesService.loadFeaturesByShopId(shopId);
+    if (!features.nfseEmission) {
+      _showSnackBar('❌ Emissão de NFS-e disponível apenas no plano Pro.', isError: true);
+      return;
+    }
+
+    // 2. Verificar duplicidade em memória
+    if (_nfseEmitida) {
+      _showSnackBar('⚠️ Nota fiscal nº $_nfseNumero já foi emitida para este agendamento.', isError: false);
+      return;
+    }
+
+    // 2.5. Pedir confirmação ao usuário
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text("Emitir Nota Fiscal"),
+        content: const Text(
+            "Tem certeza que deseja emitir a Nota Fiscal de Serviço (NFS-e) para este agendamento? "
+            "Esta ação não pode ser desfeita e os dados serão enviados à prefeitura."),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("Cancelar", style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.teal,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text("Sim, emitir"),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    // 3. Abre o modal que fará o processamento
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => _NfseEmissionModal(
+        appointmentId: appointmentId,
+        shopId: shopId,
+      ),
+    );
+
+    // 4. Atualiza estado local se o modal retornou sucesso
+    if (result != null && result['sucesso'] == true) {
+      if (mounted) {
+        setState(() {
+          _nfseEmitida = true;
+          if (result['numero'] != null) {
+            _nfseNumero = result['numero'];
+          }
+        });
+      }
+    }
+  }
+
+
   Future<void> _updateAppointment() async {
     setState(() => _isLoading = true);
     try {
@@ -490,6 +575,8 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
         'duration_min': _selectedServiceDuration ?? 30,
         'payment_method': _selectedPaymentMethod,
         'updated_at': DateTime.now().toIso8601String(),
+        // Edição administrativa: dono autorizado a sobrepor manualmente
+        'bypass_overlap_check': true,
       };
 
       await Supabase.instance.client
@@ -992,7 +1079,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
                       _selectedClientPhone != 'Não informado')
                     Row(
                       children: [
-                        // Botão WhatsApp (ícone apenas)
+                        // Botão WhatsApp
                         ElevatedButton(
                           onPressed: () async {
                             final phone = _selectedClientPhone!
@@ -1006,15 +1093,15 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
                             backgroundColor: Colors.green,
                             foregroundColor: Colors.white,
                             elevation: 0,
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
-                            minimumSize: const Size(0, 30),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                            padding: EdgeInsets.zero,
+                            minimumSize: const Size(36, 36),
+                            shape: const CircleBorder(),
                           ),
-                          child: const Icon(Icons.chat_rounded, size: 14),
+                          child: const Icon(Icons.chat_rounded, size: 16),
                         ),
                         const SizedBox(width: 6),
                         // Botão de confirmação de agenda
-                        ElevatedButton.icon(
+                        ElevatedButton(
                           onPressed: _confirmationSent ? null : () async {
                             final phone = _selectedClientPhone!
                                 .replaceAll(RegExp(r'\D'), '');
@@ -1048,23 +1135,50 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
                               if (mounted) setState(() => _confirmationSent = true);
                             }
                           },
-                          icon: Icon(
-                            _confirmationSent ? Icons.check_circle_rounded : Icons.event_available_rounded,
-                            size: 14,
-                          ),
-                          label: Text(
-                            _confirmationSent ? "Enviado" : "Confirmar",
-                            style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
-                          ),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: _confirmationSent ? Colors.grey[400] : Colors.blue[700],
                             foregroundColor: Colors.white,
                             elevation: 0,
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
-                            minimumSize: const Size(0, 30),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                            padding: EdgeInsets.zero,
+                            minimumSize: const Size(36, 36),
+                            shape: const CircleBorder(),
+                          ),
+                          child: Icon(
+                            _confirmationSent ? Icons.check_circle_rounded : Icons.event_available_rounded,
+                            size: 16,
                           ),
                         ),
+                        // ✨ Botão NFS-e — aparece para qualquer agendamento pago (regra PRO aplicada no clique)
+                        Builder(builder: (ctx) {
+                          final pStat = (_localDoc['payment_status'] ?? '').toString().toLowerCase();
+                          final status = (_localDoc['status'] ?? '').toString().toLowerCase();
+                          
+                          double total = double.tryParse(_localDoc['total_payable']?.toString() ?? _localDoc['total_value']?.toString() ?? '0') ?? 0.0;
+                          double pago = double.tryParse(_localDoc['paid_amount']?.toString() ?? _localDoc['paid_value']?.toString() ?? '0') ?? 0.0;
+                          
+                          final isPago = pStat == 'pago' || (pago >= total && total > 0.01) || status == 'concluido';
+                          
+                          if (!isPago) return const SizedBox.shrink();
+
+                          return Padding(
+                            padding: const EdgeInsets.only(left: 6.0),
+                            child: ElevatedButton(
+                                    onPressed: _emitirNfse,
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: _nfseEmitida ? Colors.teal.shade700 : Colors.teal,
+                                      foregroundColor: Colors.white,
+                                      elevation: 0,
+                                      padding: EdgeInsets.zero,
+                                      minimumSize: const Size(36, 36),
+                                      shape: const CircleBorder(),
+                                    ),
+                                    child: Icon(
+                                      _nfseEmitida ? Icons.receipt_long : Icons.receipt_outlined,
+                                      size: 16,
+                                    ),
+                                  ),
+                          );
+                        }),
                       ],
                     ),
                   if (_clientTags.isNotEmpty) ...[
@@ -1145,7 +1259,16 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     final double pago =
         double.tryParse(data['paid_amount']?.toString() ?? data['valor_pago']?.toString() ?? "0") ?? 0.0;
     final double restante = total - pago;
-    final String paymentMethod = _selectedPaymentMethod ?? data['payment_method']?.toString() ?? 'Não informado';
+    String paymentMethod = _selectedPaymentMethod ?? data['payment_method']?.toString() ?? 'Não informado';
+    bool hasOnlinePayment = data['metadata'] != null && data['metadata'] is Map && data['metadata']['payment_id'] != null;
+    final paymentIdRoot = data['payment_id']?.toString() ?? '';
+    
+    if ((hasOnlinePayment || paymentIdRoot.isNotEmpty) && 
+        (paymentMethod.toLowerCase().contains('pessoal') || 
+         paymentMethod.toLowerCase().contains('dinheiro') || 
+         paymentMethod.toLowerCase().contains('manual'))) {
+      paymentMethod = 'Pago no App';
+    }
 
     double percentPaid = total > 0 ? (pago / total) : 0.0;
     if (percentPaid > 1.0) percentPaid = 1.0;
@@ -1475,7 +1598,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
           ],
           
           // ✅ BOTÃO: VER DETALHES TÉCNICOS DA TRANSAÇÃO (NOVA PÁGINA)
-          if (data['metadata']?['payment_id'] != null) ...[
+          if (data['metadata']?['payment_id'] != null || (data['payment_id'] != null && data['payment_id'].toString().isNotEmpty)) ...[
             const SizedBox(height: 15),
             SizedBox(
               width: double.infinity,
@@ -2491,5 +2614,155 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+}
+
+// ✨ Modal interativo para emissão de Nota Fiscal
+class _NfseEmissionModal extends StatefulWidget {
+  final String appointmentId;
+  final String shopId;
+
+  const _NfseEmissionModal({
+    required this.appointmentId,
+    required this.shopId,
+  });
+
+  @override
+  State<_NfseEmissionModal> createState() => _NfseEmissionModalState();
+}
+
+class _NfseEmissionModalState extends State<_NfseEmissionModal> {
+  bool _isProcessing = true;
+  bool _isSuccess = false;
+  String _message = "Validando dados...";
+  String? _nfseNumero;
+
+  @override
+  void initState() {
+    super.initState();
+    _startEmissionProcess();
+  }
+
+  Future<void> _startEmissionProcess() async {
+    // Passo 1: Validação
+    final erros = await NfseService().validarDadosParaEmissao(widget.appointmentId, widget.shopId);
+    if (erros.isNotEmpty) {
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+          _isSuccess = false;
+          _message = 'Não foi possível emitir a NFS-e:\n\n• ${erros.join('\n• ')}';
+        });
+      }
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _message = "Emitindo Nota Fiscal...";
+      });
+    }
+
+    // Passo 2: Emissão
+    final result = await NfseService().emitirNota(widget.appointmentId);
+    if (mounted) {
+      setState(() {
+        _isProcessing = false;
+        if (result.sucesso) {
+          _isSuccess = true;
+          _message = 'Nota fiscal emitida com sucesso!';
+        } else if (result.erro != null && result.erro!.contains('ja_emitida')) {
+          _isSuccess = true;
+          _message = 'Nota fiscal já havia sido emitida anteriormente para este agendamento.';
+        } else {
+          _isSuccess = false;
+          _message = 'Erro ao emitir NFS-e: ${result.erro ?? 'Tente novamente mais tarde.'}';
+        }
+      });
+
+      if (_isSuccess) {
+        // Tenta recuperar o número para devolver à página
+        _nfseNumero = await NfseService().getNfseNumero(widget.appointmentId);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      contentPadding: const EdgeInsets.all(24),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          if (_isProcessing)
+            const SizedBox(
+              width: 48,
+              height: 48,
+              child: CircularProgressIndicator(color: Colors.teal, strokeWidth: 3),
+            )
+          else if (_isSuccess)
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.teal.withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.check_circle_outline, color: Colors.teal, size: 40),
+            )
+          else
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.red.withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.error_outline, color: Colors.red, size: 40),
+            ),
+          const SizedBox(height: 20),
+          Text(
+            _isProcessing
+                ? "Aguarde um momento..."
+                : _isSuccess
+                    ? "Sucesso!"
+                    : "Ops! Algo deu errado.",
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _message,
+            style: TextStyle(
+              fontSize: 14,
+              color: _isProcessing ? Colors.grey[700] : (_isSuccess ? Colors.teal[700] : Colors.red[700]),
+            ),
+            textAlign: TextAlign.center,
+          ),
+          if (!_isProcessing) ...[
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () {
+                  if (_isSuccess) {
+                    Navigator.pop(context, {'sucesso': true, 'numero': _nfseNumero});
+                  } else {
+                    Navigator.pop(context, {'sucesso': false});
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _isSuccess ? Colors.teal : Colors.grey[800],
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                child: const Text("Fechar", style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ]
+        ],
+      ),
+    );
   }
 }

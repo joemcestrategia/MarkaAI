@@ -1,5 +1,6 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.4'
+import { parseWorkSchedule, hhmmToMin } from '../_shared/workSchedule.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -23,6 +24,7 @@ export function generateSmartSlots({
   preventGaps,
   minAdvanceHours,
   selectedDate,
+  breakInterval,
 }: {
   startStr: string;
   endStr: string;
@@ -32,6 +34,7 @@ export function generateSmartSlots({
   preventGaps: boolean;
   minAdvanceHours: number;
   selectedDate: Date;
+  breakInterval?: BusyInterval;
 }): string[] {
   const validSlots: string[] = [];
 
@@ -42,61 +45,56 @@ export function generateSmartSlots({
 
   if (interval <= 0) return [];
 
-  // Sort busy intervals
+  // realBusy = agendamentos. allBusy = realBusy + pausa diária.
   const sortedBusy = [...busyIntervals].sort((a, b) => a.start - b.start);
+  const allBusy: BusyInterval[] = breakInterval
+    ? [...sortedBusy, breakInterval].sort((a, b) => a.start - b.start)
+    : sortedBusy;
+  const collidesAny = (s: number, e: number) =>
+    allBusy.some(b => s < b.end && e > b.start);
 
-  // Timezone check: Assume selectedDate is the target day in local time.
-  // We need current time in Brazil (UTC-3).
   const now = new Date();
-  const brazilNow = new Date(now.getTime() - (3 * 60 * 60 * 1000)); // Simple UTC-3 offset
-  // Actually, better to use UTC and compare if possible, but let's keep it simple for now.
+  const brazilNow = new Date(now.getTime() - (3 * 60 * 60 * 1000));
   const minAllowedTime = new Date(brazilNow.getTime() + minAdvanceHours * 60 * 60 * 1000);
 
   if (preventGaps) {
-    if (sortedBusy.length === 0) {
-      let current = startDayMin;
-      while (current + serviceDuration <= endDayMin) {
-        const slotDt = new Date(selectedDate);
-        slotDt.setUTCHours(Math.floor(current / 60), current % 60, 0, 0);
-        
-        if (slotDt >= minAllowedTime) {
-          const h = Math.floor(current / 60).toString().padStart(2, '0');
-          const m = (current % 60).toString().padStart(2, '0');
-          validSlots.push(`${h}:${m}`);
-          break; // Return only the first slot
-        }
-        current += interval;
-      }
-    } else {
-      const anchorPoints = new Set<number>();
+    const anchorPoints = new Set<number>();
 
-      // startDayMin as anchor
-      const startSlotEnd = startDayMin + serviceDuration;
-      const startIsFree = sortedBusy.every(b => !(startDayMin < b.end && startSlotEnd > b.start));
-      if (startIsFree) anchorPoints.add(startDayMin);
+    // Âncora: início do expediente (se livre, considerando pausa).
+    if (!collidesAny(startDayMin, startDayMin + serviceDuration)) {
+      anchorPoints.add(startDayMin);
+    } else if (breakInterval &&
+               startDayMin >= breakInterval.start &&
+               startDayMin < breakInterval.end) {
+      const after = breakInterval.end;
+      if (!collidesAny(after, after + serviceDuration)) anchorPoints.add(after);
+    }
 
-      // End of each appointment as anchor
-      for (const busy of sortedBusy) {
-        if (busy.end < endDayMin) anchorPoints.add(busy.end);
-      }
+    // Âncora: fim de cada agendamento real.
+    for (const busy of sortedBusy) {
+      if (busy.end < endDayMin) anchorPoints.add(busy.end);
+    }
 
-      const sortedAnchors = Array.from(anchorPoints).sort((a, b) => a - b);
+    // Âncora extra: fim da pausa só quando há agendamento antes dela.
+    if (breakInterval && sortedBusy.length > 0 &&
+        sortedBusy[0].start < breakInterval.start) {
+      anchorPoints.add(breakInterval.end);
+    }
 
-      for (const anchor of sortedAnchors) {
-        const anchorSlotEnd = anchor + serviceDuration;
-        const hasCollision = sortedBusy.some(b => anchor < b.end && anchorSlotEnd > b.start);
-        if (hasCollision) continue;
-        if (anchorSlotEnd > endDayMin) continue;
+    const sortedAnchors = Array.from(anchorPoints).sort((a, b) => a - b);
+    for (const anchor of sortedAnchors) {
+      const anchorEnd = anchor + serviceDuration;
+      if (anchorEnd > endDayMin) continue;
+      if (collidesAny(anchor, anchorEnd)) continue;
 
-        const slotDt = new Date(selectedDate);
-        slotDt.setUTCHours(Math.floor(anchor / 60), anchor % 60, 0, 0);
-        if (slotDt < minAllowedTime) continue;
+      const slotDt = new Date(selectedDate);
+      slotDt.setUTCHours(Math.floor(anchor / 60), anchor % 60, 0, 0);
+      if (slotDt < minAllowedTime) continue;
 
-        const h = Math.floor(anchor / 60).toString().padStart(2, '0');
-        const m = (anchor % 60).toString().padStart(2, '0');
-        const timeString = `${h}:${m}`;
-        if (!validSlots.includes(timeString)) validSlots.push(timeString);
-      }
+      const h = Math.floor(anchor / 60).toString().padStart(2, '0');
+      const m = (anchor % 60).toString().padStart(2, '0');
+      const timeString = `${h}:${m}`;
+      if (!validSlots.includes(timeString)) validSlots.push(timeString);
     }
   } else {
     let current = startDayMin;
@@ -105,7 +103,7 @@ export function generateSmartSlots({
       let hasCollision = false;
       let jumpTo = current + interval;
 
-      for (const busy of sortedBusy) {
+      for (const busy of allBusy) {
         if (current < busy.end && slotEnd > busy.start) {
           hasCollision = true;
           jumpTo = busy.end;
@@ -147,7 +145,8 @@ serve(async (req) => {
       { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
     )
 
-    const { shop_id, service_id, month, professional_id } = await req.json()
+    const { shop_id, service_id, month, professional_id, is_vip: is_vip_req } = await req.json()
+    const is_vip = is_vip_req === true
 
     if (!shop_id || !service_id || !month) {
       return new Response(JSON.stringify({ error: 'Missing parameters' }), {
@@ -174,11 +173,19 @@ serve(async (req) => {
     const autoBlockHolidays = shopConfig.auto_block_holidays ?? false
     const configuredHolidays = shopRes.data.configured_holidays || {}
     const pendingHolidays = shopRes.data.pending_holidays || []
+    
+    // Window logic (matching checkAvailability)
+    const windowDays = shopConfig.janela_agendamento_dias || 30
+    const vip_extra_days = is_vip ? (shopConfig.vip_extra_booking_days || 0) : 0
+    
+    const now = new Date()
+    const brazilNow = new Date(now.getTime() - (3 * 60 * 60 * 1000))
+    const maxDate = new Date(brazilNow.getTime() + (windowDays + vip_extra_days) * 24 * 60 * 60 * 1000)
 
     // 2. Fetch Professionals
     let profQuery = supabaseClient
       .from('employees')
-      .select('id, name, work_start, work_end, start_time, end_time, work_days, services_ids')
+      .select('id, name, work_start, work_end, start_time, end_time, work_days, work_schedule, services_ids')
       .eq('shop_id', shop_id)
     
     if (professional_id) {
@@ -237,6 +244,12 @@ serve(async (req) => {
       const isoDate = date.toISOString().split('T')[0]
       const weekday = date.getUTCDay() === 0 ? 7 : date.getUTCDay() // 1-7 (Mon-Sun)
 
+      // Window check
+      if (date > maxDate) {
+        availability[isoDate] = false
+        continue
+      }
+
       // Global blocks
       if (configuredHolidays[isoDate] === 'fechado') {
         availability[isoDate] = false
@@ -249,9 +262,11 @@ serve(async (req) => {
 
       let dayHasSlot = false
       for (const prof of qualifiedProfs) {
-        // Work days
-        const workDays = (prof.work_days as any[])?.map(Number) || []
-        if (!workDays.includes(weekday)) continue
+        // Per-day schedule (com fallback legado)
+        const schedule = parseWorkSchedule(prof as Record<string, unknown>)
+        if (schedule.size === 0) continue
+        const dayCfg = schedule.get(weekday)
+        if (!dayCfg) continue
 
         // Custom scale
         if (configuredHolidays[isoDate] && typeof configuredHolidays[isoDate] === 'object') {
@@ -259,8 +274,11 @@ serve(async (req) => {
           if (escala.length > 0 && !escala.includes(prof.id)) continue
         }
 
-        const startStr = prof.work_start || prof.start_time || '08:00'
-        const endStr = prof.work_end || prof.end_time || '18:00'
+        const startStr = dayCfg.start
+        const endStr = dayCfg.end
+        const breakI = dayCfg.break
+          ? { start: hhmmToMin(dayCfg.break.start), end: hhmmToMin(dayCfg.break.end) }
+          : undefined
         const key = `${prof.id}_${day}`
         const busy = groupedByProfDay[key] || []
 
@@ -273,6 +291,7 @@ serve(async (req) => {
           preventGaps,
           minAdvanceHours,
           selectedDate: date,
+          breakInterval: breakI,
         })
 
         if (slots.length > 0) {

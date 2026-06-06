@@ -54,8 +54,10 @@ class AuthService {
               : '${Uri.base.origin}/login')
           : 'markaai://login-callback';
       
-      debugPrint('[AuthService] Iniciando OAuth Google. RedirectTo: $redirectUrl');
-
+      if (defaultTargetPlatform == TargetPlatform.windows) {
+        debugPrint('[AuthService] Windows detectado. Aguardando retorno em: $redirectUrl');
+      }
+      
       await _supabase.auth.signInWithOAuth(
         sb.OAuthProvider.google,
         redirectTo: redirectUrl,

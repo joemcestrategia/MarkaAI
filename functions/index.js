@@ -49,7 +49,7 @@ function injectOgTags(html, { name, description, image, url }) {
 }
 
 exports.shopPreview = onRequest(
-  { region: 'us-east1', timeoutSeconds: 10, minInstances: 0 },
+  { region: 'us-east1', timeoutSeconds: 10, minInstances: 1 },
   async (req, res) => {
     const reqPath = req.path || '/';
 

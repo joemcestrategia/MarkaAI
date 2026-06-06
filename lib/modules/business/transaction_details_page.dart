@@ -65,7 +65,7 @@ class _TransactionDetailsPageState extends State<TransactionDetailsPage> {
 
   Future<void> _fetchDeepDetails() async {
     final metadata = widget.appointmentData['metadata'] as Map?;
-    final paymentId = metadata?['payment_id']?.toString();
+    final paymentId = metadata?['payment_id']?.toString() ?? widget.appointmentData['payment_id']?.toString();
 
     if (paymentId == null || paymentId.isEmpty) {
       setState(() {

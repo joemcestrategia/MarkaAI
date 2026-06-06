@@ -301,15 +301,16 @@ async function processReminder(supabase: any, appt: any, type: '48h' | '1h') {
 
     const scheduledAt = new Date(appt.scheduled_at)
 
-    // Formata data/hora no fuso horário de Brasília (UTC-3)
-    const tzParts = new Intl.DateTimeFormat('pt-BR', {
-      timeZone: 'America/Sao_Paulo',
-      day: '2-digit', month: '2-digit', year: 'numeric',
-      hour: '2-digit', minute: '2-digit', hour12: false,
-    }).formatToParts(scheduledAt)
-    const p = (type: string) => tzParts.find(x => x.type === type)?.value ?? '00'
-    const dateStr = `${p('day')}/${p('month')}/${p('year')}`
-    const timeStr = `${p('hour')}:${p('minute')}`
+    // O banco armazena o horário local sem offset (tratado como UTC pelo Postgres).
+    // Para exibir o horário correto no e-mail, lemos os componentes UTC diretamente
+    // sem aplicar nenhuma conversão de fuso — evita a subtração indevida de 3h (BRT).
+    const day   = scheduledAt.getUTCDate().toString().padStart(2, '0')
+    const month = (scheduledAt.getUTCMonth() + 1).toString().padStart(2, '0')
+    const year  = scheduledAt.getUTCFullYear().toString()
+    const hour  = scheduledAt.getUTCHours().toString().padStart(2, '0')
+    const min   = scheduledAt.getUTCMinutes().toString().padStart(2, '0')
+    const dateStr = `${day}/${month}/${year}`
+    const timeStr = `${hour}:${min}`
 
     const durationMin = appt.duration_min || 60
     const endAt = new Date(scheduledAt.getTime() + durationMin * 60 * 1000)

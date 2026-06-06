@@ -1472,6 +1472,8 @@ class _ClientHomePageState extends State<ClientHomePage> {
             final filtered = shopsRaw.where((doc) {
               final d = doc;
               final bool isActive = d['is_active'] ?? d['ativo'] ?? true;
+              
+              if (!isActive || (d['services_count'] ?? 0) == 0) return false;
 
               // Filtro adicional por estado se houver ambiguidade (opcional)
               if (cidade.estado.isNotEmpty) {
@@ -1579,7 +1581,8 @@ class _ClientHomePageState extends State<ClientHomePage> {
             }
 
             // Constrói linhas: a cada 6 itens (2 linhas) insere um Native Ad
-            final int cols = isDesktop ? 4 : 3;
+            // Constrói linhas: a cada 6 itens (2 linhas) insere um Native Ad
+            final int cols = 3;
             final List<List<Map<String, dynamic>>?> rows = [];
             for (int i = 0; i < filtered.length; i += cols) {
               final endIdx = i + cols < filtered.length ? i + cols : filtered.length;
@@ -1603,7 +1606,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
                             Expanded(
                               child: c < rowShops.length
                                   ? AspectRatio(
-                                      aspectRatio: isDesktop ? 0.85 : 0.70,
+                                      aspectRatio: isDesktop ? 0.75 : 0.70,
                                       child: _ShopCard(
                                         shop: rowShops[c],
                                         onTap: () => _openShopProfile(rowShops[c]),
@@ -2727,11 +2730,14 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
     if (_slides.isEmpty) {
       return const SizedBox.shrink();
     }
+    
+    final bool isDesktop = MediaQuery.of(context).size.width > 900;
+    
     return Column(
       children: [
         const SizedBox(height: 8),
         Container(
-          height: 135,
+          height: isDesktop ? 220 : 135,
           margin: const EdgeInsets.symmetric(horizontal: 20),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(18),

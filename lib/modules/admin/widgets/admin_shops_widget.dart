@@ -148,22 +148,55 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
   Future<List<Map<String, dynamic>>> _buildQuery() async {
     var query = Supabase.instance.client
         .from('shops')
-        .select('*, users!inner(email, is_active, id)');
+        .select('*');
 
     if (_selectedPlan != 'all') {
       query = query.filter('subscription->>plano', 'eq', _selectedPlan);
     }
-    
-    if (_showBlocked) {
-      query = query.eq('users.is_active', false);
-    }
-
-    if (_searchQuery.isNotEmpty) {
-      query = query.or('name.ilike.%$_searchQuery%,slug.ilike.%$_searchQuery%,users.email.ilike.%$_searchQuery%');
-    }
 
     final response = await query.order('name');
-    return List<Map<String, dynamic>>.from(response);
+    final shopsList = List<Map<String, dynamic>>.from(response);
+
+    if (shopsList.isNotEmpty) {
+      final shopIds = shopsList.map((s) => s['id']).toList();
+      var usersQuery = Supabase.instance.client
+          .from('users')
+          .select('id, email, is_active, shop_id')
+          .inFilter('shop_id', shopIds)
+          .eq('tipo', 'dono');
+          
+      final usersResponse = await usersQuery;
+      final usersList = List<Map<String, dynamic>>.from(usersResponse);
+
+      for (var shop in shopsList) {
+        // Encontra o dono ou um admin
+        final owner = usersList.where((u) => u['shop_id'] == shop['id']).firstOrNull;
+        shop['users'] = owner;
+      }
+      
+      shopsList.removeWhere((shop) {
+        final owner = shop['users'];
+        
+        if (_showBlocked && (owner == null || owner['is_active'] != false)) {
+          return true;
+        }
+        
+        if (_searchQuery.isNotEmpty) {
+          final queryLower = _searchQuery.toLowerCase();
+          final nameMatch = (shop['name'] ?? '').toString().toLowerCase().contains(queryLower);
+          final slugMatch = (shop['slug'] ?? '').toString().toLowerCase().contains(queryLower);
+          final emailMatch = owner != null && (owner['email'] ?? '').toString().toLowerCase().contains(queryLower);
+          
+          if (!nameMatch && !slugMatch && !emailMatch) {
+            return true;
+          }
+        }
+        
+        return false;
+      });
+    }
+
+    return shopsList;
   }
 
   Widget _buildPlanChip(String plan) {

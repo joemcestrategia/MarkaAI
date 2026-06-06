@@ -14,6 +14,7 @@ class CheckoutReviewPage extends StatefulWidget {
   final String shopId;
   final String orderId;
   final bool showProfessional;
+  final Map<String, dynamic>? selectedVariation;
 
   const CheckoutReviewPage({
     super.key,
@@ -25,6 +26,7 @@ class CheckoutReviewPage extends StatefulWidget {
     required this.shopId,
     required this.orderId,
     this.showProfessional = true,
+    this.selectedVariation,
   });
 
   @override
@@ -82,6 +84,10 @@ class _CheckoutReviewPageState extends State<CheckoutReviewPage> {
       int.parse(widget.time.split(':')[1]),
     );
 
+    final int durationMin =
+        int.tryParse(widget.serviceDoc['duration_min']?.toString() ?? '30') ?? 30;
+    final DateTime endDate = bookingDate.add(Duration(minutes: durationMin));
+
     // Fetch user profile for phone and photo
     String clientName = user.userMetadata?['full_name']?.toString().trim().isNotEmpty == true
         ? user.userMetadata!['full_name'].toString().trim()
@@ -116,14 +122,20 @@ class _CheckoutReviewPageState extends State<CheckoutReviewPage> {
       'client_phone': clientPhone,
       'client_photo': clientPhoto,
       'service_id': widget.serviceDoc['id'],
-      'service_name': widget.serviceDoc['name'] ?? 'Serviço',
+      'service_name': widget.selectedVariation != null
+          ? '${widget.serviceDoc['name'] ?? 'Serviço'} (${widget.selectedVariation!['name']})'
+          : widget.serviceDoc['name'] ?? 'Serviço',
       'professional_id': widget.professionalDoc['id'],
-      'professional_name': widget.professionalDoc['name'] ?? 'Profissional',
+      'professional_name': widget.professionalDoc['name'] ??
+          widget.professionalDoc['nome'] ??
+          'Profissional',
       'scheduled_at': bookingDate.toIso8601String(),
       'status': 'confirmado',
       'payment_method': 'Cartão de Crédito',
       'total_price': widget.paymentData['valor'],
       'total_value': widget.paymentData['valor'],
+      'duration_min': durationMin,
+      'end_at': endDate.toIso8601String(),
       'metadata': {'payment_id': paymentId},
     });
 

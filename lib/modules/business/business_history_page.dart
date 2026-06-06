@@ -49,6 +49,7 @@ class _BusinessHistoryPageState extends State<BusinessHistoryPage> {
         .from('appointments')
         .select('*, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name')
         .eq('shop_id', widget.shopId)
+        .neq('status', 'pre_reserva')
         .gte('created_at', limitDate.toUtc().toIso8601String())
         .order('created_at', ascending: false)
         .limit(300);

@@ -19,16 +19,23 @@ import 'package:markaai/modules/admin/admin_setup_page.dart';
 import 'package:markaai/core/services/session_service.dart';
 import 'package:markaai/core/services/auth_service.dart';
 import 'package:markaai/core/widgets/splash_loading_widget.dart';
+import 'package:markaai/core/services/plan_features_service.dart';
 
 class AppRouter {
   static Route<dynamic> generateRoute(RouteSettings settings) {
     // 1. Determinar o caminho (path) real. No Web, Uri.base é mais confiável para deep links iniciais.
     String pathName = settings.name ?? '/';
 
+    // Correção para Windows Desktop: às vezes o Flutter passa o caminho do executável/diretório como rota inicial
+    if (!kIsWeb && (pathName.contains(':\\') || pathName.contains(':/') || pathName.startsWith('/C:'))) {
+      debugPrint('AppRouter: Caminho de sistema Windows detectado ("$pathName"). Resetando para "/".');
+      pathName = '/';
+    }
+
     debugPrint('AppRouter: settings.name = "$pathName"');
 
     // Correção para Cold Boot no Web: se o path for '/', verificamos a URL real do browser
-    if (pathName == '/') {
+    if (kIsWeb && pathName == '/') {
       final browserPath = Uri.base.path;
       debugPrint(
           'AppRouter: Web cold-boot detectado. Uri.base.path = "$browserPath"');
@@ -450,6 +457,12 @@ class _AuthRedirectState extends State<AuthRedirect> {
             ? (doc['shop_id']?.toString() ?? widget.user.id)
             : null,
       );
+
+      // Pré-aquece o stream de features do plano para evitar loading nas telas seguintes
+      final preloadShopId = doc['shop_id']?.toString() ?? widget.user.id;
+      if (tipo == 'dono' || tipo == 'business' || tipo == 'admin') {
+        PlanFeaturesService.streamFeaturesByShopId(preloadShopId).listen((_) {});
+      }
 
       if (!mounted) return;
 

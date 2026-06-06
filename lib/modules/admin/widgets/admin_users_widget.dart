@@ -265,6 +265,9 @@ class _AdminUsersWidgetState extends State<AdminUsersWidget> {
                     items: const [
                       DropdownMenuItem(value: 'cliente', child: Text('Cliente')),
                       DropdownMenuItem(value: 'dono', child: Text('Dono de Negócio')),
+                      DropdownMenuItem(value: 'admin', child: Text('Administrador')),
+                      DropdownMenuItem(value: 'business', child: Text('Business')),
+                      DropdownMenuItem(value: 'funcionario', child: Text('Funcionário')),
                     ],
                     onChanged: (val) => setModalState(() => currentTipo = val),
                   ),

@@ -138,7 +138,7 @@ class SubscriptionService {
         if (endStr != null) {
           final end = DateTime.parse(endStr);
           if (end.isAfter(DateTime.now())) {
-            return _parsePlanId(sub['plan_id'] as String?);
+            return _parsePlanId(_readPlanKey(sub));
           } else {
             await TrialService.checkAndDeactivateExpiredTrial();
           }
@@ -159,7 +159,7 @@ class SubscriptionService {
         }
 
         if (sub['status'] == 'active') {
-          return _parsePlanId(sub['plan_id'] as String?);
+          return _parsePlanId(_readPlanKey(sub));
         }
         
         if (sub['status'] == 'canceled' || sub['status'] == 'cancelled') {
@@ -167,7 +167,7 @@ class SubscriptionService {
            if (accessUntilStr != null) {
              final accessUntil = DateTime.parse(accessUntilStr);
              if (accessUntil.isAfter(DateTime.now())) {
-               return _parsePlanId(sub['plan_id'] as String?);
+               return _parsePlanId(_readPlanKey(sub));
              }
            }
         }
@@ -184,6 +184,10 @@ class SubscriptionService {
       debugPrint("getCurrentPlan error: $e");
       return SubscriptionPlan.free;
     }
+  }
+
+  static String? _readPlanKey(Map<String, dynamic> sub) {
+    return sub['plan_id'] as String? ?? sub['plano'] as String?;
   }
 
   static SubscriptionPlan _parsePlanId(String? id) {
@@ -278,7 +282,7 @@ class SubscriptionService {
         if (endStr != null) {
           final end = DateTime.parse(endStr);
           if (end.isAfter(DateTime.now())) {
-            return _parsePlanId(sub['plan_id'] as String?);
+            return _parsePlanId(_readPlanKey(sub));
           } else {
             await TrialService.checkAndDeactivateExpiredTrial();
           }
@@ -304,12 +308,12 @@ class SubscriptionService {
           if (accessUntilStr != null) {
             final accessUntil = DateTime.parse(accessUntilStr);
             if (accessUntil.isAfter(DateTime.now())) {
-              return _parsePlanId(sub['plan_id'] as String?);
+              return _parsePlanId(_readPlanKey(sub));
             }
           }
         } else {
           // Ativa ou outros status que concedem plano
-          final planFromSub = _parsePlanId(sub['plan_id'] as String?);
+          final planFromSub = _parsePlanId(_readPlanKey(sub));
           if (planFromSub != SubscriptionPlan.free) return planFromSub;
         }
       }

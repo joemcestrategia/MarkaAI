@@ -4,6 +4,7 @@ import '../../core/theme/app_colors.dart';
 import '../schedule/booking_page.dart';
 import 'edit_appointment_confirm_page.dart';
 import 'owner_calendar_picker.dart';
+import '../../core/utils/work_schedule.dart';
 
 /// Tela de seleção de data no modo de edição do dono.
 /// Usa [OwnerCalendarPicker] que marca dias completamente ocupados com cinza + risco.
@@ -64,15 +65,20 @@ class _EditAppointmentDatePageState extends State<EditAppointmentDatePage> {
   Widget build(BuildContext context) {
     final svcName = widget.serviceDoc['nome'] ?? 'Serviço';
     final profData = widget.professionalDoc;
-    final List<dynamic> rawWorkDays =
-        profData['dias_trabalho'] ?? [1, 2, 3, 4, 5, 6];
-    final List<int> workDays =
-        rawWorkDays.map((e) => int.parse(e.toString())).toList();
+    final ws = WorkSchedule.fromEmployeeRow(profData);
+    final List<int> workDays = ws.workDays.isNotEmpty
+        ? ws.workDays
+        : ((profData['work_days'] ?? profData['dias_trabalho'] ?? [1, 2, 3, 4, 5, 6])
+                as List)
+            .map((e) => int.parse(e.toString()))
+            .toList();
     final svcData = widget.serviceDoc;
     final int serviceDuration =
         int.tryParse(svcData['tempo_min']?.toString() ?? '') ?? 30;
-    final String profStart = profData['work_start'] ?? profData['start_time'] ?? '08:00';
-    final String profEnd = profData['work_end'] ?? profData['end_time'] ?? '18:00';
+    final String profStart =
+        profData['work_start'] ?? profData['start_time'] ?? '08:00';
+    final String profEnd =
+        profData['work_end'] ?? profData['end_time'] ?? '18:00';
 
     final today = DateTime.now();
     final firstDate = DateTime(today.year, today.month, today.day);
@@ -176,6 +182,7 @@ class _EditAppointmentDatePageState extends State<EditAppointmentDatePage> {
                         serviceDurationMinutes: serviceDuration,
                         profStartTime: profStart,
                         profEndTime: profEnd,
+                        professionalDoc: profData,
                         excludeAppointmentId: widget.appointmentDoc['id'],
                         onDateSelected: (d) =>
                             setState(() => _selectedDate = d),

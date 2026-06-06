@@ -1,5 +1,7 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:windows_single_instance/windows_single_instance.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'core/utils/url_strategy_stub.dart'
@@ -19,7 +21,7 @@ import 'core/services/session_service.dart';
 import 'core/services/shop_data_cache_service.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 
-void main() async {
+void main(List<String> args) async {
   try {
     WidgetsFlutterBinding.ensureInitialized();
     print("=== BOOT STEP 0: v2 - FlutterBinding Inicializado ===");
@@ -43,19 +45,70 @@ void main() async {
 
     // 1.5 Inicializar Deep Links (OAuth Callback)
     print("=== BOOT STEP 1.5: Configurando Deep Links ===");
-    if (!kIsWeb) {
+
+    // Função auxiliar centralizada para processar o link e fazer login
+    Future<void> handleAuthLink(Uri uri) async {
+      final String uriString = uri.toString();
+      debugPrint("\n\n=== [DEEP LINK RECEBIDO] ===");
+      debugPrint("URL Completa: $uriString");
+
+      try {
+        if (uriString.contains('code=') || uriString.contains('access_token=') || uriString.contains('refresh_token=')) {
+          debugPrint("=== [DEEP LINK] Iniciando recuperação de sessão Supabase... ===");
+          await Supabase.instance.client.auth.getSessionFromUrl(uri);
+          debugPrint("=== [DEEP LINK] SUCESSO: Sessão recuperada! ===");
+        }
+      } catch (e) {
+        debugPrint("=== [DEEP LINK] ERRO ao processar link: $e ===");
+      }
+      debugPrint("==============================\n\n");
+    }
+
+    if (kIsWeb) {
+      // No Web o Supabase lida automaticamente com o fragmento da URL
+    } else if (Platform.isWindows) {
+      // --- LÓGICA SINGLE INSTANCE (WINDOWS) ---
+      await WindowsSingleInstance.ensureSingleInstance(
+        args,
+        "markaai_unique_instance_id",
+        onSecondWindow: (newArgs) async {
+          debugPrint("=== [SINGLE INSTANCE] Segunda janela detectada com args: $newArgs ===");
+          if (newArgs.isNotEmpty) {
+            final url = newArgs.first;
+            if (url.startsWith('markaai://')) {
+              await handleAuthLink(Uri.parse(url));
+            }
+          }
+        },
+      );
+
+      // Trata Cold Start no Windows (quando o app abre pelo link)
+      if (args.isNotEmpty) {
+        final url = args.first;
+        if (url.startsWith('markaai://')) {
+          debugPrint("=== [DEEP LINK] Windows Cold Start detectado ===");
+          await handleAuthLink(Uri.parse(url));
+        }
+      }
+    } else {
+      // --- LÓGICA MOBILE (ANDROID/IOS) ---
       final appLinks = AppLinks();
       
-      appLinks.getInitialLink().then((uri) async {
-        if (uri != null) {
-          debugPrint("=== INITIAL DEEP LINK: $uri ===");
-          await Supabase.instance.client.auth.getSessionFromUrl(uri);
+      // Captura URI que abriu o app (cold start mobile)
+      try {
+        final initialUri = await appLinks.getInitialLink();
+        if (initialUri != null) {
+          debugPrint("=== [DEEP LINK] Mobile Cold Start detectado ===");
+          await handleAuthLink(initialUri);
         }
-      });
+      } catch (e) {
+        debugPrint("=== [DEEP LINK] Erro ao obter link inicial mobile: $e ===");
+      }
 
+      // Captura URI com app já aberto (mobile stream)
       appLinks.uriLinkStream.listen((uri) async {
-        debugPrint("=== STREAM DEEP LINK RECEIVED: $uri ===");
-        await Supabase.instance.client.auth.getSessionFromUrl(uri);
+        debugPrint("=== [DEEP LINK] Mobile recebeu link via stream ===");
+        await handleAuthLink(uri);
       });
     }
 
@@ -80,7 +133,7 @@ void main() async {
     configurePathUrlStrategy();
 
     // 4.5 Configurar tap em notificações nativas (Firebase Messaging)
-    if (!kIsWeb) {
+    if (!kIsWeb && defaultTargetPlatform != TargetPlatform.windows) {
       try {
         FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) async {
           debugPrint("=== ON MESSAGE OPENED APP (Notificação Clicada) ===");
@@ -161,7 +214,7 @@ void main() async {
     runApp(const MarkaAIApp());
 
     // 5–7. Init pesados rodam em background (não bloqueiam a splash)
-    if (!kIsWeb) {
+    if (!kIsWeb && defaultTargetPlatform != TargetPlatform.windows) {
       // Stripe applySettings
       Stripe.instance.applySettings().catchError((e) {
         print("=== BOOT BG: Stripe applySettings falhou = $e ===");

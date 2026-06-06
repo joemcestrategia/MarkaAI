@@ -25,6 +25,7 @@ import '../../core/services/plan_features_service.dart';
 import '../../widgets/upgrade_modal.dart';
 import '../../core/services/session_service.dart';
 import '../../core/services/shop_data_cache_service.dart';
+import '../../core/services/mercado_pago_service.dart';
 import '../login/login_page.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -50,6 +51,7 @@ import 'holidays_page.dart';
 // import '../clients/client_affiliate_page.dart'; // Removido: sistema de afiliados desativado
 import '../fiscal/nfse_dashboard_screen.dart';
 import '../../features/commissions/commission_management_page.dart';
+import 'products/manage_products_page.dart';
 
 class BusinessHomePage extends StatefulWidget {
   const BusinessHomePage({super.key});
@@ -84,6 +86,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   List<int> _restrictedIndices = [];
   List<int> _hiddenIndices = []; // Indices que nem aparecem no menu
   bool _canViewCommissions = false;
+  double? _mpBalance;
+  double? _valoresReceber;
 
   SubscriptionPlan _currentPlanCode = SubscriptionPlan.free;
   bool _isTrial = false;
@@ -226,6 +230,23 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           if (shopData != null) {
             _updateFeaturesFromData(shopData);
           }
+          // Garante features frescas (bypass cache stale de plano)
+          if (currentShopId.isNotEmpty) {
+            PlanFeaturesService.loadFeaturesByShopId(currentShopId).then((f) {
+              if (mounted) {
+                setState(() {
+                  _currentFeatures = f;
+                  _restrictedIndices = [];
+                  if (!_currentFeatures.stockManagement) _restrictedIndices.add(7);
+                  if (!_currentFeatures.financialTab) _restrictedIndices.add(5);
+                  if (!_currentFeatures.automaticPriceAdjustment) _restrictedIndices.add(9);
+                  _canViewCommissions = _currentFeatures.commissionView;
+                  if (!_canViewCommissions) _restrictedIndices.add(13);
+                  if (!_currentFeatures.holidaysManagement) _restrictedIndices.add(11);
+                });
+              }
+            });
+          }
           
           // Check admin status across different possible schemas
           final roles = userData['roles'] as List?;
@@ -238,6 +259,11 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                        
           _isLoading = false;
         });
+
+        // Carrega saldo MercadoPago se conectado
+        if ((shopData?['mercadopago'] as Map<String, dynamic>?)?.isNotEmpty == true) {
+          _loadMpBalance();
+        }
 
         // Inicia canal Realtime para invalidar o dashboard automaticamente
         _startAppointmentsRealtime();
@@ -432,6 +458,32 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
   void _showUpgradeDialog(String feature) {
     UpgradeModal.show(context, featureName: feature, requiredPlan: 'Plus');
+  }
+
+  Future<void> _loadMpBalance() async {
+    try {
+      final balanceData = await MercadoPagoService.getSaldo(shopId!);
+      if (balanceData != null && mounted) {
+        setState(() => _mpBalance = (balanceData['available_balance'] as num?)?.toDouble());
+      }
+    } catch (_) {}
+
+
+    // Valores a receber: soma de agendamentos pendentes com pagamento
+    try {
+      final pendentes = await sb.Supabase.instance.client
+          .from('appointments')
+          .select('total_price')
+          .eq('shop_id', shopId!)
+          .eq('status', 'pendente');
+      double total = 0;
+      for (final a in pendentes) {
+        total += (a['total_price'] as num?)?.toDouble() ?? 0;
+      }
+      if (mounted && total > 0) {
+        setState(() => _valoresReceber = total);
+      }
+    } catch (_) {}
   }
 
   void _confirmLogout() {
@@ -665,6 +717,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       case 11: return HolidaysPage(shopId: shopId ?? "");
       case 12: return const NfseDashboardScreen();
       case 13: return CommissionManagementPage(shopId: shopId ?? "", showAppBar: isDesktop);
+      case 14: return ManageProductsPage(shopId: shopId ?? "");
       default: return _buildHomeDashboard(isDesktop: isDesktop);
     }
   }
@@ -731,6 +784,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 _buildDesktopMenuItem(6, Icons.people_outline, "Equipe"),
                 _buildDesktopMenuItem(
                     4, Icons.groups_rounded, "Clientes"),
+                _buildDesktopMenuItem(14, Icons.inventory_2_outlined, "Produtos"),
                 _buildDesktopMenuItem(7, Icons.inventory_2_outlined, "Estoque"),
                 
                 _buildDesktopMenuItem(
@@ -1080,6 +1134,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                         _buildTabletNavIcon(6, Icons.people_outline, "Equipe"),
                         _buildTabletNavIcon(4, Icons.groups_rounded, "Clientes"),
                         _buildTabletNavIcon(3, Icons.design_services_rounded, "Serviços"),
+                        _buildTabletNavIcon(14, Icons.inventory_2_outlined, "Produtos"),
                         _buildTabletNavIcon(5, Icons.account_balance_wallet_rounded, "Financeiro"),
                         _buildTabletNavIcon(7, Icons.inventory_2_outlined, "Estoque"),
                         _buildTabletNavIcon(8, Icons.settings, "Config"),
@@ -1282,6 +1337,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       0,
       1,
       3,
+      14,
       8
     ]; // Index 8 is Settings (BusinessSettingsPage). Histórico e Clientes estão no menu lateral.
     int currentBottomIndex = mainItems.contains(_selectedIndex)
@@ -1324,6 +1380,10 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         BottomNavigationBarItem(
           icon: Icon(Icons.design_services, size: 24),
           label: "Serviços",
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.inventory_2_outlined, size: 24),
+          label: "Produtos",
         ),
         BottomNavigationBarItem(
           icon: Icon(Icons.settings, size: 24),
@@ -1724,6 +1784,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           .from('appointments')
           .select('id, scheduled_at, status, client_name, service_name, total_payable, total_price, total_value, valor_com_desconto, labor_value, discount_amount, birthday_discount_applied, birthday_discount_percent, coupon_applied, coupon_discount_percent')
           .eq('shop_id', shopId!)
+          .neq('status', 'pre_reserva')
           .gte('scheduled_at', start.toIso8601String())
           .lte('scheduled_at', end.toIso8601String())
           .order('scheduled_at', ascending: true);
@@ -1742,6 +1803,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           .from('appointments')
           .select('professional_id, status, total_payable, total_price, total_value, valor_com_desconto, labor_value, discount_amount, birthday_discount_applied, birthday_discount_percent, coupon_applied, coupon_discount_percent')
           .eq('shop_id', shopId!)
+          .neq('status', 'pre_reserva')
           .gte('scheduled_at', startData.toIso8601String())
           .lte('scheduled_at', endData.toIso8601String());
       return List<Map<String, dynamic>>.from(result);
@@ -1759,6 +1821,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           .from('appointments')
           .select('scheduled_at, status, total_payable, total_price, total_value, valor_com_desconto, labor_value, discount_amount, birthday_discount_applied, birthday_discount_percent, coupon_applied, coupon_discount_percent')
           .eq('shop_id', shopId!)
+          .neq('status', 'pre_reserva')
           .gte('scheduled_at', startData.toIso8601String())
           .lte('scheduled_at', endData.toIso8601String());
       return List<Map<String, dynamic>>.from(result);
@@ -2067,6 +2130,11 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           ),
           const SizedBox(height: 20),
         ],
+        if (_mpBalance != null || _valoresReceber != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 20),
+            child: _buildMpBalanceCard(),
+          ),
         if (_currentFeatures.financialTab)
           Expanded(
             child: Row(
@@ -2307,6 +2375,12 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 ],
 
                 const SizedBox(height: 12),
+
+                if (_mpBalance != null || _valoresReceber != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: _buildMpBalanceCard(),
+                  ),
 
                 if (_currentFeatures.financialTab) ...[
                   /* Composição de Faturamento removida a pedido do usuário */
@@ -2855,6 +2929,29 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     );
   }
 
+  Widget _buildMpBalanceCard() {
+    final children = <Widget>[];
+    if (_mpBalance != null) {
+      children.add(_buildMetricCard(
+        "Saldo MP",
+        _mpBalance!,
+        Icons.account_balance_wallet,
+        Colors.blue.shade700,
+      ));
+    }
+    if (_valoresReceber != null) {
+      if (children.isNotEmpty) children.add(const SizedBox(width: 16));
+      children.add(_buildMetricCard(
+        "A Receber",
+        _valoresReceber!,
+        Icons.pending_actions,
+        Colors.orange.shade700,
+      ));
+    }
+    if (children.isEmpty) return const SizedBox.shrink();
+    return Row(children: children.map((c) => Expanded(child: c)).toList());
+  }
+
   Widget _buildMetricCard(
     String title,
     double value,
@@ -3075,6 +3172,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           .from('appointments')
           .select('client_id')
           .eq('shop_id', shopId!)
+          .neq('status', 'pre_reserva')
           .limit(200);
       
       final clientIds = (appts as List)

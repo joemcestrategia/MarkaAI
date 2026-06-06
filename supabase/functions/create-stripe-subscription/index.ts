@@ -82,7 +82,8 @@ serve(async (req: Request) => {
       payment_settings: { save_default_payment_method: 'on_subscription' },
       expand: ['latest_invoice.payment_intent'],
       metadata: { 
-        store_id: shop_id,
+        shop_id: shop_id,
+        plan_id: plan_id,
       },
     }
 

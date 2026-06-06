@@ -1,6 +1,7 @@
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
 import { corsHeaders } from '../_shared/cors.ts'
 import { createSupabaseClient, createSupabaseAdminClient } from '../_shared/supabase.ts'
+import { parseWorkSchedule, jsDowToDartWeekday, hhmmToMin } from '../_shared/workSchedule.ts'
 
 // ── Push helpers ──────────────────────────────────────────────────────────────
 
@@ -190,30 +191,28 @@ serve(async (req) => {
     // 3. Validação de Disponibilidade (Reaproveitando lógica de checkAvailability)
     const [{ data: shop }, { data: prof }] = await Promise.all([
       supabaseAdmin.from('shops').select('config, configured_holidays, pending_holidays').eq('id', shopId).maybeSingle(),
-      supabaseAdmin.from('employees').select('work_start, work_end, work_days').eq('id', professionalId).maybeSingle()
+      supabaseAdmin.from('employees').select('work_start, work_end, start_time, end_time, work_days, work_schedule').eq('id', professionalId).maybeSingle()
     ])
 
     if (!prof) throw new Error('Profissional não encontrado')
     const config = shop?.config || {}
 
-    // Validação de horário de expediente, feriados, etc.
-    const dayOfWeek = reqStart.getDay()
-    const dartWeekday = dayOfWeek === 0 ? 7 : dayOfWeek
-    // fix: bloquear dias sem equipe ativa para qualquer estabelecimento
-    // work_days NULL ou vazio → profissional sem dias configurados → rejeitar
-    const workDays = Array.isArray(prof.work_days) ? prof.work_days.map(Number) : []
-    if (workDays.length === 0) {
+    // Validação de horário de expediente (per-day schedule + pausa).
+    const dartWeekday = jsDowToDartWeekday(reqStart.getDay())
+    const schedule = parseWorkSchedule(prof as Record<string, unknown>)
+    if (schedule.size === 0) {
       return new Response(JSON.stringify({ error: 'Profissional sem dias de trabalho configurados' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
-    if (!workDays.includes(dartWeekday)) {
+    const dayCfg = schedule.get(dartWeekday)
+    if (!dayCfg) {
       return new Response(JSON.stringify({ error: 'Profissional não trabalha neste dia' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 
-    const startStr = prof.work_start || "08:00"
-    const endStr = prof.work_end || "18:00"
+    const startStr = dayCfg.start
+    const endStr = dayCfg.end
     const [startH, startM] = startStr.split(':').map(Number)
     const [endH, endM] = endStr.split(':').map(Number)
-    
+
     const dayStart = new Date(reqStart)
     dayStart.setHours(startH, startM, 0, 0)
     const dayEnd = new Date(reqStart)
@@ -221,6 +220,18 @@ serve(async (req) => {
 
     if (reqStart < dayStart || reqEnd > dayEnd) {
       return new Response(JSON.stringify({ error: 'Fora do horário de expediente do profissional' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    }
+
+    if (dayCfg.break) {
+      const reqStartMin = reqStart.getHours() * 60 + reqStart.getMinutes()
+      const reqEndMin = reqStartMin + duration
+      const brStart = hhmmToMin(dayCfg.break.start)
+      const brEnd = hhmmToMin(dayCfg.break.end)
+      if (reqStartMin < brEnd && reqEndMin > brStart) {
+        return new Response(JSON.stringify({
+          error: `Conflito com a pausa do profissional (${dayCfg.break.start}–${dayCfg.break.end})`
+        }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+      }
     }
 
     // 4. Verificar conflitos EXCLUINDO o agendamento atual

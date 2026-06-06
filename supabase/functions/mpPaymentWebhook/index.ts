@@ -205,13 +205,29 @@ Deno.serve(async (req: Request) => {
     const totalPayable = currentAppt?.total_payable ?? paidAmount
     const remainingAmount = Math.max(0, totalPayable - paidAmount)
 
+    const paymentTypeId = paymentData.payment_type_id?.toString()?.toLowerCase() || ''
+    const paymentMethodId = paymentData.payment_method_id?.toString()?.toLowerCase() || ''
+
+    let realPaymentMethod = 'Pix' // fallback default
+    if (paymentTypeId === 'credit_card') {
+      realPaymentMethod = 'Cartão de Crédito'
+    } else if (paymentTypeId === 'debit_card') {
+      realPaymentMethod = 'Cartão de Débito'
+    } else if (paymentMethodId === 'pix' || paymentTypeId === 'bank_transfer') {
+      realPaymentMethod = 'Pix'
+    } else if (paymentTypeId === 'ticket') {
+      realPaymentMethod = 'Boleto'
+    } else if (paymentTypeId === 'account_money') {
+      realPaymentMethod = 'Saldo Mercado Pago'
+    }
+
     const { error: updateError } = await supabase
       .from('appointments')
       .update({
         status: 'confirmado',
         payment_status: 'pago',
         payment_id: paymentId,
-        payment_method: 'Pix',
+        payment_method: realPaymentMethod,
         paid_amount: paidAmount,
         remaining_amount: remainingAmount,
         updated_at: new Date().toISOString(),
@@ -227,6 +243,30 @@ Deno.serve(async (req: Request) => {
     }
 
     console.log(`[mpPaymentWebhook] ✅ Agendamento ${appointmentId} confirmado via webhook (payment ${paymentId})`)
+
+    // ── Auto-emissão NFS-e (fire-and-forget) ──────────────────────────────
+    // Verifica se a loja tem emissão automática ativa para pagamentos online.
+    // Nunca bloqueia o webhook — qualquer falha é silenciada.
+    try {
+      const { data: nfseCfg } = await supabase
+        .from('nfse_config')
+        .select('id, ativo, emitir_automatico_cartao')
+        .eq('shop_id', shopId)
+        .eq('ativo', true)
+        .maybeSingle()
+
+      if (nfseCfg?.emitir_automatico_cartao === true) {
+        supabase.functions.invoke('emitir-nfse', {
+          body: { appointment_id: appointmentId, shop_id: shopId }
+        }).catch((e: any) => {
+          console.warn('[mpPaymentWebhook] Auto-emissão NFS-e falhou silenciosamente:', e?.message)
+        })
+        console.log(`[mpPaymentWebhook] 🧾 Auto-emissão NFS-e disparada para agendamento ${appointmentId}`)
+      }
+    } catch (nfseErr: any) {
+      console.warn('[mpPaymentWebhook] Erro ao verificar config NFS-e (ignorado):', nfseErr?.message)
+    }
+    // ── Fim Auto-emissão NFS-e ─────────────────────────────────────────────
 
     return new Response(JSON.stringify({ ok: true, appointment_id: appointmentId }), {
       status: 200,
