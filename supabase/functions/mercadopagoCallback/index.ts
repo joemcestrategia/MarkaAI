@@ -32,8 +32,11 @@ Deno.serve(async (req: Request) => {
     return Response.redirect(appError('Inicie o processo pelo aplicativo MarkaAI.'), 302)
   }
 
-  const clientId = Deno.env.get('MP_CLIENT_ID') || '8404269586602737'
-  const clientSecret = Deno.env.get('MP_CLIENT_SECRET') || 'D1NjvPjNYSyUjWMfngTDsO0PDy0DaghB'
+  const clientId = Deno.env.get('MP_CLIENT_ID')
+  const clientSecret = Deno.env.get('MP_CLIENT_SECRET')
+  if (!clientId || !clientSecret) {
+    return Response.redirect(appError('Configuração do Mercado Pago ausente.'), 302)
+  }
   const redirectUri = `${Deno.env.get('SUPABASE_URL')}/functions/v1/mercadopagoCallback`
 
   try {

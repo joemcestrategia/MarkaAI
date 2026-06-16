@@ -1,0 +1,12 @@
+class ApiKeys {
+  // Substitua com suas chaves reais. NUNCA comite este arquivo com chaves reais.
+  static const String geminiApiKey = 'SUA_CHAVE_GEMINI_AQUI';
+  static const String mapsApiKey = 'SUA_CHAVE_MAPS_AQUI';
+  
+  // Supabase
+  static const String supabaseUrl = 'https://SEU_PROJETO.supabase.co';
+  static const String supabaseAnonKey = 'SUA_ANON_KEY_AQUI';
+  
+  // Stripe
+  static const String stripePublishableKey = 'SUA_STRIPE_PUBLISHABLE_KEY_AQUI';
+}

@@ -52,3 +52,6 @@ functions/.env
 android/key.properties
 .env.tokens
 tmp/
+
+# API Keys — NEVER commit real keys
+lib/core/constants/api_keys.dart
