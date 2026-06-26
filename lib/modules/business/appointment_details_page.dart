@@ -9,6 +9,7 @@ import 'transaction_details_page.dart';
 import '../../core/services/mercado_pago_service.dart';
 import '../fiscal/nfse_service.dart';
 import '../../core/services/plan_features_service.dart';
+import 'package:flutter/services.dart';
 
 class AppointmentDetailsPage extends StatefulWidget {
   final Map<String, dynamic> appointmentDoc;
@@ -321,15 +322,6 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     }
   }
 
-  String _formatBirthDate(String isoString) {
-    try {
-      final date = DateTime.parse(isoString);
-      return DateFormat('dd/MM/yyyy').format(date);
-    } catch (_) {
-      return isoString;
-    }
-  }
-
   Future<void> _fetchProfessionalName(String shopId) async {
     try {
       final doc = await Supabase.instance.client
@@ -467,6 +459,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
       final snapProf = await Supabase.instance.client
           .from('appointments')
           .select()
+          .eq('shop_id', widget.appointmentDoc['shop_id'] ?? widget.appointmentDoc['shopId'])
           .eq('professional_id', _selectedProfessionalId!)
           .gte('scheduled_at', dayStart.toIso8601String())
           .lte('scheduled_at', dayEnd.toIso8601String());
@@ -558,6 +551,21 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
       final double savedPrice = _selectedPrice ??
           double.tryParse(_priceController.text.replaceAll(',', '.')) ??
           0.0;
+
+      // Recalcular desconto se aplicável
+      double currentDiscount = _discountAmount;
+      if (_isBirthdayDiscountApplied) {
+         currentDiscount = savedPrice * (_shopBirthdayDiscount / 100.0);
+      } else if (_isCouponApplied && _localDoc['coupon_discount_percent'] != null) {
+         final pct = double.tryParse(_localDoc['coupon_discount_percent'].toString()) ?? 0;
+         currentDiscount = savedPrice * (pct / 100.0);
+      }
+      final double totalWithDiscount = savedPrice - currentDiscount;
+      
+      // Obter o valor já pago para calcular o restante a pagar atualizado
+      final double paidAmount = double.tryParse(_localDoc['paid_amount']?.toString() ?? '0') ?? 0.0;
+      final double remainingAmount = totalWithDiscount - paidAmount;
+
       final Map<String, dynamic> updateData = {
         'client_id': _selectedClientId,
         'client_name': _selectedClientName,
@@ -572,6 +580,9 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
         'price': savedPrice,
         'total_value': savedPrice,
         'valor_total': savedPrice,
+        'total_payable': totalWithDiscount,
+        'valor_com_desconto': totalWithDiscount,
+        'remaining_amount': remainingAmount > 0 ? remainingAmount : 0.0,
         'duration_min': _selectedServiceDuration ?? 30,
         'payment_method': _selectedPaymentMethod,
         'updated_at': DateTime.now().toIso8601String(),
@@ -1293,12 +1304,27 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
       child: Column(
         children: [
           // Título menor e com menos espaço
-          const Text("RESUMO FINANCEIRO",
-              style: TextStyle(
-                  color: Colors.grey,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 1.0,
-                  fontSize: 9)),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text("RESUMO FINANCEIRO",
+                  style: TextStyle(
+                      color: Colors.grey,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.0,
+                      fontSize: 9)),
+              if (data['payment_id'] != null && data['payment_id'].toString().isNotEmpty) ...[
+                const SizedBox(width: 8),
+                InkWell(
+                  onTap: () {
+                    Clipboard.setData(ClipboardData(text: data['payment_id'].toString()));
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("ID copiado!")));
+                  },
+                  child: const Icon(Icons.copy, size: 10, color: AppColors.primaryPurple),
+                ),
+              ],
+            ],
+          ),
           const SizedBox(height: 5),
 
           // Valor total menor (28 -> 24)
@@ -1321,14 +1347,17 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
                   double finalDiscount = 0;
                   if (descontoGravado > 0.01) {
                     finalDiscount = descontoGravado;
-                  } else if (valorCDesc > 0 && originalPrice > 0 && valorCDesc < originalPrice - 0.01) {
-                    finalDiscount = originalPrice - valorCDesc;
                   } else if (isBirthday && originalPrice > 0) {
                     final pct = double.tryParse(data['birthday_discount_percent']?.toString() ?? '0') ?? 0;
                     if (pct > 0) finalDiscount = originalPrice * pct / 100;
                   } else if (isCoupon && originalPrice > 0) {
                     final pct = double.tryParse(data['coupon_discount_percent']?.toString() ?? '0') ?? 0;
                     if (pct > 0) finalDiscount = originalPrice * pct / 100;
+                  } else if (valorCDesc > 0 && originalPrice > 0 && valorCDesc < originalPrice - 0.01) {
+                    final double possibleDiscount = originalPrice - valorCDesc;
+                    if ((possibleDiscount - pago).abs() > 0.01 && (possibleDiscount - restante).abs() > 0.01) {
+                      finalDiscount = possibleDiscount;
+                    }
                   }
 
                   final bool temDesconto = finalDiscount > 0.01 && originalPrice > 0.01;
@@ -1492,7 +1521,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
               Container(width: 1, height: 25, color: Colors.grey[300]),
               Expanded(
                   child: Column(children: [
-                Text("A RECEBER",
+                Text("A COBRAR",
                     style: TextStyle(
                         color: restante > 0.01 ? Colors.red : Colors.grey,
                         fontWeight: FontWeight.bold,
@@ -1507,8 +1536,110 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
             ],
           ),
 
-          // NOVO: Botão de verificar pagamento PIX manualmente
-          if (restante > 0.01 && data['payment_id'] != null && data['payment_id'].toString().isNotEmpty && (data['metodo_pagamento']?.toString().toLowerCase().contains('pix') ?? false)) ...[
+          // Data do pagamento
+          if (pago > 0.01) ...[
+            const SizedBox(height: 8),
+            Builder(builder: (context) {
+              final rawPagoEm = data['pago_em']?.toString() ?? data['paid_at']?.toString();
+              if (rawPagoEm == null || rawPagoEm.isEmpty) return const SizedBox.shrink();
+              String dataPagamento = rawPagoEm;
+              try {
+                final d = DateTime.parse(rawPagoEm);
+                dataPagamento = DateFormat('dd/MM/yyyy HH:mm').format(d);
+              } catch (_) {}
+              return Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.access_time, size: 12, color: Colors.grey),
+                  const SizedBox(width: 4),
+                  Text('Pago em $dataPagamento',
+                    style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                ],
+              );
+            }),
+          ],
+
+          // Indicador de Sinal/Adiantamento e Pagamento do Restante
+          Builder(builder: (context) {
+            final double valorSinal = double.tryParse(data['valor_sinal']?.toString() ?? "0") ?? 0.0;
+            final meta = data['metadata'] as Map<String, dynamic>? ?? {};
+            final bool isAdiantamento = valorSinal > 0.01 || (restante > 0.01 && pago > 0.01) || meta['advance_payment_id'] != null;
+            if (!isAdiantamento) return const SizedBox.shrink();
+            
+            return Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Column(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.money_off, size: 14, color: Colors.orange),
+                            const SizedBox(width: 6),
+                            const Text('1º PAGAMENTO (SINAL)', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.orange)),
+                          ],
+                        ),
+                        Text(valorSinal > 0.01 ? money(valorSinal) : 'Adiantamento Parcial', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.orange)),
+                      ],
+                    ),
+                  ),
+                  if (meta['completion_payment_id'] != null) ...[
+                    const SizedBox(height: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.check_circle, size: 14, color: Colors.green),
+                              const SizedBox(width: 6),
+                              const Text('2º PAGAMENTO (RESTANTE)', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.green)),
+                            ],
+                          ),
+                          Text(meta['completion_payment_method']?.toString().toUpperCase() ?? 'CONCLUÍDO', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.green)),
+                        ],
+                      ),
+                    ),
+                  ]
+                ],
+              ),
+            );
+          }),
+
+          // Indicador de desconto total
+          Builder(builder: (context) {
+            final double originalPrice = double.tryParse(data['total_price']?.toString() ?? '0') ?? 0;
+            final bool temDesconto = originalPrice > 0.01 && total < originalPrice - 0.01;
+            if (!temDesconto) return const SizedBox.shrink();
+            final double descValor = originalPrice - total;
+            
+            if ((descValor - pago).abs() < 0.01 || (descValor - restante).abs() < 0.01) {
+              return const SizedBox.shrink(); // Ignora se "economia" for idêntico ao sinal ou restante
+            }
+
+            return Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text('Economia de ${money(descValor)}',
+                style: const TextStyle(fontSize: 10, color: Colors.green, fontWeight: FontWeight.w600)),
+            );
+          }),
+
+          // Botão de verificar pagamento PIX manualmente
+          if (restante > 0.01 && data['payment_id'] != null && data['payment_id'].toString().isNotEmpty && (data['payment_method']?.toString().toLowerCase().contains('pix') ?? false)) ...[
             const SizedBox(height: 15),
             SizedBox(
               width: double.infinity,
@@ -1598,7 +1729,10 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
           ],
           
           // ✅ BOTÃO: VER DETALHES TÉCNICOS DA TRANSAÇÃO (NOVA PÁGINA)
-          if (data['metadata']?['payment_id'] != null || (data['payment_id'] != null && data['payment_id'].toString().isNotEmpty)) ...[
+          if ((data['metadata']?['payment_id'] != null) || 
+              (data['payment_id'] != null && data['payment_id'].toString().isNotEmpty) ||
+              (data['metadata']?['advance_payment_id'] != null) ||
+              (data['metadata']?['completion_payment_id'] != null)) ...[
             const SizedBox(height: 15),
             SizedBox(
               width: double.infinity,
@@ -1631,40 +1765,91 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
   }
 
   Future<void> _marcarComoPagoManual(double pago, double restante) async {
-    final confirm = await showDialog<bool>(
+    String? selectedMethod = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Marcar como Pago"),
-        content: const Text(
-            "Tem certeza que deseja marcar este agendamento como aprovado? O valor pendente será zerado e o status será alterado para confirmado."),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text("Cancelar", style: TextStyle(color: Colors.grey)),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
-            child: const Text("Confirmar"),
-          ),
-        ],
-      ),
+      builder: (ctx) {
+        String tempMethod = 'Dinheiro';
+        return StatefulBuilder(
+          builder: (context, setStateSB) {
+            return AlertDialog(
+              title: const Text("Marcar como Pago"),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text("Tem certeza que deseja marcar este agendamento como aprovado? O valor pendente será zerado e o status será alterado para confirmado."),
+                  const SizedBox(height: 16),
+                  const Text("Forma de Pagamento (Local):", style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  DropdownButton<String>(
+                    isExpanded: true,
+                    value: tempMethod,
+                    items: ['Dinheiro', 'Cartão de Crédito', 'Cartão de Débito', 'Pix']
+                        .map((m) => DropdownMenuItem(value: m, child: Text(m)))
+                        .toList(),
+                    onChanged: (v) {
+                      if (v != null) setStateSB(() => tempMethod = v);
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, null),
+                  child: const Text("Cancelar", style: TextStyle(color: Colors.grey)),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx, tempMethod),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
+                  child: const Text("Confirmar"),
+                ),
+              ],
+            );
+          }
+        );
+      },
     );
 
-    if (confirm != true) return;
+    if (selectedMethod == null) return;
 
     setState(() => _isLoading = true);
     try {
       final novoPago = pago + restante;
+      
+      final currentMeta = (_localDoc['metadata'] as Map<String, dynamic>?) ?? {};
+      final paymentId = currentMeta['payment_id'] ?? _localDoc['payment_id'];
+      
+      Map<String, dynamic> newMeta = Map.from(currentMeta);
+      
+      // Se pago > 0.01, quer dizer que de fato houve um adiantamento financeiro antes.
+      if (pago > 0.01) {
+        newMeta['advance_payment_id'] = currentMeta['advance_payment_id'] ?? paymentId;
+        newMeta['completion_payment_id'] = 'manual';
+        newMeta['completion_payment_method'] = selectedMethod;
+        newMeta['completion_paid_at'] = DateTime.now().toIso8601String();
+      }
+      
+      newMeta['valor_pago'] = novoPago;
+      newMeta['restante_a_pagar'] = 0;
+      
+      final Map<String, dynamic> updatePayload = {
+        'status': 'confirmado',
+        'paid_amount': novoPago,
+        'remaining_amount': 0,
+        'payment_method': selectedMethod,
+        'payment_status': 'pago',
+        'pago_em': DateTime.now().toIso8601String(),
+        'metadata': newMeta,
+      };
+      
+      if (pago <= 0.01) {
+        // Se foi um pagamento integral manual, sobrescrevemos o payment_id original
+        updatePayload['payment_id'] = 'manual';
+      }
+
       await Supabase.instance.client
           .from('appointments')
-          .update({
-            'status': 'confirmado',
-            'paid_amount': novoPago,
-            'remaining_amount': 0,
-            'payment_method': _selectedPaymentMethod ?? 'Manual',
-            'payment_status': 'pago',
-          })
+          .update(updatePayload)
           .eq('id', widget.appointmentDoc['id']);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

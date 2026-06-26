@@ -1,6 +1,43 @@
 import { createSupabaseAdminClient } from '../_shared/supabase.ts'
 
 /**
+ * Valida assinatura HMAC-SHA256 do Mercado Pago.
+ * Header: x-signature = "ts=<timestamp>,v1=<hex_hash>"
+ * O payload assinado é "ts<timestamp>.+raw_body" ou "data.id=...;request-id=...;ts=...;"
+ */
+async function verifyMPSignature(
+  rawBody: string,
+  signatureHeader: string | null,
+  secret: string,
+  dataId: string,
+): Promise<boolean> {
+  if (!signatureHeader) return false
+  const parts = signatureHeader.split(',')
+  const ts = parts.find(p => p.startsWith('ts='))?.replace('ts=', '')
+  const v1 = parts.find(p => p.startsWith('v1='))?.replace('v1=', '')
+  if (!ts || !v1) return false
+
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+
+  const templates = [
+    `id:${dataId};ts:${ts};`,
+    `${ts}.${rawBody}`,
+  ]
+  for (const template of templates) {
+    const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(template))
+    const computed = Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, '0')).join('')
+    if (computed === v1) return true
+  }
+  return false
+}
+
+/**
  * Webhook do Mercado Pago para pagamentos PIX.
  *
  * Fluxo:
@@ -34,8 +71,25 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const body = await req.json()
+    const rawBody = await req.text()
+    const body = JSON.parse(rawBody)
     console.log('[mpPaymentWebhook] Recebido:', JSON.stringify(body))
+
+    // Validação HMAC — se chave configurada, assinatura é obrigatória
+    const secret = Deno.env.get('SUPABASE_MP_WEBHOOK_SECRET')
+    if (secret) {
+      const signature = req.headers.get('x-signature')
+      const valid = await verifyMPSignature(rawBody, signature, secret, body.data?.id?.toString() ?? '')
+      if (!valid) {
+        console.error('[mpPaymentWebhook] Assinatura HMAC inválida')
+        return new Response(JSON.stringify({ error: 'Assinatura inválida' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+    } else {
+      console.warn('[mpPaymentWebhook] SUPABASE_MP_WEBHOOK_SECRET não configurada — pulando validação HMAC')
+    }
 
     // Só processa eventos de pagamento
     if (body.type !== 'payment') {
@@ -195,15 +249,12 @@ Deno.serve(async (req: Request) => {
     // -----------------------------------------------------------------------
     const paidAmount = paymentData.transaction_amount ?? 0
 
-    // Busca total_payable para calcular remaining
+    // Busca total_payable, paid_amount, payment_id e metadata para calcular remaining e consolidar pagamentos
     const { data: currentAppt } = await supabase
       .from('appointments')
-      .select('total_payable')
+      .select('total_payable, paid_amount, payment_id, metadata, status')
       .eq('id', appointmentId)
       .maybeSingle()
-
-    const totalPayable = currentAppt?.total_payable ?? paidAmount
-    const remainingAmount = Math.max(0, totalPayable - paidAmount)
 
     const paymentTypeId = paymentData.payment_type_id?.toString()?.toLowerCase() || ''
     const paymentMethodId = paymentData.payment_method_id?.toString()?.toLowerCase() || ''
@@ -221,17 +272,54 @@ Deno.serve(async (req: Request) => {
       realPaymentMethod = 'Saldo Mercado Pago'
     }
 
+    // Calcula os valores somados, verificando se não é um pagamento repetido
+    const totalPayable = currentAppt?.total_payable ?? paidAmount
+    let newPaidAmount = currentAppt?.paid_amount ?? 0
+    let isSecondPayment = false
+    
+    if (currentAppt?.payment_id && currentAppt.payment_id !== paymentId.toString()) {
+      isSecondPayment = true
+      const meta = currentAppt?.metadata || {}
+      if (meta.completion_payment_id !== paymentId.toString()) {
+        newPaidAmount += paidAmount
+      }
+    } else {
+      newPaidAmount = paidAmount
+    }
+
+    const remainingAmount = Math.max(0, totalPayable - newPaidAmount)
+    const newStatus = currentAppt?.status === 'concluido' ? 'concluido' : 'confirmado'
+
+    const updatePayload: any = {
+      status: newStatus,
+      payment_status: newPaidAmount >= (totalPayable - 0.05) ? 'pago' : 'parcial',
+      paid_amount: newPaidAmount,
+      remaining_amount: remainingAmount,
+      pago_em: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+
+    if (isSecondPayment) {
+      const currentMeta = currentAppt?.metadata || {}
+      updatePayload.payment_method = realPaymentMethod
+      updatePayload.metadata = {
+        ...currentMeta,
+        advance_payment_id: currentMeta.advance_payment_id || currentAppt?.payment_id,
+        payment_id: paymentId,
+        completion_payment_id: paymentId,
+        completion_payment_method: realPaymentMethod,
+        completion_paid_at: new Date().toISOString(),
+        valor_pago: newPaidAmount,
+        restante_a_pagar: remainingAmount,
+      }
+    } else {
+      updatePayload.payment_id = paymentId
+      updatePayload.payment_method = realPaymentMethod
+    }
+
     const { error: updateError } = await supabase
       .from('appointments')
-      .update({
-        status: 'confirmado',
-        payment_status: 'pago',
-        payment_id: paymentId,
-        payment_method: realPaymentMethod,
-        paid_amount: paidAmount,
-        remaining_amount: remainingAmount,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq('id', appointmentId)
 
     if (updateError) {

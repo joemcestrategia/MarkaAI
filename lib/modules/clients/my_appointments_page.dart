@@ -397,6 +397,7 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
         emailCliente: user.email ?? "cliente@app.com",
         description:
             "Pagamento restante - ${appointment['service_name'] ?? 'Serviço'}",
+        externalReference: appointment['id'],
       );
 
       final qrCode64 =
@@ -660,7 +661,11 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
       'updated_at': DateTime.now().toIso8601String(),
       'metadata': {
         ...currentMeta,
+        'advance_payment_id': currentMeta['advance_payment_id'] ?? currentMeta['payment_id'] ?? appointment['payment_id'],
         'payment_id': paymentId,
+        'completion_payment_id': paymentId,
+        'completion_paid_at': DateTime.now().toIso8601String(),
+        'completion_payment_method': method,
         'valor_pago': newPaid,
         'restante_a_pagar': valorTotal - newPaid,
       },
@@ -674,7 +679,11 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
     appointment['payment_method'] = method;
     appointment['metadata'] = {
       ...currentMeta,
+      'advance_payment_id': currentMeta['advance_payment_id'] ?? currentMeta['payment_id'] ?? appointment['payment_id'],
       'payment_id': paymentId,
+      'completion_payment_id': paymentId,
+      'completion_paid_at': DateTime.now().toIso8601String(),
+      'completion_payment_method': method,
       'valor_pago': newPaid,
       'restante_a_pagar': valorTotal - newPaid,
     };
