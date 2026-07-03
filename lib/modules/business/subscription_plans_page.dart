@@ -20,7 +20,12 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
   bool _trialActive = false;
   int _trialDaysRemaining = 0;
   String? _shopId;
-
+  DateTime? _subscriptionStartedAt;
+  DateTime? _currentPeriodEnd;
+  bool _cancelAtPeriodEnd = false;
+  bool _hasUsedTrial = false;
+  bool _isLoadingLive = true;
+  LiveSubscriptionStatus? _liveStatus;
 
   @override
   void initState() {
@@ -39,22 +44,38 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
   }
 
   Future<void> _loadCurrentPlan() async {
+    if (_shopId == null) return;
     try {
-      final plan = await SubscriptionService.getCurrentPlan();
-      final trialStatus = await TrialService.getTrialStatus();
+      if (mounted) setState(() => _isLoadingLive = true);
+      final live = await SubscriptionService.getLiveSubscriptionStatus(shopId: _shopId!);
+      
       if (mounted) {
         setState(() {
-          _currentPlan = plan;
-          _canUseTrial = trialStatus['canUseTrial'] as bool;
-          _trialActive = trialStatus['trialActive'] as bool;
-          _trialDaysRemaining = trialStatus['daysRemaining'] as int;
-          _isLoading = false;
+          _liveStatus = live;
+          _currentPlan = SubscriptionPlan.values.firstWhere(
+            (p) => SubscriptionService.getPlanId(p) == live.planId, 
+            orElse: () => SubscriptionPlan.free,
+          );
+          _trialActive = live.status == 'trialing';
+          _subscriptionStartedAt = live.subscriptionStartedAt;
+          _currentPeriodEnd = live.currentPeriodEnd;
+          _cancelAtPeriodEnd = live.cancelAtPeriodEnd;
+          _hasUsedTrial = live.hasUsedTrial;
+          
+          if (_trialActive && _currentPeriodEnd != null) {
+            _trialDaysRemaining = _currentPeriodEnd!.difference(DateTime.now()).inDays;
+          } else {
+            _trialDaysRemaining = 0;
+          }
+          
+          _canUseTrial = !_hasUsedTrial && _currentPlan == SubscriptionPlan.free;
+          _isLoadingLive = false;
         });
       }
     } catch (e) {
       debugPrint("Erro ao carregar o plano atual: $e");
       if (mounted) {
-        setState(() => _isLoading = false);
+        setState(() => _isLoadingLive = false);
       }
     }
   }
@@ -104,44 +125,28 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
         elevation: 0,
       ),
       backgroundColor: const Color(0xFFF4F4F8),
-      body: _shopId == null
-          ? const Center(child: CircularProgressIndicator())
-          : StreamBuilder<List<Map<String, dynamic>>>(
-              stream: Supabase.instance.client
-                  .from('shops')
-                  .stream(primaryKey: ['id'])
-                  .eq('id', _shopId!),
-              builder: (context, snapshot) {
-                if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-
-                final shopData = snapshot.data!.first;
-                final detection = PlanFeaturesService.detectPlan(shopData);
-                _currentPlan = detection['plan'] as SubscriptionPlan;
-                _trialActive = detection['trial'] as bool;
-                
-                if (_trialActive) {
-                  final sub = shopData['subscription'] as Map<String, dynamic>?;
-                  if (sub != null) {
-                    final endStr = (sub['trial_end_date'] ?? sub['trial_ends_at'])?.toString();
-                    if (endStr != null) {
-                      final end = DateTime.tryParse(endStr);
-                      if (end != null) {
-                        _trialDaysRemaining = end.difference(DateTime.now()).inDays;
-                      }
-                    }
-                  }
-                }
-                
-                _canUseTrial = shopData['subscription']?['trial_used'] != true;
-
-                return ListView(
-                  padding: const EdgeInsets.all(20),
-                  children: [
-                    _buildHeader(),
-                    if (_canUseTrial && !_trialActive) _buildTrialBanner(),
-                    if (_trialActive) _buildTrialActiveBanner(),
+      body: _shopId == null || _isLoadingLive
+          ? const Center(child: CircularProgressIndicator(color: AppColors.primaryPurple))
+          : Column(
+              children: [
+                if (_liveStatus != null && !_liveStatus!.isLive)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                    color: Colors.orange.shade100,
+                    child: const Text(
+                      "Mostrando último dado conhecido da assinatura.",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.deepOrange, fontSize: 12),
+                    ),
+                  ),
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.all(20),
+                    children: [
+                      _buildHeader(),
+                      if (_canUseTrial && !_trialActive) _buildTrialBanner(),
+                      if (_trialActive) _buildTrialActiveBanner(),
                     const SizedBox(height: 16),
                     _buildPlanCard(SubscriptionPlan.free,
                         isCurrent: _currentPlan == SubscriptionPlan.free),
@@ -151,9 +156,10 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
                         isCurrent: _currentPlan == SubscriptionPlan.plus),
                     _buildPlanCard(SubscriptionPlan.pro,
                         isCurrent: _currentPlan == SubscriptionPlan.pro),
-                  ],
-                );
-              },
+                    ],
+                  ),
+                ),
+              ],
             ),
     );
   }
@@ -416,39 +422,73 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
                   _buildFeatureItem('Financeiro, comissões e automações', isCheck: false, accentColor: accentColor),
                 ] else if (plan == SubscriptionPlan.start) ...[
                   _buildFeatureItem('Tudo do plano Free +', isCheck: true, accentColor: accentColor),
-                  _buildFeatureItem('Até 2 profissionais cadastrados', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('1 profissional cadastrado', isCheck: true, accentColor: accentColor),
                   _buildFeatureItem('Pagamentos via PIX online', isCheck: true, accentColor: accentColor),
                   _buildFeatureItem('Sinal obrigatório para reservar horário', isCheck: true, accentColor: accentColor),
-                  _buildFeatureItem('Desconto automático de aniversário', isCheck: true, accentColor: accentColor),
-                  _buildFeatureItem('Cliente escolhe o profissional', isCheck: true, accentColor: accentColor),
                   _buildFeatureItem('Otimização automática de horários', isCheck: true, accentColor: accentColor),
                   _buildFeatureItem('3 fotos por serviço', isCheck: true, accentColor: accentColor),
-                  _buildFeatureItem('Cartão de Crédito/Débito online', isCheck: false, accentColor: accentColor),
+                  _buildFeatureItem('Desconto automático de aniversário', isCheck: false, accentColor: accentColor),
+                  _buildFeatureItem('Escolha de profissional pelo cliente', isCheck: false, accentColor: accentColor),
                   _buildFeatureItem('Aba Financeira e Gestão de Estoque', isCheck: false, accentColor: accentColor),
                 ] else if (plan == SubscriptionPlan.plus) ...[
                   _buildFeatureItem('Tudo do plano Start +', isCheck: true, accentColor: accentColor),
-                  _buildFeatureItem('Até 3 profissionais cadastrados', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Até 2 profissionais cadastrados', isCheck: true, accentColor: accentColor),
                   _buildFeatureItem('Cartão de Crédito e Débito online', isCheck: true, accentColor: accentColor),
                   _buildFeatureItem('Aba Financeira (receitas, despesas e comissões)', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Desconto automático de aniversário', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Escolha de profissional pelo cliente', isCheck: true, accentColor: accentColor),
                   _buildFeatureItem('Cupons e promoções personalizadas', isCheck: true, accentColor: accentColor),
                   _buildFeatureItem('Clientes VIP, bloqueio e automações', isCheck: true, accentColor: accentColor),
-                  _buildFeatureItem('Gestão de Estoque completa', isCheck: true, accentColor: accentColor),
                   _buildFeatureItem('Feriados personalizados por profissional', isCheck: true, accentColor: accentColor),
-                  _buildFeatureItem('Visitantes e leads da loja', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Gestão de Estoque completa', isCheck: false, accentColor: accentColor),
+                  _buildFeatureItem('Visitantes e leads da loja', isCheck: false, accentColor: accentColor),
+                  _buildFeatureItem('Emissão de NFS-e', isCheck: false, accentColor: accentColor),
                 ] else if (plan == SubscriptionPlan.pro) ...[
                   _buildFeatureItem('Tudo do plano Plus +', isCheck: true, accentColor: accentColor),
-                  _buildFeatureItem('Até 5 profissionais cadastrados', isCheck: true, accentColor: accentColor),
-                  _buildFeatureItem('Análises financeiras avançadas (gráficos e insights)', isCheck: true, accentColor: accentColor),
-                  _buildFeatureItem('Eficiência operacional e desempenho da equipe', isCheck: true, accentColor: accentColor),
-                  _buildFeatureItem('Comparativo de receita por período e serviço', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Até 3 profissionais cadastrados', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Gestão de Estoque completa', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Visitantes e leads da loja', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Lembrete automático por WhatsApp', isCheck: true, accentColor: accentColor),
                   _buildFeatureItem('Emissão de Nota Fiscal Eletrônica (NFS-e)', isCheck: true, accentColor: accentColor),
+                  _buildFeatureItem('Análises financeiras avançadas (DRE/Caixa)', isCheck: true, accentColor: accentColor),
                   _buildFeatureItem('Obrigatoriedade de CPF para agendamentos', isCheck: true, accentColor: accentColor),
                   _buildFeatureItem('Suporte VIP direto via WhatsApp', isCheck: true, accentColor: accentColor),
                 ],
                 const SizedBox(height: 16),
                 // ── Botões de ação ────────────────────────────────
-                if (isCurrent)
-                  // Plano ativo
+                if (isCurrent && !(_liveStatus?.isManual ?? false)) ...[
+                  // Plano ativo oficial
+                  if (_subscriptionStartedAt != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        'Assinado em: ${_subscriptionStartedAt!.day.toString().padLeft(2, '0')}/${_subscriptionStartedAt!.month.toString().padLeft(2, '0')}/${_subscriptionStartedAt!.year}',
+                        style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey[600],
+                            fontWeight: FontWeight.w500),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  if (_cancelAtPeriodEnd && _currentPeriodEnd != null)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.orange.shade200),
+                      ),
+                      child: Text(
+                        'Cancelamento agendado para ${_currentPeriodEnd!.day.toString().padLeft(2, '0')}/${_currentPeriodEnd!.month.toString().padLeft(2, '0')}/${_currentPeriodEnd!.year}. Seu acesso continuará até esta data.',
+                        style: TextStyle(
+                          color: Colors.orange.shade800,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
@@ -465,7 +505,107 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
                           style: TextStyle(
                               fontWeight: FontWeight.bold, fontSize: 14)),
                     ),
-                  )
+                  ),
+                  if (!isFree) ...[
+                    const SizedBox(height: 12),
+                    if (_cancelAtPeriodEnd)
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton(
+                          onPressed: () async {
+                            final ok = await SubscriptionService.reactivateSubscription(
+                              context: context,
+                              shopId: _shopId!,
+                            );
+                            if (ok && mounted) {
+                              await _loadCurrentPlan();
+                            }
+                          },
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.green,
+                            side: const BorderSide(color: Colors.green),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                          child: const Text('REATIVAR ASSINATURA',
+                              style: TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 14)),
+                        ),
+                      )
+                    else
+                      SizedBox(
+                        width: double.infinity,
+                        child: TextButton(
+                          onPressed: () async {
+                            final motivo = await _pedirMotivoCancelamento(context);
+                            if (motivo != null && mounted) {
+                              final ok = await SubscriptionService.cancelSubscription(
+                                context: context,
+                                shopId: _shopId!,
+                                reason: motivo,
+                              );
+                              if (ok && mounted) {
+                                await _loadCurrentPlan();
+                              }
+                            }
+                          },
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.red[400],
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                          ),
+                          child: const Text('Cancelar assinatura',
+                              style: TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 13)),
+                        ),
+                      ),
+                  ],
+                ] else if (isCurrent && (_liveStatus?.isManual ?? false)) ...[
+                  // Plano concedido pelo admin / MercadoPago
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.blue.shade200),
+                    ),
+                    child: Text(
+                      'Plano concedido manualmente pelo administrador.',
+                      style: TextStyle(
+                        color: Colors.blue.shade800,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () async {
+                        final success =
+                            await SubscriptionService.startPurchaseFlow(
+                                context, plan);
+                        if (success && mounted) {
+                          setState(() => _currentPlan = plan);
+                          await _loadCurrentPlan();
+                        }
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: accentColor,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        elevation: 0,
+                      ),
+                      child: const Text('ASSINAR OFICIALMENTE',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 14)),
+                    ),
+                  ),
+                ]
                 else if (isFree)
                   // Plano gratuito — downgrade direto
                   SizedBox(
@@ -599,6 +739,70 @@ class _SubscriptionPlansPageState extends State<SubscriptionPlansPage> {
           ),
         ],
       ),
+    );
+  }
+
+  Future<String?> _pedirMotivoCancelamento(BuildContext context) async {
+    String? selectedReason;
+    final reasons = [
+      "Preço",
+      "Não uso mais",
+      "Faltam funcionalidades",
+      "Problema técnico",
+      "Encontrei uma alternativa",
+      "Outro"
+    ];
+    
+    return await showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            return AlertDialog(
+              title: const Text('Cancelar Assinatura'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Poderia nos contar o motivo do cancelamento?'),
+                  const SizedBox(height: 16),
+                  ...reasons.map((reason) {
+                    return RadioListTile<String>(
+                      title: Text(reason),
+                      value: reason,
+                      groupValue: selectedReason,
+                      onChanged: (val) {
+                        setStateDialog(() {
+                          selectedReason = val;
+                        });
+                      },
+                      contentPadding: EdgeInsets.zero,
+                      visualDensity: const VisualDensity(
+                        horizontal: VisualDensity.minimumDensity,
+                        vertical: VisualDensity.minimumDensity,
+                      ),
+                    );
+                  }),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, null),
+                  child: const Text('Manter Plano'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx, selectedReason ?? 'Não informado'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red[400],
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('Confirmar Cancelamento'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 }

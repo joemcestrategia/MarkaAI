@@ -8,6 +8,45 @@ import '../../core/theme/app_colors.dart';
 import '../../core/widgets/premium_dialogs.dart';
 import '../../core/services/auth_service.dart';
 
+class LiveSubscriptionStatus {
+  final String status;
+  final String planId;
+  final DateTime? subscriptionStartedAt;
+  final DateTime? currentPeriodEnd;
+  final bool cancelAtPeriodEnd;
+  final bool hasUsedTrial;
+  final bool isLive;
+  final bool isManual;
+
+  LiveSubscriptionStatus({
+    required this.status,
+    required this.planId,
+    this.subscriptionStartedAt,
+    this.currentPeriodEnd,
+    required this.cancelAtPeriodEnd,
+    required this.hasUsedTrial,
+    required this.isLive,
+    this.isManual = false,
+  });
+
+  factory LiveSubscriptionStatus.fromMap(Map<String, dynamic> map, {bool isLive = true}) {
+    return LiveSubscriptionStatus(
+      status: map['status'] ?? 'free',
+      planId: map['planId'] ?? map['plan_id'] ?? 'free',
+      subscriptionStartedAt: map['subscriptionStartedAt'] != null 
+          ? DateTime.tryParse(map['subscriptionStartedAt'].toString()) 
+          : (map['subscription_started_at'] != null ? DateTime.tryParse(map['subscription_started_at'].toString()) : null),
+      currentPeriodEnd: map['currentPeriodEnd'] != null 
+          ? DateTime.tryParse(map['currentPeriodEnd'].toString())
+          : (map['current_period_end'] != null ? DateTime.tryParse(map['current_period_end'].toString()) : null),
+      cancelAtPeriodEnd: map['cancelAtPeriodEnd'] ?? map['cancel_at_period_end'] ?? false,
+      hasUsedTrial: map['hasUsedTrial'] ?? map['has_used_trial'] ?? false,
+      isLive: isLive,
+      isManual: map['isManual'] ?? false,
+    );
+  }
+}
+
 enum SubscriptionPlan { free, start, plus, pro }
 
 class SubscriptionService {
@@ -25,7 +64,7 @@ class SubscriptionService {
       'financialModule': false,
       'commissionModule': false,
       'inventoryModule': false,
-      'customLink': false,
+      'customLink': true,
       'maxServicePhotos': 1,
       'advancedScheduling': false,
       'features': ['scheduling'],
@@ -34,7 +73,7 @@ class SubscriptionService {
     SubscriptionPlan.start: {
       'name': 'Start',
       'price': 29.90,
-      'employeeLimit': 2,
+      'employeeLimit': 1,
       'clientLimit': 500,
       'adEnabled': false,
       'onlinePayment': true,
@@ -50,29 +89,29 @@ class SubscriptionService {
     SubscriptionPlan.plus: {
       'name': 'Plus',
       'price': 59.90,
-      'employeeLimit': 3,
+      'employeeLimit': 2,
       'clientLimit': 999999,
       'adEnabled': false,
       'onlinePayment': true,
       'financialModule': true,
       'commissionModule': true,
-      'inventoryModule': true,
+      'inventoryModule': false,
       'customLink': true,
       'maxServicePhotos': 5,
       'advancedScheduling': true,
       'features': [
-        'Gestão de Estoque',
         'Cupons de Desconto',
         'Reajuste Automático de Valores',
         'Classificação de Clientes (VIP)',
+        'Desconto de Aniversário Automático',
         'Automações de Marketing'
       ],
-      'description': 'Controle total: financeiro, estoque, feriados e visitantes.',
+      'description': 'Controle total: financeiro, feriados e descontos. Ideal para 2 profissionais.',
     },
     SubscriptionPlan.pro: {
       'name': 'Pro',
       'price': 99.90,
-      'employeeLimit': 5,
+      'employeeLimit': 3,
       'clientLimit': 999999,
       'adEnabled': false,
       'onlinePayment': true,
@@ -86,13 +125,57 @@ class SubscriptionService {
       'features': [
         'Emissão de Nota Fiscal Eletrônica (NFS-e)',
         'Painel Financeiro Completo (DRE/Caixa)',
+        'Gestão de Estoque Completa',
+        'Visitantes e Leads da Loja',
+        'Lembrete Automático por WhatsApp',
         'Todas as funções liberadas'
       ],
-      'description': 'Análises avançadas, 5 profissionais e suporte VIP dedicado.',
+      'description': '3 profissionais, NFS-e, estoque, visitantes e WhatsApp. Máximo poder.',
     },
   };
 
-  /// Retorna o plano atual da loja logada
+  /// Busca o status ao vivo da Stripe API, com fallback pro cache
+  static Future<LiveSubscriptionStatus> getLiveSubscriptionStatus({required String shopId}) async {
+    final supabase = sb.Supabase.instance.client;
+    try {
+      // Timeout curto (5s) pra evitar travar a tela
+      final response = await supabase.functions.invoke(
+        'get-live-subscription-status',
+        body: {'shopId': shopId},
+      ).timeout(const Duration(seconds: 5));
+
+      if (response.status == 200 && response.data != null) {
+        return LiveSubscriptionStatus.fromMap(response.data as Map<String, dynamic>, isLive: true);
+      }
+    } catch (e) {
+      debugPrint('getLiveSubscriptionStatus falhou (caindo pro fallback): $e');
+    }
+
+    // Fallback: lê a tabela shops
+    try {
+      final res = await supabase.from('shops').select('subscription, has_used_trial, plan_id, cancel_at_period_end, current_period_end, subscription_started_at').eq('id', shopId).maybeSingle();
+      if (res != null) {
+        final isManual = res['subscription'] == null || res['subscription']['stripe_subscription_id'] == null;
+        return LiveSubscriptionStatus.fromMap({
+          ...res,
+          'status': res['subscription']?['status'],
+          'isManual': isManual,
+        }, isLive: false);
+      }
+    } catch (e) {
+      debugPrint('Fallback do getLiveSubscriptionStatus também falhou: $e');
+    }
+
+    return LiveSubscriptionStatus(
+      status: 'free',
+      planId: 'free',
+      cancelAtPeriodEnd: false,
+      hasUsedTrial: false,
+      isLive: false,
+    );
+  }
+
+  /// Retorna o plano atual da loja logada (apenas para fallback antigo)
   static Future<SubscriptionPlan> getCurrentPlan() async {
     try {
       final supabase = sb.Supabase.instance.client;
@@ -713,10 +796,15 @@ class SubscriptionService {
   static Future<bool> cancelSubscription({
     required BuildContext context,
     required String shopId,
+    String? reason,
   }) async {
     try {
       final supabase = sb.Supabase.instance.client;
-      final response = await supabase.functions.invoke('cancel-subscription', body: {'shop_id': shopId});
+      final body = {'shop_id': shopId};
+      if (reason != null) {
+        body['reason'] = reason;
+      }
+      final response = await supabase.functions.invoke('cancel-subscription', body: body);
       
       final success = response.status == 200;
       final data = response.data is Map<String, dynamic> ? response.data as Map<String, dynamic> : null;
