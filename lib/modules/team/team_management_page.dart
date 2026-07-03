@@ -219,42 +219,60 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // CABEÇALHO
-        Padding(
-          padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+        // CABEÇALHO MODERNO
+        Container(
+          padding: EdgeInsets.fromLTRB(isMobile ? 20 : 32, isMobile ? 24 : 32, isMobile ? 20 : 32, 24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border(bottom: BorderSide(color: AppColors.border.withValues(alpha: 0.5))),
+          ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text("Membros da Equipe",
-                      style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      Icon(Icons.drag_handle, size: 13, color: Colors.grey[500]),
-                      const SizedBox(width: 3),
-                      Text(
-                        "Arraste para definir prioridade de escala",
-                        style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-                      ),
-                    ],
-                  ),
-                ],
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      "Membros da Equipe",
+                      style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.deepPurple, letterSpacing: -0.5),
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: AppColors.primaryPurple.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Icon(Icons.drag_handle, size: 14, color: AppColors.primaryPurple),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            "Arraste os cards para definir a ordem (prioridade) na agenda.",
+                            style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
+              const SizedBox(width: 16),
               ElevatedButton.icon(
-                onPressed: () =>
-                    _handleMemberTap(context, null, isMobile), // Novo Membro
-                icon: const Icon(Icons.add, size: 18),
-                label: Text(isMobile ? "NOVO" : "NOVO MEMBRO"),
+                onPressed: () => _handleMemberTap(context, null, isMobile),
+                icon: const Icon(Icons.add_rounded, size: 20),
+                label: Text(isMobile ? "NOVO" : "NOVO MEMBRO", style: const TextStyle(fontWeight: FontWeight.w600)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primaryPurple,
                   foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10)),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  elevation: 0,
+                  shadowColor: AppColors.primaryPurple.withValues(alpha: 0.3),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: EdgeInsets.symmetric(horizontal: isMobile ? 16 : 24, vertical: 14),
                 ),
               ),
             ],
@@ -359,58 +377,91 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
   Widget _buildEmployeeCard(Map<String, dynamic> data, bool isSelected) {
     return Container(
       decoration: BoxDecoration(
-        color: isSelected
-            ? AppColors.primaryPurple.withValues(alpha: 0.05)
-            : Colors.white,
+        color: isSelected ? AppColors.primaryPurple.withValues(alpha: 0.03) : Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: isSelected
-            ? Border.all(color: AppColors.primaryPurple, width: 2)
-            : Border.all(color: Colors.transparent, width: 2),
+        border: Border.all(
+          color: isSelected ? AppColors.primaryPurple.withValues(alpha: 0.5) : AppColors.border.withValues(alpha: 0.3),
+          width: 1.5,
+        ),
         boxShadow: [
           BoxShadow(
-              color: Colors.black.withValues(alpha: 0.04),
-              blurRadius: 10,
-              offset: const Offset(0, 4))
+            color: isSelected ? AppColors.primaryPurple.withValues(alpha: 0.08) : Colors.black.withValues(alpha: 0.02),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          )
         ],
       ),
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       child: Row(
         children: [
-          CircleAvatar(
-            radius: 28,
-            backgroundColor: AppColors.primaryPurple.withValues(alpha: 0.1),
-            backgroundImage:
-                (data['photo_url'] != null && data['photo_url'].isNotEmpty)
+          Container(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.primaryPurple.withValues(alpha: 0.1),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: CircleAvatar(
+              radius: 30,
+              backgroundColor: isSelected ? AppColors.primaryPurple : AppColors.surface,
+              child: CircleAvatar(
+                radius: 28,
+                backgroundColor: AppColors.surface,
+                backgroundImage: (data['photo_url'] != null && data['photo_url'].isNotEmpty)
                     ? CachedNetworkImageProvider(data['photo_url'])
                     : null,
-            child: (data['photo_url'] == null || data['photo_url'].isEmpty)
-                ? const Icon(Icons.person, color: AppColors.primaryPurple)
-                : null,
+                child: (data['photo_url'] == null || data['photo_url'].isEmpty)
+                    ? Icon(Icons.person_rounded, color: isSelected ? AppColors.primaryPurple : AppColors.textSecondary, size: 28)
+                    : null,
+              ),
+            ),
           ),
           const SizedBox(width: 16),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(data['name'] ?? "Sem nome",
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 15)),
-                const SizedBox(height: 4),
                 Text(
-                  "🕒 ${data['start_time'] ?? '--:--'} às ${data['end_time'] ?? '--:--'}",
-                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  data['name'] ?? "Sem nome",
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 16,
+                    color: isSelected ? AppColors.primaryPurple : AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Icon(Icons.schedule_rounded, size: 14, color: AppColors.textSecondary),
+                    const SizedBox(width: 4),
+                    Text(
+                      "${data['start_time'] ?? '--:--'} às ${data['end_time'] ?? '--:--'}",
+                      style: TextStyle(fontSize: 13, color: AppColors.textSecondary, fontWeight: FontWeight.w500),
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
           if (_isSavingPriority)
             const SizedBox(
-              width: 20,
-              height: 20,
+              width: 24,
+              height: 24,
               child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primaryPurple),
             )
           else
-            const Icon(Icons.drag_handle, color: Colors.grey, size: 22),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.transparent,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(Icons.drag_indicator_rounded, color: AppColors.textSecondary.withValues(alpha: 0.5), size: 24),
+            ),
         ],
       ),
     );

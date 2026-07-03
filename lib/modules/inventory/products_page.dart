@@ -212,7 +212,7 @@ class _ProductsPageState extends State<ProductsPage> {
       stream: productsRef.stream(primaryKey: ['id']).eq('shop_id', _shopId!),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-        final docs = snapshot.data!;
+        final docs = snapshot.data!.where((p) => p['is_affiliate'] != true).toList();
 
         if (docs.isEmpty) {
           return Center(

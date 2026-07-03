@@ -20,6 +20,8 @@ class UserModel {
   final String? documentCpf;
   final String? gender;
   final String? bio;
+  final double? lat;
+  final double? lng;
 
   UserModel({
     required this.id,
@@ -43,6 +45,8 @@ class UserModel {
     this.documentCpf,
     this.gender,
     this.bio,
+    this.lat,
+    this.lng,
   });
 
   factory UserModel.fromMap(Map<String, dynamic> map) {
@@ -68,6 +72,8 @@ class UserModel {
       documentCpf: map['document_cpf'],
       gender: map['gender'],
       bio: map['bio'],
+      lat: (map['lat'] != null) ? (map['lat'] as num).toDouble() : null,
+      lng: (map['lng'] != null) ? (map['lng'] as num).toDouble() : null,
     );
   }
 
@@ -94,6 +100,8 @@ class UserModel {
       'document_cpf': documentCpf,
       'gender': gender,
       'bio': bio,
+      'lat': lat,
+      'lng': lng,
       'updated_at': DateTime.now().toIso8601String(),
     };
   }

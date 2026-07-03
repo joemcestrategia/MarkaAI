@@ -36,7 +36,7 @@ const sendWhatsApp = async (phone: string, templateName: string, vars: string[])
   }
 
   try {
-    const res = await fetch(`https://graph.facebook.com/v17.0/${phoneId}/messages`, {
+    const res = await fetch(`https://graph.facebook.com/v19.0/${phoneId}/messages`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${token}`,
@@ -305,11 +305,14 @@ async function buildPayloadFromAppointment(supabase: any, appt: any) {
     time = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
   }
 
-  if (!clientPhone && appt.client_id) {
+  if (appt.client_id) {
+    // Sempre busca da tabela users quando há client_id para garantir
+    // que o email mais recente seja usado (ex: correções feitas pelo admin)
     const { data: userData } = await supabase.from('users').select('phone, email').eq('id', appt.client_id).single()
     if (userData) {
       clientPhone = userData.phone || clientPhone
-      clientEmail = clientEmail || userData.email
+      // Prioridade ao email atual da tabela users (ignora cópia desatualizada do agendamento)
+      clientEmail = userData.email || clientEmail
     }
   }
 

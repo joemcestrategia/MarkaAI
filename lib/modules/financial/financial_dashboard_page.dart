@@ -108,6 +108,7 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
   double _totalReceita = 0.0;
   double _totalDespesa = 0.0;
   double _totalComissao = 0.0;
+  double _comissaoProjetada = 0.0;
   double _lucroLiquido = 0.0;
   int _totalAtendimentos = 0;
   int _totalCancelamentos = 0;
@@ -592,11 +593,19 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
     
     // Mapeamento para comissões vindas da view SQL (id: valor)
     Map<String, double> apptCommissionsFromView = {};
+    double projectedCommission = 0;
+    final now = DateTime.now();
     for (var c in commissionDetails) {
       final apptId = c['appointment_id'].toString();
       final amount = _toDouble(c['commission_amount']);
       apptCommissionsFromView[apptId] = amount;
-      totalCommission += amount;
+      projectedCommission += amount;
+      final scheduledAt = c['scheduled_at'] != null
+          ? DateTime.tryParse(c['scheduled_at'].toString())
+          : null;
+      if (scheduledAt != null && scheduledAt.isBefore(now)) {
+        totalCommission += amount;
+      }
     }
 
     for (var d in emps) {
@@ -770,6 +779,7 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
     _totalReceita = totalRevenue;
     _totalDespesa = totalExpense;
     _totalComissao = totalCommission;
+    _comissaoProjetada = projectedCommission;
     _totalCustoServicos = totalCustoServicos;
     _lucroLiquido = totalRevenue - totalExpense - totalCommission;
     _margemLiquida =
@@ -1249,6 +1259,7 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
           value: _fmtCurrency(_totalComissao),
           icon: Icons.person_outline,
           color: Colors.orange,
+          subtitle: _comissaoProjetada > 0 ? 'Projeção: ${_fmtCurrency(_comissaoProjetada)}' : null,
           delta: prev != null ? _delta(_totalComissao, prev.comissao) : null,
           invertDelta: true,
         ),
@@ -2471,6 +2482,7 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
             buildRow('Faturamento Total', fmt(_totalReceita), valueColor: PdfColor(0.0, 0.45, 0.84), bold: true),
             buildRow('Despesas', fmt(_totalDespesa), valueColor: red),
             buildRow('Comissões', fmt(_totalComissao), valueColor: orange),
+            buildRow('Projeção Comissões', fmt(_comissaoProjetada), valueColor: PdfColor(1.0, 0.65, 0.0)),
             if (_totalCustoServicos > 0)
               buildRow('Custo de Serviços', fmt(_totalCustoServicos), valueColor: PdfColor(0.9, 0.36, 0.14)),
             buildRow(

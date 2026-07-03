@@ -59,6 +59,16 @@ class MercadoPagoService {
     required String shopId,
     required String paymentId,
   }) async {
+    final data = await _consultarPagamentoMP(shopId: shopId, paymentId: paymentId);
+    if (data == null) return 'unknown';
+    return data['status']?.toString() ?? 'pending';
+  }
+
+  // Consulta completa do pagamento no Mercado Pago (status, data, valor, etc.)
+  static Future<Map<String, dynamic>?> _consultarPagamentoMP({
+    required String shopId,
+    required String paymentId,
+  }) async {
     try {
       final response = await _supabase.functions.invoke('getPaymentStatus', headers: {
         'Authorization': 'Bearer ${_supabase.auth.currentSession?.accessToken ?? ''}',
@@ -68,13 +78,46 @@ class MercadoPagoService {
         'payment_id': paymentId,
       });
 
-      if (response.status != 200) return 'unknown';
-
-      final data = Map<String, dynamic>.from(response.data);
-      return data['status']?.toString() ?? 'pending';
+      if (response.status != 200) return null;
+      return Map<String, dynamic>.from(response.data);
     } catch (e) {
-      debugPrint("⚠️ Erro ao verificar status: $e");
-      return 'unknown';
+      debugPrint("⚠️ Erro ao consultar pagamento MP: $e");
+      return null;
+    }
+  }
+
+  // Obtém detalhes completos do pagamento no Mercado Pago (para exibição)
+  static Future<Map<String, dynamic>?> obterDetalhesPagamento({
+    required String shopId,
+    required String paymentId,
+  }) async {
+    return _consultarPagamentoMP(shopId: shopId, paymentId: paymentId);
+  }
+
+  // Busca pagamentos históricos usando o external_reference (appointment ID)
+  static Future<List<dynamic>?> buscarPagamentosPorReferencia({
+    required String shopId,
+    required String externalReference,
+  }) async {
+    try {
+      final response = await _supabase.functions.invoke('searchMpPayments', headers: {
+        'Authorization': 'Bearer ${_supabase.auth.currentSession?.accessToken ?? ''}',
+        'Content-Type': 'application/json',
+      }, body: {
+        'shop_id': shopId,
+        'external_reference': externalReference,
+      });
+
+      if (response.status != 200) return null;
+      
+      final data = response.data as Map<String, dynamic>;
+      if (data['results'] != null && data['results'] is List) {
+        return data['results'] as List<dynamic>;
+      }
+      return null;
+    } catch (e) {
+      debugPrint("⚠️ Erro ao buscar pagamentos por referencia MP: $e");
+      return null;
     }
   }
 

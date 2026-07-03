@@ -10,6 +10,7 @@ import '../../core/services/mercado_pago_service.dart';
 import '../fiscal/nfse_service.dart';
 import '../../core/services/plan_features_service.dart';
 import 'package:flutter/services.dart';
+import 'helpers/cancellation_helper.dart';
 
 class AppointmentDetailsPage extends StatefulWidget {
   final Map<String, dynamic> appointmentDoc;
@@ -619,6 +620,36 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     final status = data['status'] ?? '';
     final isHistory = status == 'cancelado' || status == 'concluido';
 
+    if (!isHistory) {
+      // É um agendamento ativo, vamos CANCELAR e não excluir
+      final payload = await CancellationHelper.getCancellationPayload(context, data['id']);
+      if (payload == null) return; // cancelou o modal
+
+      setState(() => _isLoading = true);
+      try {
+        await Supabase.instance.client
+            .from('appointments')
+            .update(payload)
+            .eq('id', data['id']);
+        
+        if (mounted) {
+          _showSnackBar('✅ Agendamento cancelado com sucesso', isError: false);
+          if (widget.isEmbedded) {
+            widget.onClose?.call();
+          } else {
+            Navigator.pop(context);
+          }
+        }
+      } catch (e) {
+        if (mounted) {
+          setState(() => _isLoading = false);
+          _showSnackBar('❌ Erro ao cancelar: $e', isError: true);
+        }
+      }
+      return;
+    }
+
+    // Fluxo original de exclusão (apenas para histórico)
     final confirm = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
@@ -658,7 +689,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
                   ),
                   const SizedBox(width: 12),
                   Text(
-                    'Excluir Agendamento?',
+                    'Excluir Histórico?',
                     style: Theme.of(context)
                         .textTheme
                         .titleLarge
@@ -667,11 +698,9 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
                 ],
               ),
               const SizedBox(height: 40),
-              Text(
-                isHistory
-                    ? "Este agendamento será removido permanentemente do histórico.\nEsta ação não pode ser desfeita."
-                    : "Este agendamento ativo será excluído permanentemente.\nEsta ação não pode ser desfeita.",
-                style: const TextStyle(fontSize: 15, color: Colors.black87),
+              const Text(
+                "Este agendamento será removido permanentemente do histórico.\nEsta ação não pode ser desfeita.",
+                style: TextStyle(fontSize: 15, color: Colors.black87),
               ),
               const SizedBox(height: 24),
               Row(
@@ -855,6 +884,9 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
   }
 
   Widget _buildBottomActions() {
+    final status = widget.appointmentDoc['status'] ?? '';
+    final isHistory = status == 'cancelado' || status == 'concluido';
+
     return _isEditing
         ? ElevatedButton(
             onPressed: _updateAppointment,
@@ -876,10 +908,10 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
               Expanded(
                 child: OutlinedButton.icon(
                   onPressed: _deleteAppointment,
-                  icon: const Icon(Icons.delete_outline,
+                  icon: Icon(isHistory ? Icons.delete_outline : Icons.cancel_outlined,
                       color: Colors.red, size: 18),
-                  label: const Text("Excluir",
-                      style: TextStyle(color: Colors.red, fontSize: 13)),
+                  label: Text(isHistory ? "Excluir" : "Cancelar",
+                      style: const TextStyle(color: Colors.red, fontSize: 13)),
                   style: OutlinedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     side: const BorderSide(color: Colors.redAccent),
@@ -1327,6 +1359,73 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
           ),
           const SizedBox(height: 5),
 
+          // 🔄 Banner de Status de Estorno
+          Builder(builder: (ctx) {
+            final refundStatus = (data['refund_status'] ?? 'nao_aplicavel').toString();
+            final status = (data['status'] ?? '').toString().toLowerCase();
+            if (refundStatus == 'nao_aplicavel' && status != 'cancelado') return const SizedBox.shrink();
+            if (refundStatus == 'nao_aplicavel') return const SizedBox.shrink();
+
+            Color bgColor;
+            Color textColor;
+            IconData icon;
+            String label;
+
+            switch (refundStatus) {
+              case 'pendente':
+                bgColor = Colors.amber.withValues(alpha: 0.15);
+                textColor = Colors.amber[800]!;
+                icon = Icons.hourglass_empty;
+                label = 'Estorno pendente';
+                break;
+              case 'processando':
+                bgColor = Colors.blue.withValues(alpha: 0.15);
+                textColor = Colors.blue[800]!;
+                icon = Icons.sync;
+                label = 'Estorno em processamento';
+                break;
+              case 'estornado':
+                final refundAmt = double.tryParse(data['refund_amount']?.toString() ?? '0') ?? 0;
+                String refundDate = '';
+                try {
+                  final raw = data['refunded_at']?.toString();
+                  if (raw != null && raw.isNotEmpty) {
+                    refundDate = ' em ${DateFormat('dd/MM/yyyy').format(DateTime.parse(raw))}';
+                  }
+                } catch (_) {}
+                bgColor = Colors.green.withValues(alpha: 0.15);
+                textColor = Colors.green[800]!;
+                icon = Icons.check_circle_outline;
+                label = 'Estornado: R\$ ${refundAmt.toStringAsFixed(2)}$refundDate';
+                break;
+              case 'retido':
+                bgColor = Colors.red.withValues(alpha: 0.15);
+                textColor = Colors.red[800]!;
+                icon = Icons.block;
+                label = 'Valor retido (sem estorno)';
+                break;
+              default:
+                return const SizedBox.shrink();
+            }
+
+            return Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: bgColor,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(icon, size: 14, color: textColor),
+                  const SizedBox(width: 6),
+                  Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: textColor)),
+                ],
+              ),
+            );
+          }),
+
           // Valor total menor (28 -> 24)
           Column(
             children: [
@@ -1727,8 +1826,78 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
               ),
             ),
           ],
+
+          // 🔄 BOTÃO: PROCESSAR ESTORNO (aparece somente para agendamentos cancelados com pagamento pendente de estorno)
+          Builder(builder: (ctx) {
+            final status = (data['status'] ?? '').toString().toLowerCase();
+            final refundStatus = (data['refund_status'] ?? 'nao_aplicavel').toString();
+            final paymentId = data['payment_id']?.toString() ?? '';
+            final paidAmt = double.tryParse(data['paid_amount']?.toString() ?? '0') ?? 0;
+
+            final bool canRefund = status == 'cancelado' &&
+                (refundStatus == 'pendente' || refundStatus == 'processando') &&
+                paymentId.isNotEmpty &&
+                paidAmt > 0.01;
+
+            if (!canRefund) return const SizedBox.shrink();
+
+            return Padding(
+              padding: const EdgeInsets.only(top: 15),
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.currency_exchange, size: 16),
+                  label: Text(refundStatus == 'processando'
+                      ? 'Tentar Estorno Novamente'
+                      : 'Processar Estorno'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange.withValues(alpha: 0.15),
+                    foregroundColor: Colors.orange[800],
+                    elevation: 0,
+                    shadowColor: Colors.transparent,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  onPressed: () => _processarEstorno(data),
+                ),
+              ),
+            );
+          }),
+
+          // 🔄 BOTÃO: MARCAR COMO RESOLVIDO (SEM ESTORNO)
+          Builder(builder: (ctx) {
+            final status = (data['status'] ?? '').toString().toLowerCase();
+            final refundStatus = (data['refund_status'] ?? 'nao_aplicavel').toString();
+            final paidAmt = double.tryParse(data['paid_amount']?.toString() ?? '0') ?? 0;
+
+            final bool canResolve = status == 'cancelado' &&
+                paidAmt > 0 &&
+                refundStatus != 'estornado' &&
+                refundStatus != 'retido';
+
+            if (!canResolve) return const SizedBox.shrink();
+
+            return Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.check_circle, size: 16),
+                  label: const Text('Marcar como Resolvido (Sem Estorno)'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.grey.withValues(alpha: 0.15),
+                    foregroundColor: Colors.grey[800],
+                    elevation: 0,
+                    shadowColor: Colors.transparent,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  onPressed: () => _marcarComoResolvido(data),
+                ),
+              ),
+            );
+          }),
           
-          // ✅ BOTÃO: VER DETALHES TÉCNICOS DA TRANSAÇÃO (NOVA PÁGINA)
           if ((data['metadata']?['payment_id'] != null) || 
               (data['payment_id'] != null && data['payment_id'].toString().isNotEmpty) ||
               (data['metadata']?['advance_payment_id'] != null) ||
@@ -1763,6 +1932,223 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
       ),
     );
   }
+
+  // ── Processar Estorno via Edge Function ────────────────────────────────
+  
+  Future<void> _marcarComoResolvido(Map<String, dynamic> data) async {
+    final bool? confirmar = await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Marcar como Resolvido'),
+        content: const Text('Tem certeza que deseja marcar esta pendência financeira como resolvida? O agendamento deixará de constar como estorno pendente.\n\nNenhum valor será devolvido automaticamente pelo sistema.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Voltar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryPurple, foregroundColor: Colors.white),
+            child: const Text('Confirmar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmar != true) return;
+
+    setState(() => _isLoading = true);
+    try {
+      final client = Supabase.instance.client;
+      await client
+          .from('appointments')
+          .update({'refund_status': 'retido'})
+          .eq('id', data['id']);
+
+      setState(() {
+        _localDoc['refund_status'] = 'retido';
+        _isLoading = false;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Marcado como resolvido com sucesso!', style: TextStyle(color: Colors.white)), backgroundColor: Colors.green),
+        );
+        if (widget.onAppointmentUpdated != null) {
+          widget.onAppointmentUpdated!(_localDoc);
+        }
+      }
+    } catch (e) {
+      setState(() => _isLoading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro: $e', style: const TextStyle(color: Colors.white)), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+  Future<void> _processarEstorno(Map<String, dynamic> data) async {
+    final double paidAmt = double.tryParse(data['paid_amount']?.toString() ?? '0') ?? 0;
+    final amountController = TextEditingController(text: paidAmt.toStringAsFixed(2));
+    bool isFullRefund = true;
+
+    final bool isPix = (data['payment_method']?.toString().toLowerCase().contains('pix') ?? false) || 
+                       (data['metadata']?['payment_method_id']?.toString().toLowerCase().contains('pix') ?? false);
+
+    final String helperText = isPix 
+      ? '⚠️ O estorno via PIX será solicitado ao Mercado Pago. Dependendo da instituição, pode haver aprovação manual ou limites diários no seu aplicativo do Mercado Pago.' 
+      : 'O valor será devolvido automaticamente à administradora do cartão do cliente via Mercado Pago.';
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setStateSB) {
+            return AlertDialog(
+              title: const Text('Processar Estorno'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Valor pago: R\$ ${paidAmt.toStringAsFixed(2)}',
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 12),
+                  Text(helperText, style: TextStyle(fontSize: 13, color: isPix ? Colors.orange[800] : Colors.grey)),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Checkbox(
+                        value: !isFullRefund,
+                        onChanged: (val) {
+                          setStateSB(() {
+                            isFullRefund = !(val ?? false);
+                            if (isFullRefund) {
+                              amountController.text = paidAmt.toStringAsFixed(2);
+                            }
+                          });
+                        },
+                      ),
+                      const Text('Estorno parcial', style: TextStyle(fontSize: 13)),
+                    ],
+                  ),
+                  if (!isFullRefund) ...[
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: amountController,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'Valor do estorno (R\$)',
+                        border: OutlineInputBorder(),
+                        prefixText: 'R\$ ',
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('CANCELAR', style: TextStyle(color: Colors.grey)),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+                  child: const Text('ESTORNAR'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (confirmed != true) return;
+
+    // Validação do valor antes de enviar
+    final double refundValue = double.tryParse(amountController.text.replaceAll(',', '.')) ?? 0;
+    if (refundValue <= 0 || refundValue > paidAmt + 0.05) {
+      if (mounted) {
+        _showSnackBar('Valor de estorno inválido (deve ser entre R\$ 0.01 e R\$ ${paidAmt.toStringAsFixed(2)})', isError: true);
+      }
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      final body = {
+        'appointment_id': data['id'],
+      };
+      // Só envia amount se for parcial (para aproveitar estorno total automático do MP)
+      if (!isFullRefund) {
+        body['amount'] = refundValue.toString();
+      }
+
+      final response = await Supabase.instance.client.functions.invoke(
+        'processRefund',
+        body: body,
+      );
+
+      final responseData = response.data;
+
+      if (response.status >= 200 && response.status < 300) {
+        // Sucesso
+        final refundedAmount = responseData?['refund_amount'] ?? refundValue;
+        setState(() {
+          _localDoc['refund_status'] = 'estornado';
+          _localDoc['refund_amount'] = refundedAmount;
+          _localDoc['refunded_at'] = DateTime.now().toIso8601String();
+        });
+        widget.onAppointmentUpdated?.call(_localDoc);
+        if (mounted) {
+          _showResultDialog('Sucesso', '✅ Estorno de R\$ ${double.tryParse(refundedAmount.toString())?.toStringAsFixed(2) ?? refundedAmount} processado com sucesso no Mercado Pago!');
+        }
+      } else {
+        // Erro vindo da Edge Function
+        final errorMsg = responseData?['error']?.toString() ?? 'Erro desconhecido ao processar estorno.';
+        
+        // Se é 409 (concorrência) ou 502 (rede), mensagem específica
+        if (response.status == 409) {
+          if (mounted) _showResultDialog('Aviso', '⏳ Este estorno já está em processamento. Aguarde.');
+        } else if (response.status == 502) {
+          if (mounted) _showResultDialog('Erro de Comunicação', '🌐 Falha na comunicação com o Mercado Pago: $errorMsg\n\nTente novamente mais tarde.');
+        } else if (response.status == 500 && errorMsg.contains('Mercado Pago com sucesso')) {
+          // Caso especial: MP processou mas banco falhou — atualizar UI parcialmente
+          setState(() {
+            _localDoc['refund_status'] = 'processando';
+          });
+          widget.onAppointmentUpdated?.call(_localDoc);
+          if (mounted) _showResultDialog('Alerta', '⚠️ $errorMsg');
+        } else {
+          if (mounted) _showResultDialog('Erro no Mercado Pago', '❌ O Mercado Pago recusou o estorno:\n\n$errorMsg');
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        _showResultDialog('Erro Inesperado', '❌ Ocorreu um erro interno ao chamar o estorno: $e');
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  void _showResultDialog(String title, String content) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(content),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryPurple, foregroundColor: Colors.white),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
 
   Future<void> _marcarComoPagoManual(double pago, double restante) async {
     String? selectedMethod = await showDialog<String>(
@@ -2443,7 +2829,8 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
       stream: Supabase.instance.client
           .from('services')
           .stream(primaryKey: ['id'])
-          .map((list) => list.where((d) => d['shop_id'] == shopId && (d['is_active'] ?? d['ativo']) == true).toList()),
+          .eq('shop_id', shopId)
+          .map((list) => list.where((d) => (d['is_active'] ?? d['ativo']) == true).toList()),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const CircularProgressIndicator();
         
@@ -2559,6 +2946,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
       stream: Supabase.instance.client
           .from('employees')
           .stream(primaryKey: ['id'])
+          .eq('shop_id', shopId)
           .map((list) => list.where((d) => (d['shop_id'] ?? d['shopId']) == shopId).toList()),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const SizedBox();

@@ -180,7 +180,8 @@ class _BusinessOnboardingPageState extends State<BusinessOnboardingPage> {
         address: enderecoSalvo,
         zipCode: cepSalvo,
         neighborhood: bairroSalvo,
-        planId: 'free', // Adicionado
+        ownerId: uid,
+        planId: 'free',
       );
 
       await supabase.from('shops').insert(shop.toMap());

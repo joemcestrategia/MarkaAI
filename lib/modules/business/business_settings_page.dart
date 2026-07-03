@@ -649,7 +649,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                             _currentFeatures.clientChoosesProfessional
                                 ? (v) => setState(
                                     () => _clientChoosesProfessional = v)
-                                : (v) => _showUpgradeDialog('Escolha de Profissional', PlanKey.starter),
+                                : (v) => _showUpgradeDialog('Escolha de Profissional', PlanKey.plus),
                             trailing: !_currentFeatures.clientChoosesProfessional ? _buildPremiumBadge() : null,
                           ),
                         ),
@@ -1332,7 +1332,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                               _currentFeatures.birthdayDiscount
                                   ? (v) => setState(
                                       () => _birthdayPixDiscountEnabled = v)
-                                  : (v) => _showUpgradeDialog('Desconto de Aniversário', PlanKey.starter),
+                                  : (v) => _showUpgradeDialog('Desconto de Aniversário', PlanKey.plus),
                               trailing:
                                   !_currentFeatures.birthdayDiscount ? _buildPremiumBadge() : null,
                             ),
@@ -1488,51 +1488,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             backgroundColor: _googleBusiness != null
                 ? Colors.red[600]
                 : AppColors.primaryPurple,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          ),
-        ),
-      ),
-
-      const Divider(height: 1),
-
-      // ðŸ†• Google Calendar Backup
-      ListTile(
-        leading: Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: Colors.green.shade50,
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child:
-              Icon(Icons.cloud_upload, color: Colors.green.shade700, size: 24),
-        ),
-        title: const Text(
-          "Backup Google Calendar",
-          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-        ),
-        subtitle: const Text(
-          "Salve automaticamente todos os agendamentos no seu Google Calendar",
-          style: TextStyle(fontSize: 12),
-        ),
-        trailing: ElevatedButton.icon(
-          onPressed: () {
-            if (shopId != null) {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => CalendarBackupPage(
-                    isOwner: true,
-                    shopId: shopId,
-                  ),
-                ),
-              );
-            }
-          },
-          icon: const Icon(Icons.sync, size: 18),
-          label: const Text("CONFIGURAR"),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.green,
             foregroundColor: Colors.white,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           ),

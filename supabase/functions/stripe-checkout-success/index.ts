@@ -3,20 +3,19 @@ import { serve } from "http/server"
 import Stripe from 'stripe'
 import { createClient } from 'supabase'
 import { corsHeaders } from '../_shared/cors.ts'
+import { getPlanIdFromPriceId } from '../_shared/plan-mapping.ts'
 
 const stripe = new Stripe(Deno.env.get('STRIPE_SECRET_KEY') || '', {
   apiVersion: '2023-10-16',
   httpClient: Stripe.createFetchHttpClient(),
 })
 
-// Supabase admin client (service role) para atualizar dados sem RLS
 const supabaseAdmin = createClient(
   Deno.env.get('SUPABASE_URL') || '',
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 )
 
 serve(async (req: Request) => {
-  // Este endpoint aceita GET (redirect do Stripe) e POST (verificação manual)
   const url = new URL(req.url)
 
   if (req.method === 'OPTIONS') {
@@ -37,13 +36,11 @@ serve(async (req: Request) => {
       throw new Error('session_id é obrigatório')
     }
 
-    // Recuperar sessão do Stripe
     const session = await stripe.checkout.sessions.retrieve(sessionId, {
       expand: ['subscription', 'payment_intent'],
     })
 
     if (session.payment_status !== 'paid') {
-      // Para GET (redirect), exibir página de erro
       if (req.method === 'GET') {
         return _htmlResponse('Pagamento Pendente',
           'Seu pagamento ainda não foi confirmado. Tente novamente em alguns instantes.',
@@ -59,20 +56,60 @@ serve(async (req: Request) => {
       })
     }
 
-    const shopId = session.metadata?.shop_id
-    const planId = session.metadata?.plan_id
-    const mode = session.mode // 'subscription' | 'payment'
+    const mode = session.mode
 
-    if (mode === 'subscription' && shopId && planId) {
-      // ── Atualização movida para o Webhook ────────────────
-      console.log(`[stripe-checkout-success] Redirecionando com sucesso o plano ${planId} para shop ${shopId}. O Webhook fará a liberação no banco.`)
-    } else if (mode === 'payment' && shopId) {
-      // ── Pagamento avulso (boost) ───────────────────────
+    let resolvedShopId: string | undefined = undefined
+    let resolvedPlanId: string | undefined = undefined
+
+    if (mode === 'subscription') {
+      resolvedShopId = session.metadata?.shop_id || session.subscription_data?.metadata?.shop_id
+      resolvedPlanId = session.metadata?.plan_id
+
+      if (!resolvedShopId) {
+        console.error('[stripe-checkout-success] shop_id ausente no metadata da sessão')
+        throw new Error('Dados da loja não encontrados na sessão de checkout.')
+      }
+
+      const subscriptionId = typeof session.subscription === 'string'
+        ? session.subscription
+        : (session.subscription as Stripe.Subscription)?.id
+
+      const customerId = typeof session.customer === 'string'
+        ? session.customer
+        : (session.customer as any)?.id
+
+      if (subscriptionId && !resolvedPlanId) {
+        const sub = await stripe.subscriptions.retrieve(subscriptionId)
+        const priceId = sub.items.data[0]?.price.id
+        resolvedPlanId = getPlanIdFromPriceId(priceId) || 'free'
+      }
+
+      if (!resolvedPlanId) {
+        console.error('[stripe-checkout-success] plan_id não resolvido')
+        throw new Error('Não foi possível identificar o plano contratado.')
+      }
+
+      console.log(`[stripe-checkout-success] Atualizando DB: Shop ${resolvedShopId} → Plano ${resolvedPlanId}`)
+
+      await supabaseAdmin.from('shops').update({
+        plan_id: resolvedPlanId,
+        trial_active: false,
+        subscription: {
+          plan_id: resolvedPlanId,
+          status: 'active',
+          payment_provider: 'stripe',
+          stripe_subscription_id: subscriptionId || null,
+          stripe_customer_id: customerId || null,
+          updated_at: new Date().toISOString(),
+        },
+      }).eq('id', resolvedShopId)
+
+    } else if (mode === 'payment') {
+      resolvedShopId = session.metadata?.shop_id
       const description = session.metadata?.description || ''
-      console.log(`[stripe-checkout-success] Pagamento avulso (Boost) confirmado para shop ${shopId}: ${description}`)
+      console.log(`[stripe-checkout-success] Pagamento avulso (Boost) confirmado para shop ${resolvedShopId}: ${description}`)
     }
 
-    // ── Resposta ──────────────────────────────────────────
     if (req.method === 'GET') {
       const appUrl = url.searchParams.get('app_url') || '/'
       return _htmlResponse('Pagamento Confirmado!',
@@ -85,8 +122,8 @@ serve(async (req: Request) => {
     return new Response(JSON.stringify({
       success: true,
       mode,
-      plan_id: planId,
-      shop_id: shopId,
+      plan_id: resolvedPlanId,
+      shop_id: resolvedShopId,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })

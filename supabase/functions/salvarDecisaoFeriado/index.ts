@@ -30,12 +30,17 @@ serve(async (req) => {
 
     const { data: shopDoc, error: fetchError } = await supabase
       .from('shops')
-      .select('configured_holidays, pending_holidays')
+      .select('owner_id, configured_holidays, pending_holidays')
       .eq('id', shop_id)
       .single()
 
     if (fetchError || !shopDoc) {
       return new Response(JSON.stringify({ error: 'Loja não encontrada' }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    }
+
+    const isAdmin = user.user_metadata?.role === 'admin' || user.app_metadata?.role === 'admin'
+    if (shopDoc.owner_id !== user.id && !isAdmin) {
+      return new Response(JSON.stringify({ error: 'Apenas o dono da loja pode modificar feriados' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 
     // Merge logic

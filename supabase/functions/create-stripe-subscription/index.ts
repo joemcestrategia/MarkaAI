@@ -3,18 +3,12 @@ import { serve } from "http/server"
 import Stripe from 'stripe'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3'
 import { corsHeaders } from '../_shared/cors.ts'
+import { getPriceIdFromPlanId } from '../_shared/plan-mapping.ts'
 
 const stripe = new Stripe(Deno.env.get('STRIPE_SECRET_KEY') || '', {
   apiVersion: '2023-10-16',
   httpClient: Stripe.createFetchHttpClient(),
 })
-
-const PRICE_IDS: Record<string, string> = {
-  'starter': 'price_1T98YSFzh8r5AMGzkMdAH2eq',
-  'start': 'price_1T98YSFzh8r5AMGzkMdAH2eq',
-  'plus': 'price_1T98ZPFzh8r5AMGzUHfVZRfC',
-  'pro': 'price_1T98aHFzh8r5AMGzlgvM6eSZ',
-}
 
 serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
@@ -51,7 +45,7 @@ serve(async (req: Request) => {
       throw new Error('Dados incompletos')
     }
 
-    const priceId = PRICE_IDS[plan_id]
+    const priceId = getPriceIdFromPlanId(plan_id)
     if (!priceId) {
       throw new Error(`Plano inválido ou ID de preço não configurado: ${plan_id}`)
     }

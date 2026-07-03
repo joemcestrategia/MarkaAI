@@ -3,25 +3,29 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class ClientCacheService {
   static const String _keyPrefix = 'cached_clients_';
-  static const Duration _maxAge = Duration(minutes: 10);
+  static const Duration _maxAge = Duration(hours: 2);
 
   /// Salva os dados processados na cache local
   static Future<void> saveClients(
-      String shopId, Map<String, List<Map<String, dynamic>>> processedData) async {
+      String shopId, Map<String, dynamic> processedData) async {
     final prefs = await SharedPreferences.getInstance();
 
     final serializedData = {
-      'clients': _serializeList(processedData['clients'] ?? []),
-      'visitors': _serializeList(processedData['visitors'] ?? []),
+      'clients': _serializeList(
+          (processedData['clients'] as List?)?.cast<Map<String, dynamic>>() ??
+              []),
+      'visitors': _serializeList(
+          (processedData['visitors'] as List?)?.cast<Map<String, dynamic>>() ??
+              []),
       'cachedAt': DateTime.now().toIso8601String(),
+      'fingerprint': processedData['fingerprint'] ?? '',
     };
 
     await prefs.setString('$_keyPrefix$shopId', jsonEncode(serializedData));
   }
 
-  /// Recupera os dados da cache local
-  static Future<Map<String, List<Map<String, dynamic>>>?> getCachedClients(
-      String shopId) async {
+  /// Recupera os dados da cache (retorna mesmo expirado - stale-while-revalidate)
+  static Future<Map<String, dynamic>?> getCachedClients(String shopId) async {
     final prefs = await SharedPreferences.getInstance();
     final jsonStr = prefs.getString('$_keyPrefix$shopId');
 
@@ -29,25 +33,56 @@ class ClientCacheService {
 
     try {
       final decoded = jsonDecode(jsonStr) as Map<String, dynamic>;
-      final cachedAt = DateTime.tryParse(decoded['cachedAt']?.toString() ?? '');
-      if (cachedAt != null && DateTime.now().difference(cachedAt) > _maxAge) {
-        return null;
-      }
       return {
         'clients': _deserializeList(decoded['clients'] as List),
         'visitors': _deserializeList(decoded['visitors'] as List),
+        'fingerprint': decoded['fingerprint']?.toString() ?? '',
       };
     } catch (e) {
       return null;
     }
   }
 
-  static List<Map<String, dynamic>> _serializeList(List<Map<String, dynamic>> list) {
+  /// Computa fingerprint dos appointments para detectar mudanças
+  static int computeAppointmentsFingerprint(
+      List<Map<String, dynamic>> appointments) {
+    int hash = appointments.length;
+    for (int i = 0; i < appointments.length; i++) {
+      final a = appointments[i];
+      hash = hash * 31 + (a['id']?.hashCode ?? 0);
+      hash = hash * 31 + (a['status']?.hashCode ?? 0);
+      hash = hash * 31 + (a['client_id']?.hashCode ?? 0);
+      hash = hash * 31 + ((a['total_price'] ?? 0).hashCode);
+    }
+    return hash;
+  }
+
+  /// Verifica se a cache está expirada (precisa de refresh em background)
+  static Future<bool> isCacheStale(String shopId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = prefs.getString('$_keyPrefix$shopId');
+    if (jsonStr == null) return true;
+
+    try {
+      final decoded = jsonDecode(jsonStr) as Map<String, dynamic>;
+      final cachedAt = DateTime.tryParse(decoded['cachedAt']?.toString() ?? '');
+      if (cachedAt == null) return true;
+      return DateTime.now().difference(cachedAt) > _maxAge;
+    } catch (e) {
+      return true;
+    }
+  }
+
+  static List<Map<String, dynamic>> _serializeList(
+      List<Map<String, dynamic>> list) {
     return list.map((item) {
       final newItem = Map<String, dynamic>.from(item);
       newItem.forEach((key, value) {
         if (value is DateTime) {
-          newItem[key] = {'__type__': 'DateTime', 'value': value.toIso8601String()};
+          newItem[key] = {
+            '__type__': 'DateTime',
+            'value': value.toIso8601String()
+          };
         }
       });
       return newItem;

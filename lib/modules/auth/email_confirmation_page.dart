@@ -82,14 +82,26 @@ class _EmailConfirmationPageState extends State<EmailConfirmationPage> {
   /// Garante que os dados pós-cadastro estejam no banco após confirmação de e-mail.
   /// Faz upsert de TODOS os campos do perfil a partir dos metadados do signUp(),
   /// garantindo que o perfil esteja completo independente do estado do trigger.
+  ///
+  /// CORREÇÃO CRÍTICA (2026-06-27):
+  ///   NUNCA sobrescreve o role de um usuário já existente no banco.
+  ///   Apenas define o role para linhas NOVAS (INSERT).
+  ///   Para UPDATE, o role permanece intacto.
   Future<void> _ensurePostSignupDataMigrated(sb.User user) async {
     try {
       final metadata = user.userMetadata ?? {};
-      final role = metadata['role']?.toString() ?? 'cliente';
       final supabase = sb.Supabase.instance.client;
       final uid = user.id;
 
-      // Upsert completo do perfil para TODOS os tipos de usuário
+      final existingProfile = await supabase
+          .from('users')
+          .select('role')
+          .eq('id', uid)
+          .maybeSingle();
+
+      final String? dbRole = existingProfile?['role']?.toString();
+      final String role = dbRole ?? metadata['role']?.toString() ?? 'cliente';
+
       final profileData = <String, dynamic>{
         'id': uid,
         'email': user.email ?? '',

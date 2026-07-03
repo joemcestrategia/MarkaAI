@@ -585,15 +585,26 @@ class _BookingTimePageState extends State<BookingTimePage> {
     _bookingWindowDays = widget.shopConfig['janela_agendamento_dias'] ?? 90;
     _vipExtraDays = (widget.shopConfig['vip_extra_booking_days'] ?? 0).toInt();
 
+    // Calcula a data efetiva de foco considerando antecedência mínima,
+    // para que o calendário e a pré-população usem o mesmo mês desde o início.
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final minAdvanceDateRaw = now.add(Duration(hours: widget.minAdvanceHours));
+    final minAllowedDate = DateTime(
+        minAdvanceDateRaw.year, minAdvanceDateRaw.month, minAdvanceDateRaw.day);
+    final effectiveFocusedDay =
+        minAllowedDate.isAfter(today) ? minAllowedDate : today;
+    _focusedDay = effectiveFocusedDay;
+
     // fix: bloquear dias sem equipe ativa para qualquer estabelecimento
     // Pré-popula work_days de forma SÍNCRONA antes do primeiro build.
     // Isso garante que o calendário aparece imediatamente com o padrão correto
     // (dias de trabalho habilit., não-trabalho bloqueados) sem depender de Supabase.
     // O _fetchMonthAvailability depois refina com contagem real de slots disponíveis.
-    _prePopulateWorkDays(DateTime.now());
+    _prePopulateWorkDays(effectiveFocusedDay);
 
     _checkRestriction();
-    _fetchNationalHolidays(DateTime.now());
+    _fetchNationalHolidays(effectiveFocusedDay);
     _initWithVipCheck(); // aguarda VIP antes de buscar disponibilidade
   }
 
@@ -715,12 +726,14 @@ class _BookingTimePageState extends State<BookingTimePage> {
     final profsToCheck =
         widget.qualifiedProfessionals ?? [widget.professionalDoc];
 
-    final snapshot = await Supabase.instance.client
-        .from('appointments')
-        .select()
-        .eq('shop_id', shopId)
-        .gte('scheduled_at', startOfMonth.toIso8601String())
-        .lte('scheduled_at', endOfMonth.toIso8601String());
+    final snapshot = await Supabase.instance.client.rpc(
+      'get_shop_blocked_slots',
+      params: {
+        'p_shop_id': shopId,
+        'p_start_date': startOfMonth.toIso8601String(),
+        'p_end_date': endOfMonth.toIso8601String(),
+      },
+    );
 
     Map<String, List<Map<String, int>>> groupedByProfDay = {};
     for (var data in snapshot) {
@@ -788,7 +801,14 @@ class _BookingTimePageState extends State<BookingTimePage> {
         final startStr = dayCfg.start;
         final endStr = dayCfg.end;
         final key = '${profId}_$day';
-        final busy = groupedByProfDay[key] ?? [];
+        final busy = [...(groupedByProfDay[key] ?? <Map<String, int>>[])]; 
+
+        // Inclui folgas do profissional como busyIntervals
+        final profBreaks = prof['breaks'];
+        if (profBreaks != null && profBreaks is List) {
+          busy.addAll(AvailabilityUtils.parseFolgasForDate(profBreaks, date));
+        }
+
         final breakI = dayCfg.breakInterval == null
             ? null
             : {
@@ -1615,30 +1635,36 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                       // 1. Validar Disponibilidade Localmente (Evita 401/404 de Edge Functions)
                                       final profData = _resolvedProfessional ??
                                           widget.professionalDoc;
-                                      final conflictCheck = await Supabase
+                                      final rawCheck = await Supabase
                                           .instance.client
-                                          .from('appointments')
-                                          .select(
-                                              'id, scheduled_at, duration_min')
-                                          .eq('professional_id', profData['id'])
-                                          .neq(
-                                              'id',
-                                              widget
-                                                  .appointmentId!) // EXCLUIR O ATUAL
-                                          .not('status', 'in',
-                                              '("cancelado","rejeitado","recusado","excluido")')
-                                          // Busca uma janela de tempo ao redor do horário desejado
-                                          .gte(
-                                              'scheduled_at',
-                                              newDateTime
-                                                  .subtract(
-                                                      const Duration(hours: 4))
-                                                  .toIso8601String())
-                                          .lte(
-                                              'scheduled_at',
-                                              newDateTime
-                                                  .add(const Duration(hours: 4))
-                                                  .toIso8601String());
+                                          .rpc(
+                                          'get_professional_blocked_slots',
+                                          params: {
+                                            'p_professional_id': profData['id'],
+                                            'p_start_date': newDateTime
+                                                .subtract(
+                                                    const Duration(hours: 4))
+                                                .toIso8601String(),
+                                            'p_end_date': newDateTime
+                                                .add(const Duration(hours: 4))
+                                                .toIso8601String(),
+                                          },
+                                        );
+
+                                      final conflictCheck = rawCheck
+                                          .where((a) =>
+                                              a['id'].toString() !=
+                                                  widget.appointmentId &&
+                                              !const [
+                                                'cancelado',
+                                                'rejeitado',
+                                                'recusado',
+                                                'excluido'
+                                              ].contains(
+                                                  (a['status'] ?? '')
+                                                      .toString()
+                                                      .toLowerCase()))
+                                          .toList();
 
                                       bool isConflicting = false;
                                       for (var appt in conflictCheck) {
@@ -1770,7 +1796,7 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                     try {
                                       final user = Supabase
                                           .instance.client.auth.currentUser;
-                                      if (user != null) {
+                                      if (user != null && shopId.isNotEmpty) {
                                         final newDateTime = DateTime(
                                           widget.selectedDate.year,
                                           widget.selectedDate.month,
@@ -1835,6 +1861,11 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                             backgroundColor: Colors.red,
                                           ));
                                           return;
+                                        } else if (rpcRes is Map &&
+                                            rpcRes['success'] == false) {
+                                          debugPrint(
+                                              'tentar_pre_reserva rejeitado: ${rpcRes['reason']}');
+                                          // prossegue sem lock, fallback via exclusion constraint
                                         }
                                       }
                                     } catch (e) {
@@ -1857,6 +1888,8 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                           time: _selectedTime!,
                                           selectedVariation:
                                               widget.selectedVariation,
+                                          serviceNameOverride: finalName,
+                                          servicePriceOverride: finalPrice,
                                           fromSubdomain: widget.fromSubdomain,
                                           rescheduleId: widget.appointmentId,
                                           preReservaId: preReservaId,
@@ -1874,7 +1907,9 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
                                             .delete()
                                             .eq('id', preReservaId)
                                             .eq('status', 'pre_reserva');
-                                      } catch (_) {}
+                                      } catch (e) {
+                                        debugPrint('⚠️ Falha ao limpar pre_reserva: $e');
+                                      }
                                     }
 
                                     if (result == 'edit_profile' && mounted) {
@@ -1934,13 +1969,17 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
     final profIds =
         profsToCheck.map((p) => (p['id'] ?? '').toString()).toList();
 
-    final querySnapshot = await Supabase.instance.client
-        .from('appointments')
-        .select()
-        .eq('shop_id', (widget.shop['id'] ?? '').toString())
-        .inFilter('professional_id', profIds)
-        .gte('scheduled_at', startDay.toIso8601String())
-        .lte('scheduled_at', endDay.toIso8601String());
+    final allDocs = await Supabase.instance.client.rpc(
+      'get_shop_blocked_slots',
+      params: {
+        'p_shop_id': (widget.shop['id'] ?? '').toString(),
+        'p_start_date': startDay.toIso8601String(),
+        'p_end_date': endDay.toIso8601String(),
+      },
+    );
+
+    final querySnapshot =
+        allDocs.where((d) => profIds.contains(d['professional_id'])).toList();
 
     List<Map<String, dynamic>> results = [];
 
@@ -2166,6 +2205,13 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
               final startMin = dt.hour * 60 + dt.minute;
               final agDuration = data['computed_duration'] as int;
               profBusy.add({'start': startMin, 'end': startMin + agDuration});
+            }
+
+            // Inclui folgas do profissional como busyIntervals
+            final profBreaks = prof['breaks'];
+            if (profBreaks != null && profBreaks is List) {
+              profBusy.addAll(AvailabilityUtils.parseFolgasForDate(
+                  profBreaks, widget.selectedDate));
             }
 
             final wsProf = WorkSchedule.fromEmployeeRow(

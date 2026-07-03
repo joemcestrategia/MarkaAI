@@ -3,18 +3,12 @@ import { serve } from "http/server"
 import Stripe from 'stripe'
 import { createClient } from 'supabase'
 import { corsHeaders } from '../_shared/cors.ts'
+import { getPriceIdFromPlanId } from '../_shared/plan-mapping.ts'
 
 const stripe = new Stripe(Deno.env.get('STRIPE_SECRET_KEY') || '', {
   apiVersion: '2023-10-16',
   httpClient: Stripe.createFetchHttpClient(),
 })
-
-const PRICE_IDS: Record<string, string> = {
-  'starter': 'price_1T98YSFzh8r5AMGzkMdAH2eq',
-  'start': 'price_1T98YSFzh8r5AMGzkMdAH2eq',
-  'plus': 'price_1T98ZPFzh8r5AMGzUHfVZRfC',
-  'pro': 'price_1T98aHFzh8r5AMGzlgvM6eSZ',
-}
 
 serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
@@ -28,7 +22,7 @@ serve(async (req: Request) => {
       throw new Error('shop_id e new_plan_id são obrigatórios')
     }
 
-    const newPriceId = PRICE_IDS[new_plan_id]
+    const newPriceId = getPriceIdFromPlanId(new_plan_id)
     if (!newPriceId) {
       throw new Error(`Plano inválido: ${new_plan_id}`)
     }

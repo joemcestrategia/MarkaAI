@@ -292,18 +292,29 @@ class _AuthGateState extends State<AuthGate> {
         final session = snapshot.data!.session;
 
         // Detecta confirmação de email ANTES de qualquer manipulação de URL.
-        // Inclui fragment (#access_token=...) do fluxo implícito do Supabase.
         // IMPORTANTE: deve ser calculado antes do replaceState abaixo.
+        //
+        // CORREÇÃO CRÍTICA (2026-06-27):
+        //   Uri.base.queryParameters.containsKey('code') NÃO é um indicador confiável
+        //   de confirmação de email — callbacks OAuth (Google, etc) também contêm 'code'
+        //   na query string. Isso fazia com que logins via Google redirecionassem
+        //   para EmailConfirmationPage, que sobrescrevia o role do usuário para 'cliente'.
+        //
+        //   O discriminador correto é o PATH da URL:
+        //   - /confirm-email?code=... → confirmação de email (PKCE)
+        //   - /confirm-email#access_token=... → confirmação de email (implicit)
+        //   - /?code=... → callback OAuth (NÃO é confirmação de email)
         final bool isConfirmingEmail = kIsWeb && (
-          Uri.base.queryParameters.containsKey('code') ||
           Uri.base.path.contains('confirm-email') ||
-          Uri.base.queryParameters.containsKey('access_token') ||
           Uri.base.fragment.contains('access_token')
         );
 
+        // Detecta se está na rota de reset-password (fluxo PKCE ou implícito)
+        final bool isResettingPassword = kIsWeb && Uri.base.path.contains('reset-password');
+
         // Limpa o ?code= da URL após o login (SIGNED_IN) no Web,
-        // mas apenas para logins normais — não durante confirmação de email.
-        if (event == sb.AuthChangeEvent.signedIn && kIsWeb && !isConfirmingEmail) {
+        // mas apenas para logins normais — não durante confirmação de email ou reset de senha.
+        if (event == sb.AuthChangeEvent.signedIn && kIsWeb && !isConfirmingEmail && !isResettingPassword) {
           html.window.history.replaceState(null, '', '/');
         }
 
@@ -328,7 +339,13 @@ class _AuthGateState extends State<AuthGate> {
         // Detecta evento de recuperação de senha → redireciona para tela de redefinição
         if (event == sb.AuthChangeEvent.passwordRecovery) {
           debugPrint('AuthGate: evento PASSWORD_RECOVERY detectado → ResetPasswordPage');
-          // Limpa a URL do navegador
+          if (kIsWeb) html.window.history.replaceState(null, '', '/reset-password');
+          return const ResetPasswordPage(oobCode: '');
+        }
+
+        // PKCE flow: signedIn na rota de reset-password também é recovery
+        if (event == sb.AuthChangeEvent.signedIn && isResettingPassword && session != null) {
+          debugPrint('AuthGate: signedIn na rota reset-password → ResetPasswordPage');
           if (kIsWeb) html.window.history.replaceState(null, '', '/reset-password');
           return const ResetPasswordPage(oobCode: '');
         }
@@ -764,11 +781,26 @@ class _PasswordRecoveryGateState extends State<_PasswordRecoveryGate> {
     // 1. Assina o stream ANTES de qualquer await para não perder eventos futuros
     _sub = supabase.auth.onAuthStateChange.listen((state) {
       debugPrint('[PasswordRecoveryGate] evento: ${state.event}');
-      if (state.event == sb.AuthChangeEvent.passwordRecovery ||
-          state.event == sb.AuthChangeEvent.signedIn) {
-        // Verifica se o tipo da sessão é recovery
-        final isRecoverySession = state.event == sb.AuthChangeEvent.passwordRecovery;
-        if (mounted && isRecoverySession) {
+      if (state.event == sb.AuthChangeEvent.passwordRecovery) {
+        if (mounted && !_isRecovery) {
+          setState(() {
+            _isRecovery = true;
+            _ready = true;
+          });
+        }
+        return;
+      }
+      // Fluxo PKCE: o SDK emite signedIn em vez de passwordRecovery
+      // ao trocar o ?code= da URL. Detectamos pela rota atual + sessão.
+      if (state.event == sb.AuthChangeEvent.signedIn &&
+          state.session != null &&
+          !_isRecovery) {
+        final bool onResetRoute = kIsWeb
+            ? Uri.base.path.contains('reset-password')
+            : true; // No mobile o deep link já direcionou para cá
+        if (mounted && onResetRoute) {
+          debugPrint('[PasswordRecoveryGate] signedIn na rota reset-password → recovery');
+          if (kIsWeb) html.window.history.replaceState(null, '', '/reset-password');
           setState(() {
             _isRecovery = true;
             _ready = true;
@@ -782,33 +814,48 @@ class _PasswordRecoveryGateState extends State<_PasswordRecoveryGate> {
     if (kIsWeb) {
       try {
         final fragment = Uri.base.fragment;
-        debugPrint('[PasswordRecoveryGate] Fragment da URL: $fragment');
+        final hasCodeInQuery = Uri.base.queryParameters.containsKey('code');
+        debugPrint('[PasswordRecoveryGate] Fragment da URL: "$fragment" | hasCodeInQuery: $hasCodeInQuery');
 
+        // Implicit flow: token no hash
         if (fragment.contains('type=recovery') || fragment.contains('access_token=')) {
-          // Força o SDK a processar o hash e criar a sessão
           final response = await supabase.auth.getSessionFromUrl(Uri.base);
-          debugPrint('[PasswordRecoveryGate] getSessionFromUrl OK, session: ${response.session.user.email}');
+          debugPrint('[PasswordRecoveryGate] getSessionFromUrl OK (implicit), session: ${response.session.user.email}');
 
           if (mounted) {
             setState(() {
               _isRecovery = true;
               _ready = true;
             });
-            // Limpa o hash da URL para não poluir
             html.window.history.replaceState(null, '', '/reset-password');
             return;
           }
+        }
+
+        // PKCE flow: code na query string — SDK já trocou ou vai trocar automaticamente
+        if (hasCodeInQuery) {
+          debugPrint('[PasswordRecoveryGate] PKCE ?code= detectado, aguardando troca pelo SDK...');
+          // Não faz nada aqui — o listener acima capturará o signedIn
         }
       } catch (e) {
         debugPrint('[PasswordRecoveryGate] getSessionFromUrl erro: $e');
       }
     }
 
-    // 3. Se não encontrou o token no hash, marca como pronto (vai para login)
+    // 3. Aguarda e faz fallback: verifica se há sessão ativa (PKCE pode já ter trocado o code)
     if (mounted && !_isRecovery) {
-      // Aguarda um breve momento para o stream emitir o evento PASSWORD_RECOVERY
-      await Future.delayed(const Duration(milliseconds: 800));
+      await Future.delayed(const Duration(milliseconds: 1500));
       if (mounted && !_isRecovery) {
+        final currentSession = supabase.auth.currentSession;
+        if (currentSession != null) {
+          debugPrint('[PasswordRecoveryGate] Sessão ativa após delay em reset-password → recovery');
+          if (kIsWeb) html.window.history.replaceState(null, '', '/reset-password');
+          setState(() {
+            _isRecovery = true;
+            _ready = true;
+          });
+          return;
+        }
         setState(() => _ready = true);
       }
     }

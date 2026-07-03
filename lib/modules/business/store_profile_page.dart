@@ -922,6 +922,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                             icon: Icons.store_mall_directory,
                             validator: (v) =>
                                 v!.isEmpty ? "Campo obrigatório" : null,
+                            maxLength: 200,
                           ),
                           const SizedBox(height: 12),
                           // ── Nicho / Categoria ──────────────────────────
@@ -932,6 +933,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                             label: "Descrição",
                             icon: Icons.description,
                             maxLines: 3,
+                            maxLength: 2000,
                           ),
                           const SizedBox(height: 12),
                           Row(children: [
@@ -941,6 +943,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                                 controller: _streetController,
                                 label: "Rua / Logradouro",
                                 icon: Icons.home,
+                                maxLength: 200,
                               ),
                             ),
                             const SizedBox(width: 8),
@@ -950,6 +953,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                                 controller: _numberController,
                                 label: "Número",
                                 icon: null,
+                                maxLength: 20,
                               ),
                             ),
                           ]),
@@ -960,6 +964,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                                 controller: _neighborhoodController,
                                 label: "Bairro",
                                 icon: Icons.location_city,
+                                maxLength: 150,
                               ),
                             ),
                             const SizedBox(width: 8),
@@ -968,6 +973,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                                 controller: _complementController,
                                 label: "Complemento",
                                 icon: null,
+                                maxLength: 200,
                               ),
                             ),
                           ]),
@@ -994,6 +1000,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                             hint: "(00) 00000-0000",
                             keyboardType: TextInputType.phone,
                             inputFormatters: [_phoneMask],
+                            maxLength: 20,
                             onChanged: (val) {
                               final unmasked = _phoneMask.getUnmaskedText();
                               // Padrão brasileiro: celulares novos começam com 9
@@ -1157,18 +1164,21 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                                   controller: _instagramController,
                                   label: "Instagram (ex: @minha_loja)",
                                   icon: Icons.camera_alt,
+                                  maxLength: 100,
                                 ),
                                 const SizedBox(height: 10),
                                 _buildTextField(
                                   controller: _tiktokController,
                                   label: "TikTok (ex: @minha_loja)",
                                   icon: Icons.music_note,
+                                  maxLength: 100,
                                 ),
                                 const SizedBox(height: 10),
                                 _buildTextField(
                                   controller: _youtubeController,
                                   label: "YouTube (link do canal)",
                                   icon: Icons.play_circle_fill,
+                                  maxLength: 200,
                                 ),
                               ],
                             ),
@@ -1408,6 +1418,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
     String? hint,
     List<TextInputFormatter>? inputFormatters,
     void Function(String)? onChanged,
+    int? maxLength,
   }) {
     return Container(
       decoration: BoxDecoration(
@@ -1425,7 +1436,14 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
         controller: controller,
         maxLines: maxLines,
         keyboardType: keyboardType,
-        validator: validator,
+        validator: (v) {
+          if (validator != null) {
+            final result = validator(v);
+            if (result != null) return result;
+          }
+          if (maxLength != null && v != null && v.length > maxLength!) return "Máximo $maxLength caracteres";
+          return null;
+        },
         inputFormatters: inputFormatters,
         onChanged: onChanged,
         decoration: InputDecoration(

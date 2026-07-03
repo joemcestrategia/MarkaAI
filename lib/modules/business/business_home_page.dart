@@ -28,6 +28,7 @@ import '../../core/services/shop_data_cache_service.dart';
 import '../../core/services/mercado_pago_service.dart';
 import '../login/login_page.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 // --- MÓDULOS ---
 import '../services/services_management_page.dart';
@@ -52,6 +53,8 @@ import 'holidays_page.dart';
 import '../fiscal/nfse_dashboard_screen.dart';
 import '../../features/commissions/commission_management_page.dart';
 import 'products/manage_products_page.dart';
+import 'business_clients_heatmap_page.dart';
+import 'business_refunds_page.dart';
 
 class BusinessHomePage extends StatefulWidget {
   const BusinessHomePage({super.key});
@@ -96,6 +99,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
   // Dados da loja vindos do stream (evita múltiplos StreamBuilders)
   int _pendingHolidaysCount = 0;
+  String _appVersion = '';
 
   // Cached futures para evitar re-fetch em cada rebuild
   Future<List<Map<String, dynamic>>>? _statsFuture;
@@ -118,6 +122,32 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     super.initState();
     _checkBusinessAndLoad();
     _setupForegroundNotifications();
+    _loadAppVersion();
+  }
+
+  Future<void> _loadAppVersion() async {
+    try {
+      final PackageInfo packageInfo = await PackageInfo.fromPlatform();
+      if (mounted) {
+        setState(() {
+          if (packageInfo.version.isNotEmpty && packageInfo.version != 'Unknown') {
+            _appVersion = packageInfo.buildNumber.isNotEmpty 
+                ? '${packageInfo.version}+${packageInfo.buildNumber}'
+                : packageInfo.version;
+          } else {
+            // Fallback para evitar ficar apenas com "+" caso a web falhe
+            _appVersion = ''; 
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint("Erro ao carregar versão do app: $e");
+      if (mounted) {
+        setState(() {
+          _appVersion = '';
+        });
+      }
+    }
   }
 
   @override
@@ -243,6 +273,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                   _canViewCommissions = _currentFeatures.commissionView;
                   if (!_canViewCommissions) _restrictedIndices.add(13);
                   if (!_currentFeatures.holidaysManagement) _restrictedIndices.add(11);
+                  if (!_currentFeatures.clientHeatmap) _restrictedIndices.add(15);
                 });
               }
             });
@@ -450,14 +481,32 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       _restrictedIndices.add(13);
     }
 
-    // Folgas e Feriados (Índice 11)
+    // Gestão de Folgas
     if (!_currentFeatures.holidaysManagement) {
       _restrictedIndices.add(11);
     }
+
+    // Mapa de Calor
+    if (!_currentFeatures.clientHeatmap) {
+      _restrictedIndices.add(15);
+    }
+
+    // Fiscal NFS-e
+    if (!_currentFeatures.nfseEmission) {
+      _restrictedIndices.add(12);
+    }
+
+    // Controle de Estornos (Apenas Plus e Pro)
+    final bool isPlusOrPro = _currentPlanCode == SubscriptionPlan.plus || 
+                             _currentPlanCode == SubscriptionPlan.pro || 
+                             _isTrial;
+    if (!isPlusOrPro) {
+      _restrictedIndices.add(16);
+    }
   }
 
-  void _showUpgradeDialog(String feature) {
-    UpgradeModal.show(context, featureName: feature, requiredPlan: 'Plus');
+  void _showUpgradeDialog(String feature, {String requiredPlan = 'Plus'}) {
+    UpgradeModal.show(context, featureName: feature, requiredPlan: requiredPlan);
   }
 
   Future<void> _loadMpBalance() async {
@@ -718,6 +767,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       case 12: return const NfseDashboardScreen();
       case 13: return CommissionManagementPage(shopId: shopId ?? "", showAppBar: isDesktop);
       case 14: return ManageProductsPage(shopId: shopId ?? "");
+      case 15: return const BusinessClientsHeatmapPage();
+      case 16: return BusinessRefundsPage(shopId: shopId ?? "");
       default: return _buildHomeDashboard(isDesktop: isDesktop);
     }
   }
@@ -795,15 +846,23 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                         ? const Icon(Icons.lock_outline,
                             size: 14, color: Colors.grey)
                         : null),
+                
+                _buildDesktopMenuItem(
+                    16,
+                    Icons.currency_exchange,
+                    "Controle de Estornos",
+                    trailing: _restrictedIndices.contains(16)
+                        ? const Icon(Icons.lock, size: 16, color: Colors.grey)
+                        : null),
 
                 _buildDesktopMenuItem(
                     3, Icons.design_services_rounded, "Meus Serviços"),
                 
-                // Folgas e Feriados (usa _pendingHolidaysCount do stream principal)
+                // Feriados (usa _pendingHolidaysCount do stream principal)
                 _buildDesktopMenuItem(
                   11, 
                   Icons.beach_access_rounded, 
-                  "Folgas e Feriados",
+                  "Bloqueio Feriados",
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -826,7 +885,10 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 ),
 
                 _buildDesktopMenuItem(
-                    12, Icons.receipt_long_rounded, "Fiscal NFS-e"),
+                    12, Icons.receipt_long_rounded, "Fiscal NFS-e",
+                    trailing: !_currentFeatures.nfseEmission
+                        ? const Icon(Icons.lock, size: 16, color: Colors.grey)
+                        : null),
 
                 _buildDesktopMenuItem(
                     13, 
@@ -869,6 +931,37 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                         ? const Icon(Icons.lock, size: 16, color: Colors.grey)
                         : null,
                   ),
+                ),
+
+                _buildDesktopMenuItem(
+                    15,
+                    Icons.map_rounded,
+                    "Mapa de Calor",
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: AppColors.primaryPurple.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: AppColors.primaryPurple.withOpacity(0.3)),
+                          ),
+                          child: const Text(
+                            "EM TESTE",
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.primaryPurple,
+                            ),
+                          ),
+                        ),
+                        if (!_currentFeatures.clientHeatmap) ...[
+                          const SizedBox(width: 8),
+                          const Icon(Icons.lock_outline, size: 14, color: Colors.grey),
+                        ],
+                      ],
+                    ),
                 ),
 
                 // Item de afiliados removido
@@ -954,8 +1047,13 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           ),
           Padding(
             padding: const EdgeInsets.all(16),
-            child: Text("v1.0 ${_getPlanDisplayName()}",
-                style: const TextStyle(fontSize: 10, color: Colors.grey)),
+            child: Text(
+              _appVersion.isNotEmpty
+                  ? "Versão $_appVersion - ${_getPlanDisplayName()}"
+                  : "Versão 1.8.1+3 - ${_getPlanDisplayName()}",
+              style: const TextStyle(fontSize: 10, color: Colors.grey),
+              textAlign: TextAlign.center,
+            ),
           ),
         ],
       ),
@@ -1136,6 +1234,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                         _buildTabletNavIcon(3, Icons.design_services_rounded, "Serviços"),
                         _buildTabletNavIcon(14, Icons.inventory_2_outlined, "Produtos"),
                         _buildTabletNavIcon(5, Icons.account_balance_wallet_rounded, "Financeiro"),
+                        _buildTabletNavIcon(16, Icons.currency_exchange, "Estornos"),
                         _buildTabletNavIcon(7, Icons.inventory_2_outlined, "Estoque"),
                         _buildTabletNavIcon(8, Icons.settings, "Config"),
                         _buildTabletNavIcon(11, Icons.beach_access_rounded, "Folgas",
@@ -1352,9 +1451,20 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         if (_restrictedIndices.contains(newSelected)) {
           // Identify label for dialog
           String label = "Este recurso";
+          String requiredPlan = 'Plus';
+
+          if (newSelected == 4) label = "Clientes";
           if (newSelected == 5) label = "Financeiro";
+          if (newSelected == 16) label = "Controle de Estornos";
+          if (newSelected == 6) label = "Equipe";
           if (newSelected == 7) label = "Estoque";
-          _showUpgradeDialog(label);
+          if (newSelected == 12) {
+            label = "Fiscal NFS-e";
+            requiredPlan = 'Pro';
+          }
+          if (newSelected == 13) label = "Comissões";
+          
+          _showUpgradeDialog(label, requiredPlan: requiredPlan);
           return;
         }
 
@@ -1450,15 +1560,23 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                             size: 16, color: Colors.grey)
                         : null),
                 _buildDrawerItem(
+                  icon: Icons.currency_exchange,
+                  title: "Controle de Estornos",
+                  index: 16,
+                  trailing: _restrictedIndices.contains(16)
+                      ? const Icon(Icons.lock, size: 16, color: Colors.grey)
+                      : null,
+                ),
+                _buildDrawerItem(
                   icon: Icons.trending_up,
                   title: "Reajuste de Valores",
                   index: 9,
                 ),
                 
-                // Folgas e Feriados (usa _pendingHolidaysCount do stream principal)
+                // Bloqueio Feriados (usa _pendingHolidaysCount do stream principal)
                 _buildDrawerItem(
                   icon: Icons.beach_access_rounded,
-                  title: "Folgas e Feriados",
+                  title: "Bloqueio Feriados",
                   index: 11,
                   trailing: _pendingHolidaysCount > 0 
                     ? Container(
@@ -1475,9 +1593,12 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                     : null,
                 ),
                 _buildDrawerItem(
-                  icon: Icons.receipt_long_rounded,
+                  icon: Icons.receipt_long,
                   title: "Fiscal NFS-e",
                   index: 12,
+                  trailing: !_currentFeatures.nfseEmission
+                      ? const Icon(Icons.lock, size: 16, color: Colors.grey)
+                      : null,
                 ),
                 _buildDrawerItem(
                   icon: Icons.paid_outlined,
@@ -1504,6 +1625,36 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                   trailing: !_currentFeatures.coupons
                       ? const Icon(Icons.lock, size: 16, color: Colors.grey)
                       : null,
+                ),
+                _buildDrawerItem(
+                  icon: Icons.map_rounded,
+                  title: "Mapa de Calor",
+                  index: 15,
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: AppColors.primaryPurple.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: AppColors.primaryPurple.withOpacity(0.3)),
+                        ),
+                        child: const Text(
+                          "EM TESTE",
+                          style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.primaryPurple,
+                          ),
+                        ),
+                      ),
+                      if (!_currentFeatures.clientHeatmap) ...[
+                        const SizedBox(width: 8),
+                        const Icon(Icons.lock_outline, size: 16, color: Colors.grey),
+                      ],
+                    ],
+                  ),
                 ),
 
                 const Divider(),
@@ -1602,6 +1753,11 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                             ),
                           ),
                         ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _appVersion.isNotEmpty ? "Versão $_appVersion" : "Versão 1.8.1+3",
+                        style: TextStyle(color: Colors.grey[500], fontSize: 11),
                       ),
                       if (isFree || isTrial) ...[
                         const SizedBox(height: 12),
@@ -1705,6 +1861,22 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
             Navigator.pop(context);
             if (onTap != null) {
               onTap();
+            } else if (_restrictedIndices.contains(index)) {
+              String label = "Este recurso";
+              String requiredPlan = 'Plus';
+              if (index == 5) label = "Financeiro";
+              if (index == 16) label = "Controle de Estornos";
+              if (index == 12) {
+                label = "Fiscal NFS-e";
+                requiredPlan = 'Pro';
+              }
+              if (index == 13) label = "Comissões";
+              if (index == 11) {
+                label = "Bloqueio Feriados";
+                requiredPlan = 'Start';
+              }
+              _showUpgradeDialog(label, requiredPlan: requiredPlan);
+              return;
             } else if (index != -1) {
               if (_restrictedIndices.contains(index)) {
                 _showUpgradeDialog(title);
@@ -3340,6 +3512,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         return "Clientes";
       case 5:
         return "Financeiro";
+      case 16:
+        return "Controle de Estornos";
       case 6:
         return "Equipe";
       case 7:
@@ -3354,6 +3528,12 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         return "Gestão de Folgas";
       case 12:
         return "Fiscal NFS-e";
+      case 13:
+        return "Comissões";
+      case 14:
+        return "Produtos";
+      case 15:
+        return "Mapa de Calor";
       default:
         return "";
     }

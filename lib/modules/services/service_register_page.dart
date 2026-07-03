@@ -266,11 +266,24 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
       try {
         setState(() => _isSaving = true);
         final response = await http.get(Uri.parse(photo.url!));
-        final tempDir = await getTemporaryDirectory();
-        final file = io.File('${tempDir.path}/temp_crop_${DateTime.now().millisecondsSinceEpoch}.jpg');
-        await file.writeAsBytes(response.bodyBytes);
         
-        final cropped = await _cropImage(XFile(file.path));
+        XFile tempXFile;
+        if (kIsWeb) {
+          // Na web, não podemos usar getTemporaryDirectory/io.File.
+          // Criamos XFile a partir dos bytes diretamente.
+          tempXFile = XFile.fromData(
+            response.bodyBytes,
+            mimeType: 'image/jpeg',
+            name: 'temp_crop_${DateTime.now().millisecondsSinceEpoch}.jpg',
+          );
+        } else {
+          final tempDir = await getTemporaryDirectory();
+          final file = io.File('${tempDir.path}/temp_crop_${DateTime.now().millisecondsSinceEpoch}.jpg');
+          await file.writeAsBytes(response.bodyBytes);
+          tempXFile = XFile(file.path);
+        }
+        
+        final cropped = await _cropImage(tempXFile);
         if (cropped != null) {
           setState(() {
             _photos[index] = _ServicePhotoItem(file: cropped);
@@ -368,10 +381,24 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
 
     try {
       final ImagePicker picker = ImagePicker();
-      final List<XFile> picked = await picker.pickMultiImage(
-        imageQuality: 85,
-        maxWidth: 1024,
-      );
+      List<XFile> picked;
+
+      if (kIsWeb) {
+        // Na web (especialmente mobile), pickMultiImage pode causar crash por
+        // pressão de memória. Usa pickImage (seleção única) que é mais estável.
+        // Também não passa imageQuality/maxWidth pois o processamento pesado
+        // dentro do browser pode travar a página.
+        final XFile? single = await picker.pickImage(
+          source: ImageSource.gallery,
+        );
+        picked = single != null ? [single] : [];
+      } else {
+        // No app nativo (Android/iOS), pickMultiImage funciona bem
+        picked = await picker.pickMultiImage(
+          imageQuality: 85,
+          maxWidth: 1024,
+        );
+      }
 
       if (picked.isNotEmpty) {
         int available = _currentFeatures.maxPhotosPerService - _photos.length;
@@ -398,9 +425,10 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
       }
     } catch (e) {
       if (!mounted) return;
+      debugPrint('Erro ao selecionar imagens: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text("Erro ao selecionar imagens"),
+            content: Text("Erro ao selecionar imagens. Tente novamente."),
             backgroundColor: Colors.red),
       );
     }
@@ -446,6 +474,7 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
         uploadedNewUrls = await ImageService.uploadServicePhotos(
           filesToUpload,
           docId,
+          updateDatabase: false,
           onProgress: (p) {
             if (mounted) {
               setState(() => _uploadProgress = p);
@@ -651,110 +680,108 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                                         ),
                                       ),
                                     )
-                                  : Row(
+                                  : Stack(
+                                            alignment: Alignment.center,
                                             children: [
-                                              if (totalImages < _currentFeatures.maxPhotosPerService)
-                                                Padding(
-                                                  padding: const EdgeInsets.only(left: 40, top: 10, bottom: 10),
-                                                  child: GestureDetector(
-                                                    onTap: _pickImages,
-                                                    child: Container(
-                                                      width: 90,
-                                                      margin: const EdgeInsets.only(right: 12),
-                                                      decoration: BoxDecoration(
-                                                          color: Colors.white,
-                                                          borderRadius: BorderRadius.circular(12),
-                                                          border: Border.all(
-                                                              color: AppColors.primaryPurple.withValues(alpha: 0.5),
-                                                              width: 2)),
-                                                      child: Column(
-                                                        mainAxisAlignment: MainAxisAlignment.center,
-                                                        children: [
-                                                          const Icon(Icons.add_photo_alternate,
-                                                              color: AppColors.primaryPurple, size: 32),
-                                                          const SizedBox(height: 4),
-                                                          Text("+${_currentFeatures.maxPhotosPerService - totalImages}",
-                                                              style: const TextStyle(
-                                                                  fontSize: 11,
-                                                                  color: Colors.grey,
-                                                                  fontWeight: FontWeight.bold)),
-                                                        ],
+                                              Row(
+                                                children: [
+                                                  if (totalImages < _currentFeatures.maxPhotosPerService)
+                                                    Padding(
+                                                      padding: const EdgeInsets.only(left: 40, top: 10, bottom: 10),
+                                                      child: GestureDetector(
+                                                        onTap: _pickImages,
+                                                        child: Container(
+                                                          width: 90,
+                                                          margin: const EdgeInsets.only(right: 12),
+                                                          decoration: BoxDecoration(
+                                                              color: Colors.white,
+                                                              borderRadius: BorderRadius.circular(12),
+                                                              border: Border.all(
+                                                                  color: AppColors.primaryPurple.withValues(alpha: 0.5),
+                                                                  width: 2)),
+                                                          child: Column(
+                                                            mainAxisAlignment: MainAxisAlignment.center,
+                                                            children: [
+                                                              const Icon(Icons.add_photo_alternate,
+                                                                  color: AppColors.primaryPurple, size: 32),
+                                                              const SizedBox(height: 4),
+                                                              Text("+${_currentFeatures.maxPhotosPerService - totalImages}",
+                                                                  style: const TextStyle(
+                                                                      fontSize: 11,
+                                                                      color: Colors.grey,
+                                                                      fontWeight: FontWeight.bold)),
+                                                            ],
+                                                          ),
+                                                        ),
                                                       ),
                                                     ),
+                                                  Expanded(
+                                                    child: ReorderableListView(
+                                                      scrollController: _scrollController,
+                                                      scrollDirection: Axis.horizontal,
+                                                      padding: EdgeInsets.only(
+                                                          left: (totalImages < _currentFeatures.maxPhotosPerService) ? 0 : 40,
+                                                          right: 40,
+                                                          top: 10,
+                                                          bottom: 10),
+                                                      onReorder: (oldIndex, newIndex) {
+                                                        setState(() {
+                                                          if (oldIndex < newIndex) {
+                                                            newIndex -= 1;
+                                                          }
+                                                          final item = _photos.removeAt(oldIndex);
+                                                          _photos.insert(newIndex, item);
+                                                        });
+                                                      },
+                                                      children: [
+                                                        for (int i = 0; i < _photos.length; i++)
+                                                          _buildPhotoThumb(_photos[i], i, ValueKey(_photos[i].id)),
+                                                      ],
+                                                    ),
                                                   ),
-                                                ),
-                                              Expanded(
-                                                child: ReorderableListView(
-                                                  scrollController: _scrollController,
-                                                  scrollDirection: Axis.horizontal,
-                                                  padding: EdgeInsets.only(
-                                                      left: (totalImages < _currentFeatures.maxPhotosPerService) ? 0 : 40,
-                                                      right: 40,
-                                                      top: 10,
-                                                      bottom: 10),
-                                                  onReorder: (oldIndex, newIndex) {
-                                                    setState(() {
-                                                      if (oldIndex < newIndex) {
-                                                        newIndex -= 1;
-                                                      }
-                                                      final item = _photos.removeAt(oldIndex);
-                                                      _photos.insert(newIndex, item);
-                                                    });
-                                                  },
-                                                  children: [
-                                                    for (int i = 0; i < _photos.length; i++)
-                                                      _buildPhotoThumb(_photos[i], i, ValueKey(_photos[i].id)),
-                                                  ],
-                                                ),
+                                                ],
                                               ),
-                                          Positioned(
-                                              left: 4,
-                                              child: GestureDetector(
-                                                onTap: _scrollLeft,
-                                                child: Container(
-                                                    padding:
-                                                        const EdgeInsets.all(6),
-                                                    decoration: BoxDecoration(
-                                                        color: Colors.white
-                                                            .withValues(alpha: 0.9),
-                                                        shape: BoxShape.circle,
-                                                        boxShadow: const [
-                                                          BoxShadow(
-                                                              color: Colors.black12,
-                                                              blurRadius: 4)
-                                                        ]),
-                                                    child: const Icon(
-                                                        Icons.chevron_left,
-                                                        color: Colors.black87,
-                                                        size: 20)),
-                                              )),
-                                        if (hasImages &&
-                                            _scrollController.hasClients &&
-                                            _scrollController
-                                                    .position.maxScrollExtent >
-                                                0)
-                                          Positioned(
-                                              right: 4,
-                                              child: GestureDetector(
-                                                onTap: _scrollRight,
-                                                child: Container(
-                                                    padding:
-                                                        const EdgeInsets.all(6),
-                                                    decoration: BoxDecoration(
-                                                        color: Colors.white
-                                                            .withValues(alpha: 0.9),
-                                                        shape: BoxShape.circle,
-                                                        boxShadow: const [
-                                                          BoxShadow(
-                                                              color: Colors.black12,
-                                                              blurRadius: 4)
-                                                        ]),
-                                                    child: const Icon(
-                                                        Icons.chevron_right,
-                                                        color: Colors.black87,
-                                                        size: 20)),
-                                              )),
-                                      ],
+                                              if (hasImages &&
+                                                  _scrollController.hasClients &&
+                                                  _scrollController
+                                                          .position.maxScrollExtent >
+                                                      0)
+                                                Positioned(
+                                                    left: 4,
+                                                    child: GestureDetector(
+                                                      onTap: _scrollLeft,
+                                                      child: Container(
+                                                          padding: const EdgeInsets.all(6),
+                                                          decoration: BoxDecoration(
+                                                              color: Colors.white.withValues(alpha: 0.9),
+                                                              shape: BoxShape.circle,
+                                                              boxShadow: const [
+                                                                BoxShadow(color: Colors.black12, blurRadius: 4)
+                                                              ]),
+                                                          child: const Icon(Icons.chevron_left,
+                                                              color: Colors.black87, size: 20)),
+                                                    )),
+                                              if (hasImages &&
+                                                  _scrollController.hasClients &&
+                                                  _scrollController
+                                                          .position.maxScrollExtent >
+                                                      0)
+                                                Positioned(
+                                                    right: 4,
+                                                    child: GestureDetector(
+                                                      onTap: _scrollRight,
+                                                      child: Container(
+                                                          padding: const EdgeInsets.all(6),
+                                                          decoration: BoxDecoration(
+                                                              color: Colors.white.withValues(alpha: 0.9),
+                                                              shape: BoxShape.circle,
+                                                              boxShadow: const [
+                                                                BoxShadow(color: Colors.black12, blurRadius: 4)
+                                                              ]),
+                                                          child: const Icon(Icons.chevron_right,
+                                                              color: Colors.black87, size: 20)),
+                                                    )),
+                                            ],
                                     ),
                             ),
 
@@ -762,15 +789,18 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
                               Padding(
                                 padding: const EdgeInsets.only(top: 8.0),
                                 child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text("$totalImages de ${_currentFeatures.maxPhotosPerService} fotos",
                                         style: const TextStyle(
                                             fontSize: 12, color: Colors.grey)),
-                                    Text(" • Segure para reordenar. Clique no âœ‚ï¸  para recortar.",
-                                        style: TextStyle(
-                                            fontSize: 11,
-                                            color: Colors.grey.shade600,
-                                            fontStyle: FontStyle.italic)),
+                                    Expanded(
+                                      child: Text(" • Segure para reordenar. Clique no ✂️ para recortar.",
+                                          style: TextStyle(
+                                              fontSize: 11,
+                                              color: Colors.grey.shade600,
+                                              fontStyle: FontStyle.italic)),
+                                    ),
                                   ],
                                 ),
                               ),
@@ -1270,29 +1300,20 @@ class _ServiceRegisterPageState extends State<ServiceRegisterPage>
           child: ClipRRect(
             borderRadius: BorderRadius.circular(12),
             child: photo.file != null 
-              ? FutureBuilder<Uint8List>(
-                  future: photo.file!.readAsBytes(),
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
-                    } else if (snapshot.hasError) {
-                      return Container(
-                        color: Colors.orange.shade50,
-                        child: const Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.warning_amber, color: Colors.orange, size: 30),
-                            Text("Erro", style: TextStyle(fontSize: 10, color: Colors.orange)),
-                          ],
-                        ),
-                      );
-                    } else if (snapshot.hasData) {
-                      return Image.memory(snapshot.data!, fit: BoxFit.cover);
-                    } else {
-                      return const Icon(Icons.image, color: Colors.grey, size: 30);
-                    }
-                  },
-                )
+              ? (kIsWeb
+                  ? Image.network(photo.file!.path, fit: BoxFit.cover)
+                  : FutureBuilder<Uint8List>(
+                      future: photo.file!.readAsBytes(),
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState == ConnectionState.waiting) {
+                          return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+                        }
+                        if (snapshot.hasData) {
+                          return Image.memory(snapshot.data!, fit: BoxFit.cover);
+                        }
+                        return const Icon(Icons.image, color: Colors.grey, size: 30);
+                      },
+                    ))
               : Image.network(
                   photo.url!,
                   fit: BoxFit.cover,

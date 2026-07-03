@@ -243,7 +243,7 @@ class AdminSupportWidget extends StatelessWidget {
                 decoration: const InputDecoration(labelText: 'Novo Plano'),
                 items: const [
                   DropdownMenuItem(value: 'free', child: Text('Free')),
-                  DropdownMenuItem(value: 'start', child: Text('Start')),
+                  DropdownMenuItem(value: 'starter', child: Text('Start')),
                   DropdownMenuItem(value: 'plus', child: Text('Plus')),
                   DropdownMenuItem(value: 'pro', child: Text('Pro')),
                 ],

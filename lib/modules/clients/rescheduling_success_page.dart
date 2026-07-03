@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../core/theme/app_colors.dart';
-
+import '../../core/widgets/shared_bottom_nav_bar.dart';
 class RescheduleSuccessPage extends StatelessWidget {
   final String appointmentId;
   final DateTime newDate;
@@ -32,6 +32,7 @@ class RescheduleSuccessPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
+      bottomNavigationBar: const SharedBottomNavBar(selectedIndex: 2), // Aba Agendamentos
       body: SafeArea(
         child: SingleChildScrollView(
           child: Column(

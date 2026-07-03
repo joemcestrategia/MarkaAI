@@ -10,7 +10,7 @@ import 'package:markaai/core/widgets/pexels_image_widget.dart';
 import 'package:markaai/modules/clients/client_service_detail_page.dart';
 import 'package:markaai/core/services/shop_data_cache_service.dart';
 import 'package:markaai/core/constants/api_keys.dart';
-
+import 'package:markaai/core/widgets/shared_bottom_nav_bar.dart';
 class PublicShopPage extends StatefulWidget {
   final String slug;
   final bool isReschedule;
@@ -123,6 +123,7 @@ class _PublicShopPageState extends State<PublicShopPage> {
         if (!snapshot.hasData || snapshot.data == null || snapshot.data!['shop'] == null) {
           return Scaffold(
             backgroundColor: const Color(0xFFF5F7FA),
+            bottomNavigationBar: const SharedBottomNavBar(selectedIndex: 0),
             body: Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -154,6 +155,7 @@ class _PublicShopPageState extends State<PublicShopPage> {
 
         return Scaffold(
           backgroundColor: Colors.white,
+          bottomNavigationBar: const SharedBottomNavBar(selectedIndex: 0),
           body: CustomScrollView(
             slivers: [
               SliverAppBar(
@@ -247,7 +249,9 @@ class _PublicShopPageState extends State<PublicShopPage> {
                   ),
                   child: IconButton(
                     icon: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
-                    onPressed: () => Navigator.maybePop(context),
+                    onPressed: () {
+                      Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
+                    },
                   ),
                 ),
               ),

@@ -11,11 +11,88 @@ class AdminOverviewWidget extends StatefulWidget {
 }
 
 class _AdminOverviewWidgetState extends State<AdminOverviewWidget> {
-  int? _selectedYear;
-  int? _selectedMonth;
+  int? _selectedYear = DateTime.now().year;
+  int? _selectedMonth = DateTime.now().month;
 
   final List<int> _years = List.generate(5, (index) => DateTime.now().year - index);
+  final List<String> _months = ['', 'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
   
+  late Future<List<List<Map<String, dynamic>>>> _statsFuture;
+  
+  List<Map<String, dynamic>> _activities = [];
+  bool _isLoadingActivities = true;
+  bool _isLoadingMoreActivities = false;
+  bool _hasMoreActivities = true;
+  int _activitiesOffset = 0;
+  final int _activitiesLimit = 10;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+  }
+
+  void _loadData() {
+    _statsFuture = _getStats();
+    _loadInitialActivities();
+  }
+
+  Future<void> _loadInitialActivities() async {
+    setState(() {
+      _isLoadingActivities = true;
+      _activitiesOffset = 0;
+      _activities.clear();
+      _hasMoreActivities = true;
+    });
+    await _fetchMoreActivities();
+    if (mounted) {
+      setState(() {
+        _isLoadingActivities = false;
+      });
+    }
+  }
+
+  Future<void> _fetchMoreActivities() async {
+    if (_isLoadingMoreActivities) return;
+    setState(() {
+      _isLoadingMoreActivities = true;
+    });
+
+    try {
+      final data = await Supabase.instance.client
+          .from('appointments')
+          .select('*, shops(name, logo_url)')
+          .order('created_at', ascending: false)
+          .range(_activitiesOffset, _activitiesOffset + _activitiesLimit - 1);
+      
+      final docs = List<Map<String, dynamic>>.from(data);
+      
+      if (mounted) {
+        setState(() {
+          _activities.addAll(docs);
+          _activitiesOffset += docs.length;
+          if (docs.length < _activitiesLimit) {
+            _hasMoreActivities = false;
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('Error fetching activities: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingMoreActivities = false;
+        });
+      }
+    }
+  }
+
+  void _updateFilters() {
+    setState(() {
+      _loadData();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -46,15 +123,15 @@ class _AdminOverviewWidgetState extends State<AdminOverviewWidget> {
                       isExpanded: true,
                       dropdownColor: cardColor,
                       icon: Icon(Icons.calendar_month, color: cs.primary, size: 20),
-                      hint: Text('Mês: Todos', style: TextStyle(color: textColor, fontSize: 14)),
+                      hint: Text('Mês', style: TextStyle(color: textColor, fontSize: 14)),
                       items: [
-                        DropdownMenuItem<int?>(value: null, child: Text('Mês: Todos', style: TextStyle(color: textColor, fontSize: 14))),
+                        DropdownMenuItem<int?>(value: null, child: Text('Todos', style: TextStyle(color: textColor, fontSize: 14))),
                         ...List.generate(12, (index) => DropdownMenuItem(
                           value: index + 1,
-                          child: Text('Mês: ${index + 1}', style: TextStyle(color: textColor, fontSize: 14)),
+                          child: Text(_months[index + 1], style: TextStyle(color: textColor, fontSize: 14)),
                         )),
                       ],
-                      onChanged: (val) => setState(() => _selectedMonth = val),
+                      onChanged: (val) { _selectedMonth = val; _updateFilters(); },
                     ),
                   ),
                 ),
@@ -74,15 +151,15 @@ class _AdminOverviewWidgetState extends State<AdminOverviewWidget> {
                       isExpanded: true,
                       dropdownColor: cardColor,
                       icon: Icon(Icons.calendar_today, color: cs.primary, size: 20),
-                      hint: Text('Ano: Todos', style: TextStyle(color: textColor, fontSize: 14)),
+                      hint: Text('Ano', style: TextStyle(color: textColor, fontSize: 14)),
                       items: [
-                        DropdownMenuItem<int?>(value: null, child: Text('Ano: Todos', style: TextStyle(color: textColor, fontSize: 14))),
+                        DropdownMenuItem<int?>(value: null, child: Text('Todos', style: TextStyle(color: textColor, fontSize: 14))),
                         ..._years.map((year) => DropdownMenuItem(
                           value: year,
-                          child: Text('Ano: $year', style: TextStyle(color: textColor, fontSize: 14)),
+                          child: Text(year.toString(), style: TextStyle(color: textColor, fontSize: 14)),
                         )),
                       ],
-                      onChanged: (val) => setState(() => _selectedYear = val),
+                      onChanged: (val) { _selectedYear = val; _updateFilters(); },
                     ),
                   ),
                 ),
@@ -92,7 +169,7 @@ class _AdminOverviewWidgetState extends State<AdminOverviewWidget> {
           const SizedBox(height: 24),
           // Stats Row
           FutureBuilder<List<List<Map<String, dynamic>>>>(
-            future: _getStats(),
+            future: _statsFuture,
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
@@ -105,13 +182,23 @@ class _AdminOverviewWidgetState extends State<AdminOverviewWidget> {
               final shopsList = snapshot.data![1];
               final appointmentsList = snapshot.data![2];
 
-              final totalUsers = usersList.length;
+              final Set<String> uniqueClients = {};
+              for (var row in appointmentsList) {
+                final phone = row['client_phone']?.toString().trim() ?? '';
+                final name = row['client_name']?.toString().trim() ?? '';
+                if (phone.isNotEmpty) {
+                  uniqueClients.add(phone);
+                } else if (name.isNotEmpty) {
+                  uniqueClients.add(name);
+                }
+              }
+              final totalUsers = uniqueClients.length;
               final totalShops = shopsList.length;
               final totalAppointments = appointmentsList.length;
 
               double appointmentRevenue = 0;
               for (var row in appointmentsList) {
-                final valor = row['paid_value'] ?? row['valor_pago'];
+                final valor = row['total_price'] ?? row['total_value'] ?? row['valor_com_desconto'] ?? row['paid_amount'] ?? row['paid_value'] ?? row['valor_pago'];
                 if (valor != null) {
                   appointmentRevenue += double.tryParse(valor.toString()) ?? 0;
                 }
@@ -126,7 +213,7 @@ class _AdminOverviewWidgetState extends State<AdminOverviewWidget> {
 
                 if (plan != 'free' && sub != null && sub['status'] == 'active' && !trialActive) {
                   switch (plan) {
-                    case 'start': devMonthlyRevenue += 29.90; break;
+                    case 'starter': devMonthlyRevenue += 29.90; break;
                     case 'plus': devMonthlyRevenue += 59.90; break;
                     case 'pro': devMonthlyRevenue += 99.90; break;
                   }
@@ -237,6 +324,7 @@ class _AdminOverviewWidgetState extends State<AdminOverviewWidget> {
           ),
           const SizedBox(height: 16),
           _buildRecentActivityList(cardColor, textColor, subTextColor),
+          const SizedBox(height: 80), // Espaço extra para a barra de navegação inferior
         ],
       ),
     );
@@ -390,7 +478,7 @@ class _AdminOverviewWidgetState extends State<AdminOverviewWidget> {
   }
 
   Widget _buildPlanDonut(List<Map<String, dynamic>> shops, Color cardColor, Color textColor, Color subTextColor) {
-    Map<String, int> planCounts = {'free': 0, 'start': 0, 'plus': 0, 'pro': 0};
+    Map<String, int> planCounts = {'free': 0, 'starter': 0, 'plus': 0, 'pro': 0};
     for (var row in shops) {
       final plan = (row['plan_id'] ?? row['plan'] ?? 'free').toString().toLowerCase();
       if (planCounts.containsKey(plan)) {
@@ -424,7 +512,7 @@ class _AdminOverviewWidgetState extends State<AdminOverviewWidget> {
                       radius: 15,
                       showTitle: false),
                   PieChartSectionData(
-                      value: planCounts['start']!.toDouble(),
+                      value: planCounts['starter']!.toDouble(),
                       color: const Color(0xFF4F8EF7),
                       radius: 15,
                       showTitle: false),
@@ -444,7 +532,7 @@ class _AdminOverviewWidgetState extends State<AdminOverviewWidget> {
           ),
           const SizedBox(height: 16),
           _buildLegend('Free', planCounts['free']!, Colors.grey, subTextColor, textColor),
-          _buildLegend('Start', planCounts['start']!, const Color(0xFF4F8EF7), subTextColor, textColor),
+          _buildLegend('Start', planCounts['starter']!, const Color(0xFF4F8EF7), subTextColor, textColor),
           _buildLegend('Plus', planCounts['plus']!, const Color(0xFF7C5CFC), subTextColor, textColor),
           _buildLegend('Pro', planCounts['pro']!, const Color(0xFF22C55E), subTextColor, textColor),
         ],
@@ -472,60 +560,75 @@ class _AdminOverviewWidgetState extends State<AdminOverviewWidget> {
   }
 
   Widget _buildRecentActivityList(Color cardColor, Color textColor, Color subTextColor) {
-    return FutureBuilder<List<Map<String, dynamic>>>(
-      future: Supabase.instance.client
-          .from('appointments')
-          .select()
-          .order('created_at', ascending: false)
-          .limit(6),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) return const SizedBox();
-        final docs = snapshot.data!;
-        return Column(
-          children: docs.map((data) {
-            final servico = data['service_name'] ?? data['servico_nome'] ?? 'Serviço';
-            final cliente = data['client_name'] ?? data['client_nome'] ?? 'Cliente';
-            final status = (data['status'] ?? 'pendente').toString().toLowerCase();
-            return Container(
-              margin: const EdgeInsets.only(bottom: 8),
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: cardColor,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: textColor.withValues(alpha: 0.02)),
-              ),
-              child: Row(
-                children: [
-                  CircleAvatar(
-                    radius: 16,
-                    backgroundColor: _getStatusColor(status).withValues(alpha: 0.1),
-                    child: Icon(_getStatusIcon(status), color: _getStatusColor(status), size: 16),
+    if (_isLoadingActivities) {
+      return const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator()));
+    }
+    if (_activities.isEmpty) {
+      return const SizedBox();
+    }
+    return Column(
+      children: [
+        ..._activities.map((data) {
+          final servico = data['service_name'] ?? data['servico_nome'] ?? 'Serviço';
+          
+          final shopData = data['shops'];
+          final lojaNome = (shopData is Map) ? (shopData['name'] ?? 'Loja Desconhecida') : 'Loja Desconhecida';
+          final lojaLogo = (shopData is Map) ? shopData['logo_url'] : null;
+          
+          final isManual = data['bypass_overlap_check'] == true;
+          final origem = isManual ? 'Agendamento Manual' : 'Pelo App';
+
+          final status = (data['status'] ?? 'pendente').toString().toLowerCase();
+          return Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: cardColor,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: textColor.withValues(alpha: 0.02)),
+            ),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  radius: 16,
+                  backgroundColor: lojaLogo == null ? _getStatusColor(status).withValues(alpha: 0.1) : Colors.transparent,
+                  backgroundImage: lojaLogo != null ? NetworkImage(lojaLogo) : null,
+                  child: lojaLogo == null ? Icon(_getStatusIcon(status), color: _getStatusColor(status), size: 16) : null,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(servico, style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 13)),
+                      Text(lojaNome, style: TextStyle(color: subTextColor, fontSize: 11)),
+                    ],
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(servico, style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 13)),
-                        Text('Cliente: $cliente', style: TextStyle(color: subTextColor, fontSize: 11)),
-                      ],
-                    ),
-                  ),
-                  Text(status.toUpperCase(),
-                      style: TextStyle(color: _getStatusColor(status), fontSize: 9, fontWeight: FontWeight.bold)),
-                ],
-              ),
-            );
-          }).toList(),
-        );
-      },
+                ),
+                Text(origem.toUpperCase(),
+                    style: TextStyle(color: isManual ? Colors.orange : const Color(0xFF4F8EF7), fontSize: 9, fontWeight: FontWeight.bold)),
+              ],
+            ),
+          );
+        }),
+        if (_hasMoreActivities)
+          Padding(
+            padding: const EdgeInsets.only(top: 8.0),
+            child: TextButton(
+              onPressed: _isLoadingMoreActivities ? null : _fetchMoreActivities,
+              child: _isLoadingMoreActivities
+                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Text('Ver Mais', style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ),
+      ],
     );
   }
 
   Widget _buildSubscriptionAnalytics(List<Map<String, dynamic>> shops, Color cardColor, Color textColor, Color subTextColor, double devRevenue) {
     Map<String, Map<String, dynamic>> stats = {
       'free': {'name': 'Free', 'paidCount': 0, 'manualCount': 0, 'price': 0.0},
-      'start': {'name': 'Start', 'paidCount': 0, 'manualCount': 0, 'price': 29.90},
+      'starter': {'name': 'Start', 'paidCount': 0, 'manualCount': 0, 'price': 29.90},
       'plus': {'name': 'Plus', 'paidCount': 0, 'manualCount': 0, 'price': 59.90},
       'pro': {'name': 'Pro', 'paidCount': 0, 'manualCount': 0, 'price': 99.90},
     };
@@ -615,7 +718,7 @@ class _AdminOverviewWidgetState extends State<AdminOverviewWidget> {
   Future<List<List<Map<String, dynamic>>>> _getStats() async {
     final supabase = Supabase.instance.client;
     
-    var usersQuery = supabase.from('users').select();
+    var usersQuery = supabase.from('shop_clients').select();
     var shopsQuery = supabase.from('shops').select();
     var appointmentsQuery = supabase.from('appointments').select();
     
@@ -629,7 +732,7 @@ class _AdminOverviewWidgetState extends State<AdminOverviewWidget> {
       final startDate = DateTime(year, startMonth, 1).toIso8601String();
       final endDate = DateTime(year, endMonth + 1, 1).toIso8601String();
       
-      usersQuery = usersQuery.gte('created_at', startDate).lt('created_at', endDate);
+      usersQuery = usersQuery.gte('last_updated', startDate).lt('last_updated', endDate);
       shopsQuery = shopsQuery.gte('created_at', startDate).lt('created_at', endDate);
       appointmentsQuery = appointmentsQuery.gte('created_at', startDate).lt('created_at', endDate);
     }

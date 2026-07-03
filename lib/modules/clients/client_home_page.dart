@@ -13,7 +13,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:geocoding/geocoding.dart';
 
 import '../../core/theme/app_colors.dart';
-import '../../core/services/session_service.dart';
+import '../../core/services/auth_service.dart';
 import '../../core/services/profile_check_service.dart';
 import '../../core/services/shop_data_cache_service.dart';
 import '../../core/widgets/supabase_stream_widget.dart';
@@ -32,6 +32,7 @@ import '../../core/utils/shop_category_helper.dart';
 import '../../core/widgets/pexels_image_widget.dart';
 import '../../core/services/ad_service.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
+import '../../core/widgets/shared_bottom_nav_bar.dart';
 
 class ClientHomePage extends StatefulWidget {
   final int initialTabIndex;
@@ -743,12 +744,10 @@ class _ClientHomePageState extends State<ClientHomePage> {
       }
 
       try {
-        // Importes podem ser necessários se der erro, mas já estavam no arquivo
         await GoogleSignIn().signOut();
         await GoogleSignIn().disconnect();
       } catch (_) {}
-      await SessionService.logout();
-      await Supabase.instance.client.auth.signOut();
+      await AuthService().signOut();
 
       if (mounted) {
         await showDialog(
@@ -769,7 +768,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
         if (mounted) {
           Navigator.pushAndRemoveUntil(
               context,
-              MaterialPageRoute(builder: (_) => const LoginPage()),
+              MaterialPageRoute(builder: (_) => const LoginPage(skipAutoLogin: true)),
               (r) => false);
         }
       }
@@ -788,12 +787,11 @@ class _ClientHomePageState extends State<ClientHomePage> {
       await GoogleSignIn().signOut();
       await GoogleSignIn().disconnect();
     } catch (_) {}
-    await SessionService.logout();
-    await Supabase.instance.client.auth.signOut();
+    await AuthService().signOut();
     if (mounted) {
       Navigator.pushAndRemoveUntil(
           context,
-          MaterialPageRoute(builder: (context) => const LoginPage()),
+          MaterialPageRoute(builder: (context) => const LoginPage(skipAutoLogin: true)),
           (route) => false);
     }
   }
@@ -998,7 +996,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
                     : const SizedBox.shrink(),
               ],
             ),
-            bottomNavigationBar: NavigationBar(
+            bottomNavigationBar: SharedBottomNavBar(
                   selectedIndex: _selectedIndex,
                   onDestinationSelected: (idx) {
                     if (_selectedIndex == idx) {
@@ -1011,24 +1009,6 @@ class _ClientHomePageState extends State<ClientHomePage> {
                       _onTabChanged(idx);
                     }
                   },
-                  backgroundColor: Colors.white,
-                  elevation: 10,
-                  shadowColor: Colors.black12,
-                  indicatorColor: AppColors.primaryPurple.withValues(alpha: 0.2),
-                  destinations: const [
-                    NavigationDestination(
-                        icon: Icon(Icons.explore_outlined),
-                        selectedIcon: Icon(Icons.explore),
-                        label: "Explorar"),
-                    NavigationDestination(
-                        icon: Icon(Icons.favorite_border),
-                        selectedIcon: Icon(Icons.favorite),
-                        label: "Favoritos"),
-                    NavigationDestination(
-                        icon: Icon(Icons.calendar_today_outlined),
-                        selectedIcon: Icon(Icons.calendar_today),
-                        label: "Agendamentos"),
-                  ],
                 ),
           ),
         );

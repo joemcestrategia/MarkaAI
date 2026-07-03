@@ -2,6 +2,7 @@
 import { serve } from "http/server"
 import Stripe from 'stripe'
 import { createClient } from '../_shared/supabase.ts'
+import { getPlanIdFromPriceId } from '../_shared/plan-mapping.ts'
 
 const stripe = new Stripe(Deno.env.get('STRIPE_SECRET_KEY') || '', {
   apiVersion: '2023-10-16',
@@ -15,12 +16,6 @@ const supabaseAdmin = createClient(
   Deno.env.get('SUPABASE_URL') || '',
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 )
-
-const PRICE_IDS_REV: Record<string, string> = {
-  'price_1T98YSFzh8r5AMGzkMdAH2eq': 'starter',
-  'price_1T98ZPFzh8r5AMGzUHfVZRfC': 'plus',
-  'price_1T98aHFzh8r5AMGzlgvM6eSZ': 'pro',
-}
 
 serve(async (req: Request) => {
   // Only accept POST requests
@@ -43,9 +38,26 @@ serve(async (req: Request) => {
     return new Response(`Webhook Error: ${err.message}`, { status: 400 })
   }
 
-  console.log(`🔔 Recebido evento ${event.type}`)
+  console.log(`🔔 Recebido evento ${event.type} (${event.id})`)
 
   try {
+    // ── Idempotency Check ────────────────────────────
+    const { data: processedEvent } = await supabaseAdmin
+      .from('processed_webhook_events')
+      .select('id')
+      .eq('id', event.id)
+      .maybeSingle()
+      
+    if (processedEvent) {
+      console.log(`Evento ${event.id} já processado, ignorando.`)
+      return new Response(JSON.stringify({ received: true }), { status: 200 })
+    }
+
+    await supabaseAdmin
+      .from('processed_webhook_events')
+      .insert({ id: event.id })
+    // ──────────────────────────────────────────────────
+
     switch (event.type) {
       case 'checkout.session.completed': {
         const session = event.data.object as Stripe.Checkout.Session
@@ -133,7 +145,7 @@ serve(async (req: Request) => {
           if (shopId) {
             console.log(`💰 Fatura Paga: Renovação para ${shopId}`)
             const priceId = subscription.items.data[0]?.price.id
-            const planId = PRICE_IDS_REV[priceId] || subscription.metadata?.plan_id || 'free'
+            const planId = getPlanIdFromPriceId(priceId) || subscription.metadata?.plan_id || 'free'
 
             await supabaseAdmin.from('shops').update({
               plan_id: planId,
@@ -178,18 +190,37 @@ serve(async (req: Request) => {
         break
       }
 
+      case 'customer.subscription.created': {
+        const subscription = event.data.object as Stripe.Subscription
+        const shopId = subscription.metadata?.shop_id || subscription.metadata?.store_id
+        
+        if (shopId) {
+          console.log(`✨ Assinatura Criada: Shop ${shopId}`)
+          
+          const { data } = await supabaseAdmin.from('shops').select('subscription_started_at').eq('id', shopId).maybeSingle()
+          
+          const updates: any = {
+            has_used_trial: true,
+          }
+          if (!data?.subscription_started_at) {
+            updates.subscription_started_at = new Date(subscription.start_date * 1000).toISOString()
+          }
+          
+          await supabaseAdmin.from('shops').update(updates).eq('id', shopId)
+        }
+        break
+      }
+
       case 'customer.subscription.updated': {
         const subscription = event.data.object as Stripe.Subscription
         const shopId = subscription.metadata?.shop_id || subscription.metadata?.store_id
         
         if (shopId) {
           const priceId = subscription.items.data[0]?.price.id
-          const planId = PRICE_IDS_REV[priceId] || subscription.metadata?.plan_id || 'free'
+          const planId = getPlanIdFromPriceId(priceId) || subscription.metadata?.plan_id || 'free'
           const status = subscription.status // "active", "past_due", "canceled", "unpaid"
           const cancelAtPeriodEnd = subscription.cancel_at_period_end
-          const accessUntil = cancelAtPeriodEnd 
-            ? new Date(subscription.current_period_end * 1000).toISOString()
-            : null
+          const currentPeriodEnd = new Date(subscription.current_period_end * 1000).toISOString()
 
           console.log(`🔄 Assinatura Atualizada: Shop ${shopId} | Novo Status: ${status} | Plano: ${planId}`)
 
@@ -200,12 +231,14 @@ serve(async (req: Request) => {
             // OR keep it the new plan_id so downgrades take effect correctly on the cycle virada.
             plan_id: (status === 'canceled' || status === 'unpaid') ? 'free' : planId,
             trial_active: false,
+            current_period_end: currentPeriodEnd,
+            cancel_at_period_end: cancelAtPeriodEnd,
             subscription: {
               ...(data?.subscription || {}),
               plan_id: planId,
               status: status,
+              payment_provider: 'stripe',
               cancel_at_period_end: cancelAtPeriodEnd,
-              access_until: accessUntil,
               updated_at: new Date().toISOString(),
             }
           }).eq('id', shopId)
@@ -225,6 +258,8 @@ serve(async (req: Request) => {
           
           await supabaseAdmin.from('shops').update({
             plan_id: 'free',
+            cancel_at_period_end: false,
+            current_period_end: null,
             subscription: {
               ...(data?.subscription || {}),
               status: 'canceled',

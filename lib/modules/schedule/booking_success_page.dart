@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../core/theme/app_colors.dart';
-
+import '../../core/widgets/shared_bottom_nav_bar.dart';
 class BookingSuccessPage extends StatelessWidget {
   final String serviceName;
   final String date;
@@ -32,6 +32,7 @@ class BookingSuccessPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
+      bottomNavigationBar: const SharedBottomNavBar(selectedIndex: 2), // Selecionar aba 2 (Agendamentos) porque acabaram de agendar
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(30),

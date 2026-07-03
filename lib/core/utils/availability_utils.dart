@@ -15,14 +15,14 @@ class AvailabilityUtils {
     final startOfDay = DateTime(date.year, date.month, date.day);
     final endOfDay = startOfDay.add(const Duration(days: 1));
 
-    final response = await Supabase.instance.client
-        .from('appointments')
-        .select()
-        .eq('professional_id', professionalId)
-        .gte('scheduled_at', startOfDay.toIso8601String())
-        .lt('scheduled_at', endOfDay.toIso8601String());
-
-    final List<dynamic> dataList = response;
+    final dataList = await Supabase.instance.client.rpc(
+      'get_professional_blocked_slots',
+      params: {
+        'p_professional_id': professionalId,
+        'p_start_date': startOfDay.toIso8601String(),
+        'p_end_date': endOfDay.toIso8601String(),
+      },
+    );
     List<Map<String, int>> busy = [];
 
     // Otimização N+1: Coletar service_ids que precisam de duração
@@ -82,7 +82,7 @@ class AvailabilityUtils {
       busy.add({'start': startMin, 'end': endMin});
     }
 
-    // Folgas longas (date-range — férias, médico, etc.) continuam aqui.
+    // Folgas (date-range — férias, médico, etc.) + folgas parciais (período).
     try {
       final empRes = await Supabase.instance.client
           .from('employees')
@@ -91,41 +91,88 @@ class AvailabilityUtils {
           .maybeSingle();
 
       if (empRes != null && empRes['breaks'] != null) {
-        final List<dynamic> folgasList = empRes['breaks'];
-        for (var folga in folgasList) {
-          final startFolgaStr = folga['start']?.toString();
-          final endFolgaStr = folga['end']?.toString();
-
-          if (startFolgaStr != null && endFolgaStr != null) {
-            final startFolga = DateTime.parse(startFolgaStr);
-            final endFolga = DateTime.parse(endFolgaStr);
-
-            if (startFolga.isBefore(endOfDay) &&
-                endFolga.isAfter(startOfDay)) {
-              int fStartMin = 0;
-              if (startFolga.year == date.year &&
-                  startFolga.month == date.month &&
-                  startFolga.day == date.day) {
-                fStartMin = startFolga.hour * 60 + startFolga.minute;
-              }
-
-              int fEndMin = 1440;
-              if (endFolga.year == date.year &&
-                  endFolga.month == date.month &&
-                  endFolga.day == date.day) {
-                fEndMin = endFolga.hour * 60 + endFolga.minute;
-              }
-
-              busy.add({'start': fStartMin, 'end': fEndMin});
-            }
-          }
-        }
+        busy.addAll(
+            parseFolgasForDate(List<dynamic>.from(empRes['breaks']), date));
       }
     } catch (e) {
       debugPrint("Erro ao buscar folgas do profissional: $e");
     }
 
     return busy;
+  }
+
+  /// Converte a lista de folgas (breaks JSONB) em busyIntervals para a [date].
+  /// Suporta folgas de dia inteiro (`type` ausente ou `"full_day"`) e
+  /// folgas parciais (`type == "partial"` com `start_time`/`end_time` HH:mm).
+  ///
+  /// Método público e reutilizável — usado tanto pelo [getBusyIntervals]
+  /// quanto pelo código de calendário e agenda.
+  static List<Map<String, int>> parseFolgasForDate(
+      List<dynamic> folgasList, DateTime date) {
+    final List<Map<String, int>> intervals = [];
+    final startOfDay = DateTime(date.year, date.month, date.day);
+    final endOfDay = startOfDay.add(const Duration(days: 1));
+
+    for (var folga in folgasList) {
+      final startFolgaStr = folga['start']?.toString();
+      final endFolgaStr = folga['end']?.toString();
+
+      if (startFolgaStr == null || endFolgaStr == null) continue;
+
+      final startFolga = DateTime.parse(startFolgaStr);
+      DateTime endFolga = DateTime.parse(endFolgaStr);
+
+      // Ajuste: se a data final for meia-noite exata (típico de DateRangePicker), 
+      // estendemos para o final do dia para garantir a colisão.
+      if (endFolga.hour == 0 && endFolga.minute == 0 && endFolga.second == 0) {
+        endFolga = endFolga.add(const Duration(hours: 23, minutes: 59, seconds: 59));
+      }
+
+      // A folga precisa cobrir (pelo menos parcialmente) a data solicitada.
+      if (!startFolga.isBefore(endOfDay) || !endFolga.isAfter(startOfDay)) {
+        continue;
+      }
+
+      final folgaType =
+          (folga['type']?.toString() ?? 'full_day').toLowerCase();
+
+      if (folgaType == 'partial') {
+        // Folga parcial: usa start_time/end_time (HH:mm) como período.
+        final stStr = folga['start_time']?.toString();
+        final etStr = folga['end_time']?.toString();
+        if (stStr != null && etStr != null) {
+          final stParts = stStr.split(':');
+          final etParts = etStr.split(':');
+          if (stParts.length == 2 && etParts.length == 2) {
+            final fStartMin = int.parse(stParts[0]) * 60 +
+                int.parse(stParts[1]);
+            final fEndMin = int.parse(etParts[0]) * 60 +
+                int.parse(etParts[1]);
+            if (fEndMin > fStartMin) {
+              intervals.add({'start': fStartMin, 'end': fEndMin});
+            }
+          }
+        }
+      } else {
+        // Folga de dia inteiro (full_day ou legado sem type).
+        int fStartMin = 0;
+        if (startFolga.year == date.year &&
+            startFolga.month == date.month &&
+            startFolga.day == date.day) {
+          fStartMin = startFolga.hour * 60 + startFolga.minute;
+        }
+
+        int fEndMin = 1440;
+        if (endFolga.year == date.year &&
+            endFolga.month == date.month &&
+            endFolga.day == date.day) {
+          fEndMin = endFolga.hour * 60 + endFolga.minute;
+        }
+
+        intervals.add({'start': fStartMin, 'end': fEndMin});
+      }
+    }
+    return intervals;
   }
 
   /// Verifica se um determinado horário está disponível.

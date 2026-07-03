@@ -41,7 +41,11 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
   bool _showAddPanel = false;
 
   // --- CACHE LOCAL ---
-  Map<String, List<Map<String, dynamic>>>? _cachedData;
+  Map<String, dynamic>? _cachedData;
+  int _lastStreamFingerprint = 0;
+
+  // --- STREAM CACHE ---
+  Stream<Map<String, dynamic>>? _combinedStream;
   
   // --- Contador de visitantes para o badge ---
   int _visitorsCount = 0;
@@ -59,9 +63,20 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
     final id = await SessionService.getShopId();
     if (mounted) {
       if (id != null) {
-        _loadFromCache(id);
-        _loadFeatures(id);
-        _fetchInitialData(id);
+        final cached = await ClientCacheService.getCachedClients(id);
+        final stale = await ClientCacheService.isCacheStale(id);
+        if (cached != null) {
+          _cachedData = cached;
+          _clientsCount = (cached['clients'] as List?)?.length ?? 0;
+          _visitorsCount = (cached['visitors'] as List?)?.length ?? 0;
+          _lastStreamFingerprint = (cached['fingerprint']?.toString() ?? '').hashCode;
+        }
+        if (cached == null) {
+          _fetchInitialData(id);
+        } else if (stale) {
+          _fetchInitialData(id);
+        }
+        _combinedStream = _buildCombinedStream();
       }
       setState(() {
         shopId = id;
@@ -78,7 +93,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
       final supabase = sb.Supabase.instance.client;
 
       final results = await Future.wait([
-        supabase.from('appointments').select().eq('shop_id', shopId).order('scheduled_at', ascending: false).limit(500),
+        supabase.from('appointments').select().eq('shop_id', shopId).order('scheduled_at', ascending: false).limit(5000),
         supabase.from('shops').select().eq('id', shopId).limit(1).maybeSingle(),
         supabase.from('favorites').select().eq('shop_id', shopId),
         supabase.from('shop_clients').select().eq('shop_id', shopId),
@@ -108,7 +123,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
         } else {
           final phone = (a['client_phone'] ?? a['client_telefone'])?.toString();
           if (phone != null && phone.isNotEmpty) {
-            final cleanPhone = phone.replaceAll(RegExp(r'\D'), '');
+            final cleanPhone = _normalizePhone(phone);
             if (cleanPhone.isNotEmpty) manualPhones.add(cleanPhone);
           }
         }
@@ -147,6 +162,21 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
         } catch (_) {}
       }
 
+      // RPC fallback: fetch profiles for users not found via direct query (bypasses RLS)
+      if (allUserIds.isNotEmpty) {
+        final foundIds = users.map((u) => u['id'].toString()).toSet();
+        final missingIds = allUserIds.where((id) => !foundIds.contains(id)).toList();
+        if (missingIds.isNotEmpty && shopId != null) {
+          try {
+            final rpcUsers = await supabase
+                .rpc('get_visitor_profiles', params: {'user_ids': missingIds, 'caller_shop_id': shopId});
+            if (rpcUsers is List && rpcUsers.isNotEmpty) {
+              users.addAll(rpcUsers);
+            }
+          } catch (_) {}
+        }
+      }
+
       final usersMap = <String, Map<String, dynamic>>{
         for (var doc in users) doc['id']: doc as Map<String, dynamic>
       };
@@ -167,19 +197,6 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
       }
     } catch (e) {
       debugPrint('_fetchInitialData error: $e');
-    }
-  }
-
-  Future<void> _loadFeatures(String sid) async {
-    // Features are now handled by StreamBuilder in build()
-  }
-
-  Future<void> _loadFromCache(String id) async {
-    final data = await ClientCacheService.getCachedClients(id);
-    if (data != null && mounted) {
-      setState(() {
-        _cachedData = data;
-      });
     }
   }
 
@@ -387,7 +404,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
         .stream(primaryKey: ['id'])
         .eq('shop_id', shopId!)
         .order('scheduled_at', ascending: false)
-        .limit(500)
+        .limit(5000)
         .map((rows) => rows
             .where((r) => (r['status'] ?? '').toString() != 'pre_reserva')
             .toList());
@@ -446,7 +463,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
         } else {
           final phone = (a['client_phone'] ?? a['client_telefone'])?.toString();
           if (phone != null && phone.isNotEmpty) {
-            final cleanPhone = phone.replaceAll(RegExp(r'\D'), '');
+            final cleanPhone = _normalizePhone(phone);
             if (cleanPhone.isNotEmpty) manualPhones.add(cleanPhone);
           }
         }
@@ -483,6 +500,21 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
               users.addAll(List<dynamic>.from(chunkUsers));
             } catch (_) {}
           }
+        }
+      }
+
+      // RPC fallback: fetch profiles for users not found via direct query (bypasses RLS)
+      if (allUserIds.isNotEmpty) {
+        final foundIds = users.map((u) => u['id'].toString()).toSet();
+        final missingIds = allUserIds.where((id) => !foundIds.contains(id)).toList();
+        if (missingIds.isNotEmpty && shopId != null) {
+          try {
+            final rpcUsers = await supabase
+                .rpc('get_visitor_profiles', params: {'user_ids': missingIds, 'caller_shop_id': shopId});
+            if (rpcUsers is List && rpcUsers.isNotEmpty) {
+              users.addAll(rpcUsers);
+            }
+          } catch (_) {}
         }
       }
 
@@ -614,7 +646,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
             ? const Center(child: Text("Erro: ID da Loja não encontrado"))
             : Expanded(
                 child: StreamBuilder<Map<String, dynamic>>(
-                  stream: _buildCombinedStream(),
+                  stream: _combinedStream,
                   builder: (context, snapshot) {
                     final bool useRealtime = snapshot.hasData && !snapshot.hasError;
                     final data = useRealtime ? snapshot.data! : null;
@@ -623,28 +655,36 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                       try {
                         _currentFeatures = (data['features'] as PlanFeatures?) ?? planFeaturesConfig[PlanKey.free]!;
                         final appointmentDocs = (data['appointments'] as List?)?.cast<Map<String, dynamic>>() ?? [];
-                        final usersDocs = (data['users'] as List?) ?? [];
-                        final shopConfig = (data['shop'] as Map?)?['config'] as Map? ?? {};
-                        final favoritesDocs = (data['favorites'] as List?)?.cast<Map<String, dynamic>>() ?? [];
-                        final shopClientsDocs = (data['shopClients'] as List?)?.cast<Map<String, dynamic>>() ?? [];
-                        final shopViewsDocs = (data['shopViews'] as List?)?.cast<Map<String, dynamic>>() ?? [];
 
-                        final Map<String, Map<String, dynamic>> usersMap = {
-                          for (var doc in usersDocs)
-                            if (doc is Map && doc['id'] != null)
-                              doc['id'].toString(): doc as Map<String, dynamic>
-                        };
+                        // Só re-processa se os appointments mudaram (fingerprint diferente)
+                        final newFingerprint = ClientCacheService.computeAppointmentsFingerprint(appointmentDocs);
+                        if (newFingerprint != _lastStreamFingerprint) {
+                          _lastStreamFingerprint = newFingerprint;
 
-                        final freshData = _processClientsData(
-                            appointmentDocs, usersMap, shopConfig,
-                            favoritesDocs, shopClientsDocs, shopViewsDocs);
+                          final usersDocs = (data['users'] as List?) ?? [];
+                          final shopConfig = (data['shop'] as Map?)?['config'] as Map? ?? {};
+                          final favoritesDocs = (data['favorites'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+                          final shopClientsDocs = (data['shopClients'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+                          final shopViewsDocs = (data['shopViews'] as List?)?.cast<Map<String, dynamic>>() ?? [];
 
-                        if (shopId != null) {
-                          ClientCacheService.saveClients(shopId!, freshData);
+                          final Map<String, Map<String, dynamic>> usersMap = {
+                            for (var doc in usersDocs)
+                              if (doc is Map && doc['id'] != null)
+                                doc['id'].toString(): doc as Map<String, dynamic>
+                          };
+
+                          final freshData = _processClientsData(
+                              appointmentDocs, usersMap, shopConfig,
+                              favoritesDocs, shopClientsDocs, shopViewsDocs);
+
+                          if (shopId != null) {
+                            freshData['fingerprint'] = _lastStreamFingerprint.toString();
+                            ClientCacheService.saveClients(shopId!, freshData);
+                          }
+                          _cachedData = freshData;
+                          _clientsCount = (freshData['clients'] as List?)?.length ?? 0;
+                          _visitorsCount = (freshData['visitors'] as List?)?.length ?? 0;
                         }
-                        _cachedData = freshData;
-                        _clientsCount = (freshData['clients'] as List?)?.length ?? 0;
-                        _visitorsCount = (freshData['visitors'] as List?)?.length ?? 0;
                       } catch (e) {
                         debugPrint('StreamBuilder processing error: $e');
                       }
@@ -658,8 +698,10 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                     List<Map<String, dynamic>> targetList;
                     if (_selectedTabIndex == 0) {
                       targetList = (displayData['clients'] as List?)?.cast<Map<String, dynamic>>() ?? [];
-                    } else {
+                    } else if (_selectedTabIndex == 1) {
                       targetList = (displayData['visitors'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+                    } else {
+                      targetList = (displayData['clients'] as List?)?.cast<Map<String, dynamic>>() ?? [];
                     }
 
                     final filteredDocs = targetList.where((client) {
@@ -697,12 +739,22 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                     if (_selectedTabIndex == 0) {
                       filteredDocs.removeWhere((c) => (c['agendamentosCount'] ?? 0) == 0);
                     }
-                    // Ordena alfabeticamente
-                    filteredDocs.sort((a, b) {
-                      final na = (a['name'] ?? '').toString().toLowerCase();
-                      final nb = (b['name'] ?? '').toString().toLowerCase();
-                      return na.compareTo(nb);
-                    });
+                    // Ranking: remove sem gasto e ordena por totalGasto decrescente
+                    if (_selectedTabIndex == 2) {
+                      filteredDocs.removeWhere((c) => (c['totalGasto'] ?? 0.0) <= 0);
+                      filteredDocs.sort((a, b) {
+                        final ga = (a['totalGasto'] ?? 0.0) as double;
+                        final gb = (b['totalGasto'] ?? 0.0) as double;
+                        return gb.compareTo(ga);
+                      });
+                    } else {
+                      // Ordena alfabeticamente
+                      filteredDocs.sort((a, b) {
+                        final na = (a['name'] ?? '').toString().toLowerCase();
+                        final nb = (b['name'] ?? '').toString().toLowerCase();
+                        return na.compareTo(nb);
+                      });
+                    }
 
                     return Column(
                       children: [
@@ -732,6 +784,9 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                                     isLocked: !_currentFeatures
                                         .visitorsAnalytics,
                                     count: _visitorsCount),
+                                const SizedBox(width: 15),
+                                _buildTabButton(2, "Ranking",
+                                    Icons.leaderboard_outlined),
                                 if (_selectedTabIndex == 1 &&
                                     _visitorsCount > 0) ...[
                                   const SizedBox(width: 15),
@@ -807,7 +862,8 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                                         filteredDocs[index],
                                         (_selectedClientId ==
                                             filteredDocs[index]['id']),
-                                        isMobile);
+                                        isMobile,
+                                        rank: _selectedTabIndex == 2 ? index + 1 : null);
                                   },
                                 ),
                         ),
@@ -820,7 +876,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
     );
   }
 
-  Map<String, List<Map<String, dynamic>>> _processClientsData(
+  Map<String, dynamic> _processClientsData(
       List<Map<String, dynamic>> appointments,
       Map<String, Map<String, dynamic>> usersMap,
       Map<dynamic, dynamic> shopConfig,
@@ -846,19 +902,62 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
         (v['user_id'] ?? v['userId'] ?? '').toString(): DateTime.tryParse(v['viewed_at']?.toString() ?? "") ?? now
     };
 
-    // 4. Processar Agendamentos (Principal fonte de clientes)
+    // 4. Mapas reversos: telefone/email normalizado → usuário (para vincular agendamentos manuais)
+    final Map<String, Map<String, dynamic>> phoneToUser = {};
+    final Map<String, Map<String, dynamic>> emailToUser = {};
+    for (var entry in usersMap.entries) {
+      final rawPhone = (entry.value['phone'] ?? '').toString();
+      final normalized = _normalizePhone(rawPhone);
+      if (normalized.isNotEmpty) {
+        phoneToUser[normalized] = entry.value;
+      }
+      final email = (entry.value['email'] ?? '').toString().trim().toLowerCase();
+      if (email.isNotEmpty) {
+        emailToUser[email] = entry.value;
+      }
+    }
+
+    // 5. Processar Agendamentos (Principal fonte de clientes)
     for (var doc in appointments) {
       final data = doc;
       String? userId = (data['client_id'] ?? data['clientId'])?.toString();
-      bool isManual = (userId == null || userId.isEmpty);
+      String rawClientPhone = (data['client_phone'] ?? '').toString();
+      String normalizedPhone = _normalizePhone(rawClientPhone);
+      String clientEmail = (data['client_email'] ?? '').toString().trim().toLowerCase();
 
-      final user = isManual ? null : usersMap[userId];
+      // Appointments sem client_id no banco são manuais, mesmo se acharmos usuário por telefone
+      final bool wasManual = (userId == null || userId.isEmpty);
 
-      String nome = user?['name'] ?? data['client_name'] ?? data['client_nome'] ?? "Cliente Desconhecido";
-      String telefone = user?['phone'] ?? data['client_phone'] ?? "";
-      String photoUrl = user?['photo_url'] ?? "";
+      // Tenta vincular agendamento manual a usuário registrado (telefone → email)
+      Map<String, dynamic>? matchedUser;
+      if (wasManual) {
+        if (normalizedPhone.isNotEmpty) {
+          matchedUser = phoneToUser[normalizedPhone];
+        }
+        if (matchedUser == null && clientEmail.isNotEmpty) {
+          matchedUser = emailToUser[clientEmail];
+        }
+      }
 
-      String key = !isManual ? userId : (telefone.isNotEmpty ? telefone : "doc_${doc['id']}");
+      // Dados do usuário: da conta vinculada OU do match OU do appointment
+      final effectiveUser = wasManual ? matchedUser : usersMap[userId];
+      String nome = effectiveUser?['name'] ?? data['client_name'] ?? data['client_nome'] ?? "Cliente Desconhecido";
+      String telefone = effectiveUser?['phone'] ?? rawClientPhone;
+      String photoUrl = effectiveUser?['photo_url'] ?? "";
+
+      // Chave de deduplicação: UUID do match > UUID do appointment > telefone > email > doc id
+      String key;
+      if (matchedUser != null) {
+        key = matchedUser['id']?.toString() ?? (normalizedPhone.isNotEmpty ? 'phone_$normalizedPhone' : 'email_$clientEmail');
+      } else if (!wasManual) {
+        key = userId;
+      } else if (normalizedPhone.isNotEmpty) {
+        key = 'phone_$normalizedPhone';
+      } else if (clientEmail.isNotEmpty) {
+        key = 'email_$clientEmail';
+      } else {
+        key = "doc_${doc['id']}";
+      }
 
       double valor = double.tryParse(
               (data['total_price'] ?? data['price'] ?? data['valor_total'] ?? "0")
@@ -866,46 +965,53 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
           0.0;
       DateTime dataVisita = DateTime.tryParse(data['scheduled_at'] ?? "") ?? now;
       String status = (data['status'] ?? "").toString().toLowerCase();
+      final bool pastAppointment = dataVisita.isBefore(now);
+      final bool countsAsVisit = pastAppointment &&
+          (status == 'concluido' || status == 'pago' || status == 'confirmado');
 
       if (!allClientsMap.containsKey(key)) {
+        final String effectiveUserId = matchedUser?['id']?.toString() ?? userId ?? '';
+
         allClientsMap[key] = {
           'id': key,
           'name': nome,
           'nome': nome,
           'telefone': telefone.isNotEmpty ? telefone : "Não informado",
           'foto': photoUrl,
-          'origem': isManual ? 'manual' : 'app',
+          'origem': wasManual ? 'manual' : 'app',
           'totalGasto': (status == 'concluido' || status == 'pago') ? valor : 0.0,
-          'visitas': (status == 'concluido' || status == 'pago') ? 1 : 0,
+          'visitas': countsAsVisit ? 1 : 0,
           'agendamentosCount': 1,
-          'primeiraVisita': dataVisita,
-          'ultimaVisita': dataVisita,
-          'email': user?['email'] ?? "",
-          'city': user?['city'] ?? "",
-          'state': user?['state'] ?? "",
-          'street': user?['street'] ?? "",
-          'neighborhood': user?['neighborhood'] ?? "",
-          'number': user?['number'] ?? "",
-          'zipCode': user?['zip_code'] ?? "",
-          'cpf': user?['cpf'] ?? "",
-          'birthDate': user?['birth_date'] ?? "",
-          'isFavorite': favoritedIds.contains(userId),
-          'isVisitor': visitorIds.containsKey(userId),
-          'lastViewed': visitorIds[userId],
+          'primeiraVisita': pastAppointment ? dataVisita : DateTime(2100),
+          'ultimaVisita': pastAppointment ? dataVisita : DateTime(2000),
+          'email': effectiveUser?['email'] ?? "",
+          'city': effectiveUser?['city'] ?? "",
+          'state': effectiveUser?['state'] ?? "",
+          'street': effectiveUser?['street'] ?? "",
+          'neighborhood': effectiveUser?['neighborhood'] ?? "",
+          'number': effectiveUser?['number'] ?? "",
+          'zipCode': effectiveUser?['zip_code'] ?? "",
+          'cpf': effectiveUser?['cpf'] ?? "",
+          'birthDate': effectiveUser?['birth_date'] ?? "",
+          'isFavorite': favoritedIds.contains(effectiveUserId),
+          'isVisitor': visitorIds.containsKey(effectiveUserId),
+          'lastViewed': visitorIds[effectiveUserId],
           'tags': [],
-          'servicos': <String, int>{}, // Para calcular serviço preferido
-          'visitasDates': <DateTime>[dataVisita], // Para calcular intervalo médio
-          'ultimoServico': (status == 'concluido' || status == 'pago') ? (data['service_name'] ?? data['serviceName'] ?? "") : "",
+          'servicos': <String, int>{},
+          'visitasDates': <DateTime>[if (pastAppointment) dataVisita],
+          'ultimoServico': countsAsVisit ? (data['service_name'] ?? data['serviceName'] ?? "") : "",
         };
-        if (status == 'concluido' || status == 'pago') {
+        if (countsAsVisit) {
           final sName = data['service_name'] ?? data['serviceName'] ?? "";
           if (sName.isNotEmpty) allClientsMap[key]!['servicos'][sName] = 1;
         }
       } else {
         if (status == 'concluido' || status == 'pago') {
           allClientsMap[key]!['totalGasto'] += valor;
+        }
+        if (countsAsVisit) {
           allClientsMap[key]!['visitas'] += 1;
-          
+
           final sName = data['service_name'] ?? data['serviceName'] ?? "";
           if (sName.isNotEmpty) {
             allClientsMap[key]!['servicos'][sName] = (allClientsMap[key]!['servicos'][sName] ?? 0) + 1;
@@ -913,16 +1019,18 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
         }
         allClientsMap[key]!['agendamentosCount'] += 1;
 
-        if (dataVisita.isBefore(allClientsMap[key]!['primeiraVisita'])) {
-          allClientsMap[key]!['primeiraVisita'] = dataVisita;
-        }
-        if (dataVisita.isAfter(allClientsMap[key]!['ultimaVisita'])) {
-          allClientsMap[key]!['ultimaVisita'] = dataVisita;
-          if (status == 'concluido' || status == 'pago') {
-            allClientsMap[key]!['ultimoServico'] = data['service_name'] ?? data['serviceName'] ?? "";
+        if (pastAppointment) {
+          if (dataVisita.isBefore(allClientsMap[key]!['primeiraVisita'])) {
+            allClientsMap[key]!['primeiraVisita'] = dataVisita;
           }
+          if (dataVisita.isAfter(allClientsMap[key]!['ultimaVisita'])) {
+            allClientsMap[key]!['ultimaVisita'] = dataVisita;
+            if (countsAsVisit) {
+              allClientsMap[key]!['ultimoServico'] = data['service_name'] ?? data['serviceName'] ?? "";
+            }
+          }
+          allClientsMap[key]!['visitasDates'].add(dataVisita);
         }
-        allClientsMap[key]!['visitasDates'].add(dataVisita);
       }
     }
 
@@ -965,7 +1073,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
       }
     }
 
-    // 6. Aplicar Tags e Classificações (Auto + Manual)
+    // 6. Aplicar Tags Manuais (antes do merge, baseado no user_id de shop_clients)
     final int vipMinVisits = shopConfig['vip_min_visits'] ?? 15;
     final int sumidoMaxDays = shopConfig['sumido_max_days'] ?? 45;
 
@@ -973,56 +1081,132 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
       final String uid = c['id'];
       final mData = manualDataMap[uid];
       
-      // Tags Automáticas
-      List<String> tags = [];
-      String classification = "";
-
-      if (c['origem'] == 'app') {
-        final int visits = (c['visitas'] ?? 0) as int;
-        final DateTime lastVisit = c['ultimaVisita'] as DateTime;
-        final int daysSinceLast = now.difference(lastVisit).inDays;
-
-        if (daysSinceLast > sumidoMaxDays && visits > 0) {
-          classification = 'sumido';
-        } else if (visits >= vipMinVisits && _currentFeatures.clientClassification) {
-          classification = 'vip';
-        } else if (visits == 1 && daysSinceLast < 30 && _currentFeatures.clientClassification) {
-          classification = 'novo';
-        }
-      }
-
-      // Sobreposição Manual
       if (mData != null) {
         final manualTags = List<String>.from(mData['manual_tags'] ?? mData['manualTags'] ?? []);
         final manualClass = mData['classification']?.toString();
-        
         if (manualClass != null && manualClass.isNotEmpty) {
-          classification = manualClass;
+          c['classification'] = manualClass;
         }
-        tags.addAll(manualTags);
+        c['tags'] = List<String>.from(manualTags);
+      }
+    }
+
+    // 7. Pós-processamento: unificar entradas com mesmo telefone (client_ids diferentes)
+    // Resolve duplicatas causadas por migration vinculando mesmo telefone a UUIDs distintos
+    final Map<String, String> phoneToBestKey = {};
+    final List<String> keysToRemove = [];
+
+    for (var entry in allClientsMap.entries) {
+      final phone = _normalizePhone((entry.value['telefone'] ?? '').toString());
+      if (phone.isEmpty) continue;
+
+      if (phoneToBestKey.containsKey(phone)) {
+        final primaryKey = phoneToBestKey[phone]!;
+        final primary = allClientsMap[primaryKey]!;
+        final secondary = entry.value;
+
+        // Mantém o registro com mais agendamentos ou o primeiro encontrado
+        if ((secondary['agendamentosCount'] as int) > (primary['agendamentosCount'] as int)) {
+          // Promove o secundário a primário e merge
+          final oldPrimary = Map<String, dynamic>.from(primary);
+          allClientsMap[entry.key] = _mergeClientEntry(oldPrimary, secondary);
+          allClientsMap[entry.key]!['id'] = entry.key;
+          keysToRemove.add(primaryKey);
+          phoneToBestKey[phone] = entry.key;
+          keysToRemove.remove(entry.key);
+        } else {
+          // Merge secundário no primário
+          allClientsMap[primaryKey] = _mergeClientEntry(primary, secondary);
+          keysToRemove.add(entry.key);
+        }
+      } else {
+        phoneToBestKey[phone] = entry.key;
+      }
+    }
+    for (var key in keysToRemove) {
+      allClientsMap.remove(key);
+    }
+
+    // 7b. Segunda passagem de merge: unificar por email (clientes que trocaram de telefone)
+    // Só executa se sobrou mais de 1 entrada (já foram unificadas por telefone)
+    if (allClientsMap.length > 1) {
+      final Map<String, String> emailToBestKey = {};
+      final List<String> emailKeysToRemove = [];
+
+      for (var entry in allClientsMap.entries) {
+        final email = (entry.value['email'] ?? '').toString().trim().toLowerCase();
+        if (email.isEmpty) continue;
+
+        if (emailToBestKey.containsKey(email)) {
+          final primaryKey = emailToBestKey[email]!;
+          final primary = allClientsMap[primaryKey]!;
+          final secondary = entry.value;
+
+          if ((secondary['agendamentosCount'] as int) > (primary['agendamentosCount'] as int)) {
+            final oldPrimary = Map<String, dynamic>.from(primary);
+            allClientsMap[entry.key] = _mergeClientEntry(oldPrimary, secondary);
+            allClientsMap[entry.key]!['id'] = entry.key;
+            emailKeysToRemove.add(primaryKey);
+            emailToBestKey[email] = entry.key;
+            emailKeysToRemove.remove(entry.key);
+          } else {
+            allClientsMap[primaryKey] = _mergeClientEntry(primary, secondary);
+            emailKeysToRemove.add(entry.key);
+          }
+        } else {
+          emailToBestKey[email] = entry.key;
+        }
+      }
+      for (var key in emailKeysToRemove) {
+        allClientsMap.remove(key);
+      }
+    }
+
+    // 8. Recalcular classificações automáticas e estatísticas (pós-merge)
+    for (var c in allClientsMap.values) {
+      final int visits = (c['visitas'] ?? 0) as int;
+      final bool hasRealVisits = visits > 0;
+      final DateTime ultimaVisita = c['ultimaVisita'] as DateTime;
+      final int daysSinceLast = hasRealVisits ? now.difference(ultimaVisita).inDays : 0;
+
+      // Classificação automática (só se não tiver manual e tiver visitas reais)
+      final existingClass = c['classification']?.toString() ?? '';
+      final isManualClass = existingClass.isNotEmpty;
+      
+      String autoClassification = '';
+      if (hasRealVisits && c['origem'] == 'app' && !isManualClass) {
+        if (daysSinceLast > sumidoMaxDays && visits > 0) {
+          autoClassification = 'sumido';
+        } else if (visits >= vipMinVisits && _currentFeatures.clientClassification) {
+          autoClassification = 'vip';
+        } else if (visits == 1 && daysSinceLast < 30 && _currentFeatures.clientClassification) {
+          autoClassification = 'novo';
+        }
       }
 
-      // Remove classificações da lista para garantir exclusividade antes de reinjetar a correta
+      if (!isManualClass && autoClassification.isNotEmpty) {
+        c['classification'] = autoClassification;
+      }
+
+      // Tags finais: mantém tags manuais + adiciona classificação se não existir
+      final List<String> tags = List<String>.from(c['tags'] ?? []);
       final presetClasses = ['vip', 'novo', 'problematico', 'problemático', 'sumido'];
       tags.removeWhere((t) => presetClasses.contains(t.toLowerCase()));
+      final finalClass = c['classification']?.toString() ?? '';
+      if (finalClass.isNotEmpty) tags.add(finalClass);
+      c['tags'] = tags.toSet().toList();
 
-      if (classification.isNotEmpty) tags.add(classification);
-      // Tags "favoritou" e "visitou" removidas - o coração e ícone de olho já mostram isso visualmente
-
-      c['classification'] = classification;
-      c['tags'] = tags.toSet().toList(); // Remove duplicatas
-
-      // FINALIZAR ESTATÍSTICAS
-      // 1. Serviço Preferido
+      // Serviço Preferido
       final servicos = c['servicos'] as Map<String, int>;
       if (servicos.isNotEmpty) {
-        final sortedServicos = servicos.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+        final sortedServicos = servicos.entries.toList()
+          ..sort((a, b) => b.value.compareTo(a.value));
         c['servicoPreferido'] = sortedServicos.first.key;
       } else {
         c['servicoPreferido'] = "Nenhum";
       }
 
-      // 2. Intervalo Médio (em dias)
+      // Intervalo Médio (em dias)
       final dates = List<DateTime>.from(c['visitasDates'])..sort();
       if (dates.length > 1) {
         int totalDays = 0;
@@ -1033,9 +1217,13 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
       } else {
         c['intervaloMedio'] = 0;
       }
+
+      // Ticket Médio
+      final totalGasto = (c['totalGasto'] ?? 0.0) as double;
+      c['ticketMedio'] = visits > 0 ? (totalGasto / visits) : 0.0;
     }
 
-    // 7. Separar listas
+    // 9. Separar listas
     List<Map<String, dynamic>> mainClients = [];
     List<Map<String, dynamic>> visitorLeads = [];
 
@@ -1103,86 +1291,90 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
     bool isSelected = _selectedTabIndex == index;
     final showBadge = count != null && count > 0;
 
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        InkWell(
-          onTap: () {
-            if (isLocked) {
-              UpgradeModal.show(
-                context,
-                featureName: "Aba de Visitantes",
-                requiredPlan: "Plus",
-              );
-              return;
-            }
-            setState(() {
-              _selectedTabIndex = index;
-              _selectedTagFilter = "Todos";
-            });
-          },
-          borderRadius: BorderRadius.circular(20),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            decoration: BoxDecoration(
-              color: isLocked
-                  ? Colors.grey[200]
-                  : (isSelected
-                      ? (index == 0 ? AppColors.primaryPurple : Colors.blue)
-                      : Colors.grey[100]),
-              borderRadius: BorderRadius.circular(20),
-              border: isSelected
-                  ? Border.all(color: Colors.transparent)
-                  : Border.all(color: Colors.grey[300]!),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(isLocked ? Icons.lock : icon,
-                    size: 16,
-                    color: isSelected
-                        ? Colors.white
-                        : (isLocked ? Colors.grey : Colors.grey[600])),
-                const SizedBox(width: 8),
-                Text(label,
-                    style: TextStyle(
-                        color: isSelected
-                            ? Colors.white
-                            : (isLocked ? Colors.grey : Colors.grey[600]),
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13)),
-              ],
+    return Padding(
+      padding: const EdgeInsets.only(right: 10.0, top: 10.0),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          InkWell(
+            onTap: () {
+              if (isLocked) {
+                UpgradeModal.show(
+                  context,
+                  featureName: "Aba de Visitantes",
+                  requiredPlan: "Plus",
+                );
+                return;
+              }
+              setState(() {
+                _selectedTabIndex = index;
+                _selectedTagFilter = "Todos";
+              });
+            },
+            borderRadius: BorderRadius.circular(20),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: isLocked
+                    ? Colors.grey[200]
+                    : (isSelected
+                        ? (index == 0 ? AppColors.primaryPurple : Colors.blue)
+                        : Colors.grey[100]),
+                borderRadius: BorderRadius.circular(20),
+                border: isSelected
+                    ? Border.all(color: Colors.transparent)
+                    : Border.all(color: Colors.grey[300]!),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(isLocked ? Icons.lock : icon,
+                      size: 16,
+                      color: isSelected
+                          ? Colors.white
+                          : (isLocked ? Colors.grey : Colors.grey[600])),
+                  const SizedBox(width: 8),
+                  Text(label,
+                      style: TextStyle(
+                          color: isSelected
+                              ? Colors.white
+                              : (isLocked ? Colors.grey : Colors.grey[600]),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13)),
+                ],
+              ),
             ),
           ),
-        ),
-        if (showBadge)
-          Positioned(
-            right: -8,
-            top: -8,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: Colors.red,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.white, width: 1.5),
-              ),
-              child: Text(
-                count.toString(),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
+          if (showBadge)
+            Positioned(
+              right: -10,
+              top: -10,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.red,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.white, width: 1.5),
+                ),
+                child: Text(
+                  count.toString(),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
             ),
-          ),
-      ],
+        ],
+      ),
     );
   }
 
   Widget _buildClientListItem(
-      Map<String, dynamic> client, bool isSelected, bool isMobile) {
+      Map<String, dynamic> client, bool isSelected, bool isMobile,
+      {int? rank}) {
     final currency = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     bool isManual = client['origem'] == 'manual';
     Color themeColor = isManual ? Colors.orange : AppColors.primaryPurple;
@@ -1202,11 +1394,20 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
       child: ListTile(
         onTap: () => _handleClientTap(
             context, client, client['id'], isMobile), // <--- AQUI A MÁGICA
-        leading: CircleAvatar(
-          backgroundColor: themeColor.withValues(alpha: 0.1),
-          child: Text((client['name'] ?? "?").substring(0, 1).toUpperCase(),
-              style: TextStyle(color: themeColor, fontWeight: FontWeight.bold)),
-        ),
+        leading: rank != null
+            ? CircleAvatar(
+                backgroundColor: _rankColor(rank),
+                child: Text('$rank',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14)),
+              )
+            : CircleAvatar(
+                backgroundColor: themeColor.withValues(alpha: 0.1),
+                child: Text((client['name'] ?? "?").substring(0, 1).toUpperCase(),
+                    style: TextStyle(color: themeColor, fontWeight: FontWeight.bold)),
+              ),
         title: Row(
           children: [
             Expanded(
@@ -1246,11 +1447,21 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
               ),
             const SizedBox(height: 2),
             Text(
-                "${client['visitas']} visitas • Total: ${currency.format(client['totalGasto'])}",
+                "${client['visitas']} visitas • ${currency.format(client['ticketMedio'] ?? 0)} ticket",
                 style: const TextStyle(
                     fontSize: 11,
                     color: Colors.grey,
                     fontWeight: FontWeight.w500)),
+            Text(
+                "Total: ${currency.format(client['totalGasto'])}",
+                style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.grey[700],
+                    fontWeight: FontWeight.w600)),
+            if ((client['visitas'] ?? 0) > 0 && (client['ultimaVisita'] as DateTime?) != null)
+              Text(
+                "Última visita: ${DateFormat('dd/MM/yy').format(client['ultimaVisita'])}",
+                style: TextStyle(fontSize: 10, color: Colors.grey[500])),
             const SizedBox(height: 4),
             Wrap(
               spacing: 4,
@@ -1349,6 +1560,76 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
         ],
       ),
     );
+  }
+
+  Map<String, dynamic> _mergeClientEntry(
+      Map<String, dynamic> primary, Map<String, dynamic> secondary) {
+    primary['totalGasto'] = (primary['totalGasto'] ?? 0.0) + (secondary['totalGasto'] ?? 0.0);
+    primary['visitas'] = (primary['visitas'] ?? 0) + (secondary['visitas'] ?? 0);
+    primary['agendamentosCount'] = (primary['agendamentosCount'] ?? 0) + (secondary['agendamentosCount'] ?? 0);
+
+    final primaryServicos = primary['servicos'] as Map<String, int>? ?? {};
+    final secondaryServicos = secondary['servicos'] as Map<String, int>? ?? {};
+    for (var e in secondaryServicos.entries) {
+      primaryServicos[e.key] = (primaryServicos[e.key] ?? 0) + e.value;
+    }
+    primary['servicos'] = primaryServicos;
+
+    final primaryDates = List<DateTime>.from(primary['visitasDates'] ?? []);
+    final secondaryDates = List<DateTime>.from(secondary['visitasDates'] ?? []);
+    primaryDates.addAll(secondaryDates);
+    primary['visitasDates'] = primaryDates;
+
+    final pFirst = primary['primeiraVisita'] as DateTime?;
+    final sFirst = secondary['primeiraVisita'] as DateTime?;
+    if (pFirst == null || (sFirst != null && sFirst.isBefore(pFirst))) {
+      primary['primeiraVisita'] = sFirst;
+    }
+
+    final pLast = primary['ultimaVisita'] as DateTime?;
+    final sLast = secondary['ultimaVisita'] as DateTime?;
+    if (pLast == null || (sLast != null && sLast.isAfter(pLast))) {
+      primary['ultimaVisita'] = sLast;
+      primary['ultimoServico'] = secondary['ultimoServico'] ?? primary['ultimoServico'];
+    }
+
+    // Union de tags
+    final primaryTags = List<String>.from(primary['tags'] ?? []);
+    final secondaryTags = List<String>.from(secondary['tags'] ?? []);
+    for (var t in secondaryTags) {
+      if (!primaryTags.contains(t)) primaryTags.add(t);
+    }
+    primary['tags'] = primaryTags;
+
+    // Mantém classificação mais específica (VIP > Novo > Sumido > Problematico)
+    final pClass = (primary['classification'] ?? '').toString();
+    final sClass = (secondary['classification'] ?? '').toString();
+    const priority = ['vip', 'novo', 'sumido', 'problematico', 'problemático'];
+    final pIdx = priority.indexOf(pClass);
+    final sIdx = priority.indexOf(sClass);
+    if (sIdx >= 0 && (pIdx < 0 || sIdx < pIdx)) {
+      primary['classification'] = sClass;
+    }
+
+    return primary;
+  }
+
+  String _normalizePhone(String phone) {
+    String digits = phone.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.length >= 12 && digits.startsWith('55')) {
+      digits = digits.substring(2);
+    }
+    while (digits.length > 11 && digits.startsWith('0')) {
+      digits = digits.substring(1);
+    }
+    return digits;
+  }
+
+  Color _rankColor(int rank) {
+    if (rank == 1) return Colors.amber.shade700;
+    if (rank == 2) return Colors.blueGrey.shade400;
+    if (rank == 3) return Colors.brown.shade400;
+    return Colors.grey.shade500;
   }
 
   bool _isBirthdayToday(dynamic birth) {

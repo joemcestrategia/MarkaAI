@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:markaai/core/services/session_service.dart';
 import 'package:markaai/modules/admin/widgets/admin_overview_widget.dart';
 import 'package:markaai/modules/admin/widgets/admin_metrics_widget.dart';
@@ -11,6 +12,8 @@ import 'package:markaai/modules/admin/widgets/admin_finance_widget.dart';
 import 'package:markaai/modules/admin/widgets/admin_notifications_widget.dart';
 import 'package:markaai/modules/admin/widgets/admin_monitoring_widget.dart';
 import 'package:markaai/modules/admin/widgets/admin_feature_flags_widget.dart';
+import 'package:markaai/modules/admin/widgets/admin_emails_widget.dart';
+import 'package:markaai/modules/admin/widgets/admin_whatsapp_widget.dart';
 import 'package:markaai/core/theme/app_colors.dart';
 
 enum AdminSection {
@@ -25,6 +28,8 @@ enum AdminSection {
   support,
   tickets,
   banners,
+  emails,
+  whatsapp,
 }
 
 class AdminDashboardPage extends StatefulWidget {
@@ -270,6 +275,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   _buildSidebarGroup('COMUNICAÇÃO', localTheme),
                   _buildSidebarItem(AdminSection.notifications, Icons.campaign_outlined, 'Notificações', localTheme),
                   _buildSidebarItem(AdminSection.banners, Icons.photo_library_outlined, 'Banners', localTheme),
+                  _buildSidebarItem(AdminSection.emails, Icons.email_outlined, 'Emails', localTheme),
+                  _buildSidebarItem(AdminSection.whatsapp, Icons.chat_bubble_outline, 'WhatsApp Logs', localTheme),
                   
                   const SizedBox(height: 24),
                   _buildSidebarGroup('SISTEMA', localTheme),
@@ -332,6 +339,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       case AdminSection.support: return const AdminSupportWidget();
       case AdminSection.tickets: return const AdminTicketsPage(embedded: true);
       case AdminSection.banners: return const AdminBannersPage();
+      case AdminSection.emails: return const AdminEmailsWidget();
+      case AdminSection.whatsapp: return const AdminWhatsappWidget();
     }
   }
 
@@ -348,6 +357,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       case AdminSection.support: return 'Suporte';
       case AdminSection.tickets: return 'Tickets';
       case AdminSection.banners: return 'Marketing Banners';
+      case AdminSection.emails: return 'Emails';
+      case AdminSection.whatsapp: return 'WhatsApp Logs';
     }
   }
 }

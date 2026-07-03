@@ -6,9 +6,10 @@ import 'package:intl/intl.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:io' if (dart.library.html) 'package:markaai/core/utils/io_stub.dart' as io;
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import '../../core/theme/app_colors.dart';
 import 'package:markaai/core/services/viacep_service.dart';
-import '../../core/services/session_service.dart';
 import 'client_home_page.dart';
 import '../../core/services/image_service.dart';
 
@@ -44,6 +45,7 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
   bool _isLoadingCep = false;
   bool _isSaving = false;
   double _uploadProgress = 0.0;
+  String? _existingRole;
 
   var phoneMask = MaskTextInputFormatter(
       mask: '(##) #####-####', filter: {"#": RegExp(r'[0-9]')});
@@ -133,6 +135,7 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
       if (doc != null) {
         if (mounted) {
           setState(() {
+            _existingRole = doc['role'];
             _nameController.text = doc['name'] ?? '';
             _phoneController.text = doc['phone'] ?? '';
             _cepController.text = doc['zip_code'] ?? '';
@@ -227,6 +230,30 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
     if (picked != null) setState(() => _birthDate = picked);
   }
 
+  Future<Map<String, double>?> _geocodeAddress(String query) async {
+    if (query.isEmpty) return null;
+    try {
+      final uri = Uri.parse(
+        'https://nominatim.openstreetmap.org/search'
+        '?q=${Uri.encodeComponent(query)}'
+        '&format=json&limit=1&accept-language=pt-BR',
+      );
+      final resp = await http.get(uri, headers: {'User-Agent': 'MarkaAI/1.0'});
+      if (resp.statusCode == 200) {
+        final json = jsonDecode(resp.body) as List;
+        if (json.isNotEmpty) {
+          final r = json[0] as Map<String, dynamic>;
+          final lat = double.tryParse(r['lat']?.toString() ?? '');
+          final lon = double.tryParse(r['lon']?.toString() ?? '');
+          if (lat != null && lon != null) {
+            return {'lat': lat, 'lng': lon};
+          }
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
   Future<void> _salvarCliente() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -268,7 +295,7 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
         if (parts.length > 1) estado = parts[1].trim();
       }
 
-      final userData = {
+      final userData = <String, dynamic>{
         'id': uid,
         'name': _nameController.text.trim(),
         'email': widget.user?.email ?? Supabase.instance.client.auth.currentUser?.email,
@@ -282,8 +309,35 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
         'cpf': _cpfController.text.replaceAll(RegExp(r'\D'), ''),
         'birth_date': _birthDate?.toIso8601String(),
         'updated_at': DateTime.now().toIso8601String(),
-        'role': 'cliente',
+        'role': _existingRole ?? 'cliente',
       };
+
+      try {
+        final parts = <String>[];
+        final street = _addressController.text.trim();
+        final number = _numberController.text.trim();
+        final neighborhood = _districtController.text.trim();
+        final zipCode = _cepController.text.trim();
+
+        if (street.isNotEmpty && number.isNotEmpty) {
+          parts.add('$street, $number');
+        } else if (street.isNotEmpty) {
+          parts.add(street);
+        }
+        if (neighborhood.isNotEmpty) parts.add(neighborhood);
+        if (cidade.isNotEmpty) parts.add(cidade);
+        if (estado.isNotEmpty) parts.add(estado);
+        if (parts.isEmpty && zipCode.isNotEmpty) parts.add(zipCode);
+        parts.add('Brasil');
+
+        final geo = await _geocodeAddress(parts.join(', '));
+        if (geo != null) {
+          userData['lat'] = geo['lat'];
+          userData['lng'] = geo['lng'];
+        }
+      } catch (e) {
+        debugPrint('Geocode failed during registration: $e');
+      }
 
       if (imageUrl != null) {
         userData['photo_url'] = imageUrl;
@@ -398,7 +452,11 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
                 TextFormField(
                     controller: _nameController,
                     decoration: _deco("Nome Completo", Icons.person),
-                    validator: (v) => v!.isEmpty ? "Obrigatório" : null),
+                    validator: (v) {
+                      if (v == null || v.isEmpty) return "Obrigatório";
+                      if (v.length > 150) return "Máximo 150 caracteres";
+                      return null;
+                    }),
                 const SizedBox(height: 16),
 
                 TextFormField(
@@ -486,20 +544,23 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
                 const SizedBox(height: 10),
                 TextFormField(
                     controller: _addressController,
-                    decoration: _deco("Rua", Icons.home)),
+                    decoration: _deco("Rua", Icons.home),
+                    validator: (v) => v != null && v.length > 200 ? "Máximo 200 caracteres" : null),
                 const SizedBox(height: 10),
                 Row(children: [
                   Expanded(
                       child: TextFormField(
                           controller: _numberController,
                           focusNode: _numberFocus,
-                          decoration: _deco("Número", Icons.tag))),
+                          decoration: _deco("Número", Icons.tag),
+                          validator: (v) => v != null && v.length > 20 ? "Máximo 20 caracteres" : null)),
                   const SizedBox(width: 10),
                   Expanded(
                       flex: 2,
                       child: TextFormField(
                           controller: _districtController,
-                          decoration: _deco("Bairro", Icons.location_city))),
+                          decoration: _deco("Bairro", Icons.location_city),
+                          validator: (v) => v != null && v.length > 150 ? "Máximo 150 caracteres" : null)),
                 ]),
 
                 const SizedBox(height: 30),

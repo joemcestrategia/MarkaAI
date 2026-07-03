@@ -69,7 +69,7 @@ exports.shopPreview = onRequest(
 
     try {
       const apiRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/shops?slug=ilike.${encodeURIComponent(slug)}&select=name,niche,category,city,state,logo_url&limit=1`,
+        `${SUPABASE_URL}/rest/v1/shops?slug=eq.${encodeURIComponent(slug.toLowerCase())}&select=name,niche,category,city,state,logo_url&limit=1`,
         {
           headers: {
             apikey: SUPABASE_ANON_KEY,

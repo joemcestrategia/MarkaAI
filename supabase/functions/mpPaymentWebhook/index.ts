@@ -76,7 +76,7 @@ Deno.serve(async (req: Request) => {
     console.log('[mpPaymentWebhook] Recebido:', JSON.stringify(body))
 
     // Validação HMAC — se chave configurada, assinatura é obrigatória
-    const secret = Deno.env.get('SUPABASE_MP_WEBHOOK_SECRET')
+    const secret = Deno.env.get('MERCADOPAGO_WEBHOOK_SECRET')
     if (secret) {
       const signature = req.headers.get('x-signature')
       const valid = await verifyMPSignature(rawBody, signature, secret, body.data?.id?.toString() ?? '')
@@ -88,7 +88,7 @@ Deno.serve(async (req: Request) => {
         })
       }
     } else {
-      console.warn('[mpPaymentWebhook] SUPABASE_MP_WEBHOOK_SECRET não configurada — pulando validação HMAC')
+      console.warn('[mpPaymentWebhook] MERCADOPAGO_WEBHOOK_SECRET não configurada — pulando validação HMAC')
     }
 
     // Só processa eventos de pagamento
@@ -180,6 +180,94 @@ Deno.serve(async (req: Request) => {
     const paymentData = await paymentRes.json()
     console.log(`[mpPaymentWebhook] Pagamento ${paymentId} status: ${paymentData.status}`)
 
+    // -----------------------------------------------------------------------
+    // Passo 2.5: Sincronização de Estornos Externos (BLOCO ISOLADO)
+    // Se o pagamento foi estornado no painel do MP, sincronizamos o status
+    // no nosso banco. Este bloco retorna ANTES de tocar no fluxo de pagamento.
+    // -----------------------------------------------------------------------
+    if (paymentData.status === 'refunded') {
+      console.log(`[mpPaymentWebhook] Pagamento ${paymentId} tem status 'refunded'. Iniciando sincronização de estorno externo.`)
+
+      // Buscar o agendamento vinculado a este payment_id
+      const { data: refundAppt } = await supabase
+        .from('appointments')
+        .select('id, refund_status, paid_amount')
+        .eq('payment_id', paymentId)
+        .maybeSingle()
+
+      if (!refundAppt) {
+        console.warn(`[mpPaymentWebhook] Pagamento ${paymentId} refunded, mas nenhum agendamento vinculado encontrado.`)
+        return new Response(
+          JSON.stringify({ ok: true, message: 'Estorno detectado, mas sem agendamento vinculado', payment_id: paymentId }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
+      // Idempotência: se já está 'estornado', não faz nada
+      if (refundAppt.refund_status === 'estornado') {
+        console.log(`[mpPaymentWebhook] Agendamento ${refundAppt.id} já está com refund_status='estornado'. Idempotência OK.`)
+        return new Response(
+          JSON.stringify({ ok: true, already_refunded: true, appointment_id: refundAppt.id }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
+      // Buscar dados reais do refund na API do MP (server-side verification, não confia no body do webhook)
+      let totalRefundedAmount = 0
+      try {
+        const refundsRes = await fetch(`${baseUrl}/v1/payments/${paymentId}/refunds`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        })
+        if (refundsRes.ok) {
+          const refundsData = await refundsRes.json()
+          // Pode haver múltiplos refunds parciais — somar todos
+          if (Array.isArray(refundsData)) {
+            totalRefundedAmount = refundsData.reduce((sum: number, r: any) => sum + (r.amount ?? 0), 0)
+          }
+        } else {
+          console.warn(`[mpPaymentWebhook] Não conseguiu buscar refunds da API do MP (status ${refundsRes.status}). Usando paid_amount como fallback.`)
+          totalRefundedAmount = refundAppt.paid_amount ?? 0
+        }
+      } catch (refundFetchError: any) {
+        console.warn(`[mpPaymentWebhook] Erro ao buscar refunds da API do MP:`, refundFetchError?.message)
+        totalRefundedAmount = refundAppt.paid_amount ?? 0
+      }
+
+      // UPDATE condicional (idempotência via WHERE)
+      const { data: updatedRefund, error: refundUpdateError } = await supabase
+        .from('appointments')
+        .update({
+          refund_status: 'estornado',
+          refund_amount: totalRefundedAmount,
+          refunded_at: new Date().toISOString(),
+          refunded_by: 'mercadopago_webhook',
+        })
+        .eq('id', refundAppt.id)
+        .in('refund_status', ['nao_aplicavel', 'pendente', 'processando'])
+        .select('id')
+        .maybeSingle()
+
+      if (refundUpdateError) {
+        console.error(`[mpPaymentWebhook] Erro ao sincronizar estorno externo:`, refundUpdateError)
+        return new Response(
+          JSON.stringify({ error: 'Erro ao sincronizar estorno externo' }),
+          { status: 500, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
+      if (updatedRefund) {
+        console.log(`[mpPaymentWebhook] ESTORNO_EXTERNO_SINCRONIZADO: appointment ${refundAppt.id}, valor ${totalRefundedAmount}, payment ${paymentId}`)
+      } else {
+        console.log(`[mpPaymentWebhook] Estorno externo para appointment ${refundAppt.id} — nenhuma linha atualizada (já processado ou status incompatível).`)
+      }
+
+      return new Response(
+        JSON.stringify({ ok: true, refund_synced: true, appointment_id: refundAppt.id, amount: totalRefundedAmount }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    }
+
+    // Fluxo normal: só processa pagamentos aprovados
     if (paymentData.status !== 'approved') {
       return new Response(
         JSON.stringify({ ok: true, status: paymentData.status, message: 'Pagamento não aprovado ainda' }),
@@ -198,19 +286,13 @@ Deno.serve(async (req: Request) => {
     if (externalRef) {
       const { data: apptRow } = await supabase
         .from('appointments')
-        .select('id, status')
+        .select('id, status, shop_id')
         .eq('id', externalRef)
         .maybeSingle()
 
       if (apptRow) {
         appointmentId = apptRow.id
-        if (apptRow.status === 'confirmado') {
-          console.log(`[mpPaymentWebhook] Agendamento ${appointmentId} já confirmado — idempotente, ok.`)
-          return new Response(JSON.stringify({ ok: true, already_confirmed: true }), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          })
-        }
+        shopId = shopId || apptRow.shop_id
       }
     }
 
@@ -218,18 +300,13 @@ Deno.serve(async (req: Request) => {
     if (!appointmentId) {
       const { data: apptRows } = await supabase
         .from('appointments')
-        .select('id, status')
+        .select('id, status, shop_id')
         .eq('payment_id', paymentId)
         .limit(1)
 
       if (apptRows && apptRows.length > 0) {
         appointmentId = apptRows[0].id
-        if (apptRows[0].status === 'confirmado') {
-          return new Response(JSON.stringify({ ok: true, already_confirmed: true }), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          })
-        }
+        shopId = shopId || apptRows[0].shop_id
       }
     }
 
@@ -244,87 +321,132 @@ Deno.serve(async (req: Request) => {
       )
     }
 
+    const paidAmount = paymentData.transaction_amount ?? 0
+
+    // -----------------------------------------------------------------------
+    // Passo 3.5: Idempotência Atômica via Tabela de Controle
+    // -----------------------------------------------------------------------
+    const { error: insertError } = await supabase
+      .from('mp_processed_payments')
+      .insert({
+        payment_id: paymentId,
+        appointment_id: appointmentId,
+        shop_id: shopId,
+        amount: paidAmount,
+        status: paymentData.status
+      })
+
+    // Se violar a PRIMARY KEY (código 23505), já processamos este webhook
+    if (insertError) {
+      if (insertError.code === '23505') {
+        console.log(`[mpPaymentWebhook] Pagamento ${paymentId} já processado anteriormente. Retornando 200 (idempotência atômica).`)
+        return new Response(JSON.stringify({ ok: true, already_processed: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      } else {
+        console.error(`[mpPaymentWebhook] Erro ao inserir na tabela de idempotência:`, insertError)
+        return new Response(JSON.stringify({ error: 'Erro interno ao validar idempotência' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+    }
+
     // -----------------------------------------------------------------------
     // Passo 4: Confirmar o agendamento
     // -----------------------------------------------------------------------
-    const paidAmount = paymentData.transaction_amount ?? 0
 
-    // Busca total_payable, paid_amount, payment_id e metadata para calcular remaining e consolidar pagamentos
-    const { data: currentAppt } = await supabase
-      .from('appointments')
-      .select('total_payable, paid_amount, payment_id, metadata, status')
-      .eq('id', appointmentId)
-      .maybeSingle()
+    try {
+      // Busca total_payable, paid_amount, payment_id e metadata para calcular remaining e consolidar pagamentos
+      const { data: currentAppt, error: selectError } = await supabase
+        .from('appointments')
+        .select('total_payable, paid_amount, payment_id, metadata, status')
+        .eq('id', appointmentId)
+        .maybeSingle()
 
-    const paymentTypeId = paymentData.payment_type_id?.toString()?.toLowerCase() || ''
-    const paymentMethodId = paymentData.payment_method_id?.toString()?.toLowerCase() || ''
+      if (selectError) throw selectError
 
-    let realPaymentMethod = 'Pix' // fallback default
-    if (paymentTypeId === 'credit_card') {
-      realPaymentMethod = 'Cartão de Crédito'
-    } else if (paymentTypeId === 'debit_card') {
-      realPaymentMethod = 'Cartão de Débito'
-    } else if (paymentMethodId === 'pix' || paymentTypeId === 'bank_transfer') {
-      realPaymentMethod = 'Pix'
-    } else if (paymentTypeId === 'ticket') {
-      realPaymentMethod = 'Boleto'
-    } else if (paymentTypeId === 'account_money') {
-      realPaymentMethod = 'Saldo Mercado Pago'
-    }
+      const paymentTypeId = paymentData.payment_type_id?.toString()?.toLowerCase() || ''
+      const paymentMethodId = paymentData.payment_method_id?.toString()?.toLowerCase() || ''
 
-    // Calcula os valores somados, verificando se não é um pagamento repetido
-    const totalPayable = currentAppt?.total_payable ?? paidAmount
-    let newPaidAmount = currentAppt?.paid_amount ?? 0
-    let isSecondPayment = false
-    
-    if (currentAppt?.payment_id && currentAppt.payment_id !== paymentId.toString()) {
-      isSecondPayment = true
-      const meta = currentAppt?.metadata || {}
-      if (meta.completion_payment_id !== paymentId.toString()) {
-        newPaidAmount += paidAmount
+      let realPaymentMethod = 'Pix' // fallback default
+      if (paymentTypeId === 'credit_card') {
+        realPaymentMethod = 'Cartão de Crédito'
+      } else if (paymentTypeId === 'debit_card') {
+        realPaymentMethod = 'Cartão de Débito'
+      } else if (paymentMethodId === 'pix' || paymentTypeId === 'bank_transfer') {
+        realPaymentMethod = 'Pix'
+      } else if (paymentTypeId === 'ticket') {
+        realPaymentMethod = 'Boleto'
+      } else if (paymentTypeId === 'account_money') {
+        realPaymentMethod = 'Saldo Mercado Pago'
       }
-    } else {
-      newPaidAmount = paidAmount
-    }
 
-    const remainingAmount = Math.max(0, totalPayable - newPaidAmount)
-    const newStatus = currentAppt?.status === 'concluido' ? 'concluido' : 'confirmado'
-
-    const updatePayload: any = {
-      status: newStatus,
-      payment_status: newPaidAmount >= (totalPayable - 0.05) ? 'pago' : 'parcial',
-      paid_amount: newPaidAmount,
-      remaining_amount: remainingAmount,
-      pago_em: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }
-
-    if (isSecondPayment) {
-      const currentMeta = currentAppt?.metadata || {}
-      updatePayload.payment_method = realPaymentMethod
-      updatePayload.metadata = {
-        ...currentMeta,
-        advance_payment_id: currentMeta.advance_payment_id || currentAppt?.payment_id,
-        payment_id: paymentId,
-        completion_payment_id: paymentId,
-        completion_payment_method: realPaymentMethod,
-        completion_paid_at: new Date().toISOString(),
-        valor_pago: newPaidAmount,
-        restante_a_pagar: remainingAmount,
+      // Calcula os valores somados, verificando se não é um pagamento repetido
+      const totalPayable = currentAppt?.total_payable ?? paidAmount
+      let newPaidAmount = currentAppt?.paid_amount ?? 0
+      let isSecondPayment = false
+      
+      if (currentAppt?.payment_id && currentAppt.payment_id !== paymentId.toString()) {
+        isSecondPayment = true
+        const meta = currentAppt?.metadata || {}
+        if (meta.completion_payment_id !== paymentId.toString()) {
+          newPaidAmount += paidAmount
+        }
+      } else {
+        newPaidAmount = paidAmount
       }
-    } else {
-      updatePayload.payment_id = paymentId
-      updatePayload.payment_method = realPaymentMethod
-    }
 
-    const { error: updateError } = await supabase
-      .from('appointments')
-      .update(updatePayload)
-      .eq('id', appointmentId)
+      const remainingAmount = Math.max(0, totalPayable - newPaidAmount)
+      const newStatus = currentAppt?.status === 'concluido' ? 'concluido' : 'confirmado'
 
-    if (updateError) {
-      console.error('[mpPaymentWebhook] Erro ao atualizar agendamento:', updateError)
-      return new Response(JSON.stringify({ error: 'Falha ao confirmar agendamento' }), {
+      const updatePayload: any = {
+        status: newStatus,
+        payment_status: newPaidAmount >= (totalPayable - 0.05) ? 'pago' : 'parcial',
+        paid_amount: newPaidAmount,
+        remaining_amount: remainingAmount,
+        pago_em: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }
+
+      if (isSecondPayment) {
+        const currentMeta = currentAppt?.metadata || {}
+        updatePayload.payment_method = realPaymentMethod
+        updatePayload.metadata = {
+          ...currentMeta,
+          advance_payment_id: currentMeta.advance_payment_id || currentAppt?.payment_id,
+          payment_id: paymentId,
+          completion_payment_id: paymentId,
+          completion_payment_method: realPaymentMethod,
+          completion_paid_at: new Date().toISOString(),
+          valor_pago: newPaidAmount,
+          restante_a_pagar: remainingAmount,
+        }
+      } else {
+        updatePayload.payment_id = paymentId
+        updatePayload.payment_method = realPaymentMethod
+      }
+
+      const { error: updateError } = await supabase
+        .from('appointments')
+        .update(updatePayload)
+        .eq('id', appointmentId)
+
+      if (updateError) throw updateError
+
+    } catch (passo4Error: any) {
+      console.error('[mpPaymentWebhook] Erro no processamento final do Passo 4:', passo4Error)
+      
+      // Rollback compensatório (Opção 2b aprimorada):
+      // Removemos o registro de idempotência recém-inserido caso qualquer 
+      // operação (SELECT, cálculos, UPDATE) falhe, permitindo o retry pelo MP.
+      await supabase
+        .from('mp_processed_payments')
+        .delete()
+        .eq('payment_id', paymentId)
+      
+      return new Response(JSON.stringify({ error: 'Falha no processamento, rollback executado' }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' },
       })

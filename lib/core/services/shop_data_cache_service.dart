@@ -149,11 +149,13 @@ class ShopDataCacheService {
                          .replaceAll(RegExp(r'[Çç]'), 'c')
                          .replaceAll(RegExp(r'[Ññ]'), 'n');
 
+    final normCityEscaped = normCity.replaceAll(r'\', r'\\').replaceAll('%', r'\%').replaceAll('_', r'\_');
+    final cleanCityEscaped = cleanCity.replaceAll(r'\', r'\\').replaceAll('%', r'\%').replaceAll('_', r'\_');
     final data = await Supabase.instance.client
         .from('shops')
         .select()
         .gt('services_count', 0)
-        .or('city.ilike.%$cleanCity%,city.ilike.%$normCity%');
+        .or('city.ilike.%$cleanCityEscaped%,city.ilike.%$normCityEscaped%');
 
     setCache(key, {'list': data}, ttlConfig); // Usa TTL de config (30 min)
     return List<Map<String, dynamic>>.from(data);

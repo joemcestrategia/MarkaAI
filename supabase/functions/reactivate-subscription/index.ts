@@ -53,17 +53,12 @@ serve(async (req: Request) => {
 
     const planId = new_plan_id || sub.plan_id || 'free'
 
-    // Atualizar no Supabase
+    // Atualizar no Supabase (colunas raiz)
     await supabaseAdmin.from('shops').update({
       plan_id: planId,
-      subscription: {
-        ...sub,
-        plan_id: planId,
-        status: 'active',
-        cancel_at_period_end: false,
-        payment_provider: 'stripe',
-        updated_at: new Date().toISOString(),
-      },
+      cancel_at_period_end: false,
+      cancellation_reason: null,
+      // Não mexer na sub em si para evitar race com o webhook
     }).eq('id', shop_id)
 
     return new Response(JSON.stringify({

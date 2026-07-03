@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 import '../../core/repositories/whatsapp_config_repository.dart';
 import '../../core/theme/app_colors.dart';
+import '../../widgets/upgrade_modal.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class WhatsappBusinessConfigSection extends StatefulWidget {
@@ -20,6 +21,8 @@ class _WhatsappBusinessConfigSectionState extends State<WhatsappBusinessConfigSe
   bool _isLoading = true;
   bool _isSaving = false;
   bool _isTesting = false;
+
+  String _shopPlan = 'free';
 
   final TextEditingController _phoneNumberIdController = TextEditingController();
   final TextEditingController _businessAccountIdController = TextEditingController();
@@ -40,6 +43,11 @@ class _WhatsappBusinessConfigSectionState extends State<WhatsappBusinessConfigSe
 
   Future<void> _loadConfig() async {
     try {
+      final shopRes = await Supabase.instance.client.from('shops').select('plan_id').eq('id', widget.shopId).maybeSingle();
+      if (shopRes != null) {
+        _shopPlan = shopRes['plan_id']?.toString().toLowerCase() ?? 'free';
+      }
+
       final config = await _repository.getConfig(widget.shopId);
       if (config != null) {
         _configId = config.id;
@@ -202,6 +210,8 @@ class _WhatsappBusinessConfigSectionState extends State<WhatsappBusinessConfigSe
                             const SizedBox(height: 6),
                             TextField(
                               controller: _accessTokenController,
+                              maxLength: 500,
+                              buildCounter: (_, {required int currentLength, required bool isFocused, required int? maxLength}) => null,
                               obscureText: _obscureToken,
                               style: const TextStyle(fontSize: 14),
                               decoration: InputDecoration(
@@ -266,7 +276,13 @@ class _WhatsappBusinessConfigSectionState extends State<WhatsappBusinessConfigSe
                       subtitle: const Text("Habilita o envio automático de mensagens para seus clientes"),
                       value: _isActive,
                       activeColor: const Color(0xFF25D366),
-                      onChanged: (v) => setState(() => _isActive = v),
+                      onChanged: (v) {
+                        if (_shopPlan == 'free' || _shopPlan == 'starter' || _shopPlan == 'plus') {
+                          UpgradeModal.show(context, featureName: 'Integração WhatsApp', requiredPlan: 'PRO');
+                        } else {
+                          setState(() => _isActive = v);
+                        }
+                      },
                     ),
                   ),
 
@@ -316,7 +332,7 @@ class _WhatsappBusinessConfigSectionState extends State<WhatsappBusinessConfigSe
     );
   }
 
-  Widget _buildTextField(String label, TextEditingController controller, String hint) {
+  Widget _buildTextField(String label, TextEditingController controller, String hint, {int maxLength = 500}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -324,6 +340,8 @@ class _WhatsappBusinessConfigSectionState extends State<WhatsappBusinessConfigSe
         const SizedBox(height: 6),
         TextField(
           controller: controller,
+          maxLength: maxLength,
+          buildCounter: (_, {required int currentLength, required bool isFocused, required int? maxLength}) => null,
           style: const TextStyle(fontSize: 14),
           decoration: InputDecoration(
             hintText: hint,

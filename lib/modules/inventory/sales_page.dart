@@ -12,9 +12,23 @@ class SalesPage extends StatefulWidget {
 
 class _SalesPageState extends State<SalesPage> {
   final productsRef = Supabase.instance.client.from('products');
+  String? _shopId;
   String search = '';
   List<Map<String, dynamic>> cart = [];
   bool _isSaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadShopId();
+  }
+
+  Future<void> _loadShopId() async {
+    final shopId = await SessionService.getShopId();
+    if (mounted) {
+      setState(() => _shopId = shopId);
+    }
+  }
 
   void _addToCart(Map<String, dynamic> data) {
     setState(() {
@@ -375,11 +389,14 @@ class _SalesPageState extends State<SalesPage> {
   }
 
   Widget _buildProductsList() {
+    if (_shopId == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
     return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: productsRef.stream(primaryKey: ['id']).map((list) {
-        var filtered = list;
+      stream: productsRef.stream(primaryKey: ['id']).eq('shop_id', _shopId!).map((list) {
+        var filtered = list.where((p) => p['is_affiliate'] != true).toList();
         if (search.isNotEmpty) {
-          filtered = list.where((p) => (p['name'] ?? '').toString().toLowerCase().contains(search.toLowerCase())).toList();
+          filtered = filtered.where((p) => (p['name'] ?? '').toString().toLowerCase().contains(search.toLowerCase())).toList();
         }
         filtered.sort((a, b) => (a['name'] ?? '').toString().compareTo((b['name'] ?? '').toString()));
         return filtered.take(50).toList();

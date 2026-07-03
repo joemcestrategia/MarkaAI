@@ -355,7 +355,8 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
 
     final query = _supabase
         .from('appointments')
-        .stream(primaryKey: ['id']);
+        .stream(primaryKey: ['id'])
+        .eq('shop_id', shopId!);
 
     return query.map((list) {
       final filtered = list.where((d) {
@@ -392,7 +393,8 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
 
     final query = _supabase
         .from('appointments')
-        .stream(primaryKey: ['id']);
+        .stream(primaryKey: ['id'])
+        .eq('shop_id', shopId!);
 
     return query.map((list) {
       final filtered = list.where((d) {

@@ -15,7 +15,7 @@ serve(async (req: Request) => {
   }
 
   try {
-    const { shop_id } = await req.json()
+    const { shop_id, reason } = await req.json()
 
     if (!shop_id) {
       throw new Error('shop_id é obrigatório')
@@ -43,6 +43,8 @@ serve(async (req: Request) => {
       await supabaseAdmin.from('shops').update({
         plan_id: 'free',
         trial_active: false,
+        cancel_at_period_end: false,
+        cancellation_reason: reason || 'Cancelamento manual (Sem Stripe)',
         subscription: {
           ...sub,
           status: 'canceled',
@@ -66,19 +68,16 @@ serve(async (req: Request) => {
       ? new Date(canceled.current_period_end * 1000).toISOString()
       : new Date().toISOString()
 
-    // Atualizar no Supabase
+    // Atualizar no Supabase (colunas raiz)
     await supabaseAdmin.from('shops').update({
-      subscription: {
-        ...sub,
-        status: 'canceled',
-        cancel_at_period_end: true,
-        access_until: accessUntil,
-        updated_at: new Date().toISOString(),
-      },
+      cancel_at_period_end: true,
+      current_period_end: accessUntil,
+      cancellation_reason: reason || 'Cancelado via App',
+      // Mantemos a subscription intocada, o webhook cuidará do sync final
     }).eq('id', shop_id)
 
     return new Response(JSON.stringify({
-      message: `Assinatura cancelada. Acesso mantido até ${new Date(accessUntil).toLocaleDateString('pt-BR')}.`,
+      message: `Cancelamento agendado para ${new Date(accessUntil).toLocaleDateString('pt-BR')}.`,
       access_until: accessUntil,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

@@ -55,3 +55,8 @@ tmp/
 
 # API Keys — NEVER commit real keys
 lib/core/constants/api_keys.dart
+scripts/import_supabase_users.js
+# Local test env
+scripts/tests/.env
+
+.env.production

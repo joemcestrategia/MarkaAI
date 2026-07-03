@@ -185,7 +185,7 @@ serve(async (req) => {
     // 2. Fetch Professionals
     let profQuery = supabaseClient
       .from('employees')
-      .select('id, name, work_start, work_end, start_time, end_time, work_days, work_schedule, services_ids')
+      .select('id, name, work_start, work_end, start_time, end_time, work_days, work_schedule, services_ids, breaks')
       .eq('shop_id', shop_id)
     
     if (professional_id) {
@@ -280,7 +280,41 @@ serve(async (req) => {
           ? { start: hhmmToMin(dayCfg.break.start), end: hhmmToMin(dayCfg.break.end) }
           : undefined
         const key = `${prof.id}_${day}`
-        const busy = groupedByProfDay[key] || []
+        const busy: BusyInterval[] = [...(groupedByProfDay[key] || [])]
+
+        // Inclui folgas do profissional como busyIntervals
+        const profBreaks = (prof as Record<string, unknown>).breaks as Array<Record<string, unknown>> | null
+        if (profBreaks && Array.isArray(profBreaks)) {
+          let skipProf = false
+          for (const folga of profBreaks) {
+            const fStart = folga.start ? new Date(String(folga.start)) : null
+            let fEnd = folga.end ? new Date(String(folga.end)) : null
+            if (!fStart || !fEnd) continue
+
+            // Ajuste: se a data final for meia-noite exata, significa até o fim do dia
+            if (fEnd.getUTCHours() === 0 && fEnd.getUTCMinutes() === 0) {
+              fEnd = new Date(fEnd.getTime() + 86400000 - 1)
+            }
+
+            const dayStartDt = new Date(Date.UTC(year, monthNum - 1, day))
+            const dayEndDt = new Date(Date.UTC(year, monthNum - 1, day + 1))
+            if (fStart >= dayEndDt || fEnd <= dayStartDt) continue
+
+            const fType = String(folga.type || 'full_day').toLowerCase()
+            if (fType === 'partial') {
+              const stStr = String(folga.start_time || '')
+              const etStr = String(folga.end_time || '')
+              if (stStr && etStr) {
+                busy.push({ start: hhmmToMin(stStr), end: hhmmToMin(etStr) })
+              }
+            } else {
+              // Folga de dia inteiro: pula este profissional para este dia
+              skipProf = true
+              break
+            }
+          }
+          if (skipProf) continue
+        }
 
         const slots = generateSmartSlots({
           startStr,

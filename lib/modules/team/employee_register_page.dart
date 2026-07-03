@@ -16,7 +16,8 @@ import '../../core/services/shop_data_cache_service.dart';
 import '../../core/utils/work_schedule.dart';
 import 'package:image_cropper/image_cropper.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-
+import 'package:table_calendar/table_calendar.dart';
+import '../backup/calendar_backup_page.dart';
 
 class EmployeeRegisterPage extends StatefulWidget {
   final Map<String, dynamic>? employeeToEdit;
@@ -32,14 +33,10 @@ class EmployeeRegisterPage extends StatefulWidget {
 class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
   final _formKey = GlobalKey<FormState>();
 
-  // Controladores (HORÁRIO CORRIGIDO PARA 08:00)
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
-  final _backupEmailController =
-      TextEditingController(); // 🆕 Email para backup Google Calendar
-  final _phoneController = TextEditingController();
-  final _comissaoController = TextEditingController(text: "0");
   final _cargoController = TextEditingController(); // Cargo ou Especialidade
+  double _comissaoValue = 0.0;
 
   // Jornada por dia da semana (1=Seg ... 7=Dom).
   // Cada dia: enabled + start + end + (opcional) pausa única (start/end).
@@ -54,12 +51,6 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
       ),
   };
 
-  // Máscara de telefone
-  final phoneMask = MaskTextInputFormatter(
-    mask: '(##) #####-####',
-    filter: {"#": RegExp(r'[0-9]')},
-  );
-
   // Estado
   io.File? _imageFile;
   String? _existingPhotoUrl;
@@ -71,6 +62,7 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
   bool _isSaving = false;
   bool _isDeleting = false;
   double _uploadProgress = 0.0;
+  String? _currentEmployeeId;
 
   @override
   void initState() {
@@ -125,14 +117,15 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
         if (data != null) {
           _nameController.text = data['name'] ?? "";
           _emailController.text = data['email'] ?? "";
-          _backupEmailController.text =
-              data['backup_email'] ?? ""; // 🆕 Carrega email de backup
-          _phoneController.text = data['phone'] ?? "";
           _existingPhotoUrl = data['photo_url'];
           _loadScheduleFromEmployee(data);
-          _comissaoController.text = (data['commission_percent'] != null)
-              ? data['commission_percent'].toString()
-              : '0';
+          
+          if (data['commission_percent'] != null) {
+            _comissaoValue = double.tryParse(data['commission_percent'].toString()) ?? 0.0;
+            if (_comissaoValue > 100) _comissaoValue = 100;
+            if (_comissaoValue < 0) _comissaoValue = 0;
+          }
+          
           _cargoController.text = data['role'] ?? data['position'] ?? "";
           if (data['services_ids'] != null) {
             _selectedServices = List<String>.from(data['services_ids']);
@@ -141,6 +134,8 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
           if (data['breaks'] != null) {
             _folgas = List<Map<String, dynamic>>.from(data['breaks']);
           }
+          
+          _currentEmployeeId = data['id'];
         }
       });
     }
@@ -267,66 +262,405 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
     }
   }
 
-  Future<void> _showAddFolgaDialog() async {
-    DateTimeRange? pickedRange = await showDateRangePicker(
+  Future<DateTimeRange?> _showCustomDateRangePicker(BuildContext context) async {
+    DateTime? rangeStart;
+    DateTime? rangeEnd;
+    DateTime focusedDay = DateTime.now();
+    
+    return await showDialog<DateTimeRange>(
       context: context,
-      locale: const Locale('pt', 'BR'),
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
-      builder: (context, child) => Theme(
-        data: ThemeData.light().copyWith(
-          primaryColor: AppColors.primaryPurple,
-          colorScheme:
-              const ColorScheme.light(primary: AppColors.primaryPurple),
-        ),
-        child: child!,
-      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return Dialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              backgroundColor: Colors.white,
+              child: Padding(
+                padding: const EdgeInsets.all(20.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      "Selecione o Período",
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.deepPurple),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      "Toque no dia de início e no dia de término da folga.",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                    ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      height: 380,
+                      width: 320,
+                      child: TableCalendar(
+                        firstDay: DateTime.now().subtract(const Duration(days: 1)),
+                        lastDay: DateTime.now().add(const Duration(days: 365)),
+                        focusedDay: focusedDay,
+                        rangeStartDay: rangeStart,
+                        rangeEndDay: rangeEnd,
+                        rangeSelectionMode: RangeSelectionMode.toggledOn,
+                        locale: 'pt_BR',
+                        headerStyle: const HeaderStyle(
+                          formatButtonVisible: false,
+                          titleCentered: true,
+                          titleTextStyle: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                          leftChevronIcon: Icon(Icons.chevron_left, color: AppColors.primaryPurple),
+                          rightChevronIcon: Icon(Icons.chevron_right, color: AppColors.primaryPurple),
+                        ),
+                        calendarStyle: CalendarStyle(
+                          rangeHighlightColor: AppColors.primaryPurple.withValues(alpha: 0.15),
+                          rangeStartDecoration: const BoxDecoration(
+                            color: AppColors.primaryPurple,
+                            shape: BoxShape.circle,
+                          ),
+                          rangeEndDecoration: const BoxDecoration(
+                            color: AppColors.primaryPurple,
+                            shape: BoxShape.circle,
+                          ),
+                          withinRangeTextStyle: const TextStyle(color: AppColors.primaryPurple),
+                          todayDecoration: BoxDecoration(
+                            color: Colors.transparent,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: AppColors.primaryPurple),
+                          ),
+                          todayTextStyle: const TextStyle(color: AppColors.primaryPurple, fontWeight: FontWeight.bold),
+                          selectedDecoration: const BoxDecoration(
+                            color: AppColors.primaryPurple,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        onRangeSelected: (start, end, focused) {
+                          setState(() {
+                            rangeStart = start;
+                            rangeEnd = end;
+                            focusedDay = focused;
+                          });
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text("CANCELAR", style: TextStyle(color: AppColors.textSecondary, fontWeight: FontWeight.bold)),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primaryPurple,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                          ),
+                          onPressed: () {
+                            if (rangeStart != null) {
+                              Navigator.pop(context, DateTimeRange(start: rangeStart!, end: rangeEnd ?? rangeStart!));
+                            }
+                          },
+                          child: const Text("CONFIRMAR", style: TextStyle(fontWeight: FontWeight.bold)),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      }
     );
+  }
+
+  Future<void> _showAddFolgaDialog({int? editIndex}) async {
+    Map<String, dynamic>? existingFolga;
+    if (editIndex != null) {
+      existingFolga = _folgas[editIndex];
+    }
+
+    DateTimeRange? pickedRange;
+    
+    if (existingFolga != null) {
+       final st = existingFolga['start'] is String ? DateTime.parse(existingFolga['start']) : existingFolga['start'];
+       final ed = existingFolga['end'] is String ? DateTime.parse(existingFolga['end']) : existingFolga['end'];
+       pickedRange = DateTimeRange(start: st, end: ed);
+    } else {
+      pickedRange = await _showCustomDateRangePicker(context);
+    }
 
     if (pickedRange != null) {
       if (!mounted) return;
-      String obs = "";
-      final obsController = TextEditingController();
+      String obs = existingFolga?['notes'] ?? "";
+      final obsController = TextEditingController(text: obs);
+      
+      bool isPartial = existingFolga?['type'] == 'partial';
+      TimeOfDay partialStart = const TimeOfDay(hour: 8, minute: 0);
+      TimeOfDay partialEnd = const TimeOfDay(hour: 12, minute: 0);
+
+      if (isPartial && existingFolga != null) {
+        if (existingFolga['start_time'] != null) {
+          final parts = existingFolga['start_time'].split(':');
+          if (parts.length >= 2) partialStart = TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
+        }
+        if (existingFolga['end_time'] != null) {
+          final parts = existingFolga['end_time'].split(':');
+          if (parts.length >= 2) partialEnd = TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
+        }
+      }
+
+      bool applyToAll = false;
 
       await showDialog(
           context: context,
           builder: (context) {
-            return AlertDialog(
-              title:
-                  const Text("Motivo da Folga", style: TextStyle(fontSize: 16)),
-              content: TextField(
-                  controller: obsController,
-                  decoration:
-                      const InputDecoration(hintText: "Ex: Férias, Médico...")),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text("Cancelar")),
-                ElevatedButton(
-                  onPressed: () {
-                    obs = obsController.text;
-                    Navigator.pop(context);
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primaryPurple,
-                    foregroundColor: Colors.white,
+            return StatefulBuilder(
+              builder: (context, setDialogState) {
+                return AlertDialog(
+                  title: Text(editIndex != null ? "Editar Folga" : "Configurar Folga",
+                      style: const TextStyle(fontSize: 16)),
+                  content: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        TextField(
+                            controller: obsController,
+                            decoration: const InputDecoration(
+                                labelText: "Motivo",
+                                hintText: "Ex: Férias, Médico...")),
+                        const SizedBox(height: 16),
+                        const Text("Tipo de folga",
+                            style: TextStyle(
+                                fontSize: 13, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: GestureDetector(
+                                onTap: () =>
+                                    setDialogState(() => isPartial = false),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      vertical: 12, horizontal: 8),
+                                  decoration: BoxDecoration(
+                                    color: !isPartial
+                                        ? AppColors.primaryPurple
+                                            .withValues(alpha: 0.1)
+                                        : Colors.grey[100],
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: !isPartial
+                                          ? AppColors.primaryPurple
+                                          : Colors.grey.shade300,
+                                    ),
+                                  ),
+                                  child: Column(
+                                    children: [
+                                      Icon(Icons.calendar_today,
+                                          size: 20,
+                                          color: !isPartial
+                                              ? AppColors.primaryPurple
+                                              : Colors.grey),
+                                      const SizedBox(height: 4),
+                                      Text("Dia Inteiro",
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: !isPartial
+                                                ? FontWeight.bold
+                                                : FontWeight.normal,
+                                            color: !isPartial
+                                                ? AppColors.primaryPurple
+                                                : Colors.grey,
+                                          )),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: GestureDetector(
+                                onTap: () =>
+                                    setDialogState(() => isPartial = true),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      vertical: 12, horizontal: 8),
+                                  decoration: BoxDecoration(
+                                    color: isPartial
+                                        ? AppColors.primaryPurple
+                                            .withValues(alpha: 0.1)
+                                        : Colors.grey[100],
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: isPartial
+                                          ? AppColors.primaryPurple
+                                          : Colors.grey.shade300,
+                                    ),
+                                  ),
+                                  child: Column(
+                                    children: [
+                                      Icon(Icons.access_time,
+                                          size: 20,
+                                          color: isPartial
+                                              ? AppColors.primaryPurple
+                                              : Colors.grey),
+                                      const SizedBox(height: 4),
+                                      Text("Período",
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: isPartial
+                                                ? FontWeight.bold
+                                                : FontWeight.normal,
+                                            color: isPartial
+                                                ? AppColors.primaryPurple
+                                                : Colors.grey,
+                                          )),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (isPartial) ...[
+                          const SizedBox(height: 16),
+                          const Text("Horário da folga",
+                              style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: InkWell(
+                                  onTap: () async {
+                                    final t = await showTimePicker(
+                                      context: context,
+                                      initialTime: partialStart,
+                                    );
+                                    if (t != null) {
+                                      setDialogState(() => partialStart = t);
+                                    }
+                                  },
+                                  child: InputDecorator(
+                                    decoration: InputDecoration(
+                                      labelText: "Início",
+                                      border: OutlineInputBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(8)),
+                                      prefixIcon: const Icon(
+                                          Icons.access_time,
+                                          size: 16,
+                                          color: Colors.grey),
+                                    ),
+                                    child: Text(_fmtTime(partialStart),
+                                        style: const TextStyle(
+                                            fontSize: 13)),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: InkWell(
+                                  onTap: () async {
+                                    final t = await showTimePicker(
+                                      context: context,
+                                      initialTime: partialEnd,
+                                    );
+                                    if (t != null) {
+                                      setDialogState(() => partialEnd = t);
+                                    }
+                                  },
+                                  child: InputDecorator(
+                                    decoration: InputDecoration(
+                                      labelText: "Fim",
+                                      border: OutlineInputBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(8)),
+                                      prefixIcon: const Icon(
+                                          Icons.access_time,
+                                          size: 16,
+                                          color: Colors.grey),
+                                    ),
+                                    child: Text(_fmtTime(partialEnd),
+                                        style: const TextStyle(
+                                            fontSize: 13)),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                        if (editIndex == null) ...[
+                          const SizedBox(height: 16),
+                          CheckboxListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text("Aplicar folga a toda a equipe", style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                            subtitle: const Text("Isso replicará a mesma folga para os demais funcionários ao salvar.", style: TextStyle(fontSize: 11, color: Colors.grey)),
+                            value: applyToAll,
+                            activeColor: AppColors.primaryPurple,
+                            onChanged: (val) {
+                              if (val != null) setDialogState(() => applyToAll = val);
+                            },
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
-                  child: const Text("Adicionar",
-                      style: TextStyle(color: Colors.white)),
-                )
-              ],
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text("Cancelar")),
+                    ElevatedButton(
+                      onPressed: () {
+                        obs = obsController.text;
+                        Navigator.pop(context);
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryPurple,
+                        foregroundColor: Colors.white,
+                      ),
+                      child: Text(editIndex != null ? "Atualizar" : "Adicionar",
+                          style: const TextStyle(color: Colors.white)),
+                    )
+                  ],
+                );
+              },
             );
           });
 
       if (obs.isNotEmpty) {
         setState(() {
-          _folgas.add({
-            'start': pickedRange.start.toIso8601String(),
-            'end': pickedRange.end
-                .add(const Duration(hours: 23, minutes: 59))
+          final folgaData = <String, dynamic>{
+            'start': pickedRange!.start.toIso8601String(),
+            'end': (isPartial ? pickedRange.end : pickedRange.end.add(const Duration(hours: 23, minutes: 59)))
                 .toIso8601String(),
-            'notes': obs,
-          });
+            'notes': obs.isEmpty && existingFolga != null ? existingFolga['notes'] : obs,
+          };
+
+          if (isPartial) {
+            folgaData['type'] = 'partial';
+            folgaData['start_time'] =
+                '${partialStart.hour.toString().padLeft(2, '0')}:${partialStart.minute.toString().padLeft(2, '0')}';
+            folgaData['end_time'] =
+                '${partialEnd.hour.toString().padLeft(2, '0')}:${partialEnd.minute.toString().padLeft(2, '0')}';
+          } else {
+            folgaData['type'] = 'full_day';
+          }
+
+          if (applyToAll) {
+            folgaData['apply_to_all'] = true;
+          }
+
+          if (editIndex != null) {
+            _folgas[editIndex] = folgaData;
+          } else {
+            _folgas.add(folgaData);
+          }
+
           _folgas.sort((a, b) =>
               (a['start'] as String).compareTo(b['start'] as String));
         });
@@ -437,17 +771,12 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
       final employeeData = {
         'name': _nameController.text.trim(),
         'email': _emailController.text.trim(),
-        'backup_email':
-            _backupEmailController.text.trim(), // 🆕 Salva email de backup
-        'phone': _phoneController.text.trim(),
         'photo_url': photoUrl,
         'services_ids': _selectedServices,
         'work_schedule': wsJson,
         'breaks': _folgas,
         'shop_id': _shopId,
-        'commission_percent':
-            double.tryParse(_comissaoController.text.replaceAll(',', '.')) ??
-                0.0,
+        'commission_percent': _comissaoValue,
         'role': _cargoController.text.trim(),
         'updated_at': DateTime.now().toIso8601String(),
       };
@@ -456,8 +785,11 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
           '[employee_register] saving work_schedule=${employeeData['work_schedule']}');
 
       Map<String, dynamic>? saved;
-      if (widget.employeeToEdit == null) {
-        employeeData['id'] = const Uuid().v4(); // 🆕 Gera ID para evitar erro de null value
+      String targetId;
+
+      if (widget.employeeToEdit == null && _currentEmployeeId == null) {
+        targetId = const Uuid().v4();
+        employeeData['id'] = targetId; // 🆕 Gera ID para evitar erro de null value
         final res = await sb.Supabase.instance.client
             .from('employees')
             .insert(employeeData)
@@ -465,16 +797,56 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
             .maybeSingle();
         saved = res;
       } else {
+        targetId = _currentEmployeeId ?? widget.employeeToEdit!['id'];
         final res = await sb.Supabase.instance.client
             .from('employees')
             .update(employeeData)
-            .eq('id', widget.employeeToEdit!['id'])
+            .eq('id', targetId)
             .select()
             .maybeSingle();
         saved = res;
       }
       debugPrint(
           '[employee_register] saved row work_schedule=${saved?['work_schedule']}');
+
+      // 🆕 Aplicar folgas para toda a equipe
+      final folgasToApplyAll = _folgas.where((f) => f['apply_to_all'] == true).toList();
+      if (folgasToApplyAll.isNotEmpty) {
+        try {
+          final otherEmployees = await sb.Supabase.instance.client
+              .from('employees')
+              .select('id, breaks')
+              .eq('shop_id', _shopId!)
+              .neq('id', targetId);
+
+          for (var other in otherEmployees) {
+            List<dynamic> otherBreaks = other['breaks'] ?? [];
+            List<Map<String, dynamic>> newBreaks = List<Map<String, dynamic>>.from(otherBreaks);
+            
+            for (var folga in folgasToApplyAll) {
+              // Limpa a flag e evita duplicação exata por segurança
+              final cleanFolga = Map<String, dynamic>.from(folga)..remove('apply_to_all');
+              newBreaks.add(cleanFolga);
+            }
+            
+            await sb.Supabase.instance.client
+                .from('employees')
+                .update({'breaks': newBreaks})
+                .eq('id', other['id']);
+          }
+        } catch (e) {
+          debugPrint('[employee_register] Erro ao aplicar folgas em lote: $e');
+        }
+        
+        // Remove a flag de apply_to_all do funcionário atual para o futuro
+        for (var f in _folgas) {
+          f.remove('apply_to_all');
+        }
+        await sb.Supabase.instance.client
+            .from('employees')
+            .update({'breaks': _folgas})
+            .eq('id', targetId);
+      }
 
       // Invalida o cache
       ShopDataCacheService().invalidate(_shopId!, 'employees');
@@ -505,51 +877,82 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
     }
 
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Container(
         color: Colors.white,
         child: Column(
           children: [
-            // HEADER
-            Container(
-              height: 60,
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              decoration: BoxDecoration(
-                  border:
-                      Border(bottom: BorderSide(color: Colors.grey[200]!))),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                      widget.employeeToEdit != null
-                          ? "Editar Perfil"
-                          : "Novo Profissional",
-                      style: const TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.bold)),
-                  IconButton(
-                      icon: const Icon(Icons.close, size: 20),
-                      onPressed: widget.onClose),
-                ],
+            // HEADER MODERNO (Exibido apenas no Desktop/Tablet)
+            if (MediaQuery.of(context).size.width >= 850)
+              Container(
+                height: 64,
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border(bottom: BorderSide(color: AppColors.border.withValues(alpha: 0.5))),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: AppColors.primaryPurple.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(
+                            widget.employeeToEdit != null ? Icons.edit_note_rounded : Icons.person_add_rounded,
+                            color: AppColors.primaryPurple,
+                            size: 20,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Text(
+                          widget.employeeToEdit != null
+                              ? "Editar Membro"
+                              : "Novo Membro",
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.deepPurple,
+                            letterSpacing: -0.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.close_rounded, size: 24, color: AppColors.textSecondary),
+                      onPressed: widget.onClose,
+                      splashRadius: 24,
+                    ),
+                  ],
+                ),
               ),
-            ),
 
-            // ABAS
+            // ABAS ESTILIZADAS
             Material(
               color: Colors.white,
-              child: TabBar(
-                labelColor: AppColors.primaryPurple,
-                unselectedLabelColor: Colors.grey,
-                indicatorColor: AppColors.primaryPurple,
-                labelStyle: const TextStyle(
-                    fontWeight: FontWeight.bold, fontSize: 13),
-                unselectedLabelStyle: const TextStyle(fontSize: 13),
-                tabs: const [
-                  Tab(icon: Icon(Icons.person_outline, size: 18), text: 'Perfil'),
-                  Tab(
-                      icon: Icon(Icons.calendar_today_outlined, size: 18),
-                      text: 'Jornada'),
-                  Tab(icon: Icon(Icons.spa_outlined, size: 18), text: 'Serviços'),
-                ],
+              elevation: 0,
+              child: Container(
+                decoration: BoxDecoration(
+                  border: Border(bottom: BorderSide(color: AppColors.border.withValues(alpha: 0.5))),
+                ),
+                child: TabBar(
+                  labelColor: AppColors.primaryPurple,
+                  unselectedLabelColor: AppColors.textSecondary,
+                  indicatorColor: AppColors.primaryPurple,
+                  indicatorWeight: 3,
+                  labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
+                  tabs: const [
+                    Tab(icon: Icon(Icons.person_outline_rounded, size: 20), text: 'Perfil'),
+                    Tab(icon: Icon(Icons.schedule_rounded, size: 20), text: 'Jornada'),
+                    Tab(icon: Icon(Icons.event_busy_rounded, size: 20), text: 'Folgas'),
+                    Tab(icon: Icon(Icons.spa_rounded, size: 20), text: 'Serviços'),
+                  ],
+                ),
               ),
             ),
 
@@ -561,6 +964,7 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
                   children: [
                     _buildProfileTab(),
                     _buildScheduleTab(),
+                    _buildFolgasTab(),
                     _buildServicesTab(),
                   ],
                 ),
@@ -568,28 +972,31 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
             ),
 
             // RODAPÉ
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                  color: Colors.white,
-                  border:
-                      Border(top: BorderSide(color: Colors.grey[100]!))),
-              child: SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton(
-                  onPressed: _isSaving ? null : _save,
-                  style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primaryPurple,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10))),
-                  child: _isSaving
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : const Text("SALVAR DADOS",
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold)),
+            SafeArea(
+              bottom: true,
+              child: Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                    color: Colors.white,
+                    border:
+                        Border(top: BorderSide(color: Colors.grey[100]!))),
+                child: SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: ElevatedButton(
+                    onPressed: _isSaving ? null : _save,
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryPurple,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10))),
+                    child: _isSaving
+                        ? const CircularProgressIndicator(color: Colors.white)
+                        : const Text("SALVAR DADOS",
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold)),
+                  ),
                 ),
               ),
             ),
@@ -607,123 +1014,218 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // FOTO
-          Center(
-            child: Column(
-              children: [
-                GestureDetector(
-                  onTap: _pickImage,
-                  child: Stack(
-                    alignment: Alignment.bottomRight,
-                    children: [
-                      CircleAvatar(
-                        radius: 45,
-                        backgroundColor: Colors.grey[100],
-                        backgroundImage: _imageFile != null
-                            ? (kIsWeb
-                                    ? NetworkImage(_imageFile!.path)
-                                        as ImageProvider
-                                    : FileImage(io.File(_imageFile!.path)
-                                            as dynamic)
-                                        as ImageProvider)
-                            : (_existingPhotoUrl != null
-                                    ? CachedNetworkImageProvider(
-                                        _existingPhotoUrl!)
-                                    : null)
-                                as ImageProvider?,
-                        child: (_imageFile == null &&
-                                _existingPhotoUrl == null)
-                            ? const Icon(Icons.camera_alt,
-                                size: 24, color: Colors.grey)
-                            : null,
-                      ),
-                      if (_imageFile != null)
-                        Positioned(
-                          right: 0,
-                          bottom: 0,
-                          child: GestureDetector(
-                            onTap: _editCurrentImage,
-                            child: Container(
-                              padding: const EdgeInsets.all(4),
-                              decoration: BoxDecoration(
-                                color: AppColors.primaryPurple,
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                    color: Colors.white, width: 2),
-                              ),
-                              child: const Icon(Icons.crop,
-                                  size: 14, color: Colors.white),
-                            ),
+
+          _sectionTitle("Dados Pessoais"),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // FOTO
+              Padding(
+                padding: const EdgeInsets.only(right: 16, top: 4),
+                child: Column(
+                  children: [
+                    GestureDetector(
+                      onTap: _pickImage,
+                      child: Stack(
+                        alignment: Alignment.bottomRight,
+                        children: [
+                          CircleAvatar(
+                            radius: 40,
+                            backgroundColor: AppColors.surface,
+                            backgroundImage: _imageFile != null
+                                ? (kIsWeb
+                                        ? NetworkImage(_imageFile!.path)
+                                            as ImageProvider
+                                        : FileImage(io.File(_imageFile!.path)
+                                                as dynamic)
+                                            as ImageProvider)
+                                : (_existingPhotoUrl != null
+                                        ? CachedNetworkImageProvider(
+                                            _existingPhotoUrl!)
+                                        : null)
+                                    as ImageProvider?,
+                            child: (_imageFile == null &&
+                                    _existingPhotoUrl == null)
+                                ? const Icon(Icons.add_a_photo_rounded,
+                                    size: 24, color: AppColors.textSecondary)
+                                : null,
                           ),
+                          if (_imageFile != null)
+                            Positioned(
+                              right: 0,
+                              bottom: 0,
+                              child: GestureDetector(
+                                onTap: _editCurrentImage,
+                                child: Container(
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.primaryPurple,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                        color: Colors.white, width: 2),
+                                  ),
+                                  child: const Icon(Icons.crop,
+                                      size: 14, color: Colors.white),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    if (_uploadProgress > 0 && _uploadProgress < 1.0) ...[
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: 80,
+                        child: LinearProgressIndicator(
+                          value: _uploadProgress,
+                          backgroundColor: Colors.grey[200],
+                          valueColor: const AlwaysStoppedAnimation<Color>(
+                              AppColors.primaryPurple),
                         ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text("${(_uploadProgress * 100).toInt()}%",
+                          style: const TextStyle(fontSize: 10)),
                     ],
+                  ],
+                ),
+              ),
+              
+              // INPUTS DE NOME E CARGO
+              Expanded(
+                child: Column(
+                  children: [
+                    _buildField("Nome Completo", _nameController,
+                        icon: Icons.person_outline, maxLength: 150),
+                    _buildField(
+                        "Cargo / Especialidade",
+                        _cargoController,
+                        icon: Icons.work_outline, maxLength: 100),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          _sectionTitle("Comissão"),
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.border.withValues(alpha: 0.5)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      "Porcentagem de comissão",
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: AppColors.textSecondary),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryPurple.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        "${_comissaoValue.toInt()}%",
+                        style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.primaryPurple, fontSize: 15),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    activeTrackColor: AppColors.primaryPurple,
+                    inactiveTrackColor: AppColors.primaryPurple.withValues(alpha: 0.2),
+                    thumbColor: AppColors.primaryPurple,
+                    overlayColor: AppColors.primaryPurple.withValues(alpha: 0.1),
+                    valueIndicatorColor: AppColors.primaryPurple,
+                    trackHeight: 6,
+                  ),
+                  child: Slider(
+                    value: _comissaoValue,
+                    min: 0,
+                    max: 100,
+                    divisions: 100,
+                    label: "${_comissaoValue.toInt()}%",
+                    onChanged: (val) {
+                      setState(() {
+                        _comissaoValue = val;
+                      });
+                    },
                   ),
                 ),
-                if (_uploadProgress > 0 && _uploadProgress < 1.0) ...[
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: 100,
-                    child: LinearProgressIndicator(
-                      value: _uploadProgress,
-                      backgroundColor: Colors.grey[200],
-                      valueColor: const AlwaysStoppedAnimation<Color>(
-                          AppColors.primaryPurple),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text("${(_uploadProgress * 100).toInt()}%",
-                      style: const TextStyle(fontSize: 10)),
-                ],
               ],
             ),
           ),
-          const SizedBox(height: 30),
-
-          _sectionTitle("Dados Pessoais"),
-          _buildField("Nome Completo", _nameController,
-              icon: Icons.person_outline),
-          _buildField(
-              "Cargo / Especialidade (Ex: Barbeiro, Esteticista)",
-              _cargoController,
-              icon: Icons.work_outline),
-          _buildField(
-            "Email para Backup (Google Calendar)",
-            _backupEmailController,
-            icon: Icons.cloud_upload_outlined,
-            keyboardType: TextInputType.emailAddress,
-            validator: (v) {
-              if (v != null && v.isNotEmpty && !v.contains('@')) {
-                return "Email inválido";
-              }
-              return null;
-            },
-          ),
-          _buildField(
-            "Telefone / WhatsApp",
-            _phoneController,
-            icon: Icons.phone_outlined,
-            keyboardType: TextInputType.phone,
-            inputFormatters: [phoneMask],
-            validator: (v) {
-              if (v == null || v.trim().isEmpty) return null;
-              return v.length < 14 ? "Telefone inválido" : null;
-            },
-          ),
-          _buildField("Comissão (%)", _comissaoController,
-              icon: Icons.percent,
-              keyboardType: TextInputType.number,
-              validator: (v) => null),
 
           if (widget.employeeToEdit != null) ...[
-            const SizedBox(height: 30),
-            const Divider(),
-            const SizedBox(height: 10),
+            _sectionTitle("Integrações"),
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.blue[50],
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.blue[100]!),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: [
+                  const Icon(Icons.calendar_month_rounded, color: Colors.blue, size: 24),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text("Google Calendar", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF1E3A8A))),
+                        Text("Sincronizar agendamentos", style: TextStyle(fontSize: 12, color: Colors.blue[800])),
+                      ],
+                    ),
+                  ),
+                  SizedBox(
+                    height: 36,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => CalendarBackupPage(
+                              isOwner: false,
+                              employeeId: widget.employeeToEdit!['id'],
+                              shopId: _shopId,
+                            ),
+                          ),
+                        );
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: Colors.blue[700],
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                      ),
+                      child: const Text("Configurar", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 40),
             Center(
               child: TextButton.icon(
                 onPressed: _deleteEmployee,
-                icon: const Icon(Icons.delete_outline, color: Colors.red),
+                icon: const Icon(Icons.delete_outline_rounded, color: Colors.red),
                 label: const Text("Remover da Equipe",
-                    style: TextStyle(color: Colors.red)),
+                    style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  backgroundColor: Colors.red.withValues(alpha: 0.05),
+                ),
               ),
             ),
           ],
@@ -747,11 +1249,19 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
           ),
           const SizedBox(height: 12),
           for (var d = 1; d <= 7; d++) _buildDayScheduleCard(d),
+        ],
+      ),
+    );
+  }
 
-          const SizedBox(height: 24),
-          const Divider(),
-          const SizedBox(height: 16),
+  // ─── Aba: Folgas ────────────────────────────────────────────────────────────
 
+  Widget _buildFolgasTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -764,11 +1274,37 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
             ],
           ),
           const Text(
-            "Bloqueia dias específicos sem precisar mexer na configuração semanal.",
+            "Bloqueia dias ou períodos específicos sem precisar mexer na configuração semanal. "
+            "Use 'Período' para bloquear apenas parte do dia.",
             style: TextStyle(fontSize: 11, color: Colors.grey),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
           _buildFolgasList(),
+          if (_folgas.isEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.grey[50],
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey.shade200),
+              ),
+              child: Column(
+                children: [
+                  Icon(Icons.event_available,
+                      size: 40, color: Colors.grey[300]),
+                  const SizedBox(height: 8),
+                  Text("Nenhuma folga configurada",
+                      style: TextStyle(
+                          fontSize: 13, color: Colors.grey[500])),
+                  const SizedBox(height: 4),
+                  Text(
+                      "Toque em 'Add Folga' para bloquear dias ou períodos",
+                      style: TextStyle(
+                          fontSize: 11, color: Colors.grey[400])),
+                ],
+              ),
+            ),
         ],
       ),
     );
@@ -795,12 +1331,29 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
 
   Widget _sectionTitle(String title) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Text(title,
-          style: const TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 14,
-              color: Colors.black87)),
+      padding: const EdgeInsets.only(bottom: 16, top: 8),
+      child: Row(
+        children: [
+          Container(
+            width: 4,
+            height: 16,
+            decoration: BoxDecoration(
+              color: AppColors.primaryPurple,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            title,
+            style: const TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: 15,
+              color: AppColors.deepPurple,
+              letterSpacing: -0.3,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -808,20 +1361,42 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
       {IconData? icon,
       TextInputType? keyboardType,
       String? Function(String?)? validator,
-      List<MaskTextInputFormatter>? inputFormatters}) {
+      List<MaskTextInputFormatter>? inputFormatters,
+      int? maxLength}) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(bottom: 16),
       child: TextFormField(
         controller: controller,
         keyboardType: keyboardType,
         inputFormatters: inputFormatters,
-        style: const TextStyle(fontSize: 14),
-        validator: validator ?? (v) => v!.isEmpty ? "Campo obrigatório" : null,
+        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+        validator: (v) {
+          if (validator != null) {
+            final result = validator(v);
+            if (result != null) return result;
+          }
+          if (v == null || v.isEmpty) return "Campo obrigatório";
+          if (maxLength != null && v.length > maxLength!) return "Máximo $maxLength caracteres";
+          return null;
+        },
         decoration: InputDecoration(
           labelText: label,
-          prefixIcon:
-              icon != null ? Icon(icon, size: 18, color: Colors.grey) : null,
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+          labelStyle: TextStyle(color: AppColors.textSecondary.withValues(alpha: 0.8)),
+          prefixIcon: icon != null ? Icon(icon, size: 20, color: AppColors.primaryPurple.withValues(alpha: 0.7)) : null,
+          filled: true,
+          fillColor: AppColors.surface,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide.none,
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: AppColors.border.withValues(alpha: 0.5)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: AppColors.primaryPurple, width: 1.5),
+          ),
           isDense: true,
         ),
       ),
@@ -922,18 +1497,88 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
         final start = e.value['start'] is String 
             ? DateTime.parse(e.value['start'])
             : (e.value['start'] as DateTime);
-        return ListTile(
-          dense: true,
-          contentPadding: EdgeInsets.zero,
-          leading: const Icon(Icons.event_busy, color: Colors.red, size: 20),
-          title: Text(e.value['notes'],
-              style:
-                  const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-          subtitle: Text(DateFormat('dd/MM/yyyy').format(start),
-              style: const TextStyle(fontSize: 11)),
-          trailing: IconButton(
-              icon: const Icon(Icons.close, size: 16, color: Colors.red),
-              onPressed: () => setState(() => _folgas.removeAt(e.key))),
+        final end = e.value['end'] is String 
+            ? DateTime.parse(e.value['end'])
+            : (e.value['end'] as DateTime);
+        final folgaType =
+            (e.value['type']?.toString() ?? 'full_day').toLowerCase();
+        final isPartial = folgaType == 'partial';
+
+        String dateStr;
+        if (start.year == end.year &&
+            start.month == end.month &&
+            start.day == end.day) {
+          dateStr = DateFormat('dd/MM/yyyy').format(start);
+        } else {
+          dateStr =
+              '${DateFormat('dd/MM').format(start)} — ${DateFormat('dd/MM/yyyy').format(end)}';
+        }
+
+        String subtitleText = dateStr;
+        if (isPartial) {
+          final stTime = e.value['start_time'] ?? '??';
+          final etTime = e.value['end_time'] ?? '??';
+          subtitleText = '$dateStr • $stTime–$etTime';
+        }
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          decoration: BoxDecoration(
+            color: isPartial
+                ? Colors.orange.withValues(alpha: 0.06)
+                : Colors.red.withValues(alpha: 0.06),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isPartial
+                  ? Colors.orange.withValues(alpha: 0.3)
+                  : Colors.red.withValues(alpha: 0.3),
+            ),
+          ),
+          child: ListTile(
+            onTap: () => _showAddFolgaDialog(editIndex: e.key),
+            dense: true,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+            leading: Icon(
+              isPartial ? Icons.access_time : Icons.event_busy,
+              color: isPartial ? Colors.orange : Colors.red,
+              size: 20,
+            ),
+            title: Text(e.value['notes'] ?? 'Folga',
+                style: const TextStyle(
+                    fontSize: 13, fontWeight: FontWeight.bold)),
+            subtitle: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: isPartial
+                        ? Colors.orange.withValues(alpha: 0.15)
+                        : Colors.red.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    isPartial ? 'Período' : 'Dia Inteiro',
+                    style: TextStyle(
+                      fontSize: 9,
+                      fontWeight: FontWeight.bold,
+                      color: isPartial ? Colors.orange[800] : Colors.red[800],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(subtitleText,
+                      style: const TextStyle(fontSize: 11),
+                      overflow: TextOverflow.ellipsis),
+                ),
+              ],
+            ),
+            trailing: IconButton(
+                icon: const Icon(Icons.close, size: 16, color: Colors.red),
+                onPressed: () => setState(() => _folgas.removeAt(e.key))),
+          ),
         );
       }).toList(),
     );

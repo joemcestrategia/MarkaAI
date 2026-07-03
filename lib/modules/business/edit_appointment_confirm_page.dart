@@ -164,6 +164,7 @@ class _EditAppointmentConfirmPageState
     final snap = await Supabase.instance.client
         .from('appointments')
         .select()
+        .eq('shop_id', widget.appointmentDoc['shop_id'] ?? widget.appointmentDoc['shopId'])
         .eq('professional_id', empId)
         .gte('scheduled_at', dayStart.toIso8601String())
         .lt('scheduled_at', dayEnd.toIso8601String());
@@ -282,6 +283,7 @@ class _EditAppointmentConfirmPageState
         final snapProf = await Supabase.instance.client
             .from('appointments')
             .select()
+            .eq('shop_id', widget.appointmentDoc['shop_id'] ?? widget.appointmentDoc['shopId'])
             .eq('professional_id', profId)
             .gte('scheduled_at', dayStart.toIso8601String())
             .lte('scheduled_at', dayEnd.toIso8601String());

@@ -55,7 +55,7 @@ class _InventoryHomePageState extends State<InventoryHomePage> {
 
   void _showUpgradeDialog() {
     UpgradeModal.show(context,
-        featureName: 'Módulo de Produtos', requiredPlan: 'Plus');
+        featureName: 'Módulo de Produtos', requiredPlan: 'Pro');
   }
 
   @override
@@ -84,37 +84,6 @@ class _InventoryHomePageState extends State<InventoryHomePage> {
 
         return Scaffold(
           backgroundColor: const Color(0xFFF8F9FD),
-          appBar: AppBar(
-            title: const Text('Produtos',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-            backgroundColor: AppColors.primaryPurple,
-            foregroundColor: Colors.white,
-            elevation: 0,
-            centerTitle: false,
-            actions: [
-              IconButton(
-                icon: const Icon(Icons.help_outline, size: 20),
-                onPressed: () {
-                  showDialog(
-                    context: context,
-                    builder: (ctx) => AlertDialog(
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16)),
-                      title: const Text('Guia Rápido'),
-                      content: const Text(
-                          'Gerencie seu catálogo, acompanhe saídas e otimize suas compras em um só lugar.'),
-                      actions: [
-                        TextButton(
-                            onPressed: () => Navigator.pop(ctx),
-                            child: const Text('Entendi')),
-                      ],
-                    ),
-                  );
-                },
-              ),
-              const SizedBox(width: 8),
-            ],
-          ),
           body: SafeArea(
             child: SingleChildScrollView(
               child: Column(

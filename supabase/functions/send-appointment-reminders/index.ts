@@ -6,24 +6,20 @@ import { corsHeaders } from '../_shared/cors.ts'
 // Formatadores de data/hora
 // ──────────────────────────────────────────────────────────────
 
-/** Formata data no padrão dd/MM/yyyy (fuso local do servidor — UTC) */
+/** Formata data no padrão dd/MM/yyyy pegando direto da string ISO (sem shift de fuso) */
 function formatDate(isoDate: string): string {
-  const d = new Date(isoDate)
-  // Ajuste para timezone Brasil (UTC-3)
-  const brt = new Date(d.getTime() - 3 * 60 * 60 * 1000)
-  const day = brt.getUTCDate().toString().padStart(2, '0')
-  const month = (brt.getUTCMonth() + 1).toString().padStart(2, '0')
-  const year = brt.getUTCFullYear()
+  // isoDate ex: "2026-06-23T18:00:00Z" ou "2026-06-23T18:00:00+00:00"
+  if (!isoDate || isoDate.length < 10) return ''
+  const year = isoDate.substring(0, 4)
+  const month = isoDate.substring(5, 7)
+  const day = isoDate.substring(8, 10)
   return `${day}/${month}/${year}`
 }
 
-/** Formata hora no padrão HH:mm (fuso local do servidor — UTC-3) */
+/** Formata hora no padrão HH:mm pegando direto da string ISO */
 function formatTime(isoDate: string): string {
-  const d = new Date(isoDate)
-  const brt = new Date(d.getTime() - 3 * 60 * 60 * 1000)
-  const h = brt.getUTCHours().toString().padStart(2, '0')
-  const m = brt.getUTCMinutes().toString().padStart(2, '0')
-  return `${h}:${m}`
+  if (!isoDate || isoDate.length < 16) return ''
+  return isoDate.substring(11, 16)
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -78,8 +74,20 @@ async function sendReminderTemplate(params: {
     to,
     type: 'template',
     template: {
-      name: 'hello_world',
-      language: { code: 'en_US' },
+      name: templateName,
+      language: { code: 'pt_BR' },
+      components: [
+        {
+          type: 'body',
+          parameters: [
+            { type: 'text', text: clientName },
+            { type: 'text', text: businessName },
+            { type: 'text', text: serviceName },     // O template da Meta espera o SERVIÇO na variável 3
+            { type: 'text', text: appointmentDate }, // O template da Meta espera a DATA na variável 4
+            { type: 'text', text: appointmentTime }  // O template da Meta espera a HORA na variável 5
+          ]
+        }
+      ]
     },
   }
 
@@ -134,15 +142,41 @@ serve(async (req) => {
   try {
     const now = new Date()
 
+    // Permite forçar a execução via POST body { "force": true, "testPhone": "996759238" }
+    let force = false;
+    let testPhone = '';
+    try {
+      const reqBody = await req.clone().json();
+      if (reqBody.force === true) force = true;
+      if (reqBody.testPhone) testPhone = reqBody.testPhone;
+    } catch (e) {
+      // Body vazio ou inválido, segue normal
+    }
+
+    // ────────────────────────────────────────────────────────
+    // Regra: Lembretes apenas no período da manhã (08:00 às 10:59 BRT)
+    // ────────────────────────────────────────────────────────
+    const brtNow = new Date(now.getTime() - 3 * 60 * 60 * 1000)
+    if (!force && (brtNow.getUTCHours() < 8 || brtNow.getUTCHours() > 10)) {
+      console.log(`[send-reminders] Ignorando: Agora são ${brtNow.getUTCHours()}h. Configurado para rodar apenas de manhã (08h-10h).`)
+      return new Response(
+        JSON.stringify({ ok: true, skipped: true, reason: 'Outside 08:00-10:59 BRT window' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
     // ────────────────────────────────────────────────────────
     // Busca agendamentos elegíveis para lembrete:
     // - reminder_sent = false
     // - status não cancelado nem já confirmado pelo cliente
-    // - agendamento ainda não passou
-    // - (scheduled_at - now) <= reminder_hours_before da loja (padrão 48h)
-    // - integração WhatsApp ativa e configurada na loja
+    // - Agendamento deve estar entre 48h e 72h no futuro
     // ────────────────────────────────────────────────────────
-    const { data: appointments, error: queryError } = await supabase
+    const minTimeMs = now.getTime() + 48 * 60 * 60 * 1000;
+    const maxTimeMs = now.getTime() + 72 * 60 * 60 * 1000;
+    const minDateISO = new Date(minTimeMs).toISOString();
+    const maxDateISO = new Date(maxTimeMs).toISOString();
+
+    let query = supabase
       .from('appointments')
       .select(`
         id,
@@ -154,6 +188,7 @@ serve(async (req) => {
         shops!inner (
           id,
           name,
+          plan,
           config,
           shop_whatsapp_config (
             wa_phone_number_id,
@@ -163,10 +198,22 @@ serve(async (req) => {
           )
         )
       `)
+      .eq('shops.plan', 'pro')
       .eq('reminder_sent', false)
       .not('status', 'in', '("cancelado","cancelled","confirmed_by_client")')
-      .gt('scheduled_at', now.toISOString())
-      .limit(50)
+      .limit(15) // Pega apenas 15 por vez para evitar bloqueio de SPAM na Meta
+
+    if (force) {
+      // Se forçado, ignora a janela de 48h-72h e pega qualquer agendamento no futuro não lembrado ainda
+      query = query.gt('scheduled_at', now.toISOString())
+      if (testPhone) {
+        query = query.like('client_phone', `%${testPhone}%`)
+      }
+    } else {
+      query = query.gt('scheduled_at', minDateISO).lte('scheduled_at', maxDateISO)
+    }
+
+    const { data: appointments, error: queryError } = await query
 
     if (queryError) {
       console.error('[send-reminders] Erro na query principal:', queryError.message)
@@ -215,18 +262,6 @@ serve(async (req) => {
         continue
       }
 
-      // Calcular janela de lembrete (padrão 48h)
-      const reminderHours = parseInt(shop?.config?.reminder_hours_before ?? '48', 10) || 48
-      const reminderWindowMs = reminderHours * 60 * 60 * 1000
-      const scheduledAt = new Date(appt.scheduled_at)
-      const diffMs = scheduledAt.getTime() - now.getTime()
-
-      // Ainda fora da janela de lembrete — pular
-      if (diffMs > reminderWindowMs) {
-        results.skipped++
-        continue
-      }
-
       const templateName = whatsappConfig?.wa_template_reminder_name || Deno.env.get('GLOBAL_WA_REMINDER_TEMPLATE') || 'markaai_reminder'
       const appointmentDate = formatDate(appt.scheduled_at)
       const appointmentTime = formatTime(appt.scheduled_at)
@@ -251,9 +286,14 @@ serve(async (req) => {
 
       if (sendResult.success) {
         // Marcar como enviado (idempotência — lock otimista)
+        // Armazena o wamid para que o webhook de confirmação/cancelamento
+        // encontre o agendamento exato via context.id
         const { error: updateError } = await supabase
           .from('appointments')
-          .update({ reminder_sent: true })
+          .update({
+            reminder_sent: true,
+            wa_reminder_message_id: sendResult.messageId || null,
+          })
           .eq('id', appt.id)
           .eq('reminder_sent', false) // Garante que não houve envio concorrente
 
@@ -263,12 +303,21 @@ serve(async (req) => {
 
         // Log de sucesso
         try {
+          const requestPayload = {
+            clientName,
+            businessName,
+            serviceName,
+            appointmentDate,
+            appointmentTime
+          }
+
           await supabase.from('whatsapp_send_log').insert({
             shop_id: appt.shop_id,
             to_phone: appt.client_phone.replace(/\D/g, ''),
             template_name: templateName,
             status: 'success',
             response_json: sendResult.rawResponse,
+            request_payload: requestPayload,
           })
         } catch (e: any) {
           console.warn('[send-reminders] Erro ao salvar log de sucesso:', e.message)

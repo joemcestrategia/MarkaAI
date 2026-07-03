@@ -21,6 +21,10 @@ class TransactionDetailsPage extends StatefulWidget {
 class _TransactionDetailsPageState extends State<TransactionDetailsPage> {
   bool _isLoading = false;
   Map<String, dynamic>? _fullTransaction;
+  Map<String, dynamic>? _advanceTransaction;
+  Map<String, dynamic>? _completionTransaction;
+  Map<String, dynamic>? _legacyTransaction;
+  bool _isManualCompletion = false;
   String? _errorMsg;
 
   final _fmt = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
@@ -56,18 +60,55 @@ class _TransactionDetailsPageState extends State<TransactionDetailsPage> {
     return totalPrice;
   }
 
-  double _resolveDiscountAmount(Map<String, dynamic> data, double originalPrice, double finalPrice) {
+  double _resolveDiscountAmount(Map<String, dynamic> data, double original, double finalAmt) {
     final double discountAmt = double.tryParse(data['discount_amount']?.toString() ?? '0') ?? 0;
     if (discountAmt > 0.01) return discountAmt;
-    if (originalPrice > finalPrice + 0.01) return originalPrice - finalPrice;
+    
+    final hasBirthday = data['birthday_discount_applied'] == true;
+    final hasCoupon = data['coupon_applied'] == true;
+    if (hasBirthday) {
+      final pct = double.tryParse(data['birthday_discount_percent']?.toString() ?? '0') ?? 0;
+      if (pct > 0) return original * (pct / 100);
+    }
+    if (hasCoupon) {
+      final pct = double.tryParse(data['coupon_discount_percent']?.toString() ?? '0') ?? 0;
+      if (pct > 0) return original * (pct / 100);
+    }
+    
+    if (original > 0 && finalAmt > 0 && finalAmt < original - 0.01) {
+      final double possibleDiscount = original - finalAmt;
+      final double paidAmount = double.tryParse(data['paid_amount']?.toString() ?? '0') ?? 0;
+      final double remainingAmount = double.tryParse(data['remaining_amount']?.toString() ?? '0') ?? 0;
+      
+      // Impede interpretar o pagamento parcial (sinal) ou o restante como se fosse um desconto
+      if ((possibleDiscount - paidAmount).abs() < 0.01 || (possibleDiscount - remainingAmount).abs() < 0.01) {
+        return 0;
+      }
+      return possibleDiscount;
+    }
     return 0;
+  }
+
+
+  Map<String, dynamic> _mapMpData(Map<String, dynamic>? mpData, String paymentId) {
+    if (mpData == null) return {'id': paymentId, 'status': 'pending', 'amount': 0.0, 'method': 'Desconhecido'};
+    return {
+      'id': paymentId,
+      'status': mpData['status']?.toString().toLowerCase() ?? 'pending',
+      'method': mpData['payment_method_id']?.toString() ?? 'Desconhecido',
+      'amount': mpData['transaction_amount'] != null ? (mpData['transaction_amount'] as num).toDouble() : 0.0,
+      'payment_date': mpData['date_approved']?.toString() ?? mpData['date_created']?.toString(),
+    };
   }
 
   Future<void> _fetchDeepDetails() async {
     final metadata = widget.appointmentData['metadata'] as Map?;
-    final paymentId = metadata?['payment_id']?.toString() ?? widget.appointmentData['payment_id']?.toString();
+    final advancePaymentId = metadata?['advance_payment_id']?.toString();
+    final completionPaymentId = metadata?['completion_payment_id']?.toString();
+    final legacyPaymentId = metadata?['payment_id']?.toString() ?? widget.appointmentData['payment_id']?.toString();
 
-    if (paymentId == null || paymentId.isEmpty) {
+    if ((advancePaymentId == null || advancePaymentId.isEmpty) && 
+        (legacyPaymentId == null || legacyPaymentId.isEmpty)) {
       setState(() {
         _errorMsg = "ID de transação não encontrado no agendamento.";
       });
@@ -76,26 +117,89 @@ class _TransactionDetailsPageState extends State<TransactionDetailsPage> {
 
     setState(() => _isLoading = true);
     try {
-      final details = await MercadoPagoService.verificarStatusPix(
-        shopId: widget.appointmentData['shop_id'].toString(),
-        paymentId: paymentId,
-      );
-
       final double finalAmount = _resolveDisplayTotal(widget.appointmentData);
-
-      setState(() {
+      
+      if (advancePaymentId != null && advancePaymentId.isNotEmpty) {
+        final mpData1 = await MercadoPagoService.obterDetalhesPagamento(shopId: widget.appointmentData['shop_id'].toString(), paymentId: advancePaymentId);
+        _advanceTransaction = _mapMpData(mpData1, advancePaymentId);
+      }
+      
+      if (completionPaymentId != null && completionPaymentId.isNotEmpty) {
+        if (completionPaymentId == 'manual') {
+          _isManualCompletion = true;
+          
+          // Tenta descobrir o valor do segundo pagamento
+          final double valorSinal = double.tryParse(widget.appointmentData['valor_sinal']?.toString() ?? '0') ?? 0;
+          final double paidAmount = double.tryParse(widget.appointmentData['paid_amount']?.toString() ?? '0') ?? 0;
+          final double rest = finalAmount - valorSinal;
+          
+          _completionTransaction = {
+            'id': 'manual',
+            'status': 'approved',
+            'method': metadata?['completion_payment_method'] ?? 'Presencial/Manual',
+            'amount': rest > 0 ? rest : (paidAmount > valorSinal ? paidAmount - valorSinal : 0.0),
+            'payment_date': metadata?['completion_paid_at'] ?? widget.appointmentData['pago_em'],
+          };
+        } else {
+          final mpData2 = await MercadoPagoService.obterDetalhesPagamento(shopId: widget.appointmentData['shop_id'].toString(), paymentId: completionPaymentId);
+          _completionTransaction = _mapMpData(mpData2, completionPaymentId);
+        }
+      }
+      
+      if (_advanceTransaction == null && _completionTransaction == null && legacyPaymentId != null && legacyPaymentId.isNotEmpty) {
+        // Tenta buscar no Mercado Pago por external_reference para "resgatar" os dois pagamentos
+        final payments = await MercadoPagoService.buscarPagamentosPorReferencia(
+            shopId: widget.appointmentData['shop_id'].toString(), 
+            externalReference: widget.appointmentData['id'].toString());
+        
+        if (payments != null && payments.isNotEmpty) {
+          if (payments.length >= 2) {
+            // A API de busca retorna sort=date_created&criteria=desc (mais novo primeiro)
+            final oldTx = payments.last as Map<String, dynamic>; // mais antigo (sinal)
+            final newTx = payments.first as Map<String, dynamic>; // mais novo (restante)
+            
+            _advanceTransaction = _mapMpData(oldTx, oldTx['id']?.toString() ?? '');
+            _completionTransaction = _mapMpData(newTx, newTx['id']?.toString() ?? '');
+          } else {
+             // Só encontrou um, trata como legado normal
+             final tx = payments.first as Map<String, dynamic>;
+             _legacyTransaction = _mapMpData(tx, tx['id']?.toString() ?? legacyPaymentId);
+          }
+        } else {
+          // Fallback se a busca não retornar nada
+          final mpDataLegacy = await MercadoPagoService.obterDetalhesPagamento(shopId: widget.appointmentData['shop_id'].toString(), paymentId: legacyPaymentId);
+          _legacyTransaction = _mapMpData(mpDataLegacy, legacyPaymentId);
+        }
+      }
+      
+      // Cria _fullTransaction baseando no que temos, para não quebrar outras partes
+      var baseTx = _legacyTransaction ?? _advanceTransaction;
+      if (baseTx != null) {
         _fullTransaction = {
-          'id': paymentId,
-          'status': details,
-          'method': widget.appointmentData['payment_method'] ?? 'Desconhecido',
-          'amount': finalAmount,
+          'id': baseTx['id'],
+          'status': baseTx['status'],
+          'method': baseTx['method'],
+          'amount': baseTx['amount'],
           'paid_amount': double.tryParse(widget.appointmentData['paid_amount']?.toString() ?? '0') ?? 0.0,
+          'payment_date': baseTx['payment_date'],
           'created_at': widget.appointmentData['created_at'],
           'scheduled_at': widget.appointmentData['scheduled_at'],
         };
-      });
+      } else if (_completionTransaction != null) {
+         _fullTransaction = {
+          'id': _completionTransaction!['id'],
+          'status': _completionTransaction!['status'],
+          'method': _completionTransaction!['method'],
+          'amount': _completionTransaction!['amount'],
+          'paid_amount': double.tryParse(widget.appointmentData['paid_amount']?.toString() ?? '0') ?? 0.0,
+          'payment_date': _completionTransaction!['payment_date'],
+          'created_at': widget.appointmentData['created_at'],
+          'scheduled_at': widget.appointmentData['scheduled_at'],
+        };
+      }
+
     } catch (e) {
-      setState(() => _errorMsg = "Erro ao conectar com a operadora: $e");
+      setState(() => _errorMsg = "Erro ao conectar com a operadora: ");
     } finally {
       setState(() => _isLoading = false);
     }
@@ -255,14 +359,15 @@ class _TransactionDetailsPageState extends State<TransactionDetailsPage> {
         : (status == 'rejected' ? "PAGAMENTO RECUSADO" : "AGUARDANDO / PENDENTE");
 
     final double originalPrice = double.tryParse(data['total_price']?.toString() ?? '0') ?? 0;
-    final double finalAmount = (_fullTransaction!['amount'] as double);
-    final double paidAmount = (_fullTransaction!['paid_amount'] as double);
+    final double finalAmount = _resolveDisplayTotal(data);
+    final double paidAmount = double.tryParse(data['paid_amount']?.toString() ?? '0') ?? 0;
+    final double valorSinal = double.tryParse(data['valor_sinal']?.toString() ?? '0') ?? 0;
     final double remaining = finalAmount - paidAmount;
     final double discountAmt = _resolveDiscountAmount(data, originalPrice, finalAmount);
     final bool hasDiscount = discountAmt > 0.01;
     final bool hasBirthday = data['birthday_discount_applied'] == true;
     final bool hasCoupon = data['coupon_applied'] == true;
-    final bool isAdvancePayment = paidAmount > 0.01 && remaining > 0.01;
+    final bool isAdvancePayment = valorSinal > 0.01 || (paidAmount > 0.01 && remaining > 0.01);
 
     return SingleChildScrollView(
       child: Column(
@@ -374,28 +479,92 @@ class _TransactionDetailsPageState extends State<TransactionDetailsPage> {
                   ],
                   _buildDividerRow(),
                   _buildDetailRow(
-                    isAdvancePayment ? "Adiantamento pago" : "Valor pago",
+                    isAdvancePayment ? "Total já pago" : "Valor pago",
                     _fmt.format(paidAmount),
                     valueColor: Colors.green,
                     bold: true,
                   ),
                   if (remaining > 0.01)
-                    _buildDetailRow("Restante a pagar", _fmt.format(remaining), valueColor: Colors.red, bold: true),
+                    _buildDetailRow("Restante a cobrar", _fmt.format(remaining), valueColor: Colors.red, bold: true),
                   if (remaining <= 0.01)
                     _buildDetailRow("Situação", "QUITADO ✓", valueColor: Colors.green, bold: true),
                 ]),
 
+                if (isAdvancePayment) ...[
+                  const SizedBox(height: 16),
+                  _buildInfoCard("DETALHES DO ADIANTAMENTO (SINAL)", [
+                    _buildDetailRow("Valor do sinal pago", _fmt.format(valorSinal > 0 ? valorSinal : paidAmount), valueColor: Colors.orange, bold: true),
+                    _buildDetailRow("Status do pagamento", status.toUpperCase(), valueColor: isApproved ? Colors.green : Colors.orange),
+                    if (data['payment_id'] != null)
+                      _buildDetailRow("ID Transação MP", data['payment_id'].toString(), isCopyable: true),
+                    Builder(builder: (context) {
+                      final paymentDate = _fullTransaction?['payment_date']?.toString() ?? data['pago_em']?.toString();
+                      if (paymentDate == null || paymentDate.isEmpty) return const SizedBox.shrink();
+                      String formattedDate = paymentDate;
+                      try {
+                        formattedDate = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.parse(paymentDate));
+                      } catch (_) {}
+                      return _buildDetailRow("Pago em", formattedDate);
+                    }),
+                  ]),
+                ],
+
                 const SizedBox(height: 16),
 
                 // ── INFORMAÇÕES DA TRANSAÇÃO ──
-                _buildInfoCard("INFORMAÇÕES DA TRANSAÇÃO", [
-                  _buildDetailRow("ID Transação", _fullTransaction!['id'], isCopyable: true),
-                  _buildDetailRow("Método de pagamento", _fullTransaction!['method']),
-                  _buildDetailRow("Status da operadora", status.toUpperCase()),
-                  if (data['payment_id'] != null)
-                    _buildDetailRow("Payment ID", data['payment_id'].toString(), isCopyable: true),
-                ]),
+                if (_legacyTransaction != null)
+                  _buildInfoCard("INFORMAÇÕES DA TRANSAÇÃO", [
+                    _buildDetailRow("ID Operação", _legacyTransaction!['id'], isCopyable: true),
+                    _buildDetailRow("Método de pagamento", _legacyTransaction!['method']),
+                    _buildDetailRow("Valor", _fmt.format(_legacyTransaction!['amount']), bold: true),
+                    _buildDetailRow("Status da operadora", _legacyTransaction!['status'].toString().toUpperCase()),
+                    Builder(builder: (context) {
+                      final paymentDate = _legacyTransaction!['payment_date']?.toString() ?? data['pago_em']?.toString();
+                      if (paymentDate == null || paymentDate.isEmpty) return const SizedBox.shrink();
+                      String formattedDate = paymentDate;
+                      try {
+                        formattedDate = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.parse(paymentDate));
+                      } catch (_) {}
+                      return _buildDetailRow("Data do pagamento", formattedDate);
+                    }),
+                  ]),
 
+                if (_advanceTransaction != null)
+                  _buildInfoCard("TRANSAÇÃO 1 — ADIANTAMENTO (SINAL)", [
+                    _buildDetailRow("ID Operação", _advanceTransaction!['id'], isCopyable: true),
+                    _buildDetailRow("Método de pagamento", _advanceTransaction!['method']),
+                    _buildDetailRow("Status da operadora", _advanceTransaction!['status'].toString().toUpperCase(), valueColor: _advanceTransaction!['status'] == 'approved' ? Colors.green : Colors.orange),
+                    _buildDetailRow("Valor", _fmt.format(_advanceTransaction!['amount']), bold: true),
+                    Builder(builder: (context) {
+                      final paymentDate = _advanceTransaction!['payment_date']?.toString();
+                      if (paymentDate == null || paymentDate.isEmpty) return const SizedBox.shrink();
+                      String formattedDate = paymentDate;
+                      try {
+                        formattedDate = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.parse(paymentDate));
+                      } catch (_) {}
+                      return _buildDetailRow("Data do pagamento", formattedDate);
+                    }),
+                  ]),
+
+                if (_advanceTransaction != null) const SizedBox(height: 16),
+
+                if (_completionTransaction != null)
+                  _buildInfoCard(_isManualCompletion ? "PAGAMENTO DO RESTANTE (PRESENCIAL/MANUAL)" : "TRANSAÇÃO 2 — PAGAMENTO DO RESTANTE (APP)", [
+                    if (!_isManualCompletion)
+                      _buildDetailRow("ID Operação", _completionTransaction!['id'], isCopyable: true),
+                    _buildDetailRow("Método de pagamento", _completionTransaction!['method']),
+                    _buildDetailRow("Status", _completionTransaction!['status'].toString().toUpperCase(), valueColor: _completionTransaction!['status'] == 'approved' ? Colors.green : Colors.orange),
+                    _buildDetailRow("Valor", _fmt.format(_completionTransaction!['amount']), bold: true),
+                    Builder(builder: (context) {
+                      final paymentDate = _completionTransaction!['payment_date']?.toString();
+                      if (paymentDate == null || paymentDate.isEmpty) return const SizedBox.shrink();
+                      String formattedDate = paymentDate;
+                      try {
+                        formattedDate = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.parse(paymentDate));
+                      } catch (_) {}
+                      return _buildDetailRow("Data do pagamento", formattedDate);
+                    }),
+                  ]),
                 const SizedBox(height: 16),
 
                 // ── AUDITORIA ──

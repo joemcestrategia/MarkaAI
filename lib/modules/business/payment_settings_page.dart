@@ -236,6 +236,7 @@ class _PaymentSettingsPageState extends State<PaymentSettingsPage>
       '?client_id=$clientId'
       '&response_type=code'
       '&platform_id=mp'
+      '&scope=read,write,offline_access'
       '&redirect_uri=${Uri.encodeComponent(redirectUri)}'
       '&state=${Uri.encodeComponent(state)}'
       '&_t=$nonce', // ← forçar URL única a cada tentativa (anti-cache)

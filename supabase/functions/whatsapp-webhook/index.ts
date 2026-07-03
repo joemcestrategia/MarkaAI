@@ -40,7 +40,7 @@ async function verifyMetaSignature(
  * Extrai a mensagem de quick_reply do payload do Meta.
  * Retorna null se não for um evento de botão válido.
  */
-function extractButtonEvent(body: any): { from: string; payload: string } | null {
+function extractButtonEvent(body: any): { from: string; payload: string; phoneNumberId?: string; contextMessageId?: string } | null {
   try {
     const entry = body?.entry?.[0]
     const change = entry?.changes?.[0]
@@ -57,12 +57,19 @@ function extractButtonEvent(body: any): { from: string; payload: string } | null
 
     const from: string = message.from // número sem "+", formato E.164
     const buttonPayload: string = message.button?.payload
+    const phoneNumberId: string | undefined = value?.metadata?.phone_number_id
+    const contextMessageId: string | undefined = message.context?.id // wamid da mensagem original que o cliente está respondendo
 
     if (!from || !buttonPayload) return null
-    return { from, payload: buttonPayload }
+    return { from, payload: buttonPayload, phoneNumberId, contextMessageId }
   } catch {
     return null
   }
+}
+
+/** Extrai telefone do agendamento considerando campos legados (Setmore, Firebase) */
+function getAppointmentPhone(appt: any): string {
+  return (appt.client_phone || appt.clientPhone || appt.cliente_telefone || '').replace(/\D/g, '')
 }
 
 /**
@@ -96,6 +103,37 @@ async function notifyOwner(
     })
   } catch (e) {
     console.error('[whatsapp-webhook] Erro ao notificar dono:', e)
+  }
+}
+
+/**
+ * Envia uma mensagem de texto livre de volta para o cliente.
+ * Só funciona porque o cliente acabou de interagir (janela de 24h aberta).
+ */
+async function sendWhatsAppText(
+  phoneNumberId: string,
+  accessToken: string,
+  to: string,
+  text: string,
+): Promise<void> {
+  try {
+    const payload = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: to.replace(/\D/g, ''),
+      type: 'text',
+      text: { body: text }
+    }
+    await fetch(`https://graph.facebook.com/v18.0/${phoneNumberId}/messages`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    })
+  } catch (e) {
+    console.error('[whatsapp-webhook] Erro ao enviar text reply:', e)
   }
 }
 
@@ -194,38 +232,130 @@ serve(async (req) => {
       })
     }
 
-    const { from, payload: buttonPayload } = event
+    const { from, payload: buttonPayload, phoneNumberId: webhookPhoneId, contextMessageId } = event
     // Número do remetente vem sem "+" — adicionar para bater com o formato E.164 do banco
     const clientPhone = `+${from}`
-    console.log(`[whatsapp-webhook] Botão pressionado: ${buttonPayload} | de: ${clientPhone}`)
+    const fromClean = from.replace(/\D/g, '')
+    const fromSuffix = fromClean.slice(-8)
+    console.log(`[whatsapp-webhook] Botão pressionado: ${buttonPayload} | de: ${clientPhone} | sufixo: ${fromSuffix} | phone_id: ${webhookPhoneId || '(não informado)'} | context_msg_id: ${contextMessageId || '(não informado)'}`)
 
     try {
-      // Buscar o agendamento mais recente deste número que recebeu lembrete e ainda está pendente
-      const { data: appointment, error: apptError } = await supabase
-        .from('appointments')
-        .select('id, shop_id, client_name, service_name, scheduled_at, status')
-        .eq('client_phone', clientPhone)
-        .eq('reminder_sent', true)
-        .not('status', 'in', '("cancelado","cancelled","confirmed_by_client")')
-        .gt('scheduled_at', new Date().toISOString())
-        .order('scheduled_at', { ascending: true })
-        .limit(1)
-        .maybeSingle()
+      let appointment: any = null
 
-      if (apptError) {
-        console.error('[whatsapp-webhook] Erro ao buscar agendamento:', apptError.message)
-        return new Response('OK', { status: 200 })
+      // ── ESTRATÉGIA 1 (preferencial): lookup exato pelo wamid ──
+      // O Meta envia context.id = wamid da mensagem original que o cliente está respondendo.
+      // Isso identifica EXATAMENTE qual agendamento gerou o lembrete, mesmo que o cliente
+      // tenha múltiplos agendamentos em lojas diferentes.
+      if (contextMessageId) {
+        console.log(`[whatsapp-webhook] Tentando lookup direto por contextMessageId: ${contextMessageId}`)
+        const { data: exactMatch, error: exactError } = await supabase
+          .from('appointments')
+          .select(`
+            id, shop_id, client_name, client_phone, service_name, scheduled_at, status,
+            shops (
+              plan,
+              shop_whatsapp_config (
+                wa_phone_number_id,
+                wa_access_token
+              )
+            )
+          `)
+          .eq('wa_reminder_message_id', contextMessageId)
+          .maybeSingle()
+
+        if (!exactError && exactMatch) {
+          // Verificação extra de segurança: o telefone de quem clicou bate com o do agendamento?
+          const phone = getAppointmentPhone(exactMatch)
+          if (phone.slice(-8) === fromSuffix) {
+            console.log(`[whatsapp-webhook] Match exato por wamid: ${exactMatch.id}`)
+            appointment = exactMatch
+          } else {
+            console.warn(`[whatsapp-webhook] wamid bateu (${exactMatch.id}) mas telefone NÃO confere — ignorando match exato`)
+          }
+        } else {
+          console.log(`[whatsapp-webhook] Nenhum match por wamid — caindo para busca por telefone`)
+        }
+      }
+
+      // ── ESTRATÉGIA 2 (fallback): match por telefone ──
+      if (!appointment) {
+        const findAppointment = async (requireReminderSent: boolean) => {
+          let q = supabase
+            .from('appointments')
+            .select(`
+              id, shop_id, client_name, client_phone, clientPhone, cliente_telefone, service_name, scheduled_at, status,
+              shops (
+                plan,
+                shop_whatsapp_config (
+                  wa_phone_number_id,
+                  wa_access_token
+                )
+              )
+            `)
+            .not('status', 'in', '("cancelado","cancelled","confirmed_by_client")')
+            .gt('scheduled_at', new Date().toISOString())
+            .order('scheduled_at', { ascending: false })
+
+          if (requireReminderSent) {
+            q = q.eq('reminder_sent', true)
+          }
+
+          // Se temos o phone_number_id do webhook, restringe à loja correspondente
+          if (webhookPhoneId) {
+            q = q.eq('shops.shop_whatsapp_config.wa_phone_number_id', webhookPhoneId)
+          }
+
+          const { data, error } = await q
+          if (error || !data?.length) return null
+
+          // Filtra em memória suportando campos legados (client_phone, clientPhone, cliente_telefone)
+          const matches = data.filter((appt: any) => {
+            const phone = getAppointmentPhone(appt)
+            return phone.slice(-8) === fromSuffix
+          })
+
+          if (matches.length === 0) return null
+
+          // Se múltiplos, retorna o mais recente (já ordenado por scheduled_at DESC)
+          if (matches.length > 1) {
+            console.log(`[whatsapp-webhook] ${matches.length} agendamentos batem com o telefone — usando o mais recente: ${matches[0].id}`)
+          }
+          return matches[0]
+        }
+
+        // 1ª tentativa: apenas agendamentos que já receberam lembrete (fluxo normal)
+        appointment = await findAppointment(true)
+
+        // 2ª tentativa (fallback): sem filtro de reminder_sent
+        if (!appointment) {
+          console.log(`[whatsapp-webhook] Nenhum match com reminder_sent=true, tentando fallback sem reminder_sent...`)
+          appointment = await findAppointment(false)
+        }
       }
 
       if (!appointment) {
-        console.warn(`[whatsapp-webhook] Nenhum agendamento pendente encontrado para ${clientPhone}`)
+        console.warn(`[whatsapp-webhook] Nenhum agendamento encontrado para o sufixo ${fromSuffix}`)
         return new Response('OK', { status: 200 })
       }
 
-      console.log(`[whatsapp-webhook] Agendamento encontrado: ${appointment.id} | status: ${appointment.status}`)
+      console.log(`[whatsapp-webhook] Agendamento encontrado: ${appointment.id} | status: ${appointment.status} | scheduled: ${appointment.scheduled_at}`)
+
+      // Obter credenciais para resposta
+      const shop = (appointment.shops as any) || {}
+      const shopPlan = (shop.plan || '').toLowerCase()
+
+      // Apenas lojas nos planos plus e pro podem usar WhatsApp
+      if (shopPlan !== 'plus' && shopPlan !== 'pro') {
+        console.warn(`[whatsapp-webhook] Loja ${appointment.shop_id} no plano "${shopPlan}" — WhatsApp não disponível`)
+        return new Response('OK', { status: 200 })
+      }
+
+      const whatsappConfig = shop.shop_whatsapp_config || {}
+      const phoneNumberId = whatsappConfig.wa_phone_number_id || Deno.env.get('GLOBAL_WA_PHONE_NUMBER_ID') || ''
+      const accessToken = whatsappConfig.wa_access_token || Deno.env.get('GLOBAL_WA_ACCESS_TOKEN') || ''
 
       // ── CONFIRMAR ─────────────────────────────────────────
-      if (buttonPayload === 'CONFIRM_APPOINTMENT') {
+      if (buttonPayload === 'CONFIRM_APPOINTMENT' || buttonPayload.toUpperCase() === 'CONFIRMAR') {
         const { error: updateError } = await supabase
           .from('appointments')
           .update({ status: 'confirmed_by_client' })
@@ -235,11 +365,26 @@ serve(async (req) => {
           console.error('[whatsapp-webhook] Erro ao confirmar:', updateError.message)
         } else {
           console.log(`[whatsapp-webhook] ✅ Agendamento ${appointment.id} confirmado pelo cliente`)
+          if (phoneNumberId && accessToken) {
+            await sendWhatsAppText(phoneNumberId, accessToken, clientPhone, '✅ Excelente! Seu agendamento foi confirmado com sucesso. Te esperamos!')
+          }
+
+          // Notificar dono fire-and-forget
+          const d = new Date(appointment.scheduled_at)
+          const dateStr = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}`
+          const timeStr = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
+
+          notifyOwner(
+            supabase,
+            appointment.shop_id,
+            '✅ Confirmação via WhatsApp',
+            `${appointment.client_name} confirmou presença — ${appointment.service_name} de ${dateStr} às ${timeStr}`,
+          ).catch((e) => console.error('[whatsapp-webhook] notifyOwner error:', e))
         }
       }
 
       // ── CANCELAR ──────────────────────────────────────────
-      else if (buttonPayload === 'CANCEL_APPOINTMENT') {
+      else if (buttonPayload === 'CANCEL_APPOINTMENT' || buttonPayload.toUpperCase() === 'CANCELAR') {
         const { error: cancelError } = await supabase
           .from('appointments')
           .update({ status: 'cancelado' })
@@ -250,17 +395,14 @@ serve(async (req) => {
         } else {
           console.log(`[whatsapp-webhook] ❌ Agendamento ${appointment.id} cancelado pelo cliente`)
 
-          // Notificar dono fire-and-forget
-          const d = new Date(appointment.scheduled_at)
-          const dateStr = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}`
-          const timeStr = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
+          if (phoneNumberId && accessToken) {
+            await sendWhatsAppText(phoneNumberId, accessToken, clientPhone, '❌ Entendido. Seu agendamento foi cancelado com sucesso. Caso queira agendar novamente no futuro, estamos à disposição!')
+          }
 
-          notifyOwner(
-            supabase,
-            appointment.shop_id,
-            '❌ Cancelamento via WhatsApp',
-            `${appointment.client_name} cancelou — ${appointment.service_name} de ${dateStr} às ${timeStr}`,
-          ).catch((e) => console.error('[whatsapp-webhook] notifyOwner error:', e))
+          // Nota: Não enviamos notifyOwner aqui explicitamente porque o gatilho 
+          // de banco de dados 'appointment_notifications' (Edge Function appointmentTriggers)
+          // já escuta por status = 'cancelado' e dispara notificação Push e E-mail 
+          // automaticamente para o dono.
         }
       }
 

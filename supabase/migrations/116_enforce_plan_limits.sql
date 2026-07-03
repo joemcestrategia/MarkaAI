@@ -28,9 +28,9 @@ BEGIN
     -- Normalização e Definição de Limites
     v_plan_id := COALESCE(LOWER(v_plan_id), 'free');
     
-    IF v_plan_id = 'pro' THEN v_limit := 9999;
-    ELSIF v_plan_id = 'plus' THEN v_limit := 10;
-    ELSIF v_plan_id = 'starter' THEN v_limit := 3;
+    IF v_plan_id = 'pro' THEN v_limit := 3;
+    ELSIF v_plan_id = 'plus' THEN v_limit := 2;
+    ELSIF v_plan_id = 'starter' THEN v_limit := 1;
     ELSE v_limit := 1; -- free
     END IF;
 

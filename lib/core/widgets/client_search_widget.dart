@@ -25,7 +25,7 @@ class _ClientSearchWidgetState extends State<ClientSearchWidget> {
         .from('users')
         .select()
         .eq('role', 'cliente')
-        .ilike('name', '$query%')
+        .ilike('name', '${query.replaceAll(r'\', r'\\').replaceAll('%', r'\%').replaceAll('_', r'\_')}%')
         .order('name')
         .limit(5);
 

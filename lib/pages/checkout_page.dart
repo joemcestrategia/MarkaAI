@@ -2590,6 +2590,7 @@ class _CheckoutPageState extends State<CheckoutPage>
             (metodo.contains('Sinal') || _selectedPaymentType == 'sinal')
                 ? valorPago
                 : 0,
+        if (valorPago > 0.01) 'pago_em': DateTime.now().toIso8601String(),
       };
 
       String finalAppointmentId;

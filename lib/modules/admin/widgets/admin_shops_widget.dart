@@ -16,6 +16,19 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
   String _searchQuery = '';
   String _selectedPlan = 'all';
   bool _showBlocked = false;
+  late Future<List<Map<String, dynamic>>> _shopsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _shopsFuture = _buildQuery();
+  }
+
+  void _updateFilters() {
+    setState(() {
+      _shopsFuture = _buildQuery();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -47,7 +60,7 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
                     enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: borderColor)),
                     focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: cs.primary, width: 1.5)),
                   ),
-                  onChanged: (value) => setState(() => _searchQuery = value),
+                  onChanged: (value) { _searchQuery = value; _updateFilters(); },
                 ),
               ),
               const SizedBox(width: 16),
@@ -66,18 +79,18 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
                   items: const [
                     DropdownMenuItem(value: 'all', child: Text('Todos Planos')),
                     DropdownMenuItem(value: 'free', child: Text('Free')),
-                    DropdownMenuItem(value: 'start', child: Text('Start')),
+                    DropdownMenuItem(value: 'starter', child: Text('Start')),
                     DropdownMenuItem(value: 'plus', child: Text('Plus')),
                     DropdownMenuItem(value: 'pro', child: Text('Pro')),
                   ],
-                  onChanged: (value) => setState(() => _selectedPlan = value!),
+                  onChanged: (value) { _selectedPlan = value!; _updateFilters(); },
                 ),
               ),
               const SizedBox(width: 16),
               FilterChip(
                 label: const Text('Bloqueados'),
                 selected: _showBlocked,
-                onSelected: (value) => setState(() => _showBlocked = value),
+                onSelected: (value) { _showBlocked = value; _updateFilters(); },
                 selectedColor: cs.error.withValues(alpha: 0.2),
                 checkmarkColor: cs.error,
                 labelStyle: TextStyle(color: _showBlocked ? cs.error : cs.onSurface),
@@ -88,8 +101,8 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
 
         // Listagem
         Expanded(
-          child: StreamBuilder<List<Map<String, dynamic>>>(
-            stream: _buildQuery().asStream(),
+          child: FutureBuilder<List<Map<String, dynamic>>>(
+            future: _shopsFuture,
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
@@ -111,8 +124,9 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
                   itemBuilder: (context, index) {
                     final shop = shops[index];
                     final owner = shop['users'] as Map<String, dynamic>?;
-                    final subscription = shop['subscription'] as Map<String, dynamic>?;
-                    final plan = subscription?['plano'] ?? 'free';
+                    final plan = (shop['plan_id'] ?? shop['plan'] ?? 'free').toString().toLowerCase();
+                    final isTrial = shop['trial_active'] == true;
+                    final isBoosted = shop['is_boosted'] == true;
                     final isActive = owner?['is_active'] ?? true;
 
                     return ListTile(
@@ -127,7 +141,9 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          _buildPlanChip(plan),
+                          if (isBoosted) _buildBoostChip(),
+                          if (isBoosted) const SizedBox(width: 8),
+                          _buildPlanChip(plan, isTrial),
                           const SizedBox(width: 8),
                           if (!isActive)
                             Icon(Icons.block, color: cs.error, size: 16),
@@ -163,7 +179,7 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
           .from('users')
           .select('id, email, is_active, shop_id')
           .inFilter('shop_id', shopIds)
-          .eq('tipo', 'dono');
+          .eq('role', 'dono');
           
       final usersResponse = await usersQuery;
       final usersList = List<Map<String, dynamic>>.from(usersResponse);
@@ -199,12 +215,12 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
     return shopsList;
   }
 
-  Widget _buildPlanChip(String plan) {
+  Widget _buildPlanChip(String plan, bool isTrial) {
     Color color;
     switch (plan.toLowerCase()) {
       case 'pro': color = Colors.purple; break;
       case 'plus': color = Colors.blue; break;
-      case 'start': color = AppColors.gold; break;
+      case 'starter': color = AppColors.gold; break;
       default: color = Colors.grey;
     }
     return Container(
@@ -214,7 +230,26 @@ class _AdminShopsWidgetState extends State<AdminShopsWidget> {
         borderRadius: BorderRadius.circular(6),
         border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
-      child: Text(plan.toUpperCase(), style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold)),
+      child: Text(isTrial ? 'TRIAL ${plan.toUpperCase()}' : plan.toUpperCase(), style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold)),
+    );
+  }
+
+  Widget _buildBoostChip() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.orange.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.bolt, color: Colors.orange, size: 12),
+          SizedBox(width: 4),
+          Text('BOOST', style: TextStyle(color: Colors.orange, fontSize: 10, fontWeight: FontWeight.bold)),
+        ],
+      ),
     );
   }
 
@@ -336,20 +371,42 @@ class _ShopDetailsDrawerState extends State<_ShopDetailsDrawer> with SingleTicke
         const Divider(height: 40),
         const Text('Estatísticas (30 dias)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
         const SizedBox(height: 16),
-        Row(
-          children: [
-            _buildStatCard('Agendamentos', '24', Colors.blue),
-            const SizedBox(width: 16),
-            _buildStatCard('Profissionais', '3', Colors.purple),
-          ],
+        FutureBuilder<List<dynamic>>(
+          future: Future.wait([
+            Supabase.instance.client
+                .from('appointments')
+                .select('id')
+                .eq('shop_id', widget.shop['id'])
+                .gte('created_at', DateTime.now().subtract(const Duration(days: 30)).toIso8601String()),
+            Supabase.instance.client
+                .from('employees')
+                .select('id')
+                .eq('shop_id', widget.shop['id'])
+          ]),
+          builder: (context, snapshot) {
+            final apptsCount = snapshot.hasData ? (snapshot.data![0] as List).length.toString() : '...';
+            final empsCount = snapshot.hasData ? (snapshot.data![1] as List).length.toString() : '...';
+            return Row(
+              children: [
+                _buildStatCard('Agendamentos', apptsCount, Colors.blue),
+                const SizedBox(width: 16),
+                _buildStatCard('Profissionais', empsCount, Colors.purple),
+              ],
+            );
+          },
         ),
       ],
     );
   }
 
   Widget _buildSubscriptionTab() {
-    final sub = widget.shop['subscription'] as Map<String, dynamic>?;
-    final plan = sub?['plano'] ?? 'free';
+    final plan = (widget.shop['plan_id'] ?? widget.shop['plan'] ?? 'free').toString().toLowerCase();
+    final isTrial = widget.shop['trial_active'] == true;
+    final trialEndStr = widget.shop['trial_end'];
+    final isBoosted = widget.shop['is_boosted'] == true;
+    final boostExpiresStr = widget.shop['boost_expires_at'];
+
+    String statusText = isTrial ? 'TRIAL ${plan.toUpperCase()}' : plan.toUpperCase();
     
     return ListView(
       padding: const EdgeInsets.all(24),
@@ -365,7 +422,34 @@ class _ShopDetailsDrawerState extends State<_ShopDetailsDrawer> with SingleTicke
             children: [
               const Text('Plano Atual', style: TextStyle(color: Colors.grey)),
               const SizedBox(height: 8),
-              Text(plan.toUpperCase(), style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.primaryPurple)),
+              Text(statusText, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.primaryPurple)),
+              if (isTrial && trialEndStr != null) ...[
+                const SizedBox(height: 8),
+                Text('Expira em: ${FormatUtils.formatDate(DateTime.parse(trialEndStr))}', style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+              ],
+              if (isBoosted) ...[
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.bolt, color: Colors.orange, size: 16),
+                      const SizedBox(width: 8),
+                      Text('BOOST ATIVO', style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                ),
+                if (boostExpiresStr != null) ...[
+                  const SizedBox(height: 4),
+                  Text('Expira em: ${FormatUtils.formatDate(DateTime.parse(boostExpiresStr))}', style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                ]
+              ],
               const SizedBox(height: 16),
               ElevatedButton(
                 onPressed: _showChangePlanDialog,
@@ -485,7 +569,7 @@ class _ShopDetailsDrawerState extends State<_ShopDetailsDrawer> with SingleTicke
             value: selectedPlan,
             items: const [
               DropdownMenuItem(value: 'free', child: Text('Free')),
-              DropdownMenuItem(value: 'start', child: Text('Start')),
+              DropdownMenuItem(value: 'starter', child: Text('Start')),
               DropdownMenuItem(value: 'plus', child: Text('Plus')),
               DropdownMenuItem(value: 'pro', child: Text('Pro')),
             ],

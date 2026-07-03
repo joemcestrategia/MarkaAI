@@ -10,6 +10,7 @@ import SupportDetailPage from './pages/admin/support/SupportDetailPage'
 import SupportNewPage from './pages/admin/support/SupportNewPage'
 import SupportReportsPage from './pages/admin/support/SupportReportsPage'
 import BannersPage from './pages/admin/banners/BannersPage'
+import EmailsPage from './pages/admin/emails/EmailsPage'
 
 import LoginPage from './pages/LoginPage'
 
@@ -46,6 +47,7 @@ function AppRoutes() {
       <Route path="/admin/support/relatorios" element={<SupportReportsPage />} />
       <Route path="/admin/support/:id" element={<SupportDetailPage />} />
       <Route path="/admin/banners" element={<BannersPage />} />
+      <Route path="/admin/emails" element={<EmailsPage />} />
 
       {/* Default redirect */}
       <Route path="/" element={<Navigate to="/app/suporte" replace />} />

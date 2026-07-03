@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 import '../../core/widgets/plan_gate_widget.dart';
@@ -55,6 +56,8 @@ class _NfseConfigScreenState extends State<NfseConfigScreen> {
   ];
 
   // BIBLIOTECA DE PRESETS - ITABIRITO/MG
+  // Código IBGE de Itabirito: 3131901
+  static const _itabiritoIbgeCode = '3131901';
   static const _presetsItabirito = {
     'estetica': {
       'label': 'Salão de Beleza / Estética / Trancista',
@@ -333,6 +336,19 @@ class _NfseConfigScreenState extends State<NfseConfigScreen> {
     if (!_formKey.currentState!.validate()) return;
     if (_shopId == null) return;
 
+    final codigoMun = _codigoMunicipioCtrl.text.trim();
+    if (codigoMun != _itabiritoIbgeCode) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('NFS-e está disponível exclusivamente para a cidade de Itabirito/MG (IBGE: 3131901).'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
     setState(() => _isSaving = true);
     try {
       final config = NfseConfig(
@@ -382,23 +398,19 @@ class _NfseConfigScreenState extends State<NfseConfigScreen> {
     if (_shopId == null) return;
     
     // Precisamos de um agendamento real para testar (mesmo que seja o último do shop)
-    setState(() => _isSaving = true); // Reutilizando flag de loading
+    setState(() => _isSaving = true);
     try {
-      final resp = await http.post(
-        Uri.parse('https://uhccgcojwqvkfyzrmebv.supabase.co/functions/v1/emitir-nfse'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVoY2NnY29qd3F2a2Z5enJtZWJ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM5NjYwNDgsImV4cCI6MjA4OTU0MjA0OH0.bK3UsISxVqw5gJktnBkMwmh7Swb17eV-UgD2Ia9e_PA',
-        },
-        body: jsonEncode({
+      final resp = await Supabase.instance.client.functions.invoke(
+        'emitir-nfse',
+        body: {
           'shop_id': _shopId,
           'dry_run': true,
-          'test_mode': true // Modo de busca automática de agendamento para teste
-        }),
+          'test_mode': true,
+        },
       );
 
       if (!mounted) return;
-      final result = jsonDecode(resp.body);
+      final result = resp.data as Map<String, dynamic>;
 
       _showSimulationModal(result);
     } catch (e) {
@@ -541,6 +553,8 @@ class _NfseConfigScreenState extends State<NfseConfigScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                    _buildItabiritoBanner(),
+                    const SizedBox(height: 12),
                     _buildAmbienteCard(),
                     const SizedBox(height: 16),
                     _buildHelpGuide(),
@@ -843,6 +857,36 @@ class _NfseConfigScreenState extends State<NfseConfigScreen> {
             activeTrackColor: Colors.green.shade300,
             inactiveTrackColor: Colors.white30,
             inactiveThumbColor: Colors.white70,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildItabiritoBanner() {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [const Color(0xFF1B5E20), const Color(0xFF2E7D32)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: const Row(
+        children: [
+          Icon(Icons.location_on_rounded, color: Colors.white, size: 24),
+          SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'NFS-e disponível exclusivamente para Itabirito/MG.\nIBGE: 3131901',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
+            ),
           ),
         ],
       ),

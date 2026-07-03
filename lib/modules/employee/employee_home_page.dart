@@ -27,6 +27,7 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
   late TabController _tabController;
   String _employeeName = '';
   String? _employeePhotoUrl;
+  String? _employeeShopId;
   int _todayAppointmentsCount = 0;
   int _upcomingAppointmentsCount = 0;
 
@@ -57,7 +58,9 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
         setState(() {
           _employeeName = doc['nome'] ?? 'Profissional';
           _employeePhotoUrl = doc['foto_url'];
+          _employeeShopId = doc['shop_id']?.toString();
         });
+        _loadStats();
       }
     } catch (e) {
       if (kDebugMode) debugPrint('Erro ao carregar dados do funcionário: $e');
@@ -65,6 +68,7 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
   }
 
   Future<void> _loadStats() async {
+    if (_employeeShopId == null) return;
     try {
       final now = DateTime.now();
       final todayStart = DateTime(now.year, now.month, now.day);
@@ -75,6 +79,7 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
       final todayRes = await supabase
           .from('appointments')
           .select('id')
+          .eq('shop_id', _employeeShopId!)
           .eq('professional_id', widget.employeeId)
           .gte('scheduled_at', todayStart.toIso8601String())
           .lt('scheduled_at', todayEnd.toIso8601String())
@@ -84,6 +89,7 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
       final upcomingRes = await supabase
           .from('appointments')
           .select('id')
+          .eq('shop_id', _employeeShopId!)
           .eq('professional_id', widget.employeeId)
           .gt('scheduled_at', todayEnd.toIso8601String())
           .filter('status', 'in', '("confirmado", "aguardando_confirmacao")');
@@ -181,6 +187,7 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
                     MaterialPageRoute(
                       builder: (context) => _EmployeeAppointmentsListPage(
                         employeeId: widget.employeeId,
+                        shopId: _employeeShopId,
                       ),
                     ),
                   );
@@ -283,9 +290,10 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
       stream: Supabase.instance.client
           .from('appointments')
           .stream(primaryKey: ['id'])
-          .eq('professional_id', widget.employeeId)
+          .eq('shop_id', _employeeShopId!)
           .map((list) {
             final filtered = list.where((d) {
+              if (d['professional_id'] != widget.employeeId) return false;
               final date = DateTime.tryParse(d['scheduled_at'] ?? '') ?? DateTime.now();
               return date.isAfter(todayStart.subtract(const Duration(seconds: 1))) && 
                      date.isBefore(todayEnd);
@@ -515,7 +523,7 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => CalendarBackupPage(isOwner: false, employeeId: widget.employeeId),
+                  builder: (context) => CalendarBackupPage(isOwner: false, employeeId: widget.employeeId, shopId: _employeeShopId),
                 ),
               );
             },
@@ -582,7 +590,8 @@ class _EmployeeHomePageState extends State<EmployeeHomePage>
 
 class _EmployeeAppointmentsListPage extends StatelessWidget {
   final String employeeId;
-  const _EmployeeAppointmentsListPage({required this.employeeId});
+  final String? shopId;
+  const _EmployeeAppointmentsListPage({required this.employeeId, this.shopId});
 
   @override
   Widget build(BuildContext context) {
@@ -597,10 +606,11 @@ class _EmployeeAppointmentsListPage extends StatelessWidget {
         stream: Supabase.instance.client
             .from('appointments')
             .stream(primaryKey: ['id'])
-            .eq('professional_id', employeeId)
+            .eq('shop_id', shopId!)
             .map((list) {
-              list.sort((a, b) => (b['scheduled_at'] as String).compareTo(a['scheduled_at'] as String));
-              return list;
+              final filtered = list.where((d) => d['professional_id'] == employeeId).toList();
+              filtered.sort((a, b) => (b['scheduled_at'] as String).compareTo(a['scheduled_at'] as String));
+              return filtered;
             }),
         builder: (context, snapshot) {
           if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());

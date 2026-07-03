@@ -41,7 +41,7 @@ serve(async (req) => {
     // 1. Buscar Dados da Loja e Profissional
     const [{ data: shop }, { data: prof }] = await Promise.all([
       supabase.from('shops').select('config, configured_holidays, pending_holidays').eq('id', shop_id).maybeSingle(),
-      supabase.from('employees').select('name, work_start, work_end, start_time, end_time, work_days, work_schedule').eq('id', professional_id).maybeSingle()
+      supabase.from('employees').select('name, work_start, work_end, start_time, end_time, work_days, work_schedule, breaks').eq('id', professional_id).maybeSingle()
     ])
 
     if (!prof) throw new Error('Profissional não encontrado')
@@ -103,7 +103,8 @@ serve(async (req) => {
 
     // 5b. Validação: Pausa diária (almoço, etc.)
     if (dayCfg.break) {
-      const reqStartMin = reqStart.getHours() * 60 + reqStart.getMinutes()
+      const localReqStart = new Date(reqStart.getTime() - 3 * 3600000)
+      const reqStartMin = localReqStart.getUTCHours() * 60 + localReqStart.getUTCMinutes()
       const reqEndMin = reqStartMin + duration
       const brStart = hhmmToMin(dayCfg.break.start)
       const brEnd = hhmmToMin(dayCfg.break.end)
@@ -156,6 +157,57 @@ serve(async (req) => {
         }
       } catch (_) {
         // BrasilAPI indisponível → fail-open intencional, não bloqueia o agendamento
+      }
+    }
+
+    // 6b. Validação: Folgas do Profissional (breaks)
+    const profBreaks = (prof as Record<string, unknown>).breaks as Array<Record<string, unknown>> | null
+    if (profBreaks && Array.isArray(profBreaks)) {
+      const localReqStart = new Date(reqStart.getTime() - 3 * 3600000)
+      const reqStartMin = localReqStart.getUTCHours() * 60 + localReqStart.getUTCMinutes()
+      const reqEndMin = reqStartMin + duration
+
+      for (const folga of profBreaks) {
+        const fStart = folga.start ? new Date(String(folga.start)) : null
+        let fEnd = folga.end ? new Date(String(folga.end)) : null
+        if (!fStart || !fEnd) continue
+
+        // Ajuste: se a folga salva no app terminou a meia noite (00:00) significa dia inteiro selecionado no range picker
+        if (fEnd.getUTCHours() === 0 && fEnd.getUTCMinutes() === 0) {
+           fEnd = new Date(fEnd.getTime() + 86400000 - 1)
+        }
+
+        // Verifica se a folga cobre a data solicitada
+        const dayStart = new Date(reqStart)
+        dayStart.setHours(0, 0, 0, 0)
+        const dayEnd = new Date(dayStart.getTime() + 86400000)
+        if (fStart >= dayEnd || fEnd <= dayStart) continue
+
+        const fType = String(folga.type || 'full_day').toLowerCase()
+
+        if (fType === 'partial') {
+          // Folga parcial: verifica colisão com start_time/end_time
+          const stStr = String(folga.start_time || '')
+          const etStr = String(folga.end_time || '')
+          if (stStr && etStr) {
+            const fStartMin = hhmmToMin(stStr)
+            const fEndMin = hhmmToMin(etStr)
+            if (reqStartMin < fEndMin && reqEndMin > fStartMin) {
+              return new Response(JSON.stringify({
+                available: false,
+                error: 'Profissional em folga neste período',
+                reasons: [`${prof.name || 'Profissional'} está de folga das ${stStr} às ${etStr} (${folga.notes || 'folga parcial'}).`]
+              }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+            }
+          }
+        } else {
+          // Folga de dia inteiro
+          return new Response(JSON.stringify({
+            available: false,
+            error: 'Profissional em folga neste dia',
+            reasons: [`${prof.name || 'Profissional'} está de folga o dia inteiro (${folga.notes || 'folga'}).`]
+          }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+        }
       }
     }
 

@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../core/theme/app_colors.dart';
+import '../core/services/auth_service.dart';
 import '../core/docs/legal_documents.dart';
 import '../pages/legal_viewer_page.dart';
 import '../modules/login/login_page.dart';
@@ -140,7 +141,7 @@ class _PrivacySettingsPageState extends State<PrivacySettingsPage> {
         throw Exception(errMsg);
       }
 
-      await Supabase.instance.client.auth.signOut();
+      await AuthService().signOut();
 
       if (mounted) {
         // Exibir mensagem de sucesso após deletar e sair da sessão
@@ -162,7 +163,7 @@ class _PrivacySettingsPageState extends State<PrivacySettingsPage> {
         if (mounted) {
           Navigator.pushAndRemoveUntil(
             context,
-            MaterialPageRoute(builder: (_) => const LoginPage()),
+            MaterialPageRoute(builder: (_) => const LoginPage(skipAutoLogin: true)),
             (route) => false,
           );
         }

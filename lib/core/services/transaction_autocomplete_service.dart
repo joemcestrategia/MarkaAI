@@ -183,6 +183,7 @@ class TransactionAutocompleteService {
       final res = await supabase
           .from('appointments')
           .select()
+          .eq('shop_id', shopId)
           .eq('professional_id', pro['id'])
           .gte('scheduled_at', startOfMonth.toIso8601String())
           .lte('scheduled_at', endOfMonth.toIso8601String())
@@ -211,7 +212,7 @@ class TransactionAutocompleteService {
         .eq('shop_id', shopId);
 
     if (search != null && search.trim().isNotEmpty) {
-      final s = search.trim();
+      final s = search.trim().replaceAll(r'\', r'\\').replaceAll('%', r'\%').replaceAll('_', r'\_');
       query = query.or('client_name.ilike.%$s%,client_phone.ilike.%$s%');
     }
 

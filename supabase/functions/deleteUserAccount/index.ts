@@ -1,6 +1,6 @@
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
 import { corsHeaders } from '../_shared/cors.ts'
-import { createSupabaseAdminClient } from '../_shared/supabase.ts'
+import { createSupabaseAdminClient, createSupabaseClient } from '../_shared/supabase.ts'
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -8,18 +8,33 @@ serve(async (req) => {
   }
 
   try {
+    const supabase = createSupabaseClient(req)
     const supabaseAdmin = createSupabaseAdminClient()
 
-    // ─── Obter userId do body ─────────────────────────────────────────────────
-    // O Edge Runtime já validou o JWT (vemos isso nos logs com auth_user)
-    // Se chegou até aqui, o usuário está autenticado
+    // ─── Verificar identidade do usuário ──────────────────────────────────────
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    if (authError || !user) {
+      return new Response(
+        JSON.stringify({ error: 'Usuário não autenticado' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
     const body = await req.json().catch(() => ({}))
     const userId = body?.userId as string | null
 
     if (!userId) {
       return new Response(
-        JSON.stringify({ error: 'userId não fornecido no body da requisição' }),
+        JSON.stringify({ error: 'userId não fornecido' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    // Só permite deletar a própria conta
+    if (userId !== user.id) {
+      return new Response(
+        JSON.stringify({ error: 'Acesso negado: só é possível excluir a própria conta' }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 

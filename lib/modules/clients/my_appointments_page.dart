@@ -847,10 +847,22 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
     );
 
     try {
+      // Consulta fresca para evitar bugs de estado desatualizado em memória
+      final freshApt = await Supabase.instance.client
+          .from('appointments')
+          .select('paid_amount')
+          .eq('id', appointment['id'])
+          .single();
+
+      final double paidAmount = double.tryParse(freshApt['paid_amount']?.toString() ?? '0') ?? 0;
+      final bool hasPaid = paidAmount > 0;
+
       await Supabase.instance.client
           .from('appointments')
           .update({
             'status': 'cancelado',
+            if (hasPaid) 'refund_status': 'pendente',
+            if (hasPaid) 'cancellation_reason': 'cliente_desistiu',
           })
           .eq('id', appointment['id']);
 

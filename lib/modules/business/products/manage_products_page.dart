@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:webview_flutter/webview_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../core/theme/app_colors.dart';
 import 'product_form_page.dart';
 
@@ -111,6 +113,78 @@ class _ManageProductsPageState extends State<ManageProductsPage> {
     }
   }
 
+  void _openAffiliatePreview(String url, String productName) {
+    if (url.isEmpty) return;
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://$url';
+    }
+    final uri = Uri.parse(url);
+    final allowedHost = uri.host;
+
+    final controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onNavigationRequest: (NavigationRequest request) {
+            final requestUrl = request.url;
+            if (!requestUrl.startsWith('http://') && !requestUrl.startsWith('https://')) {
+              debugPrint('Redirecionamento bloqueado: $requestUrl');
+              return NavigationDecision.prevent;
+            }
+            // Só permite navegação dentro do mesmo domínio do link original
+            if (Uri.parse(requestUrl).host != allowedHost) {
+              debugPrint('Redirecionamento externo bloqueado: $requestUrl');
+              return NavigationDecision.prevent;
+            }
+            return NavigationDecision.navigate;
+          },
+          onPageFinished: (_) {},
+        ),
+      )
+      ..loadRequest(uri);
+
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        insetPadding: const EdgeInsets.all(16),
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        clipBehavior: Clip.antiAlias,
+        child: SizedBox(
+          height: MediaQuery.of(context).size.height * 0.85,
+          width: 600,
+          child: Column(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: const BoxDecoration(
+                  color: AppColors.primaryPurple,
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        productName,
+                        style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(child: WebViewWidget(controller: controller)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -176,6 +250,11 @@ class _ManageProductsPageState extends State<ManageProductsPage> {
           child: Opacity(
             opacity: isActive ? 1.0 : 0.6,
             child: ListTile(
+              onTap: () {
+                if (isAffiliate) {
+                  _openAffiliatePreview(p['affiliate_url'] as String? ?? '', p['name'] as String? ?? '');
+                }
+              },
               contentPadding: const EdgeInsets.all(12),
               leading: Container(
                 width: 60,

@@ -41,12 +41,14 @@ class LoginPage extends StatefulWidget {
   final bool avoidRedirect;
   final String? redirectPath;
   final String? contextMessage;
+  final bool skipAutoLogin;
   const LoginPage(
       {super.key,
       this.returnOnSuccess = false,
       this.avoidRedirect = false,
       this.redirectPath,
-      this.contextMessage});
+      this.contextMessage,
+      this.skipAutoLogin = false});
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -101,8 +103,12 @@ class _LoginPageState extends State<LoginPage>
         _routeUser(user);
         return;
       }
-      // Sessão expirada ou perdida - tenta auto-login com credenciais salvas
-      await _tryAutoLogin();
+      // Sessão expirada ou perdida - tenta auto-login com credenciais salvas,
+      // a menos que um logout explícito tenha acabado de ocorrer (evita re-login
+      // indesejado após troca de conta, especialmente no Flutter Web)
+      if (!widget.skipAutoLogin) {
+        await _tryAutoLogin();
+      }
     });
   }
 
@@ -522,6 +528,17 @@ class _LoginPageState extends State<LoginPage>
         }
       } else if (msg.contains('WEAK_PASSWORD')) {
         _showError("Senha fraca. Tente uma com pelo menos 6 caracteres.");
+      } else if (msg.contains('row-level security') || msg.contains('42501') || msg.contains('PGRST')) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text("Erro de permissão no banco. Detalhes: $msg"),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+              duration: const Duration(seconds: 10),
+            ),
+          );
+        }
       } else {
         _showError("Não foi possível criar sua conta. Tente novamente.");
       }
@@ -701,21 +718,68 @@ class _LoginPageState extends State<LoginPage>
           // 📱 PAINEL DIREITO (Formulário)
           Expanded(
             flex: isDesktop ? 6 : 1,
-            child: Container(
-              color: Colors.white,
-              child: Center(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(30),
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 500),
-                    child: _emailSent
-                      ? _buildEmailSentView()
-                      : _isRegistering
-                          ? _buildRegistrationFlow()
-                          : _buildLoginForm(isDesktop),
+            child: Stack(
+              children: [
+                // Fundo branco base
+                Container(color: Colors.white),
+                
+                // Elemento abstrato roxo - topo esquerdo (suave)
+                Positioned(
+                  top: -150,
+                  left: -150,
+                  child: Container(
+                    width: 400,
+                    height: 400,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        colors: [
+                          AppColors.primaryPurple.withValues(alpha: 0.15),
+                          Colors.transparent,
+                        ],
+                        stops: const [0.0, 1.0],
+                      ),
+                    ),
                   ),
                 ),
-              ),
+                
+                // Elemento abstrato roxo - fundo direito (suave)
+                Positioned(
+                  bottom: -150,
+                  right: -150,
+                  child: Container(
+                    width: 400,
+                    height: 400,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        colors: [
+                          AppColors.primaryPurple.withValues(alpha: 0.15),
+                          Colors.transparent,
+                        ],
+                        stops: const [0.0, 1.0],
+                      ),
+                    ),
+                  ),
+                ),
+                
+                // Formulário principal
+                Positioned.fill(
+                  child: Center(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 40),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 420),
+                        child: _emailSent
+                          ? _buildEmailSentView()
+                          : _isRegistering
+                              ? _buildRegistrationFlow()
+                              : _buildLoginForm(isDesktop),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -728,28 +792,33 @@ class _LoginPageState extends State<LoginPage>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Mostrar logo e nome do sistema no topo do formulário
         Center(
-          child: Column(
-            children: [
-              Image.asset(
-                'assets/images/logo_purple.png',
-                height: isDesktop ? 80 : 96, 
-                fit: BoxFit.contain
-              ),
-              const SizedBox(height: 20),
-            ],
+          child: Image.asset(
+            'assets/images/logo_purple simple.png',
+            height: isDesktop ? 60 : 72, 
+            fit: BoxFit.contain
           ),
         ),
-        const SizedBox(height: 20),
-        const Text("Bem-vindo(a)!",
+        const SizedBox(height: 12),
+        const Text("Bem-vindo ao MarkaAI!",
+            textAlign: TextAlign.center,
             style: TextStyle(
-                fontSize: 28,
+                fontSize: 26,
                 fontWeight: FontWeight.bold,
+                letterSpacing: -0.5,
                 color: Colors.black87)),
-        const Text("Insira suas credenciais para continuar.",
-            style: TextStyle(color: Colors.grey)),
-        const SizedBox(height: 30),
+        const SizedBox(height: 8),
+        const Text("Entre em segundos para continuar.",
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.black54, fontSize: 16)),
+        const SizedBox(height: 36),
+        
+        _GoogleButton(onPressed: _handleGoogle),
+        
+        const SizedBox(height: 24),
+        _DividerOr(),
+        const SizedBox(height: 24),
+
         _ModernInput(
             controller: _emailCtrl,
             label: "E-mail",
@@ -764,7 +833,7 @@ class _LoginPageState extends State<LoginPage>
           onObscurePressed: () =>
               setState(() => _obscurePassword = !_obscurePassword),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
@@ -777,10 +846,11 @@ class _LoginPageState extends State<LoginPage>
                     value: _rememberMe,
                     onChanged: (v) => setState(() => _rememberMe = v ?? false),
                     activeColor: AppColors.primaryPurple,
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                    side: const BorderSide(color: Colors.grey, width: 1.5),
                   ),
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 8),
                 const Text('Lembrar-me',
                     style: TextStyle(fontSize: 14, color: Colors.black87)),
               ],
@@ -790,34 +860,53 @@ class _LoginPageState extends State<LoginPage>
                 context,
                 MaterialPageRoute(builder: (_) => const ForgotPasswordPage()),
               ),
-              child: const Text('Esqueceu a senha?',
+              style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(50, 30), alignment: Alignment.centerRight),
+              child: const Text('Esqueceu sua senha?',
                   style: TextStyle(
                       color: AppColors.primaryPurple,
+                      fontSize: 14,
                       fontWeight: FontWeight.w600)),
             ),
           ],
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 24),
         _PrimaryButton(
-            text: "ENTRAR",
+            text: "Entrar",
             isLoading: _isLoading,
+            rightIcon: Icons.arrow_forward_rounded,
             onPressed: _handleLoginClick),
-        const SizedBox(height: 20),
-        _DividerOr(),
-        const SizedBox(height: 20),
-        _GoogleButton(onPressed: _handleGoogle),
-        const SizedBox(height: 30),
+        const SizedBox(height: 32),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Text("Não tem uma conta?",
-                style: TextStyle(color: Colors.grey)),
-            TextButton(
-              onPressed: () => setState(() => _isRegistering = true),
-              child: const Text("Cadastre-se",
-                  style: TextStyle(
-                      color: AppColors.primaryPurple,
-                      fontWeight: FontWeight.bold)),
+            const Text("Não possui uma conta?",
+                style: TextStyle(color: Colors.black54, fontSize: 15)),
+            const SizedBox(width: 4),
+            InkWell(
+              onTap: () => setState(() => _isRegistering = true),
+              borderRadius: BorderRadius.circular(4),
+              child: const Padding(
+                padding: EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+                child: Text("Criar conta",
+                    style: TextStyle(
+                        color: AppColors.primaryPurple,
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 48),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.shield_outlined, size: 20, color: Colors.grey[400]),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                "Seus dados estão protegidos com segurança de ponta.",
+                style: TextStyle(color: Colors.grey[500], fontSize: 12),
+              ),
             ),
           ],
         )
@@ -1220,6 +1309,7 @@ class _LoginPageState extends State<LoginPage>
           label: "Nome Completo",
           icon: Icons.person,
           keyboardType: TextInputType.name,
+          maxLength: 150,
         ),
         const SizedBox(height: 16),
         _ModernInput(
@@ -1243,11 +1333,12 @@ class _LoginPageState extends State<LoginPage>
             },
           )
         else
-          _ModernInput(
-            controller: _bizCtrl,
-            label: "Nome da Barbearia/Salão",
-            icon: Icons.content_cut,
-          ),
+        _ModernInput(
+          controller: _bizCtrl,
+          label: "Nome da Barbearia/Salao",
+          icon: Icons.store_mall_directory,
+          maxLength: 200,
+        ),
       ],
     );
   }
@@ -1268,6 +1359,7 @@ class _LoginPageState extends State<LoginPage>
                 mask: _cepMask,
                 keyboardType: TextInputType.number,
                 onChanged: _handleCepSearch,
+                maxLength: 9,
               ),
             ),
             const SizedBox(width: 10),
@@ -1277,6 +1369,7 @@ class _LoginPageState extends State<LoginPage>
                 label: "Número",
                 icon: Icons.tag,
                 keyboardType: TextInputType.number,
+                maxLength: 20,
               ),
             ),
           ],
@@ -1286,6 +1379,7 @@ class _LoginPageState extends State<LoginPage>
           controller: _ruaCtrl,
           label: "Rua",
           icon: Icons.location_on_outlined,
+          maxLength: 200,
         ),
         const SizedBox(height: 16),
         Row(
@@ -1295,6 +1389,7 @@ class _LoginPageState extends State<LoginPage>
                 controller: _bairroCtrl,
                 label: "Bairro",
                 icon: Icons.holiday_village,
+                maxLength: 150,
               ),
             ),
             const SizedBox(width: 10),
@@ -1303,6 +1398,7 @@ class _LoginPageState extends State<LoginPage>
                 controller: _cidadeCtrl,
                 label: "Cidade",
                 icon: Icons.location_city,
+                maxLength: 150,
               ),
             ),
           ],
@@ -1467,6 +1563,7 @@ class _ModernInput extends StatelessWidget {
   final TextInputType? keyboardType;
   final Function(String)? onChanged;
   final String? errorText;
+  final int? maxLength;
 
   const _ModernInput({
     required this.controller,
@@ -1479,6 +1576,7 @@ class _ModernInput extends StatelessWidget {
     this.keyboardType,
     this.onChanged,
     this.errorText,
+    this.maxLength,
   });
 
   @override
@@ -1489,8 +1587,11 @@ class _ModernInput extends StatelessWidget {
       keyboardType: keyboardType,
       inputFormatters: mask != null ? [mask!] : [],
       onChanged: onChanged,
-      validator: (val) =>
-          val == null || val.isEmpty ? 'Campo obrigatório' : null,
+      validator: (val) {
+          if (val == null || val.isEmpty) return 'Campo obrigatório';
+          if (maxLength != null && val.length > maxLength!) return 'Máximo $maxLength caracteres';
+          return null;
+        },
       style: const TextStyle(color: Colors.black87),
       decoration: InputDecoration(
         labelText: label,
@@ -1513,17 +1614,17 @@ class _ModernInput extends StatelessWidget {
         contentPadding:
             const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
         border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(18),
             borderSide: BorderSide.none),
         enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(18),
             borderSide: const BorderSide(color: Color(0xFFEEEEEE))),
         focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(18),
             borderSide:
                 const BorderSide(color: AppColors.primaryPurple, width: 1.5)),
         errorBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(18),
             borderSide: const BorderSide(color: Colors.redAccent)),
       ),
     );
@@ -1534,26 +1635,29 @@ class _PrimaryButton extends StatelessWidget {
   final String text;
   final bool isLoading;
   final VoidCallback onPressed;
+  final IconData? rightIcon;
 
   const _PrimaryButton({
     required this.text,
     required this.isLoading,
     required this.onPressed,
+    this.rightIcon,
   });
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 50,
+      height: 54,
+      width: double.infinity,
       child: ElevatedButton(
         onPressed: isLoading ? null : onPressed,
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.primaryPurple,
           foregroundColor: Colors.white,
           shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          elevation: 2,
-          shadowColor: AppColors.primaryPurple.withValues(alpha: 0.4),
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          elevation: 4,
+          shadowColor: AppColors.primaryPurple.withValues(alpha: 0.3),
         ),
         child: isLoading
             ? const SizedBox(
@@ -1561,12 +1665,21 @@ class _PrimaryButton extends StatelessWidget {
                 height: 24,
                 child: CircularProgressIndicator(
                     color: Colors.white, strokeWidth: 2))
-            : Text(text,
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1)),
+            : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(text,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.5)),
+                  if (rightIcon != null) ...[
+                    const SizedBox(width: 8),
+                    Icon(rightIcon, color: Colors.white, size: 20),
+                  ]
+                ],
+              ),
       ),
     );
   }
@@ -1579,15 +1692,40 @@ class _GoogleButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return OutlinedButton.icon(
-      onPressed: onPressed,
-      icon: const Icon(Icons.g_mobiledata, size: 28, color: Colors.black87),
-      label: const Text("Entrar com Google",
-          style: TextStyle(color: Colors.black87, fontWeight: FontWeight.w600)),
-      style: OutlinedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        side: const BorderSide(color: Color(0xFFEEEEEE), width: 1.5),
+    return Container(
+      height: 56,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(18),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Image.asset(
+                "assets/images/google.png",
+                height: 24,
+              ),
+              const SizedBox(width: 12),
+              const Text("Continuar com Google",
+                  style: TextStyle(
+                      color: Colors.black87,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold)),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1658,15 +1796,14 @@ class _DividerOr extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: const [
-        Expanded(child: Divider(color: Color(0xFFEEEEEE), thickness: 1.5)),
+        Expanded(child: Divider(color: Color(0xFFE0E0E0), thickness: 1)),
         Padding(
-            padding: EdgeInsets.symmetric(horizontal: 10),
-            child: Text("OU",
+            padding: EdgeInsets.symmetric(horizontal: 16),
+            child: Text("ou",
                 style: TextStyle(
                     color: Colors.grey,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold))),
-        Expanded(child: Divider(color: Color(0xFFEEEEEE), thickness: 1.5)),
+                    fontSize: 14))),
+        Expanded(child: Divider(color: Color(0xFFE0E0E0), thickness: 1)),
       ],
     );
   }

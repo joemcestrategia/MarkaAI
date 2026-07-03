@@ -20,11 +20,18 @@ import 'modules/business/business_schedule_page.dart';
 import 'core/services/session_service.dart';
 import 'core/services/shop_data_cache_service.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'core/widgets/ios_pwa_install_banner.dart';
 
 void main(List<String> args) async {
   try {
     WidgetsFlutterBinding.ensureInitialized();
-    print("=== BOOT STEP 0: v2 - FlutterBinding Inicializado ===");
+
+    // Bloqueia logs de debug em produção (evita vazamento de dados via logcat/console)
+    if (kReleaseMode) {
+      debugPrint = (String? message, {int? wrapWidth}) {};
+    }
+
+    debugPrint("=== BOOT STEP 0: v2 - FlutterBinding Inicializado ===");
     
     // === BOOT STEP 0.5: Iniciando Firebase ===
     await Firebase.initializeApp(
@@ -274,6 +281,9 @@ class MarkaAIApp extends StatelessWidget {
       ),
       // Roteamento personalizado para suportar slugs
       onGenerateRoute: AppRouter.generateRoute,
+      builder: (context, child) {
+        return IosPwaInstallBanner(child: child ?? const SizedBox.shrink());
+      },
     );
   }
 }

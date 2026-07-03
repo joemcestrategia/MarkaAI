@@ -14,6 +14,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
   final productsRef = Supabase.instance.client.from('products');
   final purchasesRef = Supabase.instance.client.from('purchases');
   
+  String? _shopId;
   List<Map<String, dynamic>> products = [];
   List<Map<String, dynamic>> lines = [];
   bool _isLoadingProducts = true;
@@ -22,15 +23,22 @@ class _PurchasesPageState extends State<PurchasesPage> {
   @override
   void initState() {
     super.initState();
-    _loadProducts();
+    _loadShopId();
+  }
+
+  Future<void> _loadShopId() async {
+    final shopId = await SessionService.getShopId();
+    if (mounted) {
+      setState(() => _shopId = shopId);
+      if (shopId != null) _loadProducts();
+    }
   }
 
   Future<void> _loadProducts() async {
     try {
-      final shopId = await SessionService.getShopId();
-      if (shopId == null) return;
+      if (_shopId == null) return;
 
-      final data = await productsRef.select().eq('shop_id', shopId);
+      final data = await productsRef.select().eq('shop_id', _shopId!);
       setState(() {
         products = List<Map<String, dynamic>>.from(data);
         _isLoadingProducts = false;
@@ -742,8 +750,11 @@ class _PurchasesPageState extends State<PurchasesPage> {
   }
 
   Widget _buildPurchasesHistory() {
+    if (_shopId == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
     return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: purchasesRef.stream(primaryKey: ['id']).limit(50),
+      stream: purchasesRef.stream(primaryKey: ['id']).eq('shop_id', _shopId!).limit(50),
       builder: (context, snap) {
         if (!snap.hasData) {
           return const Center(child: CircularProgressIndicator());

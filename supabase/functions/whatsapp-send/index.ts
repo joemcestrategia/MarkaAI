@@ -53,11 +53,47 @@ serve(async (req) => {
 
   // --- POST: SEND MESSAGE ---
   try {
+    // Verifica autenticação — apenas usuários logados podem disparar mensagens
+    const authHeader = req.headers.get('Authorization')?.replace('Bearer ', '') ?? ''
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: 'Não autorizado' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+    const authClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_ANON_KEY') ?? ''
+    )
+    const { data: { user }, error: authError } = await authClient.auth.getUser(authHeader)
+    if (authError || !user) {
+      return new Response(JSON.stringify({ error: 'Não autorizado' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
     const payload: SendMessagePayload = await req.json()
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
+
+    // Verifica se o usuário é dono da loja
+    if (payload.shop_id) {
+      const { data: ownerCheck, error: ownerError } = await supabase
+        .from('shops')
+        .select('owner_id')
+        .eq('id', payload.shop_id)
+        .maybeSingle()
+
+      if (ownerError || !ownerCheck || ownerCheck.owner_id !== user.id) {
+        return new Response(JSON.stringify({ error: 'Apenas o dono da loja pode enviar mensagens' }), {
+          status: 403,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+    }
 
     // TEST CONNECTION ACTION
     if (payload.action === 'test') {
@@ -79,6 +115,20 @@ serve(async (req) => {
     // SEND MESSAGE ACTION
     if (!payload.shop_id || !payload.to || !payload.template_name) {
       throw new Error('Parâmetros ausentes (shop_id, to, template_name)')
+    }
+
+    // Verifica se a loja está em plano plus ou pro
+    const { data: shopData, error: shopError } = await supabase
+      .from('shops')
+      .select('plan')
+      .eq('id', payload.shop_id)
+      .maybeSingle()
+
+    if (shopError) throw shopError
+
+    const shopPlan = (shopData?.plan || '').toLowerCase()
+    if (shopPlan !== 'plus' && shopPlan !== 'pro') {
+      throw new Error(`WhatsApp disponível apenas para planos Plus e Pro. Plano atual: ${shopPlan || 'free'}`)
     }
 
     // Busca configurações

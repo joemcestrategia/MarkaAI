@@ -21,7 +21,7 @@ class LoginChoicePage extends StatelessWidget {
           children: [
             // Logo Centralizada para reforçar a marca
             Center(
-              child: Image.asset('assets/images/logo_full.png', width: 180),
+              child: Image.asset('assets/images/logo_purple.png', width: 180),
             ),
             const SizedBox(height: 60),
             const Text(

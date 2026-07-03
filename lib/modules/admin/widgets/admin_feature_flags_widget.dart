@@ -76,7 +76,7 @@ class _AdminFeatureFlagsWidgetState extends State<AdminFeatureFlagsWidget> {
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
-                      children: ['free', 'start', 'plus', 'pro'].map((plan) {
+                      children: ['free', 'starter', 'plus', 'pro'].map((plan) {
                         final isEnabled = plans.contains(plan);
                         return FilterChip(
                           label: Text(plan.toUpperCase(), style: TextStyle(fontSize: 10, color: isEnabled ? cs.onPrimary : cs.onSurface)),

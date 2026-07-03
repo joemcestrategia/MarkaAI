@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'dart:io' if (dart.library.html) 'package:markaai/core/utils/io_stub.dart' as io;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -32,7 +32,7 @@ class ImageService {
   static final SupabaseClient _supabase = Supabase.instance.client;
 
   /// Detecta iOS de forma segura (retorna false na Web)
-  static bool get _isIOS => !kIsWeb && Platform.isIOS;
+  static bool get _isIOS => !kIsWeb && io.Platform.isIOS;
 
   /// Função central para compressão inteligente
   static Future<CompressionResult> compressImage({
@@ -74,8 +74,8 @@ class ImageService {
     Uint8List originalBytes;
     if (file is XFile) {
       originalBytes = await file.readAsBytes();
-    } else if (file is File) {
-      originalBytes = await file.readAsBytes();
+    } else if (file is io.File) {
+      originalBytes = Uint8List.fromList(await file.readAsBytes());
     } else if (file is Uint8List) {
       originalBytes = file;
     } else {
@@ -122,8 +122,8 @@ class ImageService {
     Uint8List processedBytes = Uint8List.fromList(img.encodeJpg(processedImage)); // Usa JPG intermediário para o compress
     
     // 2. Loop de Compressão Inteligente
-    // No iOS, usar JPEG em vez de WebP (conversão HEIC→WebP falha silenciosamente)
-    final bool useJpeg = _isIOS;
+    // Na Web e no iOS, usar JPEG (WebP pode falhar em Safari/iOS; HEIC→WebP falha silenciosamente)
+    final bool useJpeg = kIsWeb || _isIOS;
     final CompressFormat outputFormat = useJpeg ? CompressFormat.jpeg : CompressFormat.webp;
 
     final List<double> scales = [1.0, 0.75, 0.5];
@@ -144,13 +144,28 @@ class ImageService {
       for (final double quality in qualities) {
         if (quality > targetQuality) continue; // Respeita a qualidade original do contexto
         
-        final compressed = await FlutterImageCompress.compressWithList(
-          processedBytes,
-          minWidth: currentWidth,
-          minHeight: currentHeight,
-          quality: (quality * 100).toInt(),
-          format: outputFormat,
-        );
+        Uint8List compressed;
+        try {
+          compressed = await FlutterImageCompress.compressWithList(
+            processedBytes,
+            minWidth: currentWidth,
+            minHeight: currentHeight,
+            quality: (quality * 100).toInt(),
+            format: outputFormat,
+          );
+        } catch (e) {
+          // Fallback: Na web, FlutterImageCompress pode falhar com certos formatos.
+          // Usa o pacote 'image' puro (Dart puro, funciona em todas as plataformas).
+          if (kDebugMode) {
+            print('AVISO: FlutterImageCompress falhou ($e). Usando fallback Dart puro.');
+          }
+          final fallbackImage = img.copyResize(processedImage,
+              width: currentWidth, height: currentHeight,
+              interpolation: img.Interpolation.average);
+          compressed = Uint8List.fromList(
+            img.encodeJpg(fallbackImage, quality: (quality * 100).toInt()),
+          );
+        }
 
         final currentSize = compressed.length;
 
