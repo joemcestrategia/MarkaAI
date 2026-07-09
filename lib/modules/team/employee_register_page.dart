@@ -632,39 +632,43 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
             );
           });
 
-      if (obs.isNotEmpty) {
-        setState(() {
-          final folgaData = <String, dynamic>{
-            'start': pickedRange!.start.toIso8601String(),
-            'end': (isPartial ? pickedRange.end : pickedRange.end.add(const Duration(hours: 23, minutes: 59)))
-                .toIso8601String(),
-            'notes': obs.isEmpty && existingFolga != null ? existingFolga['notes'] : obs,
-          };
-
-          if (isPartial) {
-            folgaData['type'] = 'partial';
-            folgaData['start_time'] =
-                '${partialStart.hour.toString().padLeft(2, '0')}:${partialStart.minute.toString().padLeft(2, '0')}';
-            folgaData['end_time'] =
-                '${partialEnd.hour.toString().padLeft(2, '0')}:${partialEnd.minute.toString().padLeft(2, '0')}';
-          } else {
-            folgaData['type'] = 'full_day';
-          }
-
-          if (applyToAll) {
-            folgaData['apply_to_all'] = true;
-          }
-
-          if (editIndex != null) {
-            _folgas[editIndex] = folgaData;
-          } else {
-            _folgas.add(folgaData);
-          }
-
-          _folgas.sort((a, b) =>
-              (a['start'] as String).compareTo(b['start'] as String));
-        });
+      if (obs.trim().isEmpty) {
+        obs = "Folga";
       }
+
+      setState(() {
+        final folgaData = <String, dynamic>{
+          'start': pickedRange!.start.toIso8601String(),
+          'end': (isPartial ? pickedRange.end : pickedRange.end.add(const Duration(hours: 23, minutes: 59)))
+              .toIso8601String(),
+          'notes': obs,
+        };
+
+        if (isPartial) {
+          folgaData['type'] = 'partial';
+          folgaData['start_time'] =
+              '${partialStart.hour.toString().padLeft(2, '0')}:${partialStart.minute.toString().padLeft(2, '0')}';
+          folgaData['end_time'] =
+              '${partialEnd.hour.toString().padLeft(2, '0')}:${partialEnd.minute.toString().padLeft(2, '0')}';
+        } else {
+          folgaData['type'] = 'full_day';
+        }
+
+        if (applyToAll) {
+          folgaData['apply_to_all'] = true;
+        }
+
+        if (editIndex != null) {
+          _folgas[editIndex] = folgaData;
+        } else {
+          _folgas.add(folgaData);
+        }
+
+        _folgas.sort((a, b) =>
+            (a['start'] as String).compareTo(b['start'] as String));
+      });
+      
+      _autoSaveFolgas();
     }
   }
 
@@ -705,6 +709,68 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
         widget.onClose();
       } catch (e) {
         if (mounted) setState(() => _isDeleting = false);
+      }
+    }
+  }
+
+  Future<void> _autoSaveFolgas() async {
+    final targetId = _currentEmployeeId ?? (widget.employeeToEdit != null ? widget.employeeToEdit!['id'] : null);
+    if (targetId == null) return; // Se for um novo funcionário ainda não criado, não salva auto.
+    
+    try {
+      final folgasToApplyAll = _folgas.where((f) => f['apply_to_all'] == true).toList();
+      if (folgasToApplyAll.isNotEmpty) {
+        final otherEmployees = await sb.Supabase.instance.client
+            .from('employees')
+            .select('id, breaks')
+            .eq('shop_id', _shopId!)
+            .neq('id', targetId);
+
+        for (var other in otherEmployees) {
+          List<dynamic> otherBreaks = other['breaks'] ?? [];
+          List<Map<String, dynamic>> newBreaks = List<Map<String, dynamic>>.from(otherBreaks);
+          
+          for (var folga in folgasToApplyAll) {
+            final cleanFolga = Map<String, dynamic>.from(folga)..remove('apply_to_all');
+            newBreaks.add(cleanFolga);
+          }
+          
+          await sb.Supabase.instance.client
+              .from('employees')
+              .update({'breaks': newBreaks})
+              .eq('id', other['id']);
+        }
+        
+        for (var f in _folgas) {
+          f.remove('apply_to_all');
+        }
+      }
+
+      await sb.Supabase.instance.client
+          .from('employees')
+          .update({'breaks': _folgas})
+          .eq('id', targetId);
+          
+      ShopDataCacheService().invalidate(_shopId!, 'employees');
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("✅ Folga salva com sucesso!"),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("❌ Erro ao salvar folga: $e"),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
       }
     }
   }
@@ -1577,7 +1643,35 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
             ),
             trailing: IconButton(
                 icon: const Icon(Icons.close, size: 16, color: Colors.red),
-                onPressed: () => setState(() => _folgas.removeAt(e.key))),
+                onPressed: () async {
+                  bool confirm = await showDialog(
+                          context: context,
+                          builder: (context) => AlertDialog(
+                                title: const Text("Excluir Folga?"),
+                                content: const Text(
+                                    "Tem certeza que deseja excluir esta folga do calendário?"),
+                                actions: [
+                                  TextButton(
+                                      onPressed: () =>
+                                          Navigator.pop(context, false),
+                                      child: const Text("Cancelar")),
+                                  ElevatedButton(
+                                    style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.red),
+                                    onPressed: () =>
+                                        Navigator.pop(context, true),
+                                    child: const Text("Excluir",
+                                        style: TextStyle(color: Colors.white)),
+                                  ),
+                                ],
+                              )) ??
+                      false;
+
+                  if (confirm) {
+                    setState(() => _folgas.removeAt(e.key));
+                    _autoSaveFolgas();
+                  }
+                }),
           ),
         );
       }).toList(),

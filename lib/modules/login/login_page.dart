@@ -329,8 +329,8 @@ class _LoginPageState extends State<LoginPage>
         _showError("Por favor, insira seu nome.");
         return;
       }
-      if (_phoneCtrl.text.isEmpty) {
-        _showError("Por favor, insira seu telefone.");
+      if (_phoneCtrl.text.length < 14) {
+        _showError("Por favor, insira um telefone válido com DDD.");
         return;
       }
       if (_selectedRole == 'cliente') {

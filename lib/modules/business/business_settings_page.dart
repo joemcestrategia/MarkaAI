@@ -10,6 +10,7 @@ import '../../core/constants/plan_features.dart';
 import '../../widgets/upgrade_modal.dart';
 import 'link_google_business_page.dart';
 import '../backup/calendar_backup_page.dart';
+import 'message_templates_page.dart';
 import 'payment_settings_page.dart';
 import 'subscription_plans_page.dart';
 import 'subscription_service.dart';
@@ -1444,6 +1445,21 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         value: _whatsappEnabled,
         activeColor: const Color(0xFF25D366),
         onChanged: (v) => setState(() => _whatsappEnabled = v),
+      ),
+      const Divider(height: 1),
+      ListTile(
+        leading: const Icon(Icons.chat_bubble_outline_rounded, color: AppColors.primaryPurple, size: 22),
+        title: const Text("Mensagens Personalizadas", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+        subtitle: const Text("Crie e gerencie templates de mensagens para enviar aos clientes.", style: TextStyle(fontSize: 12, color: Colors.grey)),
+        trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+        onTap: () {
+          if (shopId != null) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => MessageTemplatesPage(shopId: shopId!)),
+            );
+          }
+        },
       ),
     ]);
   }

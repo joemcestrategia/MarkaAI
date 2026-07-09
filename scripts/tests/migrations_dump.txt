@@ -1,0 +1,1673 @@
+﻿=== 208_sync_gcal_webhook_trigger.sql ===
+-- Webhook: sincroniza Google Calendar automaticamente (app fechado)
+-- Rode este script completo no SQL Editor do Supabase
+
+-- 1. Habilita pg_net
+CREATE EXTENSION IF NOT EXISTS pg_net;
+
+-- 2. FunÃ§Ã£o trigger
+CREATE OR REPLACE FUNCTION sync_gcal_webhook_trigger()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+  payload jsonb;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    payload := jsonb_build_object(
+      'type', 'DELETE',
+      'table', 'appointments',
+      'record', to_jsonb(OLD)
+    );
+  ELSIF TG_OP = 'UPDATE' THEN
+    payload := jsonb_build_object(
+      'type', 'UPDATE',
+      'table', 'appointments',
+      'record', to_jsonb(NEW),
+      'old_record', to_jsonb(OLD)
+    );
+  ELSE
+    payload := jsonb_build_object(
+      'type', 'INSERT',
+      'table', 'appointments',
+      'record', to_jsonb(NEW)
+    );
+  END IF;
+
+  PERFORM net.http_post(
+    url := 'https://uhccgcojwqvkfyzrmebv.supabase.co/functions/v1/sync-gcal-webhook',
+    body := payload,
+    headers := '{"Content-Type": "application/json"}'::jsonb
+  );
+
+  RETURN NULL;
+END;
+$$;
+
+-- 3. Trigger
+DROP TRIGGER IF EXISTS sync_gcal_webhook ON appointments;
+CREATE TRIGGER sync_gcal_webhook
+  AFTER INSERT OR UPDATE OR DELETE ON appointments
+  FOR EACH ROW
+  EXECUTE FUNCTION sync_gcal_webhook_trigger();
+
+=== 209_add_employee_user_id.sql ===
+-- Adiciona user_id na tabela employees para vincular profissional ao seu usuÃ¡rio Supabase
+-- Isso permite que o webhook de sync identifique a conta Google Calendar de cada profissional
+
+ALTER TABLE public.employees
+ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES public.users(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_employees_user_id ON public.employees(user_id);
+
+=== 209_isolate_gcal_sync.sql ===
+-- Migration: 209_isolate_gcal_sync.sql
+-- Adiciona colunas para isolar a sincronizaÃ§Ã£o do Google Calendar por funcionÃ¡rio
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'employees'
+          AND column_name = 'google_calendar'
+    ) THEN
+        ALTER TABLE public.employees ADD COLUMN google_calendar JSONB;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'appointments'
+          AND column_name = 'prof_gcal_event_id'
+    ) THEN
+        ALTER TABLE public.appointments ADD COLUMN prof_gcal_event_id TEXT;
+    END IF;
+END $$;
+
+=== 210_fix_availability_rpcs_types.sql ===
+-- Fix: get_shop_blocked_slots e get_professional_blocked_slots type casting
+-- A coluna appointments.shop_id e professional_id Ã© do tipo UUID, mas os params sÃ£o TEXT.
+-- Adicionando ::text Ã s colunas para evitar o erro "operator does not exist: text = uuid"
+
+CREATE OR REPLACE FUNCTION public.get_professional_blocked_slots(
+  p_professional_id TEXT,
+  p_start_date TIMESTAMPTZ,
+  p_end_date TIMESTAMPTZ
+)
+RETURNS TABLE(
+  id TEXT,
+  scheduled_at TIMESTAMPTZ,
+  duration_min INT,
+  service_id TEXT,
+  status TEXT,
+  professional_id TEXT
+)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT
+    a.id::text,
+    a.scheduled_at,
+    a.duration_min,
+    a.service_id::text,
+    a.status,
+    a.professional_id::text
+  FROM public.appointments a
+  WHERE a.professional_id::text = p_professional_id
+    AND a.scheduled_at >= p_start_date
+    AND a.scheduled_at < p_end_date;
+$$;
+
+CREATE OR REPLACE FUNCTION public.get_professionals_blocked_slots(
+  p_professional_ids TEXT[],
+  p_start_date TIMESTAMPTZ,
+  p_end_date TIMESTAMPTZ
+)
+RETURNS TABLE(
+  id TEXT,
+  scheduled_at TIMESTAMPTZ,
+  duration_min INT,
+  service_id TEXT,
+  status TEXT,
+  professional_id TEXT
+)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT
+    a.id::text,
+    a.scheduled_at,
+    a.duration_min,
+    a.service_id::text,
+    a.status,
+    a.professional_id::text
+  FROM public.appointments a
+  WHERE a.professional_id::text = ANY(p_professional_ids)
+    AND a.scheduled_at >= p_start_date
+    AND a.scheduled_at < p_end_date;
+$$;
+
+CREATE OR REPLACE FUNCTION public.get_shop_blocked_slots(
+  p_shop_id TEXT,
+  p_start_date TIMESTAMPTZ,
+  p_end_date TIMESTAMPTZ
+)
+RETURNS TABLE(
+  id TEXT,
+  scheduled_at TIMESTAMPTZ,
+  duration_min INT,
+  service_id TEXT,
+  status TEXT,
+  professional_id TEXT
+)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT
+    a.id::text,
+    a.scheduled_at,
+    a.duration_min,
+    a.service_id::text,
+    a.status,
+    a.professional_id::text
+  FROM public.appointments a
+  WHERE a.shop_id::text = p_shop_id
+    AND a.scheduled_at >= p_start_date
+    AND a.scheduled_at < p_end_date;
+$$;
+
+=== 211_fix_work_day_trigger_type.sql ===
+-- 211_fix_work_day_trigger_type.sql
+-- Fix operator does not exist: text = uuid in check_appointment_work_day_fn
+
+CREATE OR REPLACE FUNCTION public.check_appointment_work_day_fn()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_work_days    JSONB;
+    v_dart_weekday INT;
+    v_uid          UUID := auth.uid();
+BEGIN
+    -- Sem profissional atribuÃ­do: sem restriÃ§Ã£o de dias
+    IF NEW.professional_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+
+    -- Permite bypass (sobreposiÃ§Ã£o) se for o dono da loja ou o prÃ³prio profissional
+    IF v_uid IS NOT NULL THEN
+        IF EXISTS (
+            SELECT 1 FROM public.shops 
+            WHERE id = NEW.shop_id AND owner_id = v_uid::text
+        ) THEN
+            RETURN NEW;
+        END IF;
+
+        IF EXISTS (
+            SELECT 1 FROM public.employees
+            WHERE id = NEW.professional_id AND user_id = v_uid
+        ) THEN
+            RETURN NEW;
+        END IF;
+    END IF;
+
+    -- Busca work_days do profissional
+    SELECT e.work_days INTO v_work_days
+    FROM public.employees e
+    WHERE e.id = NEW.professional_id;
+
+    -- Profissional nÃ£o encontrado: deixa passar
+    IF NOT FOUND THEN
+        RETURN NEW;
+    END IF;
+
+    -- work_days NULL ou array vazio -> rejeitar
+    IF v_work_days IS NULL
+       OR jsonb_typeof(v_work_days) != 'array'
+       OR jsonb_array_length(v_work_days) = 0
+    THEN
+        RAISE EXCEPTION
+            'Agendamento bloqueado: o profissional nÃ£o possui dias de trabalho configurados. '
+            'Configure os dias no painel do estabelecimento antes de aceitar agendamentos.';
+    END IF;
+
+    -- Converte DOW para padrÃ£o Dart (1=Seg â€¦ 6=SÃ¡b, 7=Dom)
+    v_dart_weekday := CASE EXTRACT(DOW FROM NEW.scheduled_at)::INT
+        WHEN 0 THEN 7   -- Domingo
+        ELSE EXTRACT(DOW FROM NEW.scheduled_at)::INT
+    END;
+
+    -- Valida se o dia estÃ¡ na lista de dias de trabalho
+    IF NOT (v_work_days @> to_jsonb(v_dart_weekday)) THEN
+        RAISE EXCEPTION
+            'Agendamento bloqueado: o profissional nÃ£o trabalha neste dia da semana '
+            '(dia %, work_days configurados: %).',
+            v_dart_weekday, v_work_days;
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+=== 212_fix_birthday_trigger_type.sql ===
+-- 212_fix_birthday_trigger_type.sql
+-- Fix operator does not exist: uuid = text in handle_birthday_discount_usage_fn
+
+CREATE OR REPLACE FUNCTION public.handle_birthday_discount_usage_fn()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+AS $function$
+DECLARE
+    v_email TEXT;
+    v_phone TEXT;
+    v_year INTEGER;
+BEGIN
+    -- Executa apenas se o desconto de aniversÃ¡rio for aplicado e nÃ£o for um "pre-save" incompleto
+    -- (No sistema atual, agendamentos incompletos podem nÃ£o ter data de agendamento final ainda)
+    IF (NEW.birthday_discount_applied = true AND NEW.scheduled_at IS NOT NULL) THEN
+        v_year := EXTRACT(YEAR FROM NEW.scheduled_at::TIMESTAMPTZ);
+        
+        -- Busca dados do usuÃ¡rio para registro anti-fraude
+        SELECT email, phone INTO v_email, v_phone 
+        FROM public.users 
+        WHERE id::text = NEW.client_id;
+
+        -- 1. Trava Global no UsuÃ¡rio (Impede uso em qualquer loja)
+        UPDATE public.users 
+        SET birthday_locked = true, 
+            last_birthday_discount_year = v_year
+        WHERE id::text = NEW.client_id;
+
+        -- 2. Registro Anti-Fraude na Loja (E-mail)
+        IF v_email IS NOT NULL AND v_email <> '' THEN
+            INSERT INTO public.birthday_discount_registry (shop_id, identifier, year, user_id)
+            VALUES (NEW.shop_id, 'email_' || v_email, v_year, NEW.client_id)
+            ON CONFLICT (shop_id, identifier, year) DO NOTHING;
+        END IF;
+
+        -- 3. Registro Anti-Fraude na Loja (Telefone)
+        IF v_phone IS NOT NULL AND v_phone <> '' THEN
+            INSERT INTO public.birthday_discount_registry (shop_id, identifier, year, user_id)
+            VALUES (NEW.shop_id, 'phone_' || v_phone, v_year, NEW.client_id)
+            ON CONFLICT (shop_id, identifier, year) DO NOTHING;
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$function$;
+
+=== 213_add_wa_reminder_message_id.sql ===
+-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+-- Migration 213: wa_reminder_message_id para vinculaÃ§Ã£o exata webhookâ†’agendamento
+-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+-- Armazena o wamid (WhatsApp Message ID) do template de lembrete enviado.
+-- Permite que o webhook de confirmaÃ§Ã£o/cancelamento encontre o agendamento
+-- exato via context.id (sem depender de match por telefone).
+
+ALTER TABLE public.appointments
+  ADD COLUMN IF NOT EXISTS wa_reminder_message_id TEXT;
+
+COMMENT ON COLUMN public.appointments.wa_reminder_message_id IS
+  'wamid retornado pela Meta Cloud API ao enviar o template de lembrete. Usado pelo webhook para identificar exatamente qual agendamento o cliente estÃ¡ confirmando.';
+
+CREATE INDEX IF NOT EXISTS idx_appointments_wa_reminder_msg
+  ON public.appointments (wa_reminder_message_id)
+  WHERE wa_reminder_message_id IS NOT NULL;
+
+=== 214_fix_role_protection_policy.sql ===
+-- 214_fix_role_protection_policy.sql
+-- ============================================================
+-- CORREÃ‡ÃƒO CRÃTICA (2026-06-27):
+--   A migration 184_fix_users_update_policy.sql removeu toda a
+--   proteÃ§Ã£o do role na policy de UPDATE. A Ãºnica restriÃ§Ã£o era
+--   "role != 'admin'" no WITH CHECK, o que permite que QUALQUER
+--   usuÃ¡rio (inclusive admin) altere seu prÃ³prio role para
+--   'cliente', 'dono', 'business' ou 'funcionario'.
+--
+--   Isso, combinado com um bug no AuthGate (app_router.dart) que
+--   redirecionava callbacks OAuth para EmailConfirmationPage,
+--   fazia com que o role de admins/donos fosse sobrescrito para
+--   'cliente' durante login via Google no Web.
+--
+-- SOLUÃ‡ÃƒO:
+--   Bloquear QUALQUER alteraÃ§Ã£o de role via client API, com UMA
+--   exceÃ§Ã£o: usuÃ¡rio com role='cliente' (default do trigger para
+--   Google OAuth) PODE mudar para 'dono' ou 'business' durante o
+--   fluxo de completar cadastro (role_selection_page).
+--
+--   Regras:
+--   1. Role igual ao atual â†’ sempre permitido (update de outros campos)
+--   2. Role atual Ã© 'cliente' â†’ pode mudar para 'dono' ou 'business'
+--      (fluxo "Completar Cadastro" apÃ³s Google OAuth)
+--   3. Role atual NÃƒO Ã© 'cliente' â†’ NUNCA pode ser alterado
+--      (protege admin, dono, business, funcionario)
+--   4. NUNCA permitir role='admin' via client (security boundary)
+-- ============================================================
+
+DROP POLICY IF EXISTS "users_update_own_profile" ON public.users;
+
+CREATE POLICY "users_update_own_profile"
+ON public.users
+FOR UPDATE
+USING (auth.uid() = id)
+WITH CHECK (
+  auth.uid() = id
+  AND role != 'admin'
+  AND (
+    -- MantÃ©m o mesmo role (update de dados de perfil sem alterar role)
+    role = (SELECT role FROM public.users WHERE id = auth.uid())
+    OR
+    -- ExceÃ§Ã£o: usuÃ¡rio novo (role='cliente' default) pode escolher ser dono
+    (
+      (SELECT role FROM public.users WHERE id = auth.uid()) = 'cliente'
+      AND role IN ('dono', 'business')
+    )
+  )
+);
+
+-- ============================================================
+-- VERIFICAÃ‡ÃƒO PÃ“S-MIGRATION
+-- ============================================================
+-- SELECT policyname, cmd, with_check
+-- FROM pg_policies
+-- WHERE tablename = 'users' AND schemaname = 'public';
+
+=== 215_fix_public_rls_select_leak.sql ===
+-- 215_fix_public_rls_select_leak.sql
+-- Corrige polÃ­ticas RLS que permitiam SELECT pÃºblico irrestrito (USING true),
+-- expondo dados de todas as lojas via REST API sem autenticaÃ§Ã£o.
+--
+-- Tabelas afetadas:
+--   products  â†’ pÃºblico sÃ³ vÃª is_active=true
+--   services  â†’ pÃºblico sÃ³ vÃª is_active=true
+--   categories â†’ pÃºblico sÃ³ vÃª is_active=true
+--   employees â†’ pÃºblico sÃ³ vÃª is_active=true (se coluna existir)
+--   favorites â†’ remove leitura pÃºblica (sÃ³ autenticado vÃª os prÃ³prios)
+--   users     â†’ pÃºblico sÃ³ vÃª is_active=true
+--
+-- Tables NÃƒO alteradas (acesso pÃºblico intencional):
+--   shops  â†’ dados pÃºblicos da vitrine (nome, endereÃ§o, slug)
+--   plans  â†’ pÃ¡gina pÃºblica de planos/preÃ§os
+
+-- ============================================================
+-- 1. products
+-- ============================================================
+DROP POLICY IF EXISTS "Public Select products" ON public.products;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='public' AND table_name='products' AND column_name='is_active') THEN
+        ALTER TABLE public.products ADD COLUMN is_active BOOLEAN DEFAULT true;
+        UPDATE public.products SET is_active = true WHERE is_active IS NULL;
+    END IF;
+    EXECUTE 'CREATE POLICY "Public Select products" ON public.products FOR SELECT USING (is_active = true)';
+END $$;
+
+-- ============================================================
+-- 2. services
+-- ============================================================
+DROP POLICY IF EXISTS "Public Select services" ON public.services;
+DROP POLICY IF EXISTS "services_public_read" ON public.services;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='public' AND table_name='services' AND column_name='is_active') THEN
+        ALTER TABLE public.services ADD COLUMN is_active BOOLEAN DEFAULT true;
+        UPDATE public.services SET is_active = true WHERE is_active IS NULL;
+    END IF;
+    EXECUTE 'CREATE POLICY "services_public_read" ON public.services FOR SELECT USING (is_active = true)';
+END $$;
+
+-- ============================================================
+-- 3. categories
+-- ============================================================
+DROP POLICY IF EXISTS "Public Select categories" ON public.categories;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='public' AND table_name='categories' AND column_name='is_active') THEN
+        ALTER TABLE public.categories ADD COLUMN is_active BOOLEAN DEFAULT true;
+        UPDATE public.categories SET is_active = true WHERE is_active IS NULL;
+    END IF;
+    EXECUTE 'CREATE POLICY "Public Select categories" ON public.categories FOR SELECT USING (is_active = true)';
+END $$;
+
+-- ============================================================
+-- 4. employees (se is_active existir, restringe pÃºblico a ativos)
+-- ============================================================
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+               WHERE table_schema='public' AND table_name='employees' AND column_name='is_active') THEN
+        DROP POLICY IF EXISTS "Public Select employees" ON public.employees;
+        DROP POLICY IF EXISTS "employees_public_read" ON public.employees;
+        EXECUTE 'CREATE POLICY "employees_public_read" ON public.employees FOR SELECT USING (is_active = true)';
+    ELSE
+        -- Adiciona a coluna e depois restringe
+        ALTER TABLE public.employees ADD COLUMN is_active BOOLEAN DEFAULT true;
+        UPDATE public.employees SET is_active = true WHERE is_active IS NULL;
+        DROP POLICY IF EXISTS "Public Select employees" ON public.employees;
+        DROP POLICY IF EXISTS "employees_public_read" ON public.employees;
+        EXECUTE 'CREATE POLICY "employees_public_read" ON public.employees FOR SELECT USING (is_active = true)';
+    END IF;
+END $$;
+
+-- ============================================================
+-- 5. favorites â†’ remover leitura pÃºblica (sÃ³ autenticado)
+-- ============================================================
+DROP POLICY IF EXISTS "Favorites are viewable by everyone" ON public.favorites;
+CREATE POLICY "Favorites are viewable by everyone" ON public.favorites
+    FOR SELECT TO authenticated USING (true);
+
+-- ============================================================
+-- 6. coupons â†’ restringe leitura pÃºblica a ativos
+-- ============================================================
+DROP POLICY IF EXISTS "Public Select coupons" ON public.coupons;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='public' AND table_name='coupons' AND column_name='is_active') THEN
+        ALTER TABLE public.coupons ADD COLUMN is_active BOOLEAN DEFAULT true;
+        UPDATE public.coupons SET is_active = true WHERE is_active IS NULL;
+    END IF;
+    EXECUTE 'CREATE POLICY "Public Select coupons" ON public.coupons FOR SELECT USING (is_active = true)';
+END $$;
+
+-- ============================================================
+-- 7. financial_goals â†’ restringe a dono da loja ou admin
+-- ============================================================
+DROP POLICY IF EXISTS "Shop owner manages goals" ON public.financial_goals;
+CREATE POLICY "Shop owner manages goals" ON public.financial_goals
+    FOR ALL TO authenticated
+    USING (
+        shop_id::text IN (SELECT shop_id::text FROM public.users WHERE id = auth.uid())
+        OR (SELECT role FROM public.users WHERE id = auth.uid()) = 'admin'
+    )
+    WITH CHECK (
+        shop_id::text IN (SELECT shop_id::text FROM public.users WHERE id = auth.uid())
+        OR (SELECT role FROM public.users WHERE id = auth.uid()) = 'admin'
+    );
+-- ============================================================
+-- 8. users â†’ restringe leitura pÃºblica
+-- ============================================================
+DROP POLICY IF EXISTS "Users are viewable by everyone" ON public.users;
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+               WHERE table_schema='public' AND table_name='users' AND column_name='is_active') THEN
+        EXECUTE 'CREATE POLICY "Users are viewable by everyone" ON public.users FOR SELECT USING (is_active = true)';
+    ELSE
+        -- Sem is_active, pelo menos restringe a autenticados
+        EXECUTE 'CREATE POLICY "Users are viewable by everyone" ON public.users FOR SELECT TO authenticated USING (true)';
+    END IF;
+END $$;
+
+=== 216_fix_visitor_profiles_rpc.sql ===
+-- 216_fix_visitor_profiles_rpc.sql
+-- Adiciona verificaÃ§Ã£o de shop_id na RPC get_visitor_profiles.
+-- Antes: qualquer autenticado podia obter CPF, email, telefone, endereÃ§o
+--        de qualquer usuÃ¡rio passando uma lista de UUIDs.
+-- Agora: sÃ³ retorna perfis de usuÃ¡rios que tÃªm pelo menos um agendamento
+--        com a loja do chamador.
+
+-- Remove a versÃ£o antiga (1 parÃ¢metro) para evitar sobrecarga
+DROP FUNCTION IF EXISTS public.get_visitor_profiles(UUID[]);
+
+CREATE OR REPLACE FUNCTION public.get_visitor_profiles(user_ids UUID[], caller_shop_id UUID)
+RETURNS TABLE (
+    id          UUID,
+    name        TEXT,
+    phone       TEXT,
+    email       TEXT,
+    photo_url   TEXT,
+    birth_date  DATE,
+    city        TEXT,
+    state       TEXT,
+    street      TEXT,
+    neighborhood TEXT,
+    number      TEXT,
+    zip_code    TEXT,
+    cpf         TEXT,
+    created_at  TIMESTAMPTZ
+)
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+AS $$
+    SELECT
+        u.id,
+        u.name,
+        u.phone,
+        u.email,
+        u.photo_url,
+        u.birth_date,
+        u.city,
+        u.state,
+        u.street,
+        u.neighborhood,
+        u.number,
+        u.zip_code,
+        u.cpf,
+        u.created_at
+    FROM public.users u
+    WHERE u.id = ANY(user_ids)
+      AND (
+        -- UsuÃ¡rio tem agendamento com esta loja
+        EXISTS (
+            SELECT 1 FROM public.appointments a
+            WHERE (a.client_id::text = u.id::text OR a.client_phone = u.phone)
+              AND a.shop_id = caller_shop_id::text
+        )
+        -- OU usuÃ¡rio estÃ¡ na tabela de clientes da loja
+        OR EXISTS (
+            SELECT 1 FROM public.shop_clients sc
+            WHERE sc.user_id::text = u.id::text
+              AND sc.shop_id = caller_shop_id::text
+        )
+        -- OU caller Ã© admin (bypass)
+        OR EXISTS (
+            SELECT 1 FROM public.users adm
+            WHERE adm.id = auth.uid() AND adm.role = 'admin'
+        )
+      );
+$$;
+
+-- MantÃ©m permissÃ£o apenas para autenticados
+REVOKE ALL ON FUNCTION public.get_visitor_profiles(UUID[], UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_visitor_profiles(UUID[], UUID) TO authenticated;
+
+=== 217_fix_remaining_public_rls.sql ===
+-- 217_fix_remaining_public_rls.sql
+-- Remove leitura pÃºblica anÃ´nima de tabelas que sÃ³ sÃ£o consultadas
+-- por usuÃ¡rios autenticados (zero impacto no sistema).
+
+-- ============================================================
+-- 1. affiliate_program_config â†’ autenticados apenas
+-- ============================================================
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename='affiliate_program_config') THEN
+        DROP POLICY IF EXISTS "public_read_affiliate_config" ON public.affiliate_program_config;
+        EXECUTE 'CREATE POLICY "public_read_affiliate_config" ON public.affiliate_program_config FOR SELECT TO authenticated USING (true)';
+    END IF;
+END $$;
+
+-- ============================================================
+-- 2. global_holidays â†’ remove acesso anÃ´nimo
+-- ============================================================
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename='global_holidays') THEN
+        DROP POLICY IF EXISTS "Allow public read global_holidays" ON public.global_holidays;
+        EXECUTE 'CREATE POLICY "Allow public read global_holidays" ON public.global_holidays FOR SELECT TO authenticated USING (true)';
+    END IF;
+END $$;
+
+-- ============================================================
+-- 3. plans â†’ autenticados apenas
+-- ============================================================
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename='plans') THEN
+        DROP POLICY IF EXISTS "Public Select plans" ON public.plans;
+        EXECUTE 'CREATE POLICY "Public Select plans" ON public.plans FOR SELECT TO authenticated USING (true)';
+    END IF;
+END $$;
+
+=== 218_enable_rls_categories_plans_shops.sql ===
+-- 218_enable_rls_categories_plans_shops.sql
+-- Reativa RLS em tabelas que estÃ£o com row level security DESATIVADO.
+-- Sem RLS ativo, as polÃ­ticas de seguranÃ§a nÃ£o tÃªm efeito algum.
+-- DiagnÃ³stico: pg_class.relrowsecurity = false para estas 3 tabelas.
+
+-- 1. categories â†’ adiciona polÃ­tica para dono da loja gerenciar
+DROP POLICY IF EXISTS "Shop Manage categories" ON public.categories;
+CREATE POLICY "Shop Manage categories" ON public.categories
+    FOR ALL TO authenticated
+    USING (
+        shop_id::text IN (SELECT shop_id::text FROM public.users WHERE id = auth.uid())
+        OR (SELECT role FROM public.users WHERE id = auth.uid()) = 'admin'
+    )
+    WITH CHECK (
+        shop_id::text IN (SELECT shop_id::text FROM public.users WHERE id = auth.uid())
+        OR (SELECT role FROM public.users WHERE id = auth.uid()) = 'admin'
+    );
+
+ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
+
+-- 2. plans â†’ jÃ¡ tem polÃ­ticas corretas, sÃ³ reativar RLS
+ALTER TABLE public.plans ENABLE ROW LEVEL SECURITY;
+
+-- 3. shops â†’ jÃ¡ tem polÃ­ticas corretas, sÃ³ reativar RLS
+ALTER TABLE public.shops ENABLE ROW LEVEL SECURITY;
+
+=== 219_fix_shops_insert_rls.sql ===
+-- 219_fix_shops_insert_rls.sql
+-- A migration 218 reabilitou RLS na tabela shops, mas a polÃ­tica
+-- "shops_owner_manage" (FOR ALL) da migration 193 foi perdida.
+-- Restaram apenas:
+--   - "shops_public_read" (SELECT pÃºblico) â€” OK
+--   - "Shops are updatable by owners" (UPDATE apenas) â€” INSUFICIENTE
+-- Sem INSERT, o upsert de criaÃ§Ã£o de loja no signup falha com RLS.
+--
+-- SoluÃ§Ã£o: recriar polÃ­tica FOR ALL que cobre INSERT/UPDATE/DELETE.
+
+-- Garantir que helpers existem (criados em 193)
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
+AS $$ SELECT EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'); $$;
+
+CREATE OR REPLACE FUNCTION public.is_shop_owner(target_shop_id UUID)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
+AS $$ SELECT EXISTS (SELECT 1 FROM public.shops WHERE id = target_shop_id AND owner_id::text = auth.uid()::text); $$;
+
+-- Recriar polÃ­tica completa (FOR ALL = SELECT + INSERT + UPDATE + DELETE)
+DROP POLICY IF EXISTS "shops_owner_manage" ON public.shops;
+DROP POLICY IF EXISTS "Shops are updatable by owners" ON public.shops;
+
+CREATE POLICY "shops_owner_manage" ON public.shops
+    FOR ALL TO authenticated
+    USING (owner_id::text = auth.uid()::text OR public.is_admin())
+    WITH CHECK (owner_id::text = auth.uid()::text OR public.is_admin());
+
+=== 220_add_client_geolocation.sql ===
+-- 220_add_client_geolocation.sql
+-- Adiciona colunas lat/lng na tabela users para cache de geocodificaÃ§Ã£o,
+-- evitando re-geocodificaÃ§Ã£o via Nominatim a cada acesso ao mapa de calor.
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='public' AND table_name='users' AND column_name='lat') THEN
+        ALTER TABLE public.users ADD COLUMN lat DOUBLE PRECISION;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='public' AND table_name='users' AND column_name='lng') THEN
+        ALTER TABLE public.users ADD COLUMN lng DOUBLE PRECISION;
+    END IF;
+END $$;
+
+=== 221_add_lat_lng_to_shops.sql ===
+-- 221_add_lat_lng_to_shops.sql
+-- Add latitude and longitude to shops table for heatmap
+
+ALTER TABLE public.shops 
+ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION,
+ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION;
+
+=== 222_update_user_geolocation_rpc.sql ===
+-- Create an RPC to update user geolocation ignoring RLS
+CREATE OR REPLACE FUNCTION update_user_geolocation(p_user_id UUID, p_lat DOUBLE PRECISION, p_lng DOUBLE PRECISION)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+    UPDATE public.users
+    SET lat = p_lat, lng = p_lng
+    WHERE id = p_user_id;
+END;
+$$;
+
+=== 20260323_affiliate_system.sql ===
+-- MarkaAI Affiliate System Migration
+-- Created: 2026-03-23
+
+-- 1.1 â€” Tabela affiliates
+CREATE TABLE IF NOT EXISTS affiliates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  store_id UUID REFERENCES shops(id) ON DELETE SET NULL, -- alterado de 'stores' para 'shops' conforme estrutura do projeto
+  coupon_code VARCHAR(20) NOT NULL UNIQUE,
+  commission_type VARCHAR(20) NOT NULL DEFAULT 'recurring'
+    CHECK (commission_type IN ('recurring', 'one_time')),
+  status VARCHAR(20) NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'active', 'suspended', 'rejected')),
+  stripe_account_id VARCHAR(100),         -- ID da conta Stripe Connect do afiliado
+  stripe_onboarding_completed BOOLEAN DEFAULT FALSE,
+  total_referrals INTEGER DEFAULT 0,
+  total_conversions INTEGER DEFAULT 0,
+  total_earned_cents BIGINT DEFAULT 0,    -- Valor total ganho (em centavos)
+  total_paid_cents BIGINT DEFAULT 0,      -- Valor total jÃ¡ pago (em centavos)
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_affiliates_user_id ON affiliates(user_id);
+CREATE INDEX IF NOT EXISTS idx_affiliates_coupon_code ON affiliates(coupon_code);
+CREATE INDEX IF NOT EXISTS idx_affiliates_status ON affiliates(status);
+
+-- Trigger para updated_at (reusando se existir ou criando)
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN NEW.updated_at = NOW(); RETURN NEW; END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS affiliates_updated_at ON affiliates;
+CREATE TRIGGER affiliates_updated_at
+  BEFORE UPDATE ON affiliates
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- 1.2 â€” Tabela affiliate_program_config
+CREATE TABLE IF NOT EXISTS affiliate_program_config (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  commission_recurring_percent DECIMAL(5,2) NOT NULL DEFAULT 10.00, -- % por mÃªs recorrente
+  commission_one_time_percent DECIMAL(5,2) NOT NULL DEFAULT 30.00,  -- % apenas no 1Âº mÃªs
+  discount_percent DECIMAL(5,2) NOT NULL DEFAULT 15.00,             -- Desconto dado ao novo cliente
+  min_payout_cents INTEGER NOT NULL DEFAULT 5000,                   -- Valor mÃ­nimo para saque (R$ 50,00)
+  program_active BOOLEAN NOT NULL DEFAULT TRUE,
+  allow_store_self_referral BOOLEAN NOT NULL DEFAULT FALSE,         -- Loja nunca usa o prÃ³prio cupom
+  updated_by UUID REFERENCES auth.users(id),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Inserir configuraÃ§Ã£o padrÃ£o se nÃ£o existir
+INSERT INTO affiliate_program_config (
+  commission_recurring_percent,
+  commission_one_time_percent,
+  discount_percent,
+  min_payout_cents,
+  program_active
+) 
+SELECT 10.00, 30.00, 15.00, 5000, TRUE
+WHERE NOT EXISTS (SELECT 1 FROM affiliate_program_config LIMIT 1);
+
+-- 1.3 â€” Tabela affiliate_referrals
+CREATE TABLE IF NOT EXISTS affiliate_referrals (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  affiliate_id UUID NOT NULL REFERENCES affiliates(id) ON DELETE CASCADE,
+  referred_store_id UUID NOT NULL REFERENCES shops(id) ON DELETE CASCADE, -- alterado de 'stores' para 'shops'
+  coupon_code_used VARCHAR(20) NOT NULL,
+  subscription_id VARCHAR(200),           -- ID da assinatura Stripe
+  stripe_customer_id VARCHAR(100),
+  discount_applied_cents INTEGER DEFAULT 0,
+  commission_type VARCHAR(20) NOT NULL CHECK (commission_type IN ('recurring', 'one_time')),
+  status VARCHAR(30) NOT NULL DEFAULT 'active'
+    CHECK (status IN ('active', 'cancelled', 'paused')),
+  first_payment_date TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(referred_store_id) -- Uma loja sÃ³ pode ser referida uma vez
+);
+
+CREATE INDEX IF NOT EXISTS idx_referrals_affiliate_id ON affiliate_referrals(affiliate_id);
+CREATE INDEX IF NOT EXISTS idx_referrals_referred_store_id ON affiliate_referrals(referred_store_id);
+
+DROP TRIGGER IF EXISTS referrals_updated_at ON affiliate_referrals;
+CREATE TRIGGER referrals_updated_at
+  BEFORE UPDATE ON affiliate_referrals
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- 1.4 â€” Tabela affiliate_commissions
+CREATE TABLE IF NOT EXISTS affiliate_commissions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  affiliate_id UUID NOT NULL REFERENCES affiliates(id) ON DELETE CASCADE,
+  referral_id UUID NOT NULL REFERENCES affiliate_referrals(id) ON DELETE CASCADE,
+  stripe_payment_intent_id VARCHAR(200),  -- Payment do cliente que gerou a comissÃ£o
+  stripe_transfer_id VARCHAR(200),        -- Transfer enviado ao afiliado
+  amount_cents INTEGER NOT NULL,          -- Valor da comissÃ£o (em centavos)
+  status VARCHAR(30) NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'processing', 'paid', 'failed', 'refunded')),
+  period_start TIMESTAMPTZ,              -- InÃ­cio do mÃªs de referÃªncia
+  period_end TIMESTAMPTZ,                -- Fim do mÃªs de referÃªncia
+  paid_at TIMESTAMPTZ,
+  error_message TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_commissions_affiliate_id ON affiliate_commissions(affiliate_id);
+CREATE INDEX IF NOT EXISTS idx_commissions_status ON affiliate_commissions(status);
+CREATE INDEX IF NOT EXISTS idx_commissions_referral_id ON affiliate_commissions(referral_id);
+
+DROP TRIGGER IF EXISTS commissions_updated_at ON affiliate_commissions;
+CREATE TRIGGER commissions_updated_at
+  BEFORE UPDATE ON affiliate_commissions
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- 1.5 â€” Tabela affiliate_clicks (tracking de cliques)
+CREATE TABLE IF NOT EXISTS affiliate_clicks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  affiliate_id UUID NOT NULL REFERENCES affiliates(id) ON DELETE CASCADE,
+  ip_address INET,
+  user_agent TEXT,
+  referer TEXT,
+  converted BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_clicks_affiliate_id ON affiliate_clicks(affiliate_id);
+CREATE INDEX IF NOT EXISTS idx_clicks_created_at ON affiliate_clicks(created_at);
+
+-- 1.6 â€” Row Level Security (RLS)
+ALTER TABLE affiliates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE affiliate_referrals ENABLE ROW LEVEL SECURITY;
+ALTER TABLE affiliate_commissions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE affiliate_clicks ENABLE ROW LEVEL SECURITY;
+
+-- PolÃ­ticas para affiliates
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'affiliates_select_own') THEN
+    CREATE POLICY "affiliates_select_own" ON affiliates FOR SELECT USING (auth.uid() = user_id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'affiliates_insert_own') THEN
+    CREATE POLICY "affiliates_insert_own" ON affiliates FOR INSERT WITH CHECK (auth.uid() = user_id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'affiliates_update_own') THEN
+    CREATE POLICY "affiliates_update_own" ON affiliates FOR UPDATE USING (auth.uid() = user_id);
+  END IF;
+END $$;
+
+-- Admin acessa tudo (verificando role na tabela 'users' conforme projeto)
+-- No projeto MarkaAI a tabela de perfis parece ser 'users' ou 'profiles'.
+-- Vou usar uma lÃ³gica genÃ©rica baseada na existÃªncia de 'is_admin' ou role 'admin'
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'affiliates_admin_all') THEN
+    CREATE POLICY "affiliates_admin_all" ON affiliates FOR ALL USING (
+      EXISTS (
+        SELECT 1 FROM users -- No projeto a tabela parece ser 'users'
+        WHERE users.id = auth.uid() AND (users.role = 'admin' OR users.is_admin = true)
+      )
+    );
+  END IF;
+END $$;
+
+-- PolÃ­ticas para referrals (somente leitura pelo prÃ³prio afiliado)
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'referrals_select_own') THEN
+    CREATE POLICY "referrals_select_own" ON affiliate_referrals FOR SELECT USING (
+      EXISTS (
+        SELECT 1 FROM affiliates
+        WHERE affiliates.id = affiliate_referrals.affiliate_id
+        AND affiliates.user_id = auth.uid()
+      )
+    );
+  END IF;
+END $$;
+
+-- PolÃ­ticas para commissions (somente leitura pelo prÃ³prio afiliado)
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'commissions_select_own') THEN
+    CREATE POLICY "commissions_select_own" ON affiliate_commissions FOR SELECT USING (
+      EXISTS (
+        SELECT 1 FROM affiliates
+        WHERE affiliates.id = affiliate_commissions.affiliate_id
+        AND affiliates.user_id = auth.uid()
+      )
+    );
+  END IF;
+END $$;
+
+=== 20260422_whatsapp_cron.sql ===
+-- MigraÃ§Ã£o: Agendamento do pg_cron para lembretes automÃ¡ticos de WhatsApp
+-- Executa a Edge Function send-appointment-reminders a cada hora
+
+-- PASSO 1: Habilitar extensÃ£o pg_cron (se ainda nÃ£o estiver ativa)
+-- Nota: Em projetos Supabase, execute este passo no SQL Editor do Dashboard
+-- CREATE EXTENSION IF NOT EXISTS pg_cron;
+-- CREATE EXTENSION IF NOT EXISTS pg_net;
+
+-- PASSO 2: Remover agendamento existente (idempotente)
+SELECT cron.unschedule('appointment-reminders')
+WHERE EXISTS (
+  SELECT 1 FROM cron.job WHERE jobname = 'appointment-reminders'
+);
+
+-- PASSO 3: Criar agendamento horÃ¡rio
+SELECT cron.schedule(
+  'appointment-reminders',
+  '0 * * * *',  -- A cada hora exata
+  $$
+  SELECT net.http_post(
+    url := current_setting('app.settings.supabase_url') || '/functions/v1/send-appointment-reminders',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'Authorization', 'Bearer ' || current_setting('app.settings.service_role_key')
+    ),
+    body := '{}'::jsonb
+  );
+  $$
+);
+
+-- PASSO 4: Verificar que o cron foi criado
+SELECT jobid, jobname, schedule, active
+FROM cron.job
+WHERE jobname = 'appointment-reminders';
+
+-- â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+-- ALTERNATIVA: Definir as variÃ¡veis de configuraÃ§Ã£o se nÃ£o existirem
+-- Execute primeiro no SQL Editor:
+-- â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+--
+-- ALTER DATABASE postgres SET "app.settings.supabase_url" = 'https://uhccgcojwqvkfyzrmebv.supabase.co';
+-- ALTER DATABASE postgres SET "app.settings.service_role_key" = '<sua_service_role_key>';
+--
+-- Depois execute o SELECT cron.schedule acima.
+
+=== 20260422_whatsapp_integration.sql ===
+âœ… NotificaÃ§Ãµes inicializadas para o dono da loja
+main.dart.js:147584  POST https://uhccgcojwqvkfyzrmebv.supabase.co/functions/v1/check-whatsapp-status 400 (Bad Request)
+(anonymous) @ main.dart.js:147584
+(anonymous) @ main.dart.js:5572
+$2 @ main.dart.js:64349
+$1 @ main.dart.js:64343
+bob @ main.dart.js:65485
+WK @ main.dart.js:65488
+$0 @ main.dart.js:64819
+Ex @ main.dart.js:5714
+vj @ main.dart.js:64728
+$0 @ main.dart.js:64783
+cDG @ main.dart.js:5746
+cEd @ main.dart.js:5748
+$1 @ main.dart.js:64292
+childList
+$1 @ main.dart.js:64299
+ciN @ main.dart.js:5753
+Mz @ main.dart.js:5838
+Bd @ main.dart.js:64694
+am8 @ main.dart.js:64671
+chU @ main.dart.js:5565
+e @ main.dart.js:5561
+(anonymous) @ main.dart.js:202902
+(anonymous) @ main.dart.js:5572
+$2 @ main.dart.js:64349
+r @ main.dart.js:5558
+jS @ main.dart.js:202907
+(anonymous) @ main.dart.js:146017
+(anonymous) @ main.dart.js:5572
+$2 @ main.dart.js:64349
+r @ main.dart.js:5558
+bjd @ main.dart.js:146070
+od @ main.dart.js:146000
+oc @ main.dart.js:146001
+(anonymous) @ main.dart.js:188477
+(anonymous) @ main.dart.js:5572
+$2 @ main.dart.js:64349
+r @ main.dart.js:5558
+avP @ main.dart.js:188498
+$1 @ main.dart.js:188463
+$0 @ main.dart.js:64329Understand this error
+main.dart.js:50775 Erro no polling: FunctionException(status: 400, details: {error: Erro ao consultar API: Not Found}, reasonPhrase: )
+main.dart.js:147584  POST https://uhccgcojwqvkfyzrmebv.supabase.co/functions/v1/check-whatsapp-status 400 (Bad Request)
+(anonymous) @ main.dart.js:147584
+(anonymous) @ main.dart.js:5572
+$2 @ main.dart.js:64349
+$1 @ main.dart.js:64343
+bob @ main.dart.js:65485
+WK @ main.dart.js:65488
+$0 @ main.dart.js:64819
+Ex @ main.dart.js:5714
+vj @ main.dart.js:64728
+$0 @ main.dart.js:64783
+cDG @ main.dart.js:5746
+cEd @ main.dart.js:5748
+$1 @ main.dart.js:64292
+childList
+$1 @ main.dart.js:64299
+ciN @ main.dart.js:5753
+Mz @ main.dart.js:5838
+Bd @ main.dart.js:64694
+am8 @ main.dart.js:64671
+chU @ main.dart.js:5565
+e @ main.dart.js:5561
+(anonymous) @ main.dart.js:202902
+(anonymous) @ main.dart.js:5572
+$2 @ main.dart.js:64349
+r @ main.dart.js:5558
+jS @ main.dart.js:202907
+(anonymous) @ main.dart.js:146017
+(anonymous) @ main.dart.js:5572
+$2 @ main.dart.js:64349
+r @ main.dart.js:5558
+bjd @ main.dart.js:146070
+od @ main.dart.js:146000
+oc @ main.dart.js:146001
+(anonymous) @ main.dart.js:188477
+(anonymous) @ main.dart.js:5572
+$2 @ main.dart.js:64349
+r @ main.dart.js:5558
+avP @ main.dart.js:188498
+$1 @ main.dart.js:188463
+$0 @ main.dart.js:64329
+setInterval
+aFb @ main.dart.js:64310
+cB4 @ main.dart.js:5555
+cg4 @ main.dart.js:5550
+vf @ main.dart.js:5816
+b7v @ main.dart.js:188329
+(anonymous) @ main.dart.js:188308
+(anonymous) @ main.dart.js:5572
+$2 @ main.dart.js:64349
+$1 @ main.dart.js:64343
+bob @ main.dart.js:65485
+WK @ main.dart.js:65488
+$0 @ main.dart.js:64819
+Ex @ main.dart.js:5714
+vj @ main.dart.js:64728
+eN @ main.dart.js:64337
+q @ main.dart.js:5562
+(anonymous) @ main.dart.js:146069
+(anonymous) @ main.dart.js:5572
+$2 @ main.dart.js:64349
+$1 @ main.dart.js:64343
+bob @ main.dart.js:65485
+WK @ main.dart.js:65488
+$0 @ main.dart.js:64819
+Ex @ main.dart.js:5714
+vj @ main.dart.js:64728
+eN @ main.dart.js:64337
+q @ main.dart.js:5562
+(anonymous) @ main.dart.js:202896
+(anonymous) @ main.dart.js:5572
+$2 @ main.dart.js:64349
+$1 @ main.dart.js:64343
+bob @ main.dart.js:65485
+WK @ main.dart.js:65488
+$0 @ main.dart.js:64819
+Ex @ main.dart.js:5714
+$0 @ main.dart.js:64761
+cDG @ main.dart.js:5746
+cEd @ main.dart.js:5748
+$1 @ main.dart.js:64292
+childList
+$1 @ main.dart.js:64299
+ciN @ main.dart.js:5753
+Mz @ main.dart.js:5838
+abr @ main.dart.js:64743
+mf @ main.dart.js:64741
+eN @ main.dart.js:64645
+$1 @ main.dart.js:69866
+Promise.then
+fv @ main.dart.js:8162
+(anonymous) @ main.dart.js:147647
+(anonymous) @ main.dart.js:5572
+$2 @ main.dart.js:64349
+r @ main.dart.js:5558
+$0 @ main.dart.js:147662
+ajr @ main.dart.js:65110
+a15 @ main.dart.js:65151
+Zs @ main.dart.js:65199
+vQ @ main.dart.js:65239
+vh @ main.dart.js:65214
+apf @ main.dart.js:65402
+(anonymous) @ main.dart.js:37140
+(anonymous) @ main.dart.js:5572
+$2 @ main.dart.js:64349
+$1 @ main.dart.js:64343
+bob @ main.dart.js:65485
+WK @ main.dart.js:65488
+$0 @ main.dart.js:64819
+Ex @ main.dart.js:5714
+vj @ main.dart.js:64728
+$0 @ main.dart.js:64783
+cDG @ main.dart.js:5746
+cEd @ main.dart.js:5748
+$1 @ main.dart.js:64292
+childList
+$1 @ main.dart.js:64299
+ciN @ main.dart.js:5753
+Mz @ main.dart.js:5838
+abr @ main.dart.js:64743
+mf @ main.dart.js:64741
+eN @ main.dart.js:64645
+$1 @ main.dart.js:69866
+Promise.then
+fv @ main.dart.js:8162
+(anonymous) @ main.dart.js:37114
+(anonymous) @ main.dart.js:5572
+$2 @ main.dart.js:64349
+$1 @ main.dart.js:64343
+bob @ main.dart.js:65485
+WK @ main.dart.js:65488
+$0 @ main.dart.js:64819
+Ex @ main.dart.js:5714
+vj @ main.dart.js:64728
+$0 @ main.dart.js:64783
+cDG @ main.dart.js:5746
+cEd @ main.dart.js:5748
+$1 @ main.dart.js:64292
+childList
+$1 @ main.dart.js:64299
+ciN @ main.dart.js:5753
+Mz @ main.dart.js:5838
+abr @ main.dart.js:64743
+mf @ main.dart.js:64741
+eN @ main.dart.js:64645
+$1 @ main.dart.js:69866
+Promise.then
+fv @ main.dart.js:8162
+(anonymous) @ main.dart.js:37114
+(anonymous) @ main.dart.js:5572
+$2 @ main.dart.js:64349
+r @ main.dart.js:5558
+cDT @ main.dart.js:37161
+Mx @ main.dart.js:37094
+$1 @ main.dart.js:147634
+$0 @ main.dart.js:65387
+aAG @ main.dart.js:5779
+$0 @ main.dart.js:65129
+a_Y @ main.dart.js:65246
+a2d @ main.dart.js:65103
+eH @ main.dart.js:65383
+eH @ main.dart.js:65037
+MC @ main.dart.js:147666
+(anonymous) @ main.dart.js:146035
+(anonymous) @ main.dart.js:5572
+$2 @ main.dart.js:64349
+$1 @ main.dart.js:64343
+bob @ main.dart.js:65485
+WK @ main.dart.js:65488
+$0 @ main.dart.js:64819
+Ex @ main.dart.js:5714
+vj @ main.dart.js:64728
+eN @ main.dart.js:64337
+q @ main.dart.js:5562
+(anonymous) @ main.dart.js:147620
+(anonymous) @ main.dart.js:5572
+$2 @ main.dart.js:64349
+$1 @ main.dart.js:64343
+bob @ main.dart.js:65485
+WK @ main.dart.js:65488
+$0 @ main.dart.js:64819
+Ex @ main.dart.js:5714
+vj @ main.dart.js:64728
+$0 @ main.dart.js:64783
+cDG @ main.dart.js:5746
+cEd @ main.dart.js:5748
+$1 @ main.dart.js:64292
+childList
+$1 @ main.dart.js:64299
+ciN @ main.dart.js:5753
+Mz @ main.dart.js:5838
+abr @ main.dart.js:64743
+mf @ main.dart.js:64741
+eN @ main.dart.js:64645
+$1 @ main.dart.js:69866
+Promise.then
+fv @ main.dart.js:8162
+(anonymous) @ main.dart.js:147584
+(anonymous) @ main.dart.js:5572
+$2 @ main.dart.js:64349
+$1 @ main.dart.js:64343
+bob @ main.dart.js:65485
+WK @ main.dart.js:65488
+$0 @ main.dart.js:64819
+Ex @ main.dart.js:5714
+vj @ main.dart.js:64728
+$0 @ main.dart.js:64783
+cDG @ main.dart.js:5746
+cEd @ main.dart.js:5748
+$1 @ main.dart.js:64292
+childList
+$1 @ main.dart.js:64299
+ciN @ main.dart.js:5753
+Mz @ main.dart.js:5838
+abr @ main.dart.js:64743
+mf @ main.dart.js:64741
+eN @ main.dart.js:64645
+hO @ main.dart.js:64646
+amb @ main.dart.js:114436
+c6I @ main.dart.js:26892
+me @ main.dart.js:76801
+abg @ main.dart.js:76804
+WI @ main.dart.js:76774
+ep @ main.dart.js:76775
+a7O @ main.dart.js:89826
+t8 @ main.dart.js:89832
+UW @ main.dart.js:89918
+(anonymous) @ main.dart.js:4348
+ash @ main.dart.js:80529
+ft @ main.dart.js:80534
+arA @ main.dart.js:80970
+ad6 @ main.dart.js:80946
+arv @ main.dart.js:80909
+l5 @ main.dart.js:80604
+(anonymous) @ main.dart.js:4349
+aNx @ main.dart.js:80483
+$2 @ main.dart.js:80496
+aP @ main.dart.js:63784
+aeh @ main.dart.js:80491
+auI @ main.dart.js:80489
+oa @ main.dart.js:79521
+bfn @ main.dart.js:79515
+agE @ main.dart.js:79509
+a5u @ main.dart.js:79500
+a_z @ main.dart.js:79498
+aUF @ main.dart.js:79486
+(anonymous) @ main.dart.js:4349
+vP @ main.dart.js:1365
+blc @ main.dart.js:57742
+(anonymous) @ main.dart.js:4350
+Bs @ main.dart.js:57807
+$1 @ main.dart.js:58068
+$1 @ main.dart.js:58023
+$1 @ main.dart.js:57810
+bob @ main.dart.js:65485
+WK @ main.dart.js:65488
+$1 @ main.dart.js:65497
+cBT @ main.dart.js:8131
+(anonymous) @ main.dart.js:8122Understand this error
+main.dart.js:50775 Erro no polling: FunctionException(status: 400, details: {error: Erro ao consultar API: Not Found}, reasonPhrase: )
+=== 20260422_whatsapp_qr_codes.sql ===
+-- Tabela temporÃ¡ria para armazenar QR Codes do WhatsApp
+-- O QR Code expira em 60s, entÃ£o esta tabela Ã© de curta duraÃ§Ã£o
+
+CREATE TABLE IF NOT EXISTS whatsapp_qr_codes (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  shop_id UUID NOT NULL,
+  qr_code TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(shop_id)
+);
+
+-- RLS: habilitar mas deixar service_role acesso total
+ALTER TABLE whatsapp_qr_codes ENABLE ROW LEVEL SECURITY;
+
+-- Policy simples: apenas service_role acessa (Edge Functions usam service_role)
+CREATE POLICY "service_role_all" ON whatsapp_qr_codes
+  FOR ALL
+  TO service_role
+  USING (true)
+  WITH CHECK (true);
+
+-- Index para limpeza automÃ¡tica
+CREATE INDEX IF NOT EXISTS idx_wqr_expires ON whatsapp_qr_codes(expires_at);
+
+=== 20260423_fix_role_reset_on_oauth.sql ===
+-- ============================================================
+-- FIX 1: Corrigir trigger handle_new_user()
+-- Problema: ON CONFLICT sobrescreve role com 'cliente'
+-- SoluÃ§Ã£o: nunca tocar no role em usuÃ¡rios existentes
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO public.users (
+    id,
+    name,
+    email,
+    phone,
+    zip_code,
+    role,
+    created_at,
+    updated_at
+  )
+  VALUES (
+    NEW.id,
+    COALESCE(
+      NEW.raw_user_meta_data->>'full_name',
+      NEW.raw_user_meta_data->>'name',
+      ''
+    ),
+    NEW.email,
+    NEW.raw_user_meta_data->>'phone',
+    NEW.raw_user_meta_data->>'zip_code',
+    'cliente',
+    now(),
+    now()
+  )
+  ON CONFLICT (id) DO UPDATE SET
+    -- Atualiza apenas dados nÃ£o sensÃ­veis de perfil
+    name = CASE
+      WHEN EXCLUDED.name IS NOT NULL AND EXCLUDED.name != ''
+      THEN EXCLUDED.name
+      ELSE public.users.name
+    END,
+    email = COALESCE(EXCLUDED.email, public.users.email),
+    updated_at = now()
+    -- ROLE JAMAIS Ã‰ ATUALIZADO AQUI
+    -- role permanece intacto para usuÃ¡rios existentes
+  ;
+  RETURN NEW;
+END;
+$$;
+
+-- ============================================================
+-- FIX 2: Proteger coluna role via WITH CHECK nas policies
+-- Problema: policies de UPDATE sem WITH CHECK permitem
+--           qualquer alteraÃ§Ã£o incluindo role
+-- SoluÃ§Ã£o: garantir que role nunca mude via client
+-- ============================================================
+
+-- Remover policies de UPDATE existentes que nÃ£o tÃªm WITH CHECK
+DROP POLICY IF EXISTS "Allow users to update own data" ON public.users;
+DROP POLICY IF EXISTS "Users can update own profile" ON public.users;
+DROP POLICY IF EXISTS "Users can update their own profile" ON public.users;
+
+-- Recriar com WITH CHECK que trava o role
+CREATE POLICY "users_update_own_profile"
+ON public.users
+FOR UPDATE
+USING (auth.uid() = id)
+WITH CHECK (
+  auth.uid() = id
+  AND role = (SELECT role FROM public.users WHERE id = auth.uid())
+);
+
+-- ============================================================
+-- VERIFICAÃ‡ÃƒO PÃ“S-MIGRATION
+-- ============================================================
+
+-- Confirmar que o trigger foi atualizado
+SELECT prosrc FROM pg_proc WHERE proname = 'handle_new_user';
+
+-- Confirmar as novas policies
+SELECT policyname, cmd, qual, with_check
+FROM pg_policies
+WHERE tablename = 'users'
+  AND schemaname = 'public'
+  AND cmd = 'UPDATE';
+
+=== 20260423_meta_whatsapp_config.sql ===
+-- MigraÃ§Ã£o para IntegraÃ§Ã£o: Meta WhatsApp Business API Oficial
+
+-- 1. Remover tabelas/views e campos legados da Evolution API
+-- IMPORTANTE: REVISE ANTES DE EXECUTAR EM PRODUÃ‡ÃƒO SE EXISTIR DADOS CRÃTICOS AQUI.
+DROP TABLE IF EXISTS public.whatsapp_messages CASCADE;
+DROP TABLE IF EXISTS public.whatsapp_conversations CASCADE;
+DROP TABLE IF EXISTS public.whatsapp_qr_codes CASCADE;
+
+ALTER TABLE public.shops 
+  DROP COLUMN IF EXISTS whatsapp_instance_id,
+  DROP COLUMN IF EXISTS whatsapp_status,
+  DROP COLUMN IF EXISTS whatsapp_connected_at,
+  DROP COLUMN IF EXISTS ai_agent_enabled,
+  DROP COLUMN IF EXISTS ai_agent_name,
+  DROP COLUMN IF EXISTS ai_agent_instructions;
+
+-- 2. Tabela de configuraÃ§Ã£o da API Oficial
+CREATE TABLE IF NOT EXISTS public.shop_whatsapp_config (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  shop_id text NOT NULL REFERENCES public.shops(id) ON DELETE CASCADE,
+  wa_phone_number_id text NOT NULL,
+  wa_business_account_id text,
+  wa_access_token text NOT NULL,
+  wa_webhook_verify_token text NOT NULL,
+  wa_template_confirmed_name text,
+  wa_template_reminder_name text,
+  is_active boolean DEFAULT false,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now(),
+  UNIQUE(shop_id)
+);
+
+-- RLS
+ALTER TABLE public.shop_whatsapp_config ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "owner_full_access" ON public.shop_whatsapp_config
+  FOR ALL USING (
+    shop_id IN (
+      SELECT shop_id::text FROM public.users WHERE id = auth.uid()
+    ) OR shop_id = auth.uid()::text  -- Fallback caso shop_id represente tambÃ©m o auth.uid() do owner
+  );
+
+-- 3. Log de envios via Cloud API
+CREATE TABLE IF NOT EXISTS public.whatsapp_send_log (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  shop_id text REFERENCES public.shops(id) ON DELETE CASCADE,
+  to_phone text NOT NULL,
+  template_name text,
+  status text NOT NULL,
+  response_json jsonb,
+  sent_at timestamptz DEFAULT now()
+);
+
+ALTER TABLE public.whatsapp_send_log ENABLE ROW LEVEL SECURITY;
+-- Por enquanto, apenas serviÃ§o (backend) e leitura para dono.
+CREATE POLICY "owner_read_logs" ON public.whatsapp_send_log
+  FOR SELECT USING (
+    shop_id IN (
+      SELECT shop_id::text FROM public.users WHERE id = auth.uid()
+    ) OR shop_id = auth.uid()::text
+  );
+
+=== 20260604_fix_plan_limits_and_boost.sql ===
+-- 20260604_fix_plan_limits_and_boost.sql
+-- Corrige limites de plano para alinhar com subscription_service.dart
+-- e adiciona colunas de boost para client_home_page
+
+-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+-- 1. Corrigir limites de profissionais
+-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+CREATE OR REPLACE FUNCTION public.check_employee_limit_fn()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_plan_id TEXT;
+    v_is_trial BOOLEAN;
+    v_limit INTEGER;
+    v_count INTEGER;
+BEGIN
+    SELECT plan_id, trial_active INTO v_plan_id, v_is_trial 
+    FROM public.shops 
+    WHERE id = NEW.shop_id;
+    
+    IF v_plan_id IS NULL THEN
+        SELECT plan INTO v_plan_id FROM public.users WHERE shop_id = NEW.shop_id AND tipo = 'dono' LIMIT 1;
+    END IF;
+
+    IF v_is_trial = true THEN
+        v_plan_id := 'pro';
+    END IF;
+
+    v_plan_id := COALESCE(LOWER(v_plan_id), 'free');
+    
+    IF v_plan_id = 'pro' THEN v_limit := 5;
+    ELSIF v_plan_id = 'plus' THEN v_limit := 3;
+    ELSIF v_plan_id = 'starter' OR v_plan_id = 'start' THEN v_limit := 2;
+    ELSE v_limit := 1;
+    END IF;
+
+    SELECT count(*) INTO v_count FROM public.employees WHERE shop_id = NEW.shop_id;
+
+    IF v_count >= v_limit THEN
+        RAISE EXCEPTION 'Limite de profissionais atingido para o plano % (MÃ¡x: %)', v_plan_id, v_limit;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+-- 2. Corrigir limites de fotos por serviÃ§o
+-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+CREATE OR REPLACE FUNCTION public.check_service_photos_limit_fn()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_plan_id TEXT;
+    v_is_trial BOOLEAN;
+    v_limit INTEGER;
+    v_photo_count INTEGER;
+BEGIN
+    SELECT plan_id, trial_active INTO v_plan_id, v_is_trial 
+    FROM public.shops 
+    WHERE id = NEW.shop_id;
+    
+    IF v_is_trial = true THEN
+        v_plan_id := 'pro';
+    END IF;
+
+    v_plan_id := COALESCE(LOWER(v_plan_id), 'free');
+    
+    IF v_plan_id = 'pro' THEN v_limit := 5;
+    ELSIF v_plan_id = 'plus' THEN v_limit := 5;
+    ELSIF v_plan_id = 'starter' OR v_plan_id = 'start' THEN v_limit := 3;
+    ELSE v_limit := 1;
+    END IF;
+
+    v_photo_count := array_length(NEW.photos_urls, 1);
+    
+    IF v_photo_count > v_limit THEN
+        RAISE EXCEPTION 'O plano % permite no mÃ¡ximo % fotos por serviÃ§o.', v_plan_id, v_limit;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+-- 3. Colunas de boost (client_home_page lÃª is_boosted e boost_expires_at)
+-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='shops' AND column_name='boost') THEN
+        ALTER TABLE public.shops ADD COLUMN boost JSONB DEFAULT '{}'::jsonb;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='shops' AND column_name='is_boosted') THEN
+        ALTER TABLE public.shops ADD COLUMN is_boosted BOOLEAN DEFAULT false;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='shops' AND column_name='boost_expires_at') THEN
+        ALTER TABLE public.shops ADD COLUMN boost_expires_at TIMESTAMPTZ;
+    END IF;
+END $$;
+
+-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+-- 4. Trigger que sincroniza boost JSONB â†’ colunas top-level automaticamente
+-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+CREATE OR REPLACE FUNCTION public.sync_boost_columns_fn()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.boost IS NOT NULL THEN
+        NEW.is_boosted := (NEW.boost->>'is_active')::boolean AND 
+                          (NEW.boost->>'expires_at')::timestamptz > now();
+        NEW.boost_expires_at := (NEW.boost->>'expires_at')::timestamptz;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS tr_sync_boost_columns ON public.shops;
+CREATE TRIGGER tr_sync_boost_columns
+BEFORE INSERT OR UPDATE OF boost ON public.shops
+FOR EACH ROW
+EXECUTE FUNCTION public.sync_boost_columns_fn();
+
+=== 20260617000000_add_pago_em_to_appointments.sql ===
+-- Adiciona a coluna pago_em Ã  tabela appointments
+ALTER TABLE public.appointments ADD COLUMN IF NOT EXISTS pago_em TIMESTAMPTZ;
+
+-- ComentÃ¡rio da coluna para documentaÃ§Ã£o
+COMMENT ON COLUMN public.appointments.pago_em IS 'Data e hora em que o agendamento foi pago via Mercado Pago ou confirmado manualmente';
+
+=== 20260703154500_mp_processed_payments.sql ===
+-- Cria a tabela de registro de pagamentos processados para idempotÃªncia do Webhook do Mercado Pago
+CREATE TABLE IF NOT EXISTS public.mp_processed_payments (
+    payment_id text PRIMARY KEY,
+    appointment_id text REFERENCES public.appointments(id) ON DELETE SET NULL,
+    shop_id text REFERENCES public.shops(id) ON DELETE CASCADE,
+    amount numeric(10,2),
+    status text,
+    processed_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- Ativar RLS
+ALTER TABLE public.mp_processed_payments ENABLE ROW LEVEL SECURITY;
+
+-- PolÃ­ticas de seguranÃ§a
+-- Seguindo o padrÃ£o exato da base, fazendo cast de auth.uid() para text
+CREATE POLICY "Donos podem ler pagamentos da prÃ³pria loja" ON public.mp_processed_payments
+    FOR SELECT USING (
+        EXISTS (
+            SELECT 1 FROM public.shops
+            WHERE shops.id = mp_processed_payments.shop_id
+            AND shops.owner_id = auth.uid()::text
+        )
+    );
+
+-- ============================================================================
+-- BACKFILL: Preencher a tabela com os pagamentos que o banco JÃ reconhece
+-- ============================================================================
+
+-- 1. Pagamentos principais (coluna payment_id)
+INSERT INTO public.mp_processed_payments (payment_id, appointment_id, shop_id, amount, status)
+SELECT 
+    payment_id, 
+    id as appointment_id, 
+    shop_id, 
+    paid_amount as amount, 
+    'backfilled_from_root' as status
+FROM public.appointments
+WHERE payment_id IS NOT NULL AND payment_id != ''
+ON CONFLICT (payment_id) DO NOTHING;
+
+-- 2. Pagamentos de conclusÃ£o/restante salvos no metadata
+INSERT INTO public.mp_processed_payments (payment_id, appointment_id, shop_id, amount, status)
+SELECT 
+    metadata->>'completion_payment_id' as payment_id, 
+    id as appointment_id, 
+    shop_id, 
+    (metadata->>'valor_pago')::numeric as amount, 
+    'backfilled_from_completion' as status
+FROM public.appointments
+WHERE metadata->>'completion_payment_id' IS NOT NULL AND metadata->>'completion_payment_id' != ''
+ON CONFLICT (payment_id) DO NOTHING;
+
+-- 3. Pagamentos de sinal salvos no metadata
+INSERT INTO public.mp_processed_payments (payment_id, appointment_id, shop_id, amount, status)
+SELECT 
+    metadata->>'advance_payment_id' as payment_id, 
+    id as appointment_id, 
+    shop_id, 
+    NULL as amount, 
+    'backfilled_from_advance' as status
+FROM public.appointments
+WHERE metadata->>'advance_payment_id' IS NOT NULL AND metadata->>'advance_payment_id' != ''
+ON CONFLICT (payment_id) DO NOTHING;
+
+=== 20260703194848_add_refund_fields.sql ===
+-- Adiciona os novos campos para gestÃ£o de estorno e cancelamento
+ALTER TABLE public.appointments
+ADD COLUMN IF NOT EXISTS refund_status text DEFAULT 'nao_aplicavel',
+ADD COLUMN IF NOT EXISTS cancellation_reason text,
+ADD COLUMN IF NOT EXISTS refund_amount numeric(10,2),
+ADD COLUMN IF NOT EXISTS refunded_at timestamptz,
+ADD COLUMN IF NOT EXISTS refunded_by text;
+
+-- Constraint para garantir a integridade do domÃ­nio de status (nÃ£o duplicar se jÃ¡ existir)
+DO $$ 
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 
+    FROM pg_constraint 
+    WHERE conname = 'appointments_refund_status_check'
+  ) THEN
+    ALTER TABLE public.appointments
+    ADD CONSTRAINT appointments_refund_status_check 
+    CHECK (refund_status IN ('nao_aplicavel', 'pendente', 'estornado', 'retido'));
+  END IF;
+END $$;
+
+=== 20260703201117_add_cancellation_note.sql ===
+-- 20260703201117_add_cancellation_note.sql
+ALTER TABLE public.appointments 
+ADD COLUMN IF NOT EXISTS cancellation_note text;
+
+

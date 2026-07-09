@@ -61,10 +61,10 @@ class _ClientOnboardingPageState extends State<ClientOnboardingPage> {
   // --- PASSO CRUCIAL: VERIFICAÇÃO + SMS ---
   Future<void> _submitPhone() async {
     // 1. Valida tamanho do número
-    if (_phoneController.text.length < 15) {
-      // (31) 99999-9999 tem 15 caracteres
+    if (_phoneController.text.length < 14) {
+      // Fixo: 14 chars, Celular: 15 chars
       ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text("Número incompleto")));
+          .showSnackBar(const SnackBar(content: Text("Número incompleto. Insira o DDD e o número.")));
       return;
     }
 

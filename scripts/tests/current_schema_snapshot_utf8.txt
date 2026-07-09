@@ -1,0 +1,600 @@
+﻿table_name,column_name,data_type
+admin_announcements,id,uuid
+admin_announcements,title,text
+admin_announcements,body,text
+admin_announcements,type,text
+admin_announcements,target_plans,ARRAY
+admin_announcements,target_shops,ARRAY
+admin_announcements,is_active,boolean
+admin_announcements,starts_at,timestamp with time zone
+admin_announcements,expires_at,timestamp with time zone
+admin_announcements,created_by,uuid
+admin_announcements,created_at,timestamp with time zone
+admin_appointment_metrics,total_appointments,bigint
+admin_appointment_metrics,total_volume,numeric
+admin_appointment_metrics,active_shops,bigint
+admin_appointment_metrics,active_clients,bigint
+admin_appointment_metrics,avg_daily_appointments,numeric
+admin_appointment_metrics,avg_monthly_appointments,numeric
+admin_audit_log,id,uuid
+admin_audit_log,admin_id,uuid
+admin_audit_log,action,text
+admin_audit_log,target_type,text
+admin_audit_log,target_id,text
+admin_audit_log,details,jsonb
+admin_audit_log,ip_address,text
+admin_audit_log,created_at,timestamp with time zone
+admin_churn_monthly,mes,timestamp with time zone
+admin_churn_monthly,pagantes_no_mes,bigint
+admin_churn_monthly,churned,bigint
+admin_churn_monthly,churn_rate_pct,numeric
+admin_growth_daily,dia,date
+admin_growth_daily,novos_shops,bigint
+admin_growth_daily,novos_pagos,bigint
+admin_revenue_metrics,mrr,numeric
+admin_revenue_metrics,count_free,bigint
+admin_revenue_metrics,count_start,bigint
+admin_revenue_metrics,count_plus,bigint
+admin_revenue_metrics,count_pro,bigint
+admin_revenue_metrics,total_shops,bigint
+admin_revenue_metrics,active_shops_30d,bigint
+app_banners,id,uuid
+app_banners,title,text
+app_banners,subtitle,text
+app_banners,image_url,text
+app_banners,cta_text,text
+app_banners,cta_url,text
+app_banners,is_active,boolean
+app_banners,sort_order,integer
+app_banners,created_at,timestamp with time zone
+app_banners,updated_at,timestamp with time zone
+app_banners,impressions,bigint
+app_banners,clicks,bigint
+app_banners,advertiser_name,text
+app_banners,advertiser_email,text
+app_banners,starts_at,timestamp with time zone
+app_banners,ends_at,timestamp with time zone
+app_banners,budget_impressions,bigint
+appointments,id,text
+appointments,shop_id,text
+appointments,client_name,text
+appointments,service_name,text
+appointments,labor_value,numeric
+appointments,products_value,numeric
+appointments,total_value,numeric
+appointments,status,text
+appointments,scheduled_at,timestamp with time zone
+appointments,is_imported,boolean
+appointments,created_at,timestamp with time zone
+appointments,client_id,text
+appointments,product_value,numeric
+appointments,payment_method,text
+appointments,created_by,text
+appointments,professional_id,text
+appointments,service_id,text
+appointments,professional_name,text
+appointments,metadata,jsonb
+appointments,client_phone,text
+appointments,client_email,text
+appointments,duration_min,integer
+appointments,birthday_discount_applied,boolean
+appointments,coupon_applied,boolean
+appointments,coupon_code,text
+appointments,coupon_discount_percent,numeric
+appointments,total_price,numeric
+appointments,paid_amount,numeric
+appointments,remaining_amount,numeric
+appointments,valor_com_desconto,numeric
+appointments,birthday_discount_percent,numeric
+appointments,card_tax_percent,numeric
+appointments,valor_sinal,numeric
+appointments,end_at,timestamp with time zone
+appointments,payment_id,text
+appointments,updated_at,timestamp with time zone
+appointments,discount_amount,numeric
+appointments,payment_status,text
+appointments,total_payable,numeric
+appointments,client_photo,text
+appointments,reminder_48h_sent,boolean
+appointments,reminder_1h_sent,boolean
+appointments,is_rescheduled,boolean
+appointments,reschedule_count,integer
+appointments,awaiting_confirmation,boolean
+appointments,confirmation_sent,boolean
+appointments,confirmed_via_whatsapp,boolean
+appointments,reminder_sent,boolean
+appointments,google_calendar_event_id,text
+appointments,bypass_overlap_check,boolean
+appointments,pago_em,timestamp with time zone
+appointments,prof_gcal_event_id,text
+appointments,wa_reminder_message_id,text
+approved_payments,id,text
+approved_payments,shop_id,text
+approved_payments,payment_id,bigint
+approved_payments,status,text
+approved_payments,amount,numeric
+approved_payments,email,text
+approved_payments,created_at,timestamp with time zone
+bank_accounts,id,text
+bank_accounts,shop_id,text
+bank_accounts,bank_name,text
+bank_accounts,original_bank,text
+bank_accounts,owner,text
+bank_accounts,logo_url,text
+bank_accounts,created_at,timestamp with time zone
+banner_events,id,uuid
+banner_events,banner_id,uuid
+banner_events,event_type,text
+banner_events,platform,text
+banner_events,occurred_at,timestamp with time zone
+birthday_discount_registry,id,uuid
+birthday_discount_registry,shop_id,text
+birthday_discount_registry,identifier,text
+birthday_discount_registry,year,integer
+birthday_discount_registry,user_id,uuid
+birthday_discount_registry,used_at,timestamp with time zone
+categories,id,text
+categories,shop_id,text
+categories,name,text
+categories,order,integer
+categories,created_at,timestamp with time zone
+categories,ordem,integer
+categories,is_active,boolean
+commission_rules,id,uuid
+commission_rules,shop_id,text
+commission_rules,employee_id,text
+commission_rules,service_id,text
+commission_rules,commission_type,text
+commission_rules,commission_value,numeric
+commission_rules,applies_to,text
+commission_rules,active,boolean
+commission_rules,created_at,timestamp with time zone
+commission_rules,updated_at,timestamp with time zone
+coupon_usage,id,uuid
+coupon_usage,coupon_id,uuid
+coupon_usage,user_id,uuid
+coupon_usage,appointment_id,text
+coupon_usage,used_at,timestamp with time zone
+coupons,id,uuid
+coupons,shop_id,text
+coupons,code,text
+coupons,description,text
+coupons,discount_percent,numeric
+coupons,is_active,boolean
+coupons,valid_until,timestamp with time zone
+coupons,valid_month,integer
+coupons,max_usage,integer
+coupons,usage_count,integer
+coupons,created_at,timestamp with time zone
+coupons,updated_at,timestamp with time zone
+coupons,service_ids,ARRAY
+coupons,target_audience,text
+coupons,blocked_classifications,ARRAY
+coupons,valid_payment_methods,ARRAY
+employees,id,text
+employees,shop_id,text
+employees,name,text
+employees,phone,text
+employees,type,text
+employees,commission_percent,numeric
+employees,start_time,text
+employees,end_time,text
+employees,photo_url,text
+employees,role,text
+employees,email,text
+employees,created_at,timestamp with time zone
+employees,backup_email,text
+employees,services_ids,jsonb
+employees,work_days,jsonb
+employees,breaks,jsonb
+employees,updated_at,timestamp with time zone
+employees,schedule_priority,integer
+employees,work_schedule,jsonb
+employees,work_start,text
+employees,work_end,text
+employees,user_id,uuid
+employees,google_calendar,jsonb
+employees,is_active,boolean
+favorites,id,uuid
+favorites,user_id,uuid
+favorites,shop_id,text
+favorites,created_at,timestamp with time zone
+favorites,shop_name,text
+fcm_tokens,id,uuid
+fcm_tokens,user_id,uuid
+fcm_tokens,token,text
+fcm_tokens,platform,text
+fcm_tokens,updated_at,timestamp with time zone
+feature_flags,id,uuid
+feature_flags,flag_key,text
+feature_flags,label,text
+feature_flags,description,text
+feature_flags,enabled_global,boolean
+feature_flags,enabled_for_plans,ARRAY
+feature_flags,enabled_for_shops,ARRAY
+feature_flags,created_at,timestamp with time zone
+feature_flags,updated_at,timestamp with time zone
+financial_goals,id,bigint
+financial_goals,goal_id,text
+financial_goals,shop_id,text
+financial_goals,value,numeric
+financial_goals,year,integer
+financial_goals,month,integer
+financial_goals,updated_at,timestamp with time zone
+financial_transactions,id,text
+financial_transactions,shop_id,text
+financial_transactions,type,text
+financial_transactions,amount,numeric
+financial_transactions,date,timestamp with time zone
+financial_transactions,description,text
+financial_transactions,source,text
+financial_transactions,unique_id,text
+financial_transactions,created_at,timestamp with time zone
+global_holidays,id,uuid
+global_holidays,date,date
+global_holidays,name,text
+global_holidays,description,text
+global_holidays,is_platform_closed,boolean
+global_holidays,created_at,timestamp with time zone
+global_holidays,created_by,uuid
+mp_processed_payments,payment_id,text
+mp_processed_payments,appointment_id,text
+mp_processed_payments,shop_id,text
+mp_processed_payments,amount,numeric
+mp_processed_payments,status,text
+mp_processed_payments,processed_at,timestamp with time zone
+nfse_config,id,uuid
+nfse_config,shop_id,text
+nfse_config,cnpj,text
+nfse_config,inscricao_municipal,text
+nfse_config,codigo_municipio,text
+nfse_config,codigo_servico_lc116,text
+nfse_config,aliquota_iss,numeric
+nfse_config,regime_tributario,integer
+nfse_config,ambiente,text
+nfse_config,emitir_automatico_dinheiro,boolean
+nfse_config,ativo,boolean
+nfse_config,created_at,timestamp with time zone
+nfse_config,updated_at,timestamp with time zone
+nfse_config,codigo_nbs,text
+nfse_config,codigo_tributacao_municipio,text
+nfse_config,desconto_incondicional,numeric
+nfse_config,desconto_condicional,numeric
+nfse_config,exigibilidade_iss,integer
+nfse_config,incentivador_cultural,boolean
+nfse_config,serie_rps,text
+nfse_config,proximo_numero_rps,bigint
+nfse_config,provedor_nfse,text
+nfse_config,url_webservice,text
+nfse_config,usuario_prefeitura,text
+nfse_config,senha_prefeitura,text
+nfse_config,cert_pfx_base64,text
+nfse_config,cert_senha_hash,text
+nfse_config,emitir_automatico_cartao,boolean
+nfse_emissoes,id,uuid
+nfse_emissoes,shop_id,text
+nfse_emissoes,appointment_id,text
+nfse_emissoes,numero_nfse,text
+nfse_emissoes,chave_acesso,text
+nfse_emissoes,codigo_verificacao,text
+nfse_emissoes,status,text
+nfse_emissoes,valor_servico,numeric
+nfse_emissoes,tomador_cpf_cnpj,text
+nfse_emissoes,tomador_nome,text
+nfse_emissoes,xml_dps,text
+nfse_emissoes,xml_nfse,text
+nfse_emissoes,pdf_url,text
+nfse_emissoes,motivo_rejeicao,text
+nfse_emissoes,created_at,timestamp with time zone
+nfse_emissoes,updated_at,timestamp with time zone
+plans,id,text
+plans,name,text
+plans,description,text
+plans,price_month,numeric
+plans,features,jsonb
+processed_webhook_events,id,text
+processed_webhook_events,created_at,timestamp with time zone
+products,id,text
+products,shop_id,text
+products,name,text
+products,price,numeric
+products,stock_quantity,numeric
+products,track_stock,boolean
+products,code,text
+products,created_at,timestamp with time zone
+products,updated_at,timestamp with time zone
+products,description,text
+products,sku,text
+products,category,text
+products,color,text
+products,weight,numeric
+products,weight_unit,text
+products,is_active,boolean
+products,qty,integer
+products,image_url,text
+products,is_affiliate,boolean
+products,affiliate_url,text
+purchases,id,text
+purchases,shop_id,text
+purchases,user_id,uuid
+purchases,items,jsonb
+purchases,total,numeric
+purchases,status,text
+purchases,notes,text
+purchases,created_at,timestamp with time zone
+purchases,updated_at,timestamp with time zone
+push_subscriptions,id,uuid
+push_subscriptions,user_id,uuid
+push_subscriptions,endpoint,text
+push_subscriptions,p256dh,text
+push_subscriptions,auth_key,text
+push_subscriptions,user_agent,text
+push_subscriptions,created_at,timestamp with time zone
+push_subscriptions,updated_at,timestamp with time zone
+sales,id,uuid
+sales,shop_id,uuid
+sales,items,jsonb
+sales,total,numeric
+sales,created_at,timestamp with time zone
+saved_cards,id,text
+saved_cards,user_id,uuid
+saved_cards,shop_id,text
+saved_cards,card_token,text
+saved_cards,brand,text
+saved_cards,last_four,text
+saved_cards,holder_name,text
+saved_cards,expiration_month,integer
+saved_cards,expiration_year,integer
+saved_cards,payment_method_id,text
+saved_cards,is_default,boolean
+saved_cards,created_at,timestamp with time zone
+saved_cards,updated_at,timestamp with time zone
+services,id,text
+services,shop_id,text
+services,name,text
+services,description,text
+services,price,numeric
+services,cost,numeric
+services,duration_min,integer
+services,is_active,boolean
+services,created_at,timestamp with time zone
+services,photos_urls,ARRAY
+services,category_ids,ARRAY
+services,variations,jsonb
+services,requires_warning,boolean
+services,warning_message,text
+services,updated_at,timestamp with time zone
+services,cost_percent,numeric
+services,is_featured,boolean
+shop_activity_log,id,uuid
+shop_activity_log,shop_id,text
+shop_activity_log,appointment_id,text
+shop_activity_log,event_type,text
+shop_activity_log,actor_type,text
+shop_activity_log,actor_name,text
+shop_activity_log,description,text
+shop_activity_log,metadata,jsonb
+shop_activity_log,created_at,timestamp with time zone
+shop_clients,id,uuid
+shop_clients,shop_id,text
+shop_clients,user_id,uuid
+shop_clients,manual_tags,ARRAY
+shop_clients,classification,text
+shop_clients,classification_override,boolean
+shop_clients,notes,text
+shop_clients,nome,text
+shop_clients,telefone,text
+shop_clients,last_updated,timestamp with time zone
+shop_monthly_stats,shop_id,text
+shop_monthly_stats,year,smallint
+shop_monthly_stats,month,smallint
+shop_monthly_stats,revenue,numeric
+shop_monthly_stats,appointments_count,integer
+shop_monthly_stats,updated_at,timestamp with time zone
+shop_views,id,uuid
+shop_views,user_id,uuid
+shop_views,shop_id,text
+shop_views,viewed_at,timestamp with time zone
+shop_whatsapp_config,id,uuid
+shop_whatsapp_config,shop_id,text
+shop_whatsapp_config,wa_phone_number_id,text
+shop_whatsapp_config,wa_business_account_id,text
+shop_whatsapp_config,wa_access_token,text
+shop_whatsapp_config,wa_webhook_verify_token,text
+shop_whatsapp_config,wa_template_confirmed_name,text
+shop_whatsapp_config,wa_template_reminder_name,text
+shop_whatsapp_config,is_active,boolean
+shop_whatsapp_config,created_at,timestamp with time zone
+shop_whatsapp_config,updated_at,timestamp with time zone
+shops,id,text
+shops,name,text
+shops,slug,text
+shops,phone,text
+shops,whatsapp,text
+shops,instagram,text
+shops,plan_id,text
+shops,city,text
+shops,state,text
+shops,zip_code,text
+shops,address,text
+shops,image_url,text
+shops,logo_url,text
+shops,verified,boolean
+shops,is_boosted,boolean
+shops,boost_expires_at,timestamp with time zone
+shops,trial_active,boolean
+shops,payment_provider,text
+shops,config,jsonb
+shops,mercadopago,jsonb
+shops,subscription,jsonb
+shops,created_at,timestamp with time zone
+shops,updated_at,timestamp with time zone
+shops,email,text
+shops,owner_id,text
+shops,banner_url,text
+shops,description,text
+shops,facebook,text
+shops,opening_hours,jsonb
+shops,rating,numeric
+shops,review_count,integer
+shops,category_id,text
+shops,category,text
+shops,niche,text
+shops,neighborhood,text
+shops,pending_holidays,jsonb
+shops,configured_holidays,jsonb
+shops,custom_holidays,jsonb
+shops,tiktok,text
+shops,youtube,text
+shops,street,text
+shops,number,text
+shops,complement,text
+shops,google_business,jsonb
+shops,notification_settings,jsonb
+shops,mp_access_token,text
+shops,fcm_token,text
+shops,fcm_updated_at,timestamp with time zone
+shops,cnpj,text
+shops,owner_notify_phone,text
+shops,boost,jsonb
+shops,services_count,integer
+shops,lat,double precision
+shops,lng,double precision
+shops,subscription_started_at,timestamp with time zone
+shops,current_period_end,timestamp with time zone
+shops,cancel_at_period_end,boolean
+shops,has_used_trial,boolean
+shops,cancellation_reason,text
+stock_movements,id,text
+stock_movements,shop_id,text
+stock_movements,product_id,text
+stock_movements,type,text
+stock_movements,delta,integer
+stock_movements,ref_id,text
+stock_movements,reason,text
+stock_movements,created_at,timestamp with time zone
+stock_movements,updated_at,timestamp with time zone
+subscription_history,id,uuid
+subscription_history,shop_id,text
+subscription_history,old_plan,text
+subscription_history,new_plan,text
+subscription_history,changed_by,uuid
+subscription_history,changed_at,timestamp with time zone
+subscription_history,reason,text
+subscription_history,source,text
+support_tickets,id,uuid
+support_tickets,ticket_number,integer
+support_tickets,title,text
+support_tickets,description,text
+support_tickets,status,text
+support_tickets,priority,text
+support_tickets,category,text
+support_tickets,source,text
+support_tickets,shop_id,text
+support_tickets,shop_name,text
+support_tickets,opened_by_user_id,uuid
+support_tickets,opened_by_name,text
+support_tickets,reporter_email,text
+support_tickets,assigned_to,uuid
+support_tickets,sla_deadline,timestamp with time zone
+support_tickets,resolved_at,timestamp with time zone
+support_tickets,closed_at,timestamp with time zone
+support_tickets,last_reply_at,timestamp with time zone
+support_tickets,last_reply_by,text
+support_tickets,has_unread_admin,boolean
+support_tickets,has_unread_client,boolean
+support_tickets,created_at,timestamp with time zone
+support_tickets,updated_at,timestamp with time zone
+support_tickets,attachments,jsonb
+ticket_history,id,uuid
+ticket_history,ticket_id,uuid
+ticket_history,actor_name,text
+ticket_history,actor_role,text
+ticket_history,action,text
+ticket_history,old_value,text
+ticket_history,new_value,text
+ticket_history,created_at,timestamp with time zone
+ticket_messages,id,uuid
+ticket_messages,ticket_id,uuid
+ticket_messages,author_id,uuid
+ticket_messages,author_name,text
+ticket_messages,author_role,text
+ticket_messages,body,text
+ticket_messages,is_internal,boolean
+ticket_messages,attachments,jsonb
+ticket_messages,created_at,timestamp with time zone
+ticket_tag_links,ticket_id,uuid
+ticket_tag_links,tag_id,uuid
+ticket_tags,id,uuid
+ticket_tags,name,text
+ticket_tags,color,text
+users,id,uuid
+users,name,text
+users,email,text
+users,phone,text
+users,role,text
+users,shop_id,text
+users,plan,text
+users,is_active,boolean
+users,created_at,timestamp with time zone
+users,updated_at,timestamp with time zone
+users,linked_shops,jsonb
+users,photo_url,text
+users,birth_date,date
+users,city,text
+users,neighborhood,text
+users,number,text
+users,street,text
+users,verified,boolean
+users,zip_code,text
+users,document_cpf,text
+users,address,text
+users,state,text
+users,gender,text
+users,bio,text
+users,birthday_locked,boolean
+users,last_birthday_discount_year,integer
+users,google_calendar,jsonb
+users,fcm_token,text
+users,fcm_updated_at,timestamp with time zone
+users,cpf,text
+users,lat,double precision
+users,lng,double precision
+vw_commission_summary,appointment_id,text
+vw_commission_summary,shop_id,text
+vw_commission_summary,employee_id,text
+vw_commission_summary,employee_name,text
+vw_commission_summary,employee_avatar,text
+vw_commission_summary,employee_commission_percent,numeric
+vw_commission_summary,service_id,text
+vw_commission_summary,service_name,text
+vw_commission_summary,service_price,numeric
+vw_commission_summary,scheduled_at,timestamp with time zone
+vw_commission_summary,month_reference,timestamp with time zone
+vw_commission_summary,commission_type,text
+vw_commission_summary,commission_value,numeric
+vw_commission_summary,commission_amount,numeric
+webhook_logs,id,text
+webhook_logs,source,text
+webhook_logs,event_type,text
+webhook_logs,resource_id,text
+webhook_logs,payload,jsonb
+webhook_logs,processed,boolean
+webhook_logs,processed_at,timestamp with time zone
+webhook_logs,error_message,text
+webhook_logs,created_at,timestamp with time zone
+whatsapp_send_errors,id,uuid
+whatsapp_send_errors,appointment_id,text
+whatsapp_send_errors,shop_id,text
+whatsapp_send_errors,error_code,text
+whatsapp_send_errors,raw_response,jsonb
+whatsapp_send_errors,attempt_number,integer
+whatsapp_send_errors,created_at,timestamp with time zone
+whatsapp_send_log,id,uuid
+whatsapp_send_log,shop_id,text
+whatsapp_send_log,to_phone,text
+whatsapp_send_log,template_name,text
+whatsapp_send_log,status,text
+whatsapp_send_log,response_json,jsonb
+whatsapp_send_log,sent_at,timestamp with time zone
+whatsapp_send_log,request_payload,jsonb

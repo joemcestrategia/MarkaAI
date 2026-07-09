@@ -186,39 +186,39 @@ class GoogleCalendarService {
       final supabase = Supabase.instance.client;
       String? accessToken;
 
-      if (employeeId != null) {
-        // Modo profissional: usa refresh token armazenado via edge function
-        _log('Modo profissional detectado, renovando token via edge function...');
+      if (employeeId != null || supabase.auth.currentUser != null) {
+        _log('Tentando renovar token via edge function (Modo backend)...');
         try {
-          final refreshRes = await supabase.functions.invoke('save-google-calendar', body: {
-            'employeeId': employeeId,
-            'action': 'refresh',
-          });
+          final bodyParams = <String, dynamic>{'action': 'refresh'};
+          if (employeeId != null) {
+            bodyParams['employeeId'] = employeeId;
+          } else {
+            bodyParams['userId'] = supabase.auth.currentUser!.id;
+          }
+
+          final refreshRes = await supabase.functions.invoke('save-google-calendar', body: bodyParams);
 
           final data = refreshRes.data as Map<String, dynamic>?;
           if (refreshRes.status == 200 && data?['success'] == true && data?['accessToken'] != null) {
             accessToken = data!['accessToken'] as String;
-            _log('Token renovado com sucesso');
+            _log('Token renovado com sucesso via backend');
           } else {
-            final errMsg = data?['error'] as String? ?? 'Edge function não retornou accessToken — verifique se a função save-google-calendar foi atualizada no Supabase (supabase functions deploy)';
-            _logError('Falha ao renovar token: $errMsg (status=${refreshRes.status})', Exception('refresh token failed'));
+            final errMsg = data?['error'] as String? ?? 'Edge function não retornou accessToken';
+            _log('Falha ao renovar token via backend: $errMsg (status=${refreshRes.status})');
           }
         } catch (e, stack) {
-          _logError('Erro ao renovar token do profissional', e, stack);
+          _logError('Erro ao renovar token via backend', e, stack);
         }
+      }
 
-        if (accessToken == null) {
-          _logError('Não foi possível obter token do profissional', Exception('no token'));
-          return counters;
-        }
-      } else {
-        // Modo owner: usa Google Sign-In do dispositivo
-        _log('Modo owner, usando Google Sign-In do dispositivo...');
+      if (accessToken == null && employeeId == null) {
+        // Fallback para o modo owner: usa Google Sign-In do dispositivo apenas se falhou via edge function
+        _log('Fallback: Modo owner, usando Google Sign-In do dispositivo...');
         final googleSignIn = _getSignIn();
         GoogleSignInAccount? gUser = await googleSignIn.signInSilently();
         gUser ??= await googleSignIn.signIn();
         if (gUser == null) {
-          _logError('Nenhuma conta Google disponível', Exception('gUser null'));
+          _logError('Nenhuma conta Google disponível e usuário cancelou o prompt', Exception('gUser null'));
           return counters;
         }
 
@@ -229,6 +229,11 @@ class GoogleCalendarService {
         }
 
         accessToken = gAuth.accessToken;
+      }
+
+      if (accessToken == null) {
+         _logError('Não foi possível obter token de acesso (nem via backend, nem via fallback local)', Exception('no token'));
+         return counters;
       }
 
       final credentials = auth.AccessCredentials(

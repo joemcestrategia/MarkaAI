@@ -11,6 +11,8 @@ import '../fiscal/nfse_service.dart';
 import '../../core/services/plan_features_service.dart';
 import 'package:flutter/services.dart';
 import 'helpers/cancellation_helper.dart';
+import '../../core/models/message_template_model.dart';
+import '../../core/services/message_template_service.dart';
 
 class AppointmentDetailsPage extends StatefulWidget {
   final Map<String, dynamic> appointmentDoc;
@@ -772,6 +774,133 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     }
   }
 
+  void _showTemplatesBottomSheet() async {
+    final phone = _selectedClientPhone?.replaceAll(RegExp(r'\D'), '');
+    if (phone == null || phone.isEmpty) {
+      _showSnackBar("Cliente sem telefone cadastrado.", isError: true);
+      return;
+    }
+
+    final shopId = _localDoc['shop_id']?.toString();
+    if (shopId == null) return;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return FutureBuilder<List<MessageTemplate>>(
+          future: MessageTemplateService().getTemplates(shopId),
+          builder: (context, snapshot) {
+            final templates = snapshot.data ?? [];
+            final isLoading = snapshot.connectionState == ConnectionState.waiting;
+
+            return Container(
+              height: MediaQuery.of(context).size.height * 0.6,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              child: Column(
+                children: [
+                  Container(
+                    margin: const EdgeInsets.only(top: 16, bottom: 8),
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.all(16.0),
+                    child: Text(
+                      "Enviar Mensagem",
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  if (isLoading)
+                    const Expanded(child: Center(child: CircularProgressIndicator()))
+                  else if (templates.isEmpty)
+                    const Expanded(child: Center(child: Text("Nenhuma mensagem configurada.")))
+                  else
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: templates.length,
+                        itemBuilder: (context, index) {
+                          final template = templates[index];
+                          return ListTile(
+                            leading: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: template.isDefault ? Colors.blue[50] : AppColors.primaryPurple.withOpacity(0.1),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(
+                                template.isDefault ? Icons.verified_rounded : Icons.mark_chat_read_rounded,
+                                color: template.isDefault ? Colors.blue[700] : AppColors.primaryPurple,
+                              ),
+                            ),
+                            title: Text(template.title, style: const TextStyle(fontWeight: FontWeight.bold)),
+                            subtitle: Text(
+                              template.isDefault ? "Padrão de Confirmação" : (template.content ?? ''),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            onTap: () async {
+                              Navigator.pop(ctx);
+                              
+                              final nomeCompleto = _selectedClientName ?? 'cliente';
+                              final primeiroNome = nomeCompleto.trim().split(' ').first;
+                              final date = _selectedDate;
+                              final time = _selectedTime;
+                              String diaStr = '';
+                              String horaStr = '';
+                              if (date != null) {
+                                final weekdays = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'];
+                                final diaSemana = weekdays[date.weekday - 1];
+                                final dia = date.day.toString().padLeft(2, '0');
+                                final mes = date.month.toString().padLeft(2, '0');
+                                diaStr = '$diaSemana, $dia/$mes';
+                              }
+                              if (time != null) {
+                                final h = time.hour.toString().padLeft(2, '0');
+                                final m = time.minute.toString().padLeft(2, '0');
+                                horaStr = '$h:$m';
+                              }
+                              final servico = (_selectedServiceName != null && _selectedServiceName!.isNotEmpty)
+                                  ? _selectedServiceName!
+                                  : 'serviço';
+
+                              final rawMsg = template.generateFullMessage(
+                                clientName: primeiroNome,
+                                serviceName: servico,
+                                dateStr: diaStr,
+                                timeStr: horaStr,
+                              );
+
+                              final msg = Uri.encodeComponent(rawMsg);
+                              final url = 'https://wa.me/55$phone?text=$msg';
+                              if (await canLaunchUrl(Uri.parse(url))) {
+                                await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+                                if (template.isDefault && mounted) {
+                                  setState(() => _confirmationSent = true);
+                                }
+                              }
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   /// Exibe um Snackbar sempre na camada raiz da UI, mesmo quando este widget
   /// está embutido dentro de uma modal ou painel lateral.
   void _showSnackBar(String message, {bool isError = false}) {
@@ -1143,41 +1272,9 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
                           child: const Icon(Icons.chat_rounded, size: 16),
                         ),
                         const SizedBox(width: 6),
-                        // Botão de confirmação de agenda
+                        // Botão de confirmação de agenda / Mensagens
                         ElevatedButton(
-                          onPressed: _confirmationSent ? null : () async {
-                            final phone = _selectedClientPhone!
-                                .replaceAll(RegExp(r'\D'), '');
-                            final nomeCompleto = _selectedClientName ?? 'cliente';
-                            final primeiroNome = nomeCompleto.trim().split(' ').first;
-                            final date = _selectedDate;
-                            final time = _selectedTime;
-                            String diaStr = '';
-                            String horaStr = '';
-                            if (date != null) {
-                              final weekdays = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'];
-                              final diaSemana = weekdays[date.weekday - 1];
-                              final dia = date.day.toString().padLeft(2, '0');
-                              final mes = date.month.toString().padLeft(2, '0');
-                              diaStr = '$diaSemana, $dia/$mes';
-                            }
-                            if (time != null) {
-                              final h = time.hour.toString().padLeft(2, '0');
-                              final m = time.minute.toString().padLeft(2, '0');
-                              horaStr = '$h:$m';
-                            }
-                            final servico = (_selectedServiceName != null && _selectedServiceName!.isNotEmpty)
-                                ? _selectedServiceName!
-                                : 'serviço';
-                            final msg = Uri.encodeComponent(
-                              'Olá, $primeiroNome! 😊\n\nPassando para confirmar seu agendamento:\n\n✂️ $servico\n📅 $diaStr às $horaStr\n\nTe esperamos! Qualquer dúvida é só falar. 🙏',
-                            );
-                            final url = 'https://wa.me/55$phone?text=$msg';
-                            if (await canLaunchUrl(Uri.parse(url))) {
-                              await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-                              if (mounted) setState(() => _confirmationSent = true);
-                            }
-                          },
+                          onPressed: _confirmationSent ? null : _showTemplatesBottomSheet,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: _confirmationSent ? Colors.grey[400] : Colors.blue[700],
                             foregroundColor: Colors.white,
@@ -2084,10 +2181,51 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
         body['amount'] = refundValue.toString();
       }
 
-      final response = await Supabase.instance.client.functions.invoke(
-        'processRefund',
-        body: body,
-      );
+      FunctionResponse? response;
+      try {
+        response = await Supabase.instance.client.functions.invoke(
+          'processRefund',
+          body: body,
+        );
+      } on FunctionException catch (fe) {
+        // O Supabase SDK lança FunctionException para status 4xx/5xx
+        // Extraímos o corpo de erro para exibir mensagem específica
+        if (mounted) {
+          final details = fe.details;
+          String errorMsg = 'Erro desconhecido.';
+          if (details is Map) {
+            errorMsg = details['error']?.toString() ?? errorMsg;
+          } else if (details is String) {
+            errorMsg = details;
+          }
+
+          final status = fe.status;
+          if (status == 403) {
+            _showResultDialog('Sem Permissão', '🔒 Apenas o dono da loja pode realizar estornos financeiros.');
+          } else if (status == 401) {
+            _showResultDialog('Não Autenticado', '🔑 Sua sessão expirou. Faça login novamente.');
+          } else if (status == 404) {
+            _showResultDialog('Não Encontrado', '🔍 Agendamento não encontrado no sistema.');
+          } else if (status == 409) {
+            _showResultDialog('Em Processamento', '⏳ Este estorno já está sendo processado. Aguarde alguns instantes e atualize a tela.');
+          } else if (status == 412) {
+            _showResultDialog('Mercado Pago não configurado', '💳 A conta do Mercado Pago não está conectada a esta loja.\n\nAcesse Configurações → Mercado Pago para conectar sua conta.');
+          } else if (status == 400) {
+            _showResultDialog('Dados Inválidos', '⚠️ $errorMsg');
+          } else if (status == 502) {
+            _showResultDialog('Erro de Comunicação', '🌐 Falha na comunicação com o Mercado Pago.\n\n$errorMsg\n\nTente novamente em alguns instantes.');
+          } else if (status == 500 && errorMsg.contains('Mercado Pago com sucesso')) {
+            // MP processou mas banco falhou — atualizar UI parcialmente
+            setState(() { _localDoc['refund_status'] = 'processando'; });
+            widget.onAppointmentUpdated?.call(_localDoc);
+            _showResultDialog('Alerta Importante', '⚠️ $errorMsg');
+          } else {
+            // Erro genérico do MP com mensagem da API
+            _showResultDialog('Recusado pelo Mercado Pago', '❌ $errorMsg');
+          }
+        }
+        return;
+      }
 
       final responseData = response.data;
 
@@ -2104,28 +2242,13 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
           _showResultDialog('Sucesso', '✅ Estorno de R\$ ${double.tryParse(refundedAmount.toString())?.toStringAsFixed(2) ?? refundedAmount} processado com sucesso no Mercado Pago!');
         }
       } else {
-        // Erro vindo da Edge Function
+        // Casos de erro não lançados como exception (improvável, mas defensivo)
         final errorMsg = responseData?['error']?.toString() ?? 'Erro desconhecido ao processar estorno.';
-        
-        // Se é 409 (concorrência) ou 502 (rede), mensagem específica
-        if (response.status == 409) {
-          if (mounted) _showResultDialog('Aviso', '⏳ Este estorno já está em processamento. Aguarde.');
-        } else if (response.status == 502) {
-          if (mounted) _showResultDialog('Erro de Comunicação', '🌐 Falha na comunicação com o Mercado Pago: $errorMsg\n\nTente novamente mais tarde.');
-        } else if (response.status == 500 && errorMsg.contains('Mercado Pago com sucesso')) {
-          // Caso especial: MP processou mas banco falhou — atualizar UI parcialmente
-          setState(() {
-            _localDoc['refund_status'] = 'processando';
-          });
-          widget.onAppointmentUpdated?.call(_localDoc);
-          if (mounted) _showResultDialog('Alerta', '⚠️ $errorMsg');
-        } else {
-          if (mounted) _showResultDialog('Erro no Mercado Pago', '❌ O Mercado Pago recusou o estorno:\n\n$errorMsg');
-        }
+        if (mounted) _showResultDialog('Erro no Mercado Pago', '❌ $errorMsg');
       }
     } catch (e) {
       if (mounted) {
-        _showResultDialog('Erro Inesperado', '❌ Ocorreu um erro interno ao chamar o estorno: $e');
+        _showResultDialog('Erro Inesperado', '❌ Ocorreu um erro interno: ${e.toString().replaceAll(RegExp(r'FunctionException\(.*?\)'), '').trim()}');
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);

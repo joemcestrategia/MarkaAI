@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/services/auth_service.dart';
+import '../../core/services/google_calendar_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 import '../../core/services/plan_features_service.dart';
@@ -22,6 +23,7 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
   late PlanFeatures _currentFeatures = planFeaturesConfig[PlanKey.free]!;
   int _currentEmployeeCount = 0;
   int _refreshKey = 0;
+  bool _isSyncingAll = false;
 
   // Controle do Painel Lateral (Apenas Desktop)
   bool _showPanel = false;
@@ -51,6 +53,85 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
       debugPrint('❌ Erro ao salvar prioridades de escala: $e');
     } finally {
       if (mounted) setState(() => _isSavingPriority = false);
+    }
+  }
+
+  Future<void> _syncAllSchedules() async {
+    if (shopId == null) return;
+    setState(() => _isSyncingAll = true);
+    try {
+      final supabase = sb.Supabase.instance.client;
+      final shopDoc = await supabase.from('shops').select('name').eq('id', shopId!).maybeSingle();
+      final shopName = shopDoc?['name'] ?? 'MarkaAI';
+
+      // 1. Sync Owner
+      final user = AuthService().currentUser;
+      if (user != null) {
+        final doc = await supabase.from('users').select('google_calendar').eq('id', user.id).maybeSingle();
+        final gcal = doc?['google_calendar'] as Map<String, dynamic>?;
+        if (gcal != null && gcal['connected'] == true) {
+          final activeAppts = await supabase.from('appointments').select('id, scheduled_at, end_at, duration_min, client_name, service_name, professional_name, google_calendar_event_id, status').eq('shop_id', shopId!).inFilter('status', ['agendado', 'confirmado', 'pendente', 'pendente_verificacao', 'pendente_pix', 'aguardando_confirmacao']).isFilter('google_calendar_event_id', null);
+          
+          final updateAppts = await supabase.from('appointments').select('id, scheduled_at, end_at, duration_min, client_name, service_name, professional_name, google_calendar_event_id, status').eq('shop_id', shopId!).inFilter('status', ['agendado', 'confirmado', 'pendente', 'pendente_verificacao', 'pendente_pix', 'aguardando_confirmacao']).not('google_calendar_event_id', 'is', null);
+
+          final delAppts = await supabase.from('appointments').select('id, google_calendar_event_id, status').eq('shop_id', shopId!).inFilter('status', ['cancelado', 'rejeitado', 'recusado', 'excluido']).not('google_calendar_event_id', 'is', null);
+
+          final toDelete = (delAppts as List).map((a) => a['google_calendar_event_id'] as String).toList();
+          
+          await GoogleCalendarService.syncAll(
+            toCreate: List<Map<String, dynamic>>.from(activeAppts),
+            toUpdate: List<Map<String, dynamic>>.from(updateAppts),
+            eventIdsToDelete: toDelete,
+            shopName: shopName,
+            eventIdCol: 'google_calendar_event_id',
+            employeeId: null,
+          );
+          
+          for (final a in delAppts) {
+            await supabase.from('appointments').update({'google_calendar_event_id': null}).eq('id', a['id']);
+          }
+        }
+      }
+
+      // 2. Sync Profissionais
+      final profs = await supabase.from('employees').select('id, google_calendar').eq('shop_id', shopId!);
+      for (final prof in profs) {
+        final gcal = prof['google_calendar'] as Map<String, dynamic>?;
+        if (gcal != null && gcal['connected'] == true) {
+          final eventIdCol = (gcal.containsKey('tokenExpiry')) ? 'google_calendar_event_id' : 'prof_gcal_event_id';
+          
+          final activeAppts = await supabase.from('appointments').select('id, scheduled_at, end_at, duration_min, client_name, service_name, professional_name, google_calendar_event_id, prof_gcal_event_id, status').eq('shop_id', shopId!).eq('professional_id', prof['id']).inFilter('status', ['agendado', 'confirmado', 'pendente', 'pendente_verificacao', 'pendente_pix', 'aguardando_confirmacao']).isFilter(eventIdCol, null);
+          
+          final updateAppts = await supabase.from('appointments').select('id, scheduled_at, end_at, duration_min, client_name, service_name, professional_name, google_calendar_event_id, prof_gcal_event_id, status').eq('shop_id', shopId!).eq('professional_id', prof['id']).inFilter('status', ['agendado', 'confirmado', 'pendente', 'pendente_verificacao', 'pendente_pix', 'aguardando_confirmacao']).not(eventIdCol, 'is', null);
+
+          final delAppts = await supabase.from('appointments').select('id, google_calendar_event_id, prof_gcal_event_id, status').eq('shop_id', shopId!).eq('professional_id', prof['id']).inFilter('status', ['cancelado', 'rejeitado', 'recusado', 'excluido']).not(eventIdCol, 'is', null);
+
+          final toDelete = (delAppts as List).map((a) => a[eventIdCol] as String).toList();
+          
+          await GoogleCalendarService.syncAll(
+            toCreate: List<Map<String, dynamic>>.from(activeAppts),
+            toUpdate: List<Map<String, dynamic>>.from(updateAppts),
+            eventIdsToDelete: toDelete,
+            shopName: shopName,
+            eventIdCol: eventIdCol,
+            employeeId: prof['id'],
+          );
+          
+          for (final a in delAppts) {
+            await supabase.from('appointments').update({eventIdCol: null}).eq('id', a['id']);
+          }
+        }
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Agendas sincronizadas com sucesso!'), backgroundColor: Colors.green));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao sincronizar agendas: $e'), backgroundColor: Colors.red));
+      }
+    } finally {
+      if (mounted) setState(() => _isSyncingAll = false);
     }
   }
 
@@ -262,6 +343,29 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
                 ),
               ),
               const SizedBox(width: 16),
+              if (!isMobile)
+                OutlinedButton.icon(
+                  onPressed: _isSyncingAll ? null : _syncAllSchedules,
+                  icon: _isSyncingAll 
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primaryPurple))
+                    : const Icon(Icons.sync_rounded, size: 20),
+                  label: const Text("SINCRONIZAR", style: TextStyle(fontWeight: FontWeight.w600)),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.primaryPurple,
+                    side: BorderSide(color: AppColors.primaryPurple.withValues(alpha: 0.5)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  ),
+                ),
+              if (!isMobile) const SizedBox(width: 12),
+              if (isMobile)
+                IconButton(
+                  onPressed: _isSyncingAll ? null : _syncAllSchedules,
+                  icon: _isSyncingAll 
+                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primaryPurple))
+                    : const Icon(Icons.sync_rounded, color: AppColors.primaryPurple),
+                  tooltip: "Sincronizar Agendas",
+                ),
               ElevatedButton.icon(
                 onPressed: () => _handleMemberTap(context, null, isMobile),
                 icon: const Icon(Icons.add_rounded, size: 20),

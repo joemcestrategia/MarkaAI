@@ -217,6 +217,14 @@ class _BusinessProfilePageState extends State<BusinessProfilePage> {
   Future<void> _saveData() async {
     if (!_formKey.currentState!.validate()) return;
 
+    if (_phoneCtrl.text.length < 14) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('⚠️ Informe um telefone válido com DDD (no mínimo 14 caracteres).'),
+        backgroundColor: Colors.red,
+      ));
+      return;
+    }
+
     // Validação extra para cidade e estado (campos obrigatórios)
     final cidade = _cidadeCtrl.text.trim();
     final estado = _estadoSelecionado;

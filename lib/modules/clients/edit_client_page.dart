@@ -276,6 +276,16 @@ class _EditClientPageState extends State<EditClientPage> {
   }
 
   Future<void> _save() async {
+    if (_phoneController.text.length < 14) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text(
+                "O telefone deve ter no mínimo 14 caracteres (incluindo DDD)."),
+            backgroundColor: Colors.red),
+      );
+      return;
+    }
+
     setState(() => _isLoading = true);
     try {
       DateTime? parsedBirth;

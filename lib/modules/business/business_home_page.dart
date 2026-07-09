@@ -31,6 +31,7 @@ import '../login/login_page.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import '../../services/update_service.dart';
+import '../../pages/update_page.dart';
 
 // --- MÓDULOS ---
 import '../services/services_management_page.dart';
@@ -102,6 +103,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   // Dados da loja vindos do stream (evita múltiplos StreamBuilders)
   int _pendingHolidaysCount = 0;
   String _appVersion = '';
+  UpdateInfo? _updateInfo;
 
   // Cached futures para evitar re-fetch em cada rebuild
   Future<List<Map<String, dynamic>>>? _statsFuture;
@@ -113,7 +115,6 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   List<Map<String, dynamic>> _statsCache = [];
   int _lastDashboardYear = -999; 
   int _lastDashboardMonth = -999;
-
 
   sb.RealtimeChannel? _appointmentsChannel;
   sb.RealtimeChannel? _conversationsChannel;
@@ -134,8 +135,11 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   Future<void> _loadAppVersion() async {
     try {
       final PackageInfo packageInfo = await PackageInfo.fromPlatform();
+      final updateInfo = await UpdateService.checkForUpdate();
+      
       if (mounted) {
         setState(() {
+          _updateInfo = updateInfo;
           if (packageInfo.version.isNotEmpty && packageInfo.version != 'Unknown') {
             _appVersion = packageInfo.buildNumber.isNotEmpty 
                 ? '${packageInfo.version}+${packageInfo.buildNumber}'
@@ -1776,6 +1780,58 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                         _appVersion.isNotEmpty ? "Versão $_appVersion" : "Versão 1.8.1+3",
                         style: TextStyle(color: Colors.grey[500], fontSize: 11),
                       ),
+                      const SizedBox(height: 8),
+                      if (_updateInfo != null)
+                        GestureDetector(
+                          onTap: () {
+                            Navigator.pop(context);
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => UpdatePage(updateInfo: _updateInfo!),
+                                fullscreenDialog: true,
+                              ),
+                            );
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: Colors.orange.withOpacity(0.5)),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.system_update_alt, size: 12, color: Colors.orange),
+                                SizedBox(width: 4),
+                                Text(
+                                  "Desatualizado - Atualizar",
+                                  style: TextStyle(color: Colors.orange, fontSize: 10, fontWeight: FontWeight.bold),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                      else
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.green.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.check_circle, size: 12, color: Colors.green),
+                              SizedBox(width: 4),
+                              Text(
+                                "Atualizado",
+                                style: TextStyle(color: Colors.green, fontSize: 10, fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+                        ),
                       if (isFree || isTrial) ...[
                         const SizedBox(height: 12),
                         SizedBox(

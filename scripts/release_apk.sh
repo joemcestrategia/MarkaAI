@@ -49,7 +49,7 @@ fi
 echo "Versão detectada: $VERSION_NAME (Build: $VERSION_CODE)"
 
 echo "Construindo APK (release)..."
-flutter build apk --release
+# flutter build apk --release
 
 APK_PATH="build/app/outputs/flutter-apk/app-release.apk"
 if [ ! -f "$APK_PATH" ]; then

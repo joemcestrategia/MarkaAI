@@ -134,7 +134,7 @@ class _BusinessOnboardingPageState extends State<BusinessOnboardingPage> {
   }
 
   Future<void> _finalizarCadastroEmpresa() async {
-    if (_telefoneController.text.isEmpty) return;
+    if (_telefoneController.text.length < 14) return;
 
     final supabase = sb.Supabase.instance.client;
     final currentUser = supabase.auth.currentUser;
@@ -361,7 +361,15 @@ class _BusinessOnboardingPageState extends State<BusinessOnboardingPage> {
             btnText: "FINALIZAR E ABRIR PAINEL",
             isLoading: _isSaving,
             onNext: () {
-              if (_telefoneController.text.isEmpty) return;
+              if (_telefoneController.text.length < 14) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('📱 Informe um número de telefone válido com DDD.'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+                return;
+              }
               if (_cidadeController.text.trim().isEmpty ||
                   _estadoSelecionado == null) {
                 ScaffoldMessenger.of(context).showSnackBar(

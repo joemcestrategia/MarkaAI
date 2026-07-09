@@ -137,7 +137,7 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
           setState(() {
             _existingRole = doc['role'];
             _nameController.text = doc['name'] ?? '';
-            _phoneController.text = doc['phone'] ?? '';
+            _phoneController.text = phoneMask.maskText(doc['phone'] ?? '');
             _cepController.text = doc['zip_code'] ?? '';
             _addressController.text = doc['street'] ?? doc['address'] ?? '';
             _numberController.text = doc['number'] ?? '';
@@ -261,11 +261,11 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
     if (rawPhone.isEmpty) {
       rawPhone = _phoneController.text.replaceAll(RegExp(r'\D'), '');
     }
-    if (rawPhone.length < 10) {
+    if (_phoneController.text.length < 14) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
             content: Text(
-                "O telefone deve ter formato de celular (11) ou fixo (10) dígitos."),
+                "O telefone deve ter no mínimo 14 caracteres (incluindo DDD)."),
             backgroundColor: Colors.red),
       );
       return;
@@ -478,12 +478,8 @@ class _ClientRegisterPageState extends State<ClientRegisterPage> {
                       }
                     },
                     validator: (v) {
-                      String unmasked = phoneMask.getUnmaskedText();
-                      if (unmasked.isEmpty) {
-                        unmasked = v!.replaceAll(RegExp(r'\D'), '');
-                      }
-                      return unmasked.length < 10
-                          ? "Telefone incompleto"
+                      return v!.length < 14
+                          ? "Telefone incompleto. Insira o DDD e o número."
                           : null;
                     }),
                 const SizedBox(height: 16),
