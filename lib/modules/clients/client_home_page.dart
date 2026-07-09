@@ -33,6 +33,7 @@ import '../../core/widgets/pexels_image_widget.dart';
 import '../../core/services/ad_service.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import '../../core/widgets/shared_bottom_nav_bar.dart';
+import '../../services/update_service.dart';
 
 class ClientHomePage extends StatefulWidget {
   final int initialTabIndex;
@@ -100,6 +101,10 @@ class _ClientHomePageState extends State<ClientHomePage> {
     _loadUserData();
     _loadCidadeSalva();
     _setupNotifications();
+    
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      UpdateService.checkForUpdateAndPrompt(context);
+    });
   }
 
   @override

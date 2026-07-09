@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'catalog_import_page.dart';
+import 'message_templates_page.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'store_profile_page.dart';
@@ -29,6 +30,7 @@ import '../../core/services/mercado_pago_service.dart';
 import '../login/login_page.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import '../../services/update_service.dart';
 
 // --- MÓDULOS ---
 import '../services/services_management_page.dart';
@@ -123,6 +125,10 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     _checkBusinessAndLoad();
     _setupForegroundNotifications();
     _loadAppVersion();
+    
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      UpdateService.checkForUpdateAndPrompt(context);
+    });
   }
 
   Future<void> _loadAppVersion() async {
@@ -1625,6 +1631,17 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                   trailing: !_currentFeatures.coupons
                       ? const Icon(Icons.lock, size: 16, color: Colors.grey)
                       : null,
+                ),
+                _buildDrawerItem(
+                  icon: Icons.chat_bubble_outline_rounded,
+                  title: "Mensagens Padrões",
+                  index: -1,
+                  onTap: () {
+                    Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => MessageTemplatesPage(shopId: shopId ?? "")));
+                  },
                 ),
                 _buildDrawerItem(
                   icon: Icons.map_rounded,

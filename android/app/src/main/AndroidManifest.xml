@@ -8,6 +8,7 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <!-- Permission to send native notifications (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:label="MarkaAI"
@@ -81,6 +82,16 @@
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
             android:value="ca-app-pub-4304690293754093~6073797484"/>
+            
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileProvider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
         
 
     </application>
