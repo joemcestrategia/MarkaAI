@@ -310,17 +310,6 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    if (!appointmentId) {
-      console.error(
-        `[mpPaymentWebhook] Agendamento não encontrado — payment_id: ${paymentId}, external_ref: ${externalRef}`,
-      )
-      // Retornamos 200 para o MP não reenviar infinitamente
-      return new Response(
-        JSON.stringify({ ok: false, message: 'Agendamento não encontrado', payment_id: paymentId }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      )
-    }
-
     const paidAmount = paymentData.transaction_amount ?? 0
 
     // -----------------------------------------------------------------------
@@ -333,7 +322,8 @@ Deno.serve(async (req: Request) => {
         appointment_id: appointmentId,
         shop_id: shopId,
         amount: paidAmount,
-        status: paymentData.status
+        status: paymentData.status,
+        ...(appointmentId ? {} : { orphan_reason: 'appointment_not_found' })
       })
 
     // Se violar a PRIMARY KEY (código 23505), já processamos este webhook
@@ -351,6 +341,17 @@ Deno.serve(async (req: Request) => {
           headers: { 'Content-Type': 'application/json' },
         })
       }
+    }
+
+    if (!appointmentId) {
+      console.error(
+        `[mpPaymentWebhook] Agendamento não encontrado (Registrado como órfão) — payment_id: ${paymentId}, external_ref: ${externalRef}`,
+      )
+      // Retornamos 200 para o MP não reenviar infinitamente
+      return new Response(
+        JSON.stringify({ ok: false, message: 'Agendamento não encontrado. Pagamento salvo como órfão.', payment_id: paymentId }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
     }
 
     // -----------------------------------------------------------------------
@@ -388,10 +389,10 @@ Deno.serve(async (req: Request) => {
       let newPaidAmount = currentAppt?.paid_amount ?? 0
       let isSecondPayment = false
       
-      if (currentAppt?.payment_id && currentAppt.payment_id !== paymentId.toString()) {
+      if (currentAppt?.payment_id && currentAppt.payment_id.toString() !== paymentId.toString()) {
         isSecondPayment = true
         const meta = currentAppt?.metadata || {}
-        if (meta.completion_payment_id !== paymentId.toString()) {
+        if (meta.completion_payment_id?.toString() !== paymentId.toString()) {
           newPaidAmount += paidAmount
         }
       } else {
@@ -420,12 +421,26 @@ Deno.serve(async (req: Request) => {
           completion_payment_id: paymentId,
           completion_payment_method: realPaymentMethod,
           completion_paid_at: new Date().toISOString(),
+          completion_payment_amount: paidAmount,
           valor_pago: newPaidAmount,
           restante_a_pagar: remainingAmount,
         }
       } else {
         updatePayload.payment_id = paymentId
         updatePayload.payment_method = realPaymentMethod
+        const currentMeta = currentAppt?.metadata || {}
+        if (newPaidAmount < (totalPayable - 0.05)) {
+          updatePayload.metadata = {
+            ...currentMeta,
+            advance_payment_amount: paidAmount
+          }
+        } else {
+          updatePayload.metadata = {
+            ...currentMeta,
+            full_payment_amount: paidAmount,
+            full_payment_method: realPaymentMethod
+          }
+        }
       }
 
       const { error: updateError } = await supabase

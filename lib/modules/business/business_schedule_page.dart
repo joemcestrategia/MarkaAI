@@ -14,7 +14,9 @@ import '../../core/utils/work_schedule.dart';
 import '../../core/services/shop_data_cache_service.dart';
 import '../../core/services/schedule_cache_service.dart';
 import '../../core/services/transaction_autocomplete_service.dart';
+import '../../core/services/privacy_service.dart';
 import '../fiscal/nfse_service.dart';
+import '../../utils/payment_summary.dart';
 
 class BusinessSchedulePage extends StatefulWidget {
   final String shopId;
@@ -41,6 +43,16 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
   final Map<String, GlobalKey> _appointmentKeys = {};
   String? _highlightedAppointmentId;
   bool _initialScrollDone = false;
+
+  String _formatHourMinute(dynamic isoString) {
+    if (isoString == null) return '';
+    try {
+      final d = DateTime.parse(isoString.toString()).toLocal();
+      return '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+    } catch (_) {
+      return '';
+    }
+  }
 
   // Holidays state
   List<dynamic> _nationalHolidays = [];
@@ -127,7 +139,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
       _startFromSelectedDay = true;
       final now = DateTime.now();
       final startOfWeek = now.subtract(Duration(days: now.weekday - 1));
-      _startFromDate = DateTime(startOfWeek.year, startOfWeek.month, startOfWeek.day);
+      _startFromDate = DateTime(now.year, now.month, now.day);
       final endOfWeek = startOfWeek.add(const Duration(days: 6));
       _weekEndDate = DateTime(endOfWeek.year, endOfWeek.month, endOfWeek.day, 23, 59, 59);
       // Carrega a semana atual imediatamente (inclui agendamentos futuros da semana)
@@ -281,9 +293,31 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
   // 🗓 CARGA POR MÊS: carrega todos os agendamentos do mês exibido no calendário
   Future<void> _loadAppointmentsForMonth(DateTime month) async {
     if (_isLoading) return;
+
+    final startOfMonth = DateTime(month.year, month.month, 1);
+    final endOfMonth = DateTime(month.year, month.month + 1, 0, 23, 59, 59);
+
+    // Stale-While-Revalidate: Busca no cache local primeiro
+    final cachedForMonth = _docCache.values.where((doc) {
+      final rawSA = doc['scheduled_at'];
+      if (rawSA == null) return false;
+      final date = rawSA is DateTime ? rawSA : DateTime.parse(rawSA.toString());
+      final dateKey = DateTime(date.year, date.month, date.day);
+      return !dateKey.isBefore(startOfMonth) && !dateKey.isAfter(endOfMonth);
+    }).toList();
+
+    cachedForMonth.sort((a, b) {
+      final da = a['scheduled_at'] is DateTime ? a['scheduled_at'] : DateTime.parse(a['scheduled_at'].toString());
+      final db = b['scheduled_at'] is DateTime ? b['scheduled_at'] : DateTime.parse(b['scheduled_at'].toString());
+      return da.compareTo(db);
+    });
+
     setState(() {
-      _isLoading = true;
-      _appointments = [];
+      // Se não tem cache, mostra o loading. Se tem, já exibe na tela enquanto busca no fundo.
+      if (cachedForMonth.isEmpty) {
+        _isLoading = true;
+      }
+      _appointments = List<Map<String, dynamic>>.from(cachedForMonth);
       _lastDocument = null;
       _firstDocument = null;
       _hasMore = true;
@@ -292,13 +326,10 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
       _showOnlySelectedDay = false;
     });
 
-    final startOfMonth = DateTime(month.year, month.month, 1);
-    final endOfMonth = DateTime(month.year, month.month + 1, 0, 23, 59, 59);
-
     try {
       final snapshot = await sb.Supabase.instance.client
           .from('appointments')
-          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, payment_id, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name, created_by, refund_status, refund_amount, refunded_at, refunded_by')
+          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, payment_id, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name, created_by, refund_status, refund_amount, refunded_at, refunded_by, confirmation_state, whatsapp_reminder_status, whatsapp_reminder_sent_at, whatsapp_reminder_failed_at, whatsapp_reminder_confirmed_at')
           .eq('shop_id', widget.shopId)
           .neq('status', 'pre_reserva')
           .gte('scheduled_at', startOfMonth.toIso8601String())
@@ -309,6 +340,8 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
       await _enrichClientNames(snapshot);
       if (mounted) {
         setState(() {
+          // Clear cached items and replace with fresh data from server
+          _appointments.clear();
           for (var d in snapshot) {
             _addToCache(d);
             _appointments.add(d);
@@ -341,7 +374,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
 
     try {
       final client = sb.Supabase.instance.client;
-      var query = client.from('appointments').select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, payment_id, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name, created_by, refund_status, refund_amount, refunded_at, refunded_by').eq('shop_id', widget.shopId).neq('status', 'pre_reserva');
+      var query = client.from('appointments').select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, payment_id, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name, created_by, refund_status, refund_amount, refunded_at, refunded_by, confirmation_state, whatsapp_reminder_status, whatsapp_reminder_sent_at, whatsapp_reminder_failed_at, whatsapp_reminder_confirmed_at').eq('shop_id', widget.shopId).neq('status', 'pre_reserva');
 
       // Simple implementation: load first page
       if (_startFromSelectedDay && _startFromDate != null && _weekEndDate != null) {
@@ -398,7 +431,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
       
       var query = sb.Supabase.instance.client
           .from('appointments')
-          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, payment_id, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name, created_by, refund_status, refund_amount, refunded_at, refunded_by')
+          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, payment_id, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name, created_by, refund_status, refund_amount, refunded_at, refunded_by, confirmation_state, whatsapp_reminder_status, whatsapp_reminder_sent_at, whatsapp_reminder_failed_at, whatsapp_reminder_confirmed_at')
           .eq('shop_id', widget.shopId)
           .neq('status', 'pre_reserva')
           .gt('scheduled_at', lastDate);
@@ -450,7 +483,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
 
       var query = sb.Supabase.instance.client
           .from('appointments')
-          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, payment_id, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name, created_by, refund_status, refund_amount, refunded_at, refunded_by')
+          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, payment_id, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name, created_by, refund_status, refund_amount, refunded_at, refunded_by, confirmation_state, whatsapp_reminder_status, whatsapp_reminder_sent_at, whatsapp_reminder_failed_at, whatsapp_reminder_confirmed_at')
           .eq('shop_id', widget.shopId)
           .neq('status', 'pre_reserva')
           .lt('scheduled_at', firstDate);
@@ -784,8 +817,13 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                                   final sData = service;
                                   return DropdownMenuItem<String>(
                                     value: service['id'].toString(),
-                                    child: Text(
-                                        '${sData['name'] ?? sData['nome']} - R\$ ${sData['price'] ?? sData['preco']}'),
+                                    child: ValueListenableBuilder<bool>(
+                                      valueListenable: PrivacyService.instance.isHiddenNotifier,
+                                      builder: (context, isHidden, _) => Text(
+                                        isHidden 
+                                          ? '${sData['name'] ?? sData['nome']} - R\$ *****'
+                                          : '${sData['name'] ?? sData['nome']} - R\$ ${sData['price'] ?? sData['preco']}'),
+                                    ),
                                   );
                                 }).toList(),
                                 onChanged: (value) {
@@ -1866,7 +1904,13 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                                                 return ListTile(
                                                   dense: true,
                                                   title: Text(option['name'] ?? option['nome'] ?? '', style: const TextStyle(fontSize: 13)),
-                                                  subtitle: Text('R\$ ${option['price'] ?? option['preco']}', style: const TextStyle(fontSize: 11)),
+                                                  subtitle: ValueListenableBuilder<bool>(
+                                                    valueListenable: PrivacyService.instance.isHiddenNotifier,
+                                                    builder: (context, isHidden, _) => Text(
+                                                      isHidden ? 'R\$ *****' : 'R\$ ${option['price'] ?? option['preco']}',
+                                                      style: const TextStyle(fontSize: 11)
+                                                    ),
+                                                  ),
                                                   onTap: () => onSelected(option),
                                                 );
                                               },
@@ -2309,16 +2353,17 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                               .where(_shouldShowAppointment)
                               .toList();
 
-                          return filteredAppointments.isEmpty
+                          final groupedItems = _buildGroupedListItems(
+                            appointments: filteredAppointments,
+                            isDesktop: true,
+                          );
+                          return groupedItems.isEmpty
                               ? _buildEmptyState()
                               : ListView(
                                   controller: _scrollController,
                                   padding: const EdgeInsets.only(
                                       top: 10, bottom: 20),
-                                  children: _buildGroupedListItems(
-                                    appointments: filteredAppointments,
-                                    isDesktop: true,
-                                  ),
+                                  children: groupedItems,
                                 );
                         }(),
                 ),
@@ -2393,14 +2438,16 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
       }).toList();
     }
 
-    if (filteredAppointments.isEmpty) {
-      return SliverFillRemaining(child: _buildEmptyState());
-    }
-
     final flat = _buildGroupedListItems(
       appointments: filteredAppointments,
       isDesktop: false,
     );
+
+    final hasContent = flat.isNotEmpty;
+
+    if (!hasContent) {
+      return SliverFillRemaining(child: _buildEmptyState());
+    }
 
     return SliverList(
         delegate: SliverChildBuilderDelegate((context, index) {
@@ -2434,8 +2481,8 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
           final startStr = b['start']?.toString();
           final endStr = b['end']?.toString();
           if (startStr != null && endStr != null) {
-            final start = DateTime.parse(startStr);
-            final end = DateTime.parse(endStr);
+            final start = DateTime.parse(startStr).toLocal();
+            final end = DateTime.parse(endStr).toLocal();
             
             for (var dt = DateTime(start.year, start.month, start.day); 
                  !dt.isAfter(end); 
@@ -2509,7 +2556,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
         flat.add(Padding(
           padding: isDesktop
               ? const EdgeInsets.fromLTRB(0, 20, 0, 10)
-              : const EdgeInsets.fromLTRB(16, 12, 16, 6),
+              : const EdgeInsets.fromLTRB(16, 6, 16, 2),
           child: Container(
             key: headerKey,
             child: Row(
@@ -2531,12 +2578,15 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                           color: AppColors.primaryPurple.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(6),
                         ),
-                        child: Text(
-                          "Total: ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(dayTotal)}",
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.primaryPurple,
+                        child: ValueListenableBuilder<bool>(
+                          valueListenable: PrivacyService.instance.isHiddenNotifier,
+                          builder: (context, isHidden, _) => Text(
+                            isHidden ? "Total: R\$ *****" : "Total: ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(dayTotal)}",
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.primaryPurple,
+                            ),
                           ),
                         ),
                       ),
@@ -2846,6 +2896,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     return Column(
       children: [
         TableCalendar(
+          rowHeight: 42, // <-- Altura reduzida das células dos dias
           locale: 'pt_BR',
           firstDay: DateTime.utc(2020, 1, 1),
           lastDay: DateTime.utc(2030, 12, 31),
@@ -2974,8 +3025,8 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                     final startStr = b['start']?.toString();
                     final endStr = b['end']?.toString();
                     if (startStr != null && endStr != null) {
-                      final start = DateTime.parse(startStr);
-                      final end = DateTime.parse(endStr);
+                      final start = DateTime.parse(startStr).toLocal();
+                      final end = DateTime.parse(endStr).toLocal();
                       final dayStart = DateTime(day.year, day.month, day.day);
                       final dayEnd = dayStart.add(const Duration(days: 1));
                       if (start.isBefore(dayEnd) && end.isAfter(dayStart)) {
@@ -3018,6 +3069,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
           headerStyle: const HeaderStyle(
             titleCentered: true,
             formatButtonVisible: true,
+            headerPadding: EdgeInsets.symmetric(vertical: 4.0), // <-- Padding reduzido
             titleTextStyle:
                 TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
           ),
@@ -3034,19 +3086,37 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
             outsideDaysVisible: false,
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 2), // <-- Margem inferior reduzida
       ],
     );
   }
 
   Widget _buildStatsSection() {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
       color: Colors.transparent,
-      child: Text(
-        "Faturamento da semana: ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(_weeklyRevenue)}",
-        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-        textAlign: TextAlign.left,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          ValueListenableBuilder<bool>(
+            valueListenable: PrivacyService.instance.isHiddenNotifier,
+            builder: (context, isHidden, _) => Text(
+              isHidden ? "Faturamento da semana: R\$ *****" : "Faturamento da semana: ${NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(_weeklyRevenue)}",
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              textAlign: TextAlign.left,
+            ),
+          ),
+          ValueListenableBuilder<bool>(
+            valueListenable: PrivacyService.instance.isHiddenNotifier,
+            builder: (context, isHidden, _) => IconButton(
+              icon: Icon(
+                isHidden ? Icons.visibility_off : Icons.visibility,
+                color: Colors.grey[700],
+              ),
+              onPressed: () => PrivacyService.instance.togglePrivacy(),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -3098,12 +3168,6 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     }
   }
 
-  double _parseRevenueValue(Map<String, dynamic> d) {
-    final val = d['total_payable'] ?? d['total_price'] ?? d['total_value'] ?? d['valor_com_desconto'] ?? d['labor_value'] ?? 0;
-    if (val is num) return val.toDouble();
-    if (val is String) return double.tryParse(val.replaceAll(',', '.')) ?? 0.0;
-    return 0.0;
-  }
 
   // Canal Realtime: atualiza apenas o necessário quando há alterações
   void _startRealtimeSubscription() {
@@ -3148,6 +3212,22 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                     if (idx != -1) {
                       _appointments[idx] = Map<String, dynamic>.from(_appointments[idx])
                         ..['confirmed_via_whatsapp'] = true;
+                      _docCache[id] = _appointments[idx];
+                    }
+                  });
+                  return;
+                }
+
+                // confirmation_state ou status mudou: atualiza ambos in-place
+                final newConfState = newRecord['confirmation_state']?.toString();
+                final newRecStatus = (newRecord['status'] ?? '').toString().toLowerCase();
+                if (newConfState != null) {
+                  setState(() {
+                    final idx = _appointments.indexWhere((a) => a['id'].toString() == id);
+                    if (idx != -1) {
+                      _appointments[idx] = Map<String, dynamic>.from(_appointments[idx])
+                        ..['confirmation_state'] = newConfState
+                        ..['status'] = newRecStatus;
                       _docCache[id] = _appointments[idx];
                     }
                   });
@@ -3385,7 +3465,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
           DateTime(endDate.year, endDate.month, endDate.day, 23, 59, 59);
       final snap = await sb.Supabase.instance.client
           .from('appointments')
-          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, paid_amount, remaining_amount, payment_method, payment_status, payment_id, coupon_applied, coupon_code, birthday_discount_applied, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name, created_by, refund_status, refund_amount, refunded_at, refunded_by')
+          .select('id, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, paid_amount, remaining_amount, payment_method, payment_status, payment_id, coupon_applied, coupon_code, birthday_discount_applied, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name, created_by, refund_status, refund_amount, refunded_at, refunded_by, confirmation_state, whatsapp_reminder_status, whatsapp_reminder_sent_at, whatsapp_reminder_failed_at, whatsapp_reminder_confirmed_at')
           .eq('shop_id', widget.shopId)
           .neq('status', 'pre_reserva')
           .gte('scheduled_at', start.toIso8601String())
@@ -3487,7 +3567,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
 
   Widget _buildBreakCard(Map<String, dynamic> data, {required bool isDesktop}) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: 6),
       decoration: BoxDecoration(
         color: Colors.orange.shade50,
         borderRadius: BorderRadius.circular(12),
@@ -3542,11 +3622,6 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     }
 
     double total = _getDisplayTotal(data);
-    double pago = double.tryParse(
-      data['paid_amount']?.toString() ??
-      data['paid_value']?.toString() ?? 
-      data['valor_pago']?.toString() ?? 
-      data['valorPago']?.toString() ?? "0") ?? 0;
     String status = data['status']?.toString().toLowerCase() ?? '';
     String paymentMethod = data['payment_method']?.toString() ?? 'Não informado';
     bool hasOnlinePayment = data['metadata'] != null && data['metadata'] is Map && data['metadata']['payment_id'] != null;
@@ -3561,30 +3636,23 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     }
 
     // Priorizar payment_status se existir, senão inferir
-    String pStat = data['payment_status']?.toString().toLowerCase() ?? '';
-    bool quitado = pStat == 'pago' || (pago >= total && total > 0.01) || status == 'concluido';
-    bool hasPaymentError = (pStat.contains('reject') || pStat.contains('cancel') || pStat.contains('fail')) && !quitado;
+    final summary = getPaymentSummary(data);
     bool isCanceled = status == 'cancelado';
 
     Color statusColor = Colors.blue;
-    String statusText = "AGENDADO";
 
     if (isCanceled) {
       statusColor = Colors.red;
-      statusText = "CANCELADO";
     } else if (status == 'concluido') {
       statusColor = Colors.grey;
-      statusText = "CONCLUÍDO";
     } else if (status == 'confirmed_by_client' || data['confirmed_via_whatsapp'] == true) {
       statusColor = Colors.green;
-      statusText = "CONFIRMADO VIA ZAP";
     } else if (status == 'confirmado') {
       statusColor = Colors.green;
-      statusText = "CONFIRMADO";
     }
 
-    Color payColor = quitado ? Colors.green : (pago > 0.01 ? Colors.orange : Colors.grey);
-    String payText = quitado ? "PAGO" : (pago > 0.01 ? "ADIANTADO" : "PGTO. PENDENTE");
+    Color payColor = summary.status == 'pago' ? Colors.green : (summary.status == 'parcial' ? Colors.orange : Colors.grey);
+    String payText = summary.status == 'pago' ? "PAGO" : (summary.status == 'parcial' ? "PGTO. PARCIAL" : "PGTO. PENDENTE");
 
     bool isSelected = isDesktop && _selectedAppointment?['id']?.toString() == data['id']?.toString();
 
@@ -3607,8 +3675,6 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     final String professionalNome = data['professional_name'] ?? data['profissional_nome'] ?? data['professionalName'] ?? data['profissionalNome'] ?? 'Não definido';
 
     final String? createdByRaw = data['created_by']?.toString();
-    final bool isManual = (clientId == null || clientId.toString().isEmpty) ||
-                          (createdByRaw == 'dono');
 
     void openClientProfile() {
       if (clientId == null) return;
@@ -3689,7 +3755,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
         }
       },
       child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
+        margin: const EdgeInsets.only(bottom: 6),
         decoration: BoxDecoration(
           color: highlighted ? AppColors.primaryPurple.withValues(alpha: 0.04) : Colors.white,
           borderRadius: BorderRadius.circular(12),
@@ -3809,7 +3875,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             // ✨ Texto Superior: NFS-e Emitida
-                            if (pStat == 'pago' || hasOnlinePayment)
+                            if (summary.status == 'pago' || hasOnlinePayment)
                               FutureBuilder<bool>(
                                 future: _checkNfseEmitida(data['id'].toString()),
                                 builder: (ctx, snap) {
@@ -3840,20 +3906,17 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                             Row(
                               children: [
                                 Flexible(
-                                  child: GestureDetector(
-                                    onTap: openClientProfile,
-                                    child: Text(
-                                      clientDisplay,
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 15,
-                                        decoration: isCanceled
-                                            ? TextDecoration.lineThrough
-                                            : TextDecoration.none,
-                                        color: isCanceled
-                                            ? Colors.grey
-                                            : Colors.black87,
-                                      ),
+                                  child: Text(
+                                    clientDisplay,
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 15,
+                                      decoration: isCanceled
+                                          ? TextDecoration.lineThrough
+                                          : TextDecoration.none,
+                                      color: isCanceled
+                                          ? Colors.grey
+                                          : Colors.black87,
                                     ),
                                   ),
                                 ),
@@ -3890,29 +3953,35 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                               ],
                             ),
                             const SizedBox(height: 6),
-                            // Tags de Status e Pagamento
+                            // Tags de Confirmação (WhatsApp / Meta)
                             Wrap(
                               spacing: 6,
                               runSpacing: 4,
                               children: [
-                                // Badge de Status do Agendamento
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color: statusColor.withValues(alpha: 0.1),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    statusText,
-                                    style: TextStyle(
-                                      fontSize: 8,
-                                      fontWeight: FontWeight.w800,
-                                      color: statusColor,
+                                if (data['whatsapp_reminder_status'] == 'sent')
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: Colors.grey.withValues(alpha: 0.12),
+                                      borderRadius: BorderRadius.circular(4),
+                                      border: Border.all(color: Colors.grey.withValues(alpha: 0.4)),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(Icons.access_time, size: 10, color: Colors.grey),
+                                        const SizedBox(width: 3),
+                                        Flexible(
+                                          child: Text(
+                                            'MENSAGEM ENVIADA${data['whatsapp_reminder_sent_at'] != null ? ' · ${_formatHourMinute(data['whatsapp_reminder_sent_at'])}' : ''}',
+                                            style: const TextStyle(fontSize: 8, fontWeight: FontWeight.w800, color: Colors.grey),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                ),
-                                // ✅ Badge WhatsApp Confirmou
-                                if (data['confirmed_via_whatsapp'] == true)
+                                if (data['whatsapp_reminder_status'] == 'confirmed')
                                   Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                     decoration: BoxDecoration(
@@ -3920,60 +3989,63 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                                       borderRadius: BorderRadius.circular(4),
                                       border: Border.all(color: const Color(0xFF22C55E).withValues(alpha: 0.3)),
                                     ),
-                                    child: const Text('✅', style: TextStyle(fontSize: 10)),
-                                  ),
-                                // Badge Manual / App
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color: (isManual ? Colors.orange : Colors.blue).withValues(alpha: 0.1),
-                                    borderRadius: BorderRadius.circular(4),
-                                    border: Border.all(color: (isManual ? Colors.orange : Colors.blue).withValues(alpha: 0.25)),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(isManual ? Icons.edit_note : Icons.smartphone, size: 8, color: isManual ? Colors.orange : Colors.blue),
-                                      const SizedBox(width: 3),
-                                      Text(
-                                        isManual ? 'MANUAL' : 'APP',
-                                        style: TextStyle(
-                                          fontSize: 8,
-                                          fontWeight: FontWeight.w800,
-                                          color: isManual ? Colors.orange : Colors.blue,
+                                    child: const Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.check_circle, size: 10, color: Color(0xFF16A34A)),
+                                        SizedBox(width: 3),
+                                        Flexible(
+                                          child: Text('AGENDAMENTO CONFIRMADO', style: TextStyle(fontSize: 8, fontWeight: FontWeight.w800, color: Color(0xFF15803D)), overflow: TextOverflow.ellipsis),
                                         ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                // Badge de Forma de Pagamento
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.primaryPurple.withValues(alpha: 0.05),
-                                    borderRadius: BorderRadius.circular(4),
-                                    border: Border.all(color: AppColors.primaryPurple.withValues(alpha: 0.2)),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      const Icon(Icons.payments_outlined, size: 9, color: AppColors.primaryPurple),
-                                      if (hasPaymentError) ...[
-                                        const SizedBox(width: 2),
-                                        const Icon(Icons.warning_amber_rounded, size: 10, color: Colors.orange),
                                       ],
-                                      const SizedBox(width: 3),
-                                      Text(
-                                        paymentMethod.toUpperCase(),
-                                        style: const TextStyle(
-                                          fontSize: 8, 
-                                          fontWeight: FontWeight.bold, 
-                                          color: AppColors.primaryPurple
-                                        ),
-                                      ),
-                                    ],
+                                    ),
                                   ),
-                                ),
+                                if (data['whatsapp_reminder_status'] == 'failed')
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFEF4444).withValues(alpha: 0.12),
+                                      borderRadius: BorderRadius.circular(4),
+                                      border: Border.all(color: const Color(0xFFEF4444).withValues(alpha: 0.3)),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(Icons.warning_rounded, size: 10, color: Color(0xFFDC2626)),
+                                        const SizedBox(width: 3),
+                                        Flexible(
+                                          child: Text(
+                                            'FALHA NO ENVIO${data['whatsapp_reminder_failed_at'] != null ? ' · ${_formatHourMinute(data['whatsapp_reminder_failed_at'])}' : ''}',
+                                            style: const TextStyle(fontSize: 8, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                if (data['whatsapp_reminder_status'] == 'expired')
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: Colors.blue.withValues(alpha: 0.12),
+                                      borderRadius: BorderRadius.circular(4),
+                                      border: Border.all(color: Colors.blue.withValues(alpha: 0.3)),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(Icons.flash_on, size: 10, color: Colors.blue),
+                                        const SizedBox(width: 3),
+                                        const Flexible(
+                                          child: Text(
+                                            'AGENDAMENTO DE OPORTUNIDADE',
+                                            style: TextStyle(fontSize: 8, fontWeight: FontWeight.w800, color: Colors.blue),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                               ],
                             ),
                           ],
@@ -4003,18 +4075,24 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                               if (pct > 0) discVal = originalPrice * pct / 100;
                             }
                             if (discVal < 0.01 || originalPrice < 0.01) return const SizedBox.shrink();
-                            return Text(
-                              NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(originalPrice),
-                              style: const TextStyle(
-                                fontSize: 10,
-                                color: Colors.grey,
-                                decoration: TextDecoration.lineThrough,
+                            return ValueListenableBuilder<bool>(
+                              valueListenable: PrivacyService.instance.isHiddenNotifier,
+                              builder: (context, isHidden, _) => Text(
+                                isHidden ? "R\$ *****" : NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(originalPrice),
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  color: Colors.grey,
+                                  decoration: TextDecoration.lineThrough,
+                                ),
                               ),
                             );
                           }),
-                          Text(
-                            NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(total),
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                          ValueListenableBuilder<bool>(
+                            valueListenable: PrivacyService.instance.isHiddenNotifier,
+                            builder: (context, isHidden, _) => Text(
+                              isHidden ? "R\$ *****" : NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(total),
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                            ),
                           ),
                           if (data['birthday_discount_applied'] == true) ...[  
                             const SizedBox(height: 3),

@@ -17,6 +17,8 @@ class AppointmentModel {
   final int durationMin;
   final DateTime? createdAt;
   final String createdBy; // 'dono' ou 'cliente'
+  final String? confirmationState;
+  final bool reminderSent;
 
   AppointmentModel({
     this.id,
@@ -37,6 +39,8 @@ class AppointmentModel {
     required this.durationMin,
     this.createdAt,
     required this.createdBy,
+    this.confirmationState,
+    this.reminderSent = false,
   });
 
   factory AppointmentModel.fromMap(Map<String, dynamic> map) {
@@ -59,6 +63,8 @@ class AppointmentModel {
       durationMin: map['duration_min'] ?? 30,
       createdAt: map['created_at'] != null ? DateTime.parse(map['created_at']) : null,
       createdBy: map['created_by'] ?? 'cliente',
+      confirmationState: map['confirmation_state'],
+      reminderSent: map['reminder_sent'] ?? false,
     );
   }
 
@@ -82,6 +88,8 @@ class AppointmentModel {
       'duration_min': durationMin,
       'created_at': (createdAt ?? DateTime.now()).toIso8601String(),
       'created_by': createdBy,
+      'confirmation_state': confirmationState,
+      'reminder_sent': reminderSent,
     };
   }
 }

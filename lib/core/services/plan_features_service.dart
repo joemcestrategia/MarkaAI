@@ -98,6 +98,7 @@ class PlanFeaturesService {
       automaticPriceAdjustment: base.automaticPriceAdjustment,
       commissionView: base.commissionView,
       holidaysManagement: base.holidaysManagement,
+      rescuePanel: base.rescuePanel,
       customHolidays: base.customHolidays,
       customLink: base.customLink,
       visitorsAnalytics: base.visitorsAnalytics,

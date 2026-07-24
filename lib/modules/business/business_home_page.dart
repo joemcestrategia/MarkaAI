@@ -5,6 +5,8 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'catalog_import_page.dart';
 import 'message_templates_page.dart';
+import '../../core/services/message_template_service.dart';
+import '../../core/models/message_template_model.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'store_profile_page.dart';
@@ -32,6 +34,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import '../../services/update_service.dart';
 import '../../pages/update_page.dart';
+import '../../core/services/privacy_service.dart';
 
 // --- MÓDULOS ---
 import '../services/services_management_page.dart';
@@ -39,6 +42,7 @@ import '../team/team_management_page.dart';
 import 'business_settings_page.dart';
 import 'business_schedule_page.dart';
 import 'business_clients_page.dart';
+import 'rescue_panel/rescue_panel_page.dart';
 // import '../settings/excel_import_page.dart'; // Import removed  recurso 'Importar Dados' descontinuado
 import '../financial/financial_dashboard_page.dart';
 // import 'financial_wallet_page.dart';
@@ -60,7 +64,14 @@ import 'business_clients_heatmap_page.dart';
 import 'business_refunds_page.dart';
 
 class BusinessHomePage extends StatefulWidget {
-  const BusinessHomePage({super.key});
+  final DateTime? initialDate;
+  final String? initialAppointmentId;
+
+  const BusinessHomePage({
+    super.key,
+    this.initialDate,
+    this.initialAppointmentId,
+  });
 
   @override
   State<BusinessHomePage> createState() => _BusinessHomePageState();
@@ -92,8 +103,9 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   List<int> _restrictedIndices = [];
   List<int> _hiddenIndices = []; // Indices que nem aparecem no menu
   bool _canViewCommissions = false;
-  double? _mpBalance;
-  double? _valoresReceber;
+  // _mpBalance e _valoresReceber removidos em 2026-07-17:
+  // O endpoint /users/{id}/mercadopago_account/balance retorna 403 para
+  // integrações OAuth de terceiros — restrição do próprio Mercado Pago.
 
   SubscriptionPlan _currentPlanCode = SubscriptionPlan.free;
   bool _isTrial = false;
@@ -123,6 +135,12 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   @override
   void initState() {
     super.initState();
+    if (widget.initialDate != null || widget.initialAppointmentId != null) {
+      _scheduleInitialDate = widget.initialDate;
+      _scheduleInitialAppointmentId = widget.initialAppointmentId;
+      _scheduleKey = ValueKey('schedule_${_scheduleInitialDate?.millisecondsSinceEpoch}_$_scheduleInitialAppointmentId');
+      _selectedIndex = 1;
+    }
     _checkBusinessAndLoad();
     _setupForegroundNotifications();
     _loadAppVersion();
@@ -168,9 +186,39 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   }
 
   void _setupForegroundNotifications() {
-    // Supabase Realtime ou Notificações Locais podem ser implementadas aqui
-    // Por enquanto, removemos a dependência do FirebaseMessaging
-    debugPrint("Notificações foreground (via Supabase/Local) podem ser configuradas aqui.");
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      final appointmentId = message.data['appointment_id'];
+      final dateStr = message.data['scheduled_at'] ?? '';
+      final title = message.notification?.title ?? '';
+      final body = message.notification?.body ?? '';
+      final date = dateStr.isNotEmpty ? DateTime.tryParse(dateStr) : null;
+
+      if (appointmentId != null && mounted && shopId != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFF7C3AED),
+            content: Text(body.isNotEmpty ? body : title),
+            duration: const Duration(seconds: 8),
+            action: SnackBarAction(
+              label: 'VER',
+              textColor: Colors.white,
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => BusinessSchedulePage(
+                      shopId: shopId!,
+                      initialDate: date ?? DateTime.now(),
+                      initialAppointmentId: appointmentId,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        );
+      }
+    });
   }
 
   Future<void> _checkBusinessAndLoad() async {
@@ -301,10 +349,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           _isLoading = false;
         });
 
-        // Carrega saldo MercadoPago se conectado
-        if ((shopData?['mercadopago'] as Map<String, dynamic>?)?.isNotEmpty == true) {
-          _loadMpBalance();
-        }
+        // Saldo MP removido: endpoint bloqueado pelo MP para OAuth de terceiros.
 
         // Inicia canal Realtime para invalidar o dashboard automaticamente
         _startAppointmentsRealtime();
@@ -475,6 +520,11 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       _restrictedIndices.add(7);
     }
 
+    // Painel de Resgate (Índice 17)
+    if (!_currentFeatures.rescuePanel) {
+      _restrictedIndices.add(17);
+    }
+
     // Financeiro (Índice 5) — aberto para Plus (básico) e Pro (avançado)
     if (!_currentFeatures.financialTab) {
       _restrictedIndices.add(5);
@@ -519,31 +569,11 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     UpgradeModal.show(context, featureName: feature, requiredPlan: requiredPlan);
   }
 
-  Future<void> _loadMpBalance() async {
-    try {
-      final balanceData = await MercadoPagoService.getSaldo(shopId!);
-      if (balanceData != null && mounted) {
-        setState(() => _mpBalance = (balanceData['available_balance'] as num?)?.toDouble());
-      }
-    } catch (_) {}
-
-
-    // Valores a receber: soma de agendamentos pendentes com pagamento
-    try {
-      final pendentes = await sb.Supabase.instance.client
-          .from('appointments')
-          .select('total_price')
-          .eq('shop_id', shopId!)
-          .eq('status', 'pendente');
-      double total = 0;
-      for (final a in pendentes) {
-        total += (a['total_price'] as num?)?.toDouble() ?? 0;
-      }
-      if (mounted && total > 0) {
-        setState(() => _valoresReceber = total);
-      }
-    } catch (_) {}
-  }
+  // _loadMpBalance() removido em 2026-07-17.
+  // Motivo: o endpoint /users/{id}/mercadopago_account/balance retorna 403
+  // para qualquer token OAuth de terceiros, independente de escopos configurados.
+  // Testado exaustivamente: read + write + offline_access + Application&User API's
+  // não resolvem — é uma restrição arquitetural do Mercado Pago para integrações marketplace.
 
   void _confirmLogout() {
     showModalBottomSheet(
@@ -779,6 +809,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       case 14: return ManageProductsPage(shopId: shopId ?? "");
       case 15: return const BusinessClientsHeatmapPage();
       case 16: return BusinessRefundsPage(shopId: shopId ?? "");
+      case 17: return const RescuePanelPage();
       default: return _buildHomeDashboard(isDesktop: isDesktop);
     }
   }
@@ -845,6 +876,11 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 _buildDesktopMenuItem(6, Icons.people_outline, "Equipe"),
                 _buildDesktopMenuItem(
                     4, Icons.groups_rounded, "Clientes"),
+                _buildDesktopMenuItem(
+                    17, Icons.support_agent_rounded, "Painel de Resgate",
+                    trailing: !_currentFeatures.rescuePanel
+                        ? const Icon(Icons.lock, size: 16, color: Colors.grey)
+                        : null),
                 _buildDesktopMenuItem(14, Icons.inventory_2_outlined, "Produtos"),
                 _buildDesktopMenuItem(7, Icons.inventory_2_outlined, "Estoque"),
                 
@@ -1133,13 +1169,17 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
             _getScreenTitle(_selectedIndex),
             style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
           ),
-          PopupMenuButton<String>(
-            offset: const Offset(0, 50),
-            color: Colors.white,
-            surfaceTintColor: Colors.white,
-            onSelected: _handleMenuAction,
-            child: Row(
-              children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+
+              PopupMenuButton<String>(
+                offset: const Offset(0, 50),
+                color: Colors.white,
+                surfaceTintColor: Colors.white,
+                onSelected: _handleMenuAction,
+                child: Row(
+                  children: [
                 // Mostrar apenas o avatar para economizar espaço
                 CircleAvatar(
                   radius: 18,
@@ -1180,6 +1220,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 ),
               const PopupMenuDivider(),
               _buildPopupItem('sair', Icons.logout, "Sair", isRed: true),
+            ],
+          ),
             ],
           ),
         ],
@@ -1241,6 +1283,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                         _buildTabletNavIcon(2, Icons.history, "Histórico"),
                         _buildTabletNavIcon(6, Icons.people_outline, "Equipe"),
                         _buildTabletNavIcon(4, Icons.groups_rounded, "Clientes"),
+                        _buildTabletNavIcon(17, Icons.support_agent_rounded, "Resgate"),
                         _buildTabletNavIcon(3, Icons.design_services_rounded, "Serviços"),
                         _buildTabletNavIcon(14, Icons.inventory_2_outlined, "Produtos"),
                         _buildTabletNavIcon(5, Icons.account_balance_wallet_rounded, "Financeiro"),
@@ -1391,6 +1434,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           ),
         ),
         actions: [
+
           PopupMenuButton<String>(
             offset: const Offset(0, 50),
             color: Colors.white,
@@ -1518,7 +1562,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       child: Column(
         children: [
           Container(
-            padding: const EdgeInsets.fromLTRB(20, 50, 20, 20),
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(20, 40, 20, 10),
             decoration: const BoxDecoration(
               gradient: LinearGradient(
                 colors: [
@@ -1529,12 +1574,40 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 end: Alignment.bottomRight,
               ),
             ),
-            child: Center(
-              child: Image.asset(
-                'assets/images/logo_white.png',
-                height: 40,
-                fit: BoxFit.contain,
-              ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Image.asset(
+                  'assets/images/logo_white.png',
+                  height: 28,
+                  fit: BoxFit.contain,
+                ),
+                const SizedBox(height: 8),
+                Builder(
+                  builder: (context) {
+                    final plan = _currentPlanCode;
+                    final isTrial = _isTrial;
+                    String planName = SubscriptionService.getPlanDetails(plan)['name'].toString().toUpperCase();
+                    if (isTrial) planName += " (TESTE)";
+
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        "Plano $planName",
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ],
             ),
           ),
           Expanded(
@@ -1555,6 +1628,14 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                   icon: Icons.groups,
                   title: "Clientes",
                   index: 4,
+                ),
+                _buildDrawerItem(
+                  icon: Icons.support_agent_rounded,
+                  title: "Painel de Resgate",
+                  index: 17,
+                  trailing: !_currentFeatures.rescuePanel
+                      ? const Icon(Icons.lock, size: 16, color: Colors.grey)
+                      : null,
                 ),
                 _buildDrawerItem(
                   icon: Icons.inventory_2_outlined,
@@ -1644,7 +1725,10 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                     Navigator.push(
                         context,
                         MaterialPageRoute(
-                            builder: (_) => MessageTemplatesPage(shopId: shopId ?? "")));
+                            builder: (_) => MessageTemplatesPage(
+                                  shopId: shopId ?? "",
+                                  isFreePlan: _currentPlanCode == SubscriptionPlan.free,
+                                )));
                   },
                 ),
                 _buildDrawerItem(
@@ -1751,87 +1835,77 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
               return SafeArea(
                 top: false,
                 child: Container(
-                  padding: const EdgeInsets.all(20),
+                  padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 20),
                   decoration: BoxDecoration(
                     color: Colors.grey[50],
                     border: Border(top: BorderSide(color: Colors.grey[200]!)),
                   ),
                   child: Column(
                     children: [
+                      // Plano foi movido para o topo
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          const Text("Seu Plano: ",
-                              style: TextStyle(color: Colors.grey, fontSize: 13)),
                           Text(
-                            planName,
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13,
-                              color: isFree
-                                  ? Colors.grey[600]
-                                  : AppColors.primaryPurple,
-                            ),
+                            _appVersion.isNotEmpty ? "Versão $_appVersion" : "Versão 1.8.1+3",
+                            style: TextStyle(color: Colors.grey[500], fontSize: 11),
                           ),
+                          if (_updateInfo != null) ...[
+                            const SizedBox(width: 8),
+                            GestureDetector(
+                              onTap: () {
+                                Navigator.pop(context);
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => UpdatePage(updateInfo: _updateInfo!),
+                                    fullscreenDialog: true,
+                                  ),
+                                );
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(4),
+                                  border: Border.all(color: Colors.orange.withOpacity(0.5)),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.system_update_alt, size: 12, color: Colors.orange),
+                                    SizedBox(width: 4),
+                                    Text(
+                                      "Desatualizado - Atualizar",
+                                      style: TextStyle(color: Colors.orange, fontSize: 10, fontWeight: FontWeight.bold),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ] else ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.green.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.check_circle, size: 12, color: Colors.green),
+                                  SizedBox(width: 4),
+                                  Text(
+                                    "Atualizado",
+                                    style: TextStyle(color: Colors.green, fontSize: 10, fontWeight: FontWeight.bold),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ],
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _appVersion.isNotEmpty ? "Versão $_appVersion" : "Versão 1.8.1+3",
-                        style: TextStyle(color: Colors.grey[500], fontSize: 11),
-                      ),
-                      const SizedBox(height: 8),
-                      if (_updateInfo != null)
-                        GestureDetector(
-                          onTap: () {
-                            Navigator.pop(context);
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => UpdatePage(updateInfo: _updateInfo!),
-                                fullscreenDialog: true,
-                              ),
-                            );
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: Colors.orange.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(4),
-                              border: Border.all(color: Colors.orange.withOpacity(0.5)),
-                            ),
-                            child: const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.system_update_alt, size: 12, color: Colors.orange),
-                                SizedBox(width: 4),
-                                Text(
-                                  "Desatualizado - Atualizar",
-                                  style: TextStyle(color: Colors.orange, fontSize: 10, fontWeight: FontWeight.bold),
-                                ),
-                              ],
-                            ),
-                          ),
-                        )
-                      else
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: Colors.green.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.check_circle, size: 12, color: Colors.green),
-                              SizedBox(width: 4),
-                              Text(
-                                "Atualizado",
-                                style: TextStyle(color: Colors.green, fontSize: 10, fontWeight: FontWeight.bold),
-                              ),
-                            ],
-                          ),
-                        ),
                       if (isFree || isTrial) ...[
                         const SizedBox(height: 12),
                         SizedBox(
@@ -2375,11 +2449,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           ),
           const SizedBox(height: 20),
         ],
-        if (_mpBalance != null || _valoresReceber != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 20),
-            child: _buildMpBalanceCard(),
-          ),
+
         if (_currentFeatures.financialTab)
           Expanded(
             child: Row(
@@ -2510,19 +2580,35 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                               _buildMonthDropdown(dark: true),
                               const SizedBox(width: 8),
                               _buildYearDropdown(dark: true),
+                              IconButton(
+                                icon: ValueListenableBuilder<bool>(
+                                  valueListenable: PrivacyService.instance.isHiddenNotifier,
+                                  builder: (context, isHidden, _) => Icon(
+                                    isHidden ? Icons.visibility_off : Icons.visibility,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                onPressed: () => PrivacyService.instance.togglePrivacy(),
+                              ),
                             ],
                           ),
                           const SizedBox(height: 10),
                           FittedBox(
-                            fit: BoxFit.fitWidth,
+                            fit: BoxFit.scaleDown,
                             alignment: Alignment.centerRight,
-                            child: Text(
-                              fmt.format(faturamentoTotal),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: -0.5,
-                              ),
+                            child: ValueListenableBuilder<bool>(
+                              valueListenable: PrivacyService.instance.isHiddenNotifier,
+                              builder: (context, isHidden, _) {
+                                return Text(
+                                  isHidden ? "R\$ *****" : fmt.format(faturamentoTotal),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 28,
+                                    letterSpacing: -0.5,
+                                  ),
+                                );
+                              },
                             ),
                           ),
                         ],
@@ -2621,11 +2707,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
                 const SizedBox(height: 12),
 
-                if (_mpBalance != null || _valoresReceber != null)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: _buildMpBalanceCard(),
-                  ),
+
 
                 if (_currentFeatures.financialTab) ...[
                   /* Composição de Faturamento removida a pedido do usuário */
@@ -2727,12 +2809,15 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
             FittedBox(
               fit: BoxFit.scaleDown,
               alignment: Alignment.centerLeft,
-              child: Text(
-                value,
-                style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF1A1D2E)),
+              child: ValueListenableBuilder<bool>(
+                valueListenable: PrivacyService.instance.isHiddenNotifier,
+                builder: (context, isHidden, _) => Text(
+                  (isHidden && isMoney) ? "R\$ *****" : value,
+                  style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF1A1D2E)),
+                ),
               ),
             ),
             const SizedBox(height: 1),
@@ -2751,8 +2836,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         final todayDocs = snap.data ?? [];
         final hoje = todayDocs.length;
         final proximosHoje = todayDocs.where((data) {
-          final status = (data['status'] ?? '').toString();
-          return status == 'agendado' || status == 'confirmado';
+          final status = (data['status'] ?? '').toString().toLowerCase();
+          return status != 'cancelado' && status != 'falta';
         }).toList();
 
         double totalDia = 0.0;
@@ -2807,8 +2892,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                             fontWeight: FontWeight.bold, fontSize: 14)),
                     Text(
                       proximosHoje.isEmpty
-                          ? 'Nenhum agendamento pendente'
-                          : '${proximosHoje.length} agendamento${proximosHoje.length > 1 ? 's' : ''} pendente${proximosHoje.length > 1 ? 's' : ''}',
+                          ? 'Nenhum agendamento'
+                          : '${proximosHoje.length} agendamento${proximosHoje.length > 1 ? 's' : ''}',
                       style: TextStyle(fontSize: 12, color: Colors.grey[500]),
                     ),
                   ],
@@ -2821,12 +2906,15 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                   color: totalDia == 0 ? Colors.grey[100] : const Color(0xFFF3F0FF),
                   borderRadius: BorderRadius.circular(20),
                 ),
-                child: Text(
-                  fmt.format(totalDia),
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: totalDia == 0 ? Colors.grey : AppColors.primaryPurple,
+                child: ValueListenableBuilder<bool>(
+                  valueListenable: PrivacyService.instance.isHiddenNotifier,
+                  builder: (context, isHidden, _) => Text(
+                    isHidden ? "R\$ *****" : fmt.format(totalDia),
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: totalDia == 0 ? Colors.grey : AppColors.primaryPurple,
+                    ),
                   ),
                 ),
               ),
@@ -2836,7 +2924,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
             const SizedBox(height: 12),
             const Divider(height: 1),
             const SizedBox(height: 10),
-            ...proximosHoje.take(3).map((data) {
+            ...proximosHoje.map((data) {
               final dateStr = data['scheduled_at'] as String?;
               final date = DateTime.tryParse(dateStr ?? '') ?? DateTime.now();
               final hora = DateFormat('HH:mm').format(date);
@@ -2883,12 +2971,15 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                         ],
                       ),
                     ),
-                    Text(
-                      fmt.format(_resolveAppointmentValue(data)),
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black87,
+                    ValueListenableBuilder<bool>(
+                      valueListenable: PrivacyService.instance.isHiddenNotifier,
+                      builder: (context, isHidden, _) => Text(
+                        isHidden ? "R\$ *****" : fmt.format(_resolveAppointmentValue(data)),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black87,
+                        ),
                       ),
                     ),
                   ],
@@ -3174,28 +3265,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     );
   }
 
-  Widget _buildMpBalanceCard() {
-    final children = <Widget>[];
-    if (_mpBalance != null) {
-      children.add(_buildMetricCard(
-        "Saldo MP",
-        _mpBalance!,
-        Icons.account_balance_wallet,
-        Colors.blue.shade700,
-      ));
-    }
-    if (_valoresReceber != null) {
-      if (children.isNotEmpty) children.add(const SizedBox(width: 16));
-      children.add(_buildMetricCard(
-        "A Receber",
-        _valoresReceber!,
-        Icons.pending_actions,
-        Colors.orange.shade700,
-      ));
-    }
-    if (children.isEmpty) return const SizedBox.shrink();
-    return Row(children: children.map((c) => Expanded(child: c)).toList());
-  }
+  // _buildMpBalanceCard() removido em 2026-07-17 junto com _loadMpBalance().
 
   Widget _buildMetricCard(
     String title,
@@ -3257,11 +3327,14 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                   FittedBox(
                     fit: BoxFit.scaleDown,
                     alignment: Alignment.centerLeft,
-                    child: Text(
-                      textVal,
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
+                    child: ValueListenableBuilder<bool>(
+                      valueListenable: PrivacyService.instance.isHiddenNotifier,
+                      builder: (context, isHidden, _) => Text(
+                        isHidden && isMoney ? "R\$ *****" : textVal,
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                   ),
@@ -3522,7 +3595,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                       child: InkWell(
                         onTap: () {
                           if (phone != null && phone.isNotEmpty) {
-                            _launchWhatsAppFromPhone(phone);
+                            _launchWhatsAppFromPhone(phone, nome);
                           }
                         },
                         child: Column(
@@ -3558,12 +3631,38 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     );
   }
 
-  Future<void> _launchWhatsAppFromPhone(String phoneRaw) async {
+  Future<void> _launchWhatsAppFromPhone(String phoneRaw, String clientName) async {
     String phone = phoneRaw.replaceAll(RegExp(r'[^0-9]'), '');
     if (phone.length <= 11) phone = '55$phone';
 
-    final url = Uri.parse(
-        'https://wa.me/$phone?text=Parabéns pelo seu aniversário! 🎉');
+    String messageText = 'Parabéns pelo seu aniversário! 🎉';
+    
+    try {
+      final templates = await MessageTemplateService().getTemplates(shopId!);
+      final birthdayTemplate = templates.firstWhere(
+        (t) => t.isDefault && t.title == 'Mensagem de Aniversário',
+        orElse: () => MessageTemplate(
+          shopId: shopId!, 
+          title: '', 
+          isDefault: true,
+          content: 'Olá, [NOME_CLIENTE]! 🎉 Feliz Aniversário! Que seu dia seja muito especial. Um abraço da nossa equipe!',
+        )
+      );
+      
+      final primeiroNome = clientName.trim().split(' ').first;
+      messageText = birthdayTemplate.generateFullMessage(
+        clientName: primeiroNome,
+        serviceName: '',
+        dateStr: '',
+        timeStr: '',
+      );
+    } catch (e) {
+      debugPrint('Erro ao buscar template de aniversário: $e');
+    }
+
+    final msg = Uri.encodeComponent(messageText);
+    final url = Uri.parse('https://wa.me/$phone?text=$msg');
+    
     if (await canLaunchUrl(url)) {
       await launchUrl(url, mode: LaunchMode.externalApplication);
     }

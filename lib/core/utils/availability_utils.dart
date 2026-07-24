@@ -119,8 +119,8 @@ class AvailabilityUtils {
 
       if (startFolgaStr == null || endFolgaStr == null) continue;
 
-      final startFolga = DateTime.parse(startFolgaStr);
-      DateTime endFolga = DateTime.parse(endFolgaStr);
+      final startFolga = DateTime.parse(startFolgaStr).toLocal();
+      DateTime endFolga = DateTime.parse(endFolgaStr).toLocal();
 
       // Ajuste: se a data final for meia-noite exata (típico de DateRangePicker), 
       // estendemos para o final do dia para garantir a colisão.

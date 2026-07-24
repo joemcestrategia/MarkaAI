@@ -13,7 +13,22 @@ class MessageTemplateService {
         .order('is_default', ascending: false) // Puts default first
         .order('title', ascending: true);
         
-    return (response as List).map((map) => MessageTemplate.fromMap(map)).toList();
+    var templates = (response as List).map((map) => MessageTemplate.fromMap(map)).toList();
+    
+    // Auto-create birthday template if it doesn't exist
+    final hasBirthday = templates.any((t) => t.isDefault && t.title == 'Mensagem de Aniversário');
+    if (!hasBirthday) {
+      final birthdayTemplate = MessageTemplate(
+        shopId: shopId,
+        title: 'Mensagem de Aniversário',
+        content: 'Olá, [NOME_CLIENTE]! 🎉 Feliz Aniversário! Que seu dia seja muito especial. Um abraço da nossa equipe!',
+        isDefault: true,
+      );
+      final created = await createTemplate(birthdayTemplate);
+      templates.insert(0, created);
+    }
+
+    return templates;
   }
 
   // Create a new template

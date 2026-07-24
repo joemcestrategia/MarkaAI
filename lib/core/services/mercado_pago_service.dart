@@ -490,25 +490,22 @@ class MercadoPagoService {
   }
 
   // ===========================================================================
-  // SALDO MERCADO PAGO (Via Edge Function — evita CORS)
+  // SALDO MERCADO PAGO — REMOVIDO em 2026-07-17
   // ===========================================================================
-  static Future<Map<String, dynamic>?> getSaldo(String shopId) async {
-    try {
-      final response = await _supabase.functions.invoke('getMpBalance', headers: {
-        'Authorization': 'Bearer ${_supabase.auth.currentSession?.accessToken ?? ''}',
-        'Content-Type': 'application/json',
-      }, body: {
-        'shop_id': shopId,
-      });
-
-      if (response.status == 200 && response.data != null) {
-        return Map<String, dynamic>.from(response.data);
-      }
-      debugPrint("⚠️ getSaldo: status ${response.status}");
-      return null;
-    } catch (e) {
-      debugPrint("❌ Erro getSaldo: $e");
-      return null;
-    }
-  }
+  // getSaldo() foi removido porque o endpoint da API do Mercado Pago
+  // /users/{user_id}/mercadopago_account/balance retorna HTTP 403 (ForbiddenApiError)
+  // para qualquer integração OAuth de terceiros, independentemente dos escopos
+  // configurados (read, write, offline_access, Application&User API's).
+  //
+  // Investigação realizada em 2026-07-17:
+  // - Token OAuth válido confirmado via /users/me (HTTP 200)
+  // - Testados: /users/{id}/mercadopago_account/balance → 403
+  //             /users/me/mercadopago_account/balance  → 403
+  //             /v1/account/balance                    → 404
+  //             /v1/users/{id}/balance                 → 404
+  //             /v1/account/releases                   → 404
+  // - Conclusão: o MP bloqueia consulta de saldo via OAuth por design.
+  //   O acesso ao saldo real só é possível com o Access Token pessoal
+  //   de produção do próprio titular da conta.
+  // ===========================================================================
 }

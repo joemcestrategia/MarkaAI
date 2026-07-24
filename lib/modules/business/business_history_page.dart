@@ -77,7 +77,7 @@ class _BusinessHistoryPageState extends State<BusinessHistoryPage> {
 
     for (var data in apptRes) {
       final rawDate = data['created_at'];
-      final dt = rawDate != null ? DateTime.tryParse(rawDate.toString()) : null;
+      final dt = rawDate != null ? DateTime.tryParse(rawDate.toString())?.toLocal() : null;
       events.add({
         'type': 'agendamento',
         'id': data['id'],
@@ -98,7 +98,7 @@ class _BusinessHistoryPageState extends State<BusinessHistoryPage> {
 
       for (var data in transRes) {
         final rawDate = data['created_at'] ?? data['createdAt'] ?? data['data'];
-        final dt = rawDate != null ? DateTime.tryParse(rawDate.toString()) : null;
+        final dt = rawDate != null ? DateTime.tryParse(rawDate.toString())?.toLocal() : null;
         events.add({
           'type': 'pagamento',
           'id': data['id'],
@@ -126,7 +126,7 @@ class _BusinessHistoryPageState extends State<BusinessHistoryPage> {
 
       for (final data in actRes) {
         final rawDate = data['created_at'];
-        final dt = rawDate != null ? DateTime.tryParse(rawDate.toString()) : null;
+        final dt = rawDate != null ? DateTime.tryParse(rawDate.toString())?.toLocal() : null;
         events.add({
           'type': 'atividade',
           'id': data['id'],
@@ -236,6 +236,43 @@ class _BusinessHistoryPageState extends State<BusinessHistoryPage> {
     );
   }
 
+  Future<void> _openAppointmentDetails(String appointmentId) async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (c) => const Center(child: CircularProgressIndicator(color: AppColors.primaryPurple)),
+    );
+    try {
+      final supabase = sb.Supabase.instance.client;
+      final doc = await supabase
+          .from('appointments')
+          .select('*, shop_id, professional_id, client_id, scheduled_at, duration_min, status, total_value, total_price, labor_value, valor_com_desconto, total_payable, discount_amount, paid_amount, remaining_amount, payment_method, payment_status, coupon_applied, coupon_code, coupon_discount_percent, birthday_discount_applied, birthday_discount_percent, metadata, service_id, client_name, client_phone, client_email, client_photo, service_name, professional_name, confirmation_state, whatsapp_reminder_status, whatsapp_reminder_sent_at, whatsapp_reminder_failed_at, whatsapp_reminder_confirmed_at, created_by')
+          .eq('id', appointmentId)
+          .maybeSingle();
+
+      if (mounted) {
+        Navigator.pop(context); // close dialog
+        if (doc != null) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => AppointmentDetailsPage(
+                appointmentDoc: doc,
+              ),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Agendamento não encontrado.')));
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context); // close dialog
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao carregar detalhes: $e')));
+      }
+    }
+  }
+
   Widget _buildDateHeader(DateTime date) {
     // Check if today/yesterday
     final now = DateTime.now();
@@ -314,20 +351,30 @@ class _BusinessHistoryPageState extends State<BusinessHistoryPage> {
                 ? 'REAGENDAMENTO'
                 : 'ATUALIZAÇÃO';
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: accentColor.withValues(alpha: 0.25), width: 1.5),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 6, offset: const Offset(0, 2)),
-        ],
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+    final String? appointmentId = payload['appointment_id']?.toString() ?? payload['agendamento_id']?.toString();
+
+    return GestureDetector(
+      onTap: () {
+        if (appointmentId != null && appointmentId.isNotEmpty) {
+          _openAppointmentDetails(appointmentId);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Detalhes não disponíveis.')));
+        }
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: accentColor.withValues(alpha: 0.25), width: 1.5),
+          boxShadow: [
+            BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 6, offset: const Offset(0, 2)),
+          ],
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
           Container(
             width: 36,
             height: 36,
@@ -369,6 +416,7 @@ class _BusinessHistoryPageState extends State<BusinessHistoryPage> {
             ),
           ),
         ],
+      ),
       ),
     );
   }
@@ -574,38 +622,6 @@ class _BusinessHistoryPageState extends State<BusinessHistoryPage> {
                         spacing: 6,
                         runSpacing: 4,
                         children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: accentColor.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              statusLabel,
-                              style: TextStyle(
-                                  color: accentColor,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold),
-                            ),
-                          ),
-                          // ✅ Tag confirmado via WhatsApp
-                          if (payload['confirmed_via_whatsapp'] == true)
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF22C55E).withValues(alpha: 0.12),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(color: const Color(0xFF22C55E).withValues(alpha: 0.3)),
-                              ),
-                              child: const Text(
-                                '✅ CONFIRMOU',
-                                style: TextStyle(
-                                  color: Color(0xFF16A34A),
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
                           // 💳 Forma de Pagamento
                           if (paymentMethod.isNotEmpty)
                             Container(
@@ -622,35 +638,6 @@ class _BusinessHistoryPageState extends State<BusinessHistoryPage> {
                                   const SizedBox(width: 3),
                                   Text(paymentMethod.toUpperCase(), style: const TextStyle(color: AppColors.primaryPurple, fontSize: 10, fontWeight: FontWeight.bold)),
                                 ],
-                              ),
-                            ),
-                          if (clientPhone != null && clientPhone.isNotEmpty)
-                            InkWell(
-                              onTap: () async {
-                                final url = 'https://wa.me/${clientPhone.replaceAll(RegExp(r'\D'), '')}';
-                                if (await canLaunchUrl(Uri.parse(url))) {
-                                  await launchUrl(Uri.parse(url));
-                                } else {
-                                  if (!context.mounted) return;
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text('Não foi possível abrir o WhatsApp para $clientPhone')),
-                                  );
-                                }
-                              },
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: Colors.green.withValues(alpha: 0.1),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(Icons.chat_rounded, color: Colors.green, size: 12),
-                                    SizedBox(width: 4),
-                                    Text('WhatsApp', style: TextStyle(color: Colors.green, fontSize: 10, fontWeight: FontWeight.bold)),
-                                  ],
-                                ),
                               ),
                             ),
                         ],
@@ -732,44 +719,55 @@ class _BusinessHistoryPageState extends State<BusinessHistoryPage> {
     final val = double.tryParse(payload['amount']?.toString() ?? '0') ?? 0;
     final desc = payload['description'] ?? 'Pagamento Avulso';
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.grey[50],
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey[200]!),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: Colors.green.withValues(alpha: 0.1),
-              shape: BoxShape.circle,
+    final String? appointmentId = payload['appointment_id']?.toString() ?? payload['agendamento_id']?.toString();
+
+    return GestureDetector(
+      onTap: () {
+        if (appointmentId != null && appointmentId.isNotEmpty) {
+          _openAppointmentDetails(appointmentId);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Detalhes não disponíveis.')));
+        }
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.grey[50],
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey[200]!),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.green.withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+              ),
+              child:
+                  const Icon(Icons.attach_money, color: Colors.green, size: 20),
             ),
-            child:
-                const Icon(Icons.attach_money, color: Colors.green, size: 20),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(desc,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 15)),
-                Text("Pagamento • $time",
-                    style: const TextStyle(color: Colors.grey, fontSize: 12)),
-              ],
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(desc,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 15)),
+                  Text("Pagamento • $time",
+                      style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                ],
+              ),
             ),
-          ),
-          Text(
-            NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(val),
-            style: const TextStyle(
-                fontWeight: FontWeight.bold, color: Colors.green),
-          ),
-        ],
+            Text(
+              NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(val),
+              style: const TextStyle(
+                  fontWeight: FontWeight.bold, color: Colors.green),
+            ),
+          ],
+        ),
       ),
     );
   }

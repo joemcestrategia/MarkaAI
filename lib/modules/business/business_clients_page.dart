@@ -29,8 +29,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _searchText = "";
 
-  // 0 = Clientes, 1 = Visitantes (Leads)
-  int _selectedTabIndex = 0;
+  // Removido: abas Visitantes e Ranking
 
   // Filtro de Tags: "Todos", "VIP", "Sumido", "Problematico", "Novo"
   String _selectedTagFilter = "Todos";
@@ -46,12 +45,8 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
 
   // --- STREAM CACHE ---
   Stream<Map<String, dynamic>>? _combinedStream;
-  
-  // --- Contador de visitantes para o badge ---
-  int _visitorsCount = 0;
 
   PlanFeatures _currentFeatures = planFeaturesConfig[PlanKey.free]!;
-  int _clientsCount = 0;
 
   @override
   void initState() {
@@ -67,8 +62,6 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
         final stale = await ClientCacheService.isCacheStale(id);
         if (cached != null) {
           _cachedData = cached;
-          _clientsCount = (cached['clients'] as List?)?.length ?? 0;
-          _visitorsCount = (cached['visitors'] as List?)?.length ?? 0;
           _lastStreamFingerprint = (cached['fingerprint']?.toString() ?? '').hashCode;
         }
         if (cached == null) {
@@ -166,7 +159,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
       if (allUserIds.isNotEmpty) {
         final foundIds = users.map((u) => u['id'].toString()).toSet();
         final missingIds = allUserIds.where((id) => !foundIds.contains(id)).toList();
-        if (missingIds.isNotEmpty && shopId != null) {
+        if (missingIds.isNotEmpty) {
           try {
             final rpcUsers = await supabase
                 .rpc('get_visitor_profiles', params: {'user_ids': missingIds, 'caller_shop_id': shopId});
@@ -184,15 +177,23 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
       final shopConfig = (shop?['config'] as Map?)?.cast<dynamic, dynamic>() ?? {};
       final featuresForNow = features;
 
+      // Busca aliases do Setmore (mapeamento shop_client_id → user_id)
+      List<Map<String, dynamic>> aliasRows = [];
+      try {
+        final rawAliases = await supabase
+            .from('shop_client_aliases')
+            .select('user_id, shop_client_id')
+            .eq('shop_id', shopId);
+        aliasRows = List<Map<String, dynamic>>.from(rawAliases);
+      } catch (_) {}
+
       if (mounted) {
         final processed = _processClientsData(
-            appointments, usersMap, shopConfig, favorites, shopClients, shopViews);
+            appointments, usersMap, shopConfig, favorites, shopClients, shopViews, aliasRows);
         ClientCacheService.saveClients(shopId, processed);
         setState(() {
           _cachedData = processed;
           _currentFeatures = featuresForNow;
-          _clientsCount = (processed['clients'] as List?)?.length ?? 0;
-          _visitorsCount = (processed['visitors'] as List?)?.length ?? 0;
         });
       }
     } catch (e) {
@@ -342,55 +343,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
     }
   }
 
-  void _showClearVisitorsDialog() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Limpar Visitantes?"),
-        content: const Text("Isso apagará todo o histórico de visualizações (leads) da sua loja. Esta ação não pode ser desfeita."),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text("CANCELAR"),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              _clearVisitors();
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-            child: const Text("LIMPAR TUDO"),
-          ),
-        ],
-      ),
-    );
-  }
 
-  Future<void> _clearVisitors() async {
-    if (shopId == null) return;
-    
-    try {
-      setState(() => _isLoadingId = true); // Reutiliza flag de loading para feedback visual
-      await sb.Supabase.instance.client
-          .from('shop_views')
-          .delete()
-          .eq('shop_id', shopId!);
-      
-      if (mounted) {
-        setState(() => _isLoadingId = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Lista de visitantes limpa com sucesso!")),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isLoadingId = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Erro ao limpar visitantes: $e"), backgroundColor: Colors.red),
-        );
-      }
-    }
-  }
   
   // ✅ STREAM REATIVO COMBINADO
   Stream<Map<String, dynamic>> _buildCombinedStream() {
@@ -537,7 +490,17 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
         } catch (_) {}
       }
 
-      return {...data, 'users': users};
+      // Busca aliases do Setmore (mapeamento shop_client_id → user_id)
+      List<Map<String, dynamic>> aliasRows = [];
+      try {
+        final rawAliases = await supabase
+            .from('shop_client_aliases')
+            .select('user_id, shop_client_id')
+            .eq('shop_id', shopId!);
+        aliasRows = List<Map<String, dynamic>>.from(rawAliases);
+      } catch (_) {}
+
+      return {...data, 'users': users, 'aliases': aliasRows};
     });
   }
 
@@ -666,6 +629,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                           final favoritesDocs = (data['favorites'] as List?)?.cast<Map<String, dynamic>>() ?? [];
                           final shopClientsDocs = (data['shopClients'] as List?)?.cast<Map<String, dynamic>>() ?? [];
                           final shopViewsDocs = (data['shopViews'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+                          final aliasesDocs = (data['aliases'] as List?)?.cast<Map<String, dynamic>>() ?? [];
 
                           final Map<String, Map<String, dynamic>> usersMap = {
                             for (var doc in usersDocs)
@@ -675,15 +639,14 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
 
                           final freshData = _processClientsData(
                               appointmentDocs, usersMap, shopConfig,
-                              favoritesDocs, shopClientsDocs, shopViewsDocs);
+                              favoritesDocs, shopClientsDocs, shopViewsDocs,
+                              aliasesDocs);
 
                           if (shopId != null) {
                             freshData['fingerprint'] = _lastStreamFingerprint.toString();
                             ClientCacheService.saveClients(shopId!, freshData);
                           }
                           _cachedData = freshData;
-                          _clientsCount = (freshData['clients'] as List?)?.length ?? 0;
-                          _visitorsCount = (freshData['visitors'] as List?)?.length ?? 0;
                         }
                       } catch (e) {
                         debugPrint('StreamBuilder processing error: $e');
@@ -695,14 +658,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                       return const Center(child: CircularProgressIndicator());
                     }
 
-                    List<Map<String, dynamic>> targetList;
-                    if (_selectedTabIndex == 0) {
-                      targetList = (displayData['clients'] as List?)?.cast<Map<String, dynamic>>() ?? [];
-                    } else if (_selectedTabIndex == 1) {
-                      targetList = (displayData['visitors'] as List?)?.cast<Map<String, dynamic>>() ?? [];
-                    } else {
-                      targetList = (displayData['clients'] as List?)?.cast<Map<String, dynamic>>() ?? [];
-                    }
+                    List<Map<String, dynamic>> targetList = (displayData['clients'] as List?)?.cast<Map<String, dynamic>>() ?? [];
 
                     final filteredDocs = targetList.where((client) {
                       final nome = (client['name'] ?? "").toString();
@@ -735,87 +691,19 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                           _selectedTagFilter.toLowerCase());
                     }).toList();
 
-                    // Aba Clientes: remove quem nunca agendou (leads puros)
-                    if (_selectedTabIndex == 0) {
-                      filteredDocs.removeWhere((c) => (c['agendamentosCount'] ?? 0) == 0);
-                    }
-                    // Ranking: remove sem gasto e ordena por totalGasto decrescente
-                    if (_selectedTabIndex == 2) {
-                      filteredDocs.removeWhere((c) => (c['totalGasto'] ?? 0.0) <= 0);
-                      filteredDocs.sort((a, b) {
-                        final ga = (a['totalGasto'] ?? 0.0) as double;
-                        final gb = (b['totalGasto'] ?? 0.0) as double;
-                        return gb.compareTo(ga);
-                      });
-                    } else {
-                      // Ordena alfabeticamente
-                      filteredDocs.sort((a, b) {
-                        final na = (a['name'] ?? '').toString().toLowerCase();
-                        final nb = (b['name'] ?? '').toString().toLowerCase();
-                        return na.compareTo(nb);
-                      });
-                    }
+                    // Remove quem nunca agendou (leads puros)
+                    filteredDocs.removeWhere((c) => (c['agendamentosCount'] ?? 0) == 0);
+                    // Ordena alfabeticamente
+                    filteredDocs.sort((a, b) {
+                      final na = (a['name'] ?? '').toString().toLowerCase();
+                      final nb = (b['name'] ?? '').toString().toLowerCase();
+                      return na.compareTo(nb);
+                    });
 
                     return Column(
                       children: [
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 24, vertical: 10),
-                          decoration: const BoxDecoration(
-                            color: Colors.white,
-                            boxShadow: [
-                              BoxShadow(
-                                  color: Colors.black12,
-                                  blurRadius: 4,
-                                  offset: Offset(0, 2))
-                            ],
-                          ),
-                          child: SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: Row(
-                              children: [
-                                _buildTabButton(0, "Clientes",
-                                    Icons.people_outline,
-                                    count: _clientsCount),
-                                const SizedBox(width: 15),
-                                _buildTabButton(1, "Visitantes",
-                                    Icons.visibility_outlined,
-                                    isLocked: !_currentFeatures
-                                        .visitorsAnalytics,
-                                    count: _visitorsCount),
-                                const SizedBox(width: 15),
-                                _buildTabButton(2, "Ranking",
-                                    Icons.leaderboard_outlined),
-                                if (_selectedTabIndex == 1 &&
-                                    _visitorsCount > 0) ...[
-                                  const SizedBox(width: 15),
-                                  TextButton.icon(
-                                    onPressed: _showClearVisitorsDialog,
-                                    icon: const Icon(
-                                        Icons.delete_sweep_outlined,
-                                        size: 18,
-                                        color: Colors.red),
-                                    label: const Text("Limpar",
-                                        style: TextStyle(
-                                            color: Colors.red,
-                                            fontSize: 13,
-                                            fontWeight: FontWeight.bold)),
-                                    style: TextButton.styleFrom(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 12),
-                                      backgroundColor:
-                                          Colors.red.withValues(alpha: 0.05),
-                                      shape: RoundedRectangleBorder(
-                                          borderRadius:
-                                              BorderRadius.circular(20)),
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                        ),
+                        // Aba de botões removida
+
                         Container(
                           width: double.infinity,
                           padding: const EdgeInsets.symmetric(
@@ -829,23 +717,19 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                                 const SizedBox(width: 8),
                                 _buildTagFilterChip("VIP",
                                     icon: Icons.star,
-                                    color: Colors.amber,
-                                    isLocked: !_currentFeatures.clientFilter),
+                                    color: Colors.amber),
                                 const SizedBox(width: 8),
                                 _buildTagFilterChip("Novo",
                                     icon: Icons.new_releases,
-                                    color: Colors.green,
-                                    isLocked: !_currentFeatures.clientFilter),
+                                    color: Colors.green),
                                 const SizedBox(width: 8),
                                 _buildTagFilterChip("Sumido",
                                     icon: Icons.timer_off_outlined,
-                                    color: Colors.grey,
-                                    isLocked: !_currentFeatures.clientFilter),
+                                    color: Colors.grey),
                                 const SizedBox(width: 8),
                                 _buildTagFilterChip("Problemático",
                                     icon: Icons.warning_amber_rounded,
-                                    color: Colors.red,
-                                    isLocked: !_currentFeatures.clientFilter),
+                                    color: Colors.red),
                               ],
                             ),
                           ),
@@ -863,7 +747,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                                         (_selectedClientId ==
                                             filteredDocs[index]['id']),
                                         isMobile,
-                                        rank: _selectedTabIndex == 2 ? index + 1 : null);
+                                        rank: null);
                                   },
                                 ),
                         ),
@@ -882,8 +766,19 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
       Map<dynamic, dynamic> shopConfig,
       List<Map<String, dynamic>> favorites,
       List<Map<String, dynamic>> shopClients,
-      List<Map<String, dynamic>> shopViews) {
-    
+      List<Map<String, dynamic>> shopViews,
+      [List<Map<String, dynamic>> aliasesDocs = const []]) {
+
+    // Mapa de aliases: user_id (real) → lista de shop_client_ids do Setmore
+    final Map<String, List<String>> aliasesMap = {};
+    for (var a in aliasesDocs) {
+      final uid   = a['user_id']?.toString() ?? '';
+      final scId  = a['shop_client_id']?.toString() ?? '';
+      if (uid.isNotEmpty && scId.isNotEmpty) {
+        aliasesMap.putIfAbsent(uid, () => []).add(scId);
+      }
+    }
+
     Map<String, Map<String, dynamic>> allClientsMap = {};
     final now = DateTime.now();
 
@@ -1000,6 +895,8 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
           'servicos': <String, int>{},
           'visitasDates': <DateTime>[if (pastAppointment) dataVisita],
           'ultimoServico': countsAsVisit ? (data['service_name'] ?? data['serviceName'] ?? "") : "",
+          // IDs dos registros Setmore vinculados (alias) — usados no ClientDetailsPage
+          'ids': aliasesMap[effectiveUserId] ?? [],
         };
         if (countsAsVisit) {
           final sName = data['service_name'] ?? data['serviceName'] ?? "";
@@ -1249,6 +1146,10 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
   }
 
   Widget _buildTagFilterChip(String label, {IconData? icon, Color? color, bool isLocked = false}) {
+    // Garantir que a flag de lock use o plano em cache caso o stream atrase
+    final features = PlanFeaturesService.cachedFeatures ?? _currentFeatures;
+    final actuallyLocked = isLocked || (!features.clientFilter && !features.clientClassification);
+    
     bool isSelected = _selectedTagFilter == label;
     Color activeColor = color ?? AppColors.primaryPurple;
 
@@ -1260,7 +1161,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
         fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
         fontSize: 12,
       ),
-      avatar: isLocked 
+      avatar: actuallyLocked 
           ? const Icon(Icons.lock, size: 14, color: Colors.grey)
           : (icon != null
               ? Icon(icon, size: 14, color: isSelected ? Colors.white : color)
@@ -1271,7 +1172,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
       side: BorderSide(
           color: isSelected ? Colors.transparent : Colors.grey[300]!),
       onSelected: (selected) {
-        if (isLocked) {
+        if (actuallyLocked) {
           UpgradeModal.show(
             context,
             featureName: "Filtros de Clientes",
@@ -1286,91 +1187,6 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
     );
   }
 
-
-  Widget _buildTabButton(int index, String label, IconData icon, {bool isLocked = false, int? count}) {
-    bool isSelected = _selectedTabIndex == index;
-    final showBadge = count != null && count > 0;
-
-    return Padding(
-      padding: const EdgeInsets.only(right: 10.0, top: 10.0),
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          InkWell(
-            onTap: () {
-              if (isLocked) {
-                UpgradeModal.show(
-                  context,
-                  featureName: "Aba de Visitantes",
-                  requiredPlan: "Plus",
-                );
-                return;
-              }
-              setState(() {
-                _selectedTabIndex = index;
-                _selectedTagFilter = "Todos";
-              });
-            },
-            borderRadius: BorderRadius.circular(20),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(
-                color: isLocked
-                    ? Colors.grey[200]
-                    : (isSelected
-                        ? (index == 0 ? AppColors.primaryPurple : Colors.blue)
-                        : Colors.grey[100]),
-                borderRadius: BorderRadius.circular(20),
-                border: isSelected
-                    ? Border.all(color: Colors.transparent)
-                    : Border.all(color: Colors.grey[300]!),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(isLocked ? Icons.lock : icon,
-                      size: 16,
-                      color: isSelected
-                          ? Colors.white
-                          : (isLocked ? Colors.grey : Colors.grey[600])),
-                  const SizedBox(width: 8),
-                  Text(label,
-                      style: TextStyle(
-                          color: isSelected
-                              ? Colors.white
-                              : (isLocked ? Colors.grey : Colors.grey[600]),
-                          fontWeight: FontWeight.bold,
-                          fontSize: 13)),
-                ],
-              ),
-            ),
-          ),
-          if (showBadge)
-            Positioned(
-              right: -10,
-              top: -10,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: Colors.red,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: Colors.white, width: 1.5),
-                ),
-                child: Text(
-                  count.toString(),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
 
   Widget _buildClientListItem(
       Map<String, dynamic> client, bool isSelected, bool isMobile,

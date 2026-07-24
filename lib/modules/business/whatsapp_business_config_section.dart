@@ -23,6 +23,8 @@ class _WhatsappBusinessConfigSectionState extends State<WhatsappBusinessConfigSe
   bool _isTesting = false;
 
   String _shopPlan = 'free';
+  String _reminderTimeUnit = 'hours';
+  double _reminderTimeValue = 48.0;
 
   final TextEditingController _phoneNumberIdController = TextEditingController();
   final TextEditingController _businessAccountIdController = TextEditingController();
@@ -43,9 +45,12 @@ class _WhatsappBusinessConfigSectionState extends State<WhatsappBusinessConfigSe
 
   Future<void> _loadConfig() async {
     try {
-      final shopRes = await Supabase.instance.client.from('shops').select('plan_id').eq('id', widget.shopId).maybeSingle();
+      final shopRes = await Supabase.instance.client.from('shops').select('plan_id, config').eq('id', widget.shopId).maybeSingle();
       if (shopRes != null) {
         _shopPlan = shopRes['plan_id']?.toString().toLowerCase() ?? 'free';
+        final shopConfig = shopRes['config'] as Map<String, dynamic>? ?? {};
+        _reminderTimeUnit = shopConfig['reminder_time_unit'] ?? 'hours';
+        _reminderTimeValue = (shopConfig['reminder_time_value'] ?? 48).toDouble();
       }
 
       final config = await _repository.getConfig(widget.shopId);
@@ -92,6 +97,14 @@ class _WhatsappBusinessConfigSectionState extends State<WhatsappBusinessConfigSe
       );
 
       await _repository.saveConfig(config);
+
+      // Atualiza também o tempo no JSON config da loja
+      final currentShopRes = await Supabase.instance.client.from('shops').select('config').eq('id', widget.shopId).maybeSingle();
+      final currentConfig = currentShopRes?['config'] as Map<String, dynamic>? ?? {};
+      currentConfig['reminder_time_unit'] = _reminderTimeUnit;
+      currentConfig['reminder_time_value'] = _reminderTimeValue.round();
+      await Supabase.instance.client.from('shops').update({'config': currentConfig}).eq('id', widget.shopId);
+
       _showSnack("Configurações do WhatsApp salvas com sucesso!");
     } catch (e) {
       _showSnack("Erro ao salvar: $e", isError: true);
@@ -283,6 +296,77 @@ class _WhatsappBusinessConfigSectionState extends State<WhatsappBusinessConfigSe
                           setState(() => _isActive = v);
                         }
                       },
+                    ),
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  // ANTECEDÊNCIA DO LEMBRETE
+                  const Text("3. Momento do Lembrete", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.primaryPurple)),
+                  const SizedBox(height: 6),
+                  const Text("Defina com quanta antecedência deseja notificar o cliente sobre o agendamento.", style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: RadioListTile<String>(
+                                title: const Text('Horas', style: TextStyle(fontSize: 14)),
+                                value: 'hours',
+                                groupValue: _reminderTimeUnit,
+                                contentPadding: EdgeInsets.zero,
+                                activeColor: const Color(0xFF25D366),
+                                onChanged: (value) {
+                                  setState(() {
+                                    _reminderTimeUnit = value!;
+                                    if (_reminderTimeValue > 72) _reminderTimeValue = 72;
+                                  });
+                                },
+                              ),
+                            ),
+                            Expanded(
+                              child: RadioListTile<String>(
+                                title: const Text('Dias', style: TextStyle(fontSize: 14)),
+                                value: 'days',
+                                groupValue: _reminderTimeUnit,
+                                contentPadding: EdgeInsets.zero,
+                                activeColor: const Color(0xFF25D366),
+                                onChanged: (value) {
+                                  setState(() {
+                                    _reminderTimeUnit = value!;
+                                    if (_reminderTimeValue > 7) _reminderTimeValue = 7;
+                                  });
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          _reminderTimeUnit == 'hours'
+                              ? "Enviar com ${_reminderTimeValue.round()} horas de antecedência"
+                              : "Enviar com ${_reminderTimeValue.round()} dias de antecedência",
+                          style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black87),
+                        ),
+                        Slider(
+                          value: _reminderTimeValue,
+                          min: 1,
+                          max: _reminderTimeUnit == 'hours' ? 72 : 7,
+                          divisions: _reminderTimeUnit == 'hours' ? 71 : 6,
+                          activeColor: const Color(0xFF25D366),
+                          label: _reminderTimeValue.round().toString(),
+                          onChanged: (val) {
+                            setState(() => _reminderTimeValue = val);
+                          },
+                        ),
+                      ],
                     ),
                   ),
 

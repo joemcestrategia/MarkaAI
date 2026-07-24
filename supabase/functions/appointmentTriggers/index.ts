@@ -657,10 +657,31 @@ serve(async (req) => {
     else if (payload.type === 'UPDATE') {
       const before = payload.old_record
       const after = payload.record
-      const notifiableStatuses = ['agendado', 'confirmado']
+      const notifiableStatuses = ['agendado', 'confirmado', 'confirmed_by_client']
       const statusChanged = before.status !== after.status
       const dateChanged = before.scheduled_at !== after.scheduled_at
       const currentStatus = (after.status || '').toLowerCase()
+
+      // WhatsApp confirmation: confirmation_state mudou
+      const confStateChanged = before.confirmation_state !== after.confirmation_state
+      const newConfState = (after.confirmation_state || '').toLowerCase()
+
+      if (confStateChanged && (newConfState === 'confirmed' || newConfState === 'cancelled')) {
+        const data = await buildPayloadFromAppointment(supabase, after)
+        const title = newConfState === 'confirmed' ? '✅ Confirmação via WhatsApp' : '❌ Cancelamento via WhatsApp'
+        const body = newConfState === 'confirmed'
+          ? `${data.payload.clientName} confirmou presença — ${data.payload.serviceName} às ${data.payload.time}`
+          : `${data.payload.clientName} cancelou — ${data.payload.serviceName} de ${data.payload.date} às ${data.payload.time}`
+
+        console.log(`[UPDATE] WhatsApp ${newConfState} detected for appointment ${after.id}. Sending push...`)
+        const results = await Promise.allSettled([
+          after.shop_id ? sendOwnerPush(supabase, after.shop_id, title, body) : Promise.resolve(),
+          data.ownerId ? sendOwnerFCM(supabase, data.ownerId, title, body, { scheduled_at: after.scheduled_at || '', appointment_id: after.id || '' }) : Promise.resolve(),
+        ])
+        results.forEach((r, i) => {
+          if (r.status === 'rejected') console.error(`[PROMISE_WA_${i}_FAILED]`, r.reason)
+        })
+      }
 
       // 1. Mudança para Confirmação / Agendamento (ex: de 'pendente' para 'confirmado')
       if (statusChanged && notifiableStatuses.includes(currentStatus) && !notifiableStatuses.includes((before.status || '').toLowerCase())) {
@@ -740,9 +761,14 @@ serve(async (req) => {
 
         // Activity log
         if (after.shop_id) {
+          const wasPixExpired = (before.status || '').toLowerCase() === 'pendente_pix'
           await logActivity(supabase, after.shop_id, after.id || null,
-            'agendamento_cancelado', 'cliente', data.payload.clientName,
-            `${data.payload.clientName} cancelou ${data.payload.serviceName} de ${data.payload.date} às ${data.payload.time}`,
+            'agendamento_cancelado',
+            wasPixExpired ? 'sistema' : 'cliente',
+            data.payload.clientName,
+            wasPixExpired
+              ? 'Cancelamento automático pelo sistema (Pix expirado)'
+              : `${data.payload.clientName} cancelou ${data.payload.serviceName} de ${data.payload.date} às ${data.payload.time}`,
             { service_name: data.payload.serviceName, old_status: before.status }
           )
         }

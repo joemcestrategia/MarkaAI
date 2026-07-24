@@ -40,6 +40,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
 
   bool _whatsappEnabled = true;
 
+  // ⏰ Antecedência do lembrete WhatsApp
+  String _reminderTimeUnit = 'hours';
+  double _reminderTimeValue = 48.0;
+
   // ðŸ•’ Intervalo (Slots)
   int _appointmentIntervalMinutes = 60;
 
@@ -86,6 +90,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
 
   // Google Business
   Map<String, dynamic>? _googleBusiness;
+
+  // Snapshot para detectar alterações não salvas
+  Map<String, dynamic> _savedSnapshot = {};
 
   @override
   void initState() {
@@ -203,6 +210,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 _vipAvgInterval = (config['vip_avg_interval'] ?? 30).toDouble();
                 _sumidoMaxDays = (config['sumido_max_days'] ?? 45).toDouble();
                 _whatsappEnabled = config['whatsapp_enabled'] ?? true;
+
+                // ⏰ Antecedência do lembrete
+                _reminderTimeUnit = config['reminder_time_unit'] ?? 'hours';
+                _reminderTimeValue = (config['reminder_time_value'] ?? 48).toDouble();
               });
             }
           }
@@ -215,6 +226,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               _nfseAutoEmit = nfseCfg?.emitirAutomaticoCartao ?? false;
             });
           }
+
+          // Salvar snapshot do estado original após carregamento
+          _savedSnapshot = _buildCurrentSnapshot();
         }
       }
     } catch (e) {
@@ -295,6 +309,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           'sumido_max_days': _sumidoMaxDays.round(),
           'require_cpf': _requireCpf,
           'whatsapp_enabled': _whatsappEnabled,
+          'reminder_time_unit': _reminderTimeUnit,
+          'reminder_time_value': _reminderTimeValue.round(),
           'atualizado_em': DateTime.now().toIso8601String(),
         }
       }).eq('id', shopId!);
@@ -311,6 +327,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         ShopDataCacheService().invalidate(shopId!, 'config');
         
         _showSnack("Configurações salvas com sucesso!", isError: false);
+
+        // Atualizar snapshot após salvar
+        _savedSnapshot = _buildCurrentSnapshot();
       }
     } catch (e) {
       if (mounted) _showSnack("Erro ao salvar: $e", isError: true);
@@ -368,7 +387,20 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           _currentFeatures = snapshot.data!;
         }
 
-        return Scaffold(
+        return PopScope(
+          canPop: false,
+          onPopInvokedWithResult: (didPop, result) async {
+            if (didPop) return;
+            if (_hasUnsavedChanges()) {
+              final shouldLeave = await _showUnsavedChangesDialog();
+              if (shouldLeave == true && context.mounted) {
+                Navigator.of(context).pop();
+              }
+            } else {
+              Navigator.of(context).pop();
+            }
+          },
+          child: Scaffold(
           backgroundColor: const Color(0xFFF2F4F8),
           body: LayoutBuilder(
             builder: (context, constraints) {
@@ -419,6 +451,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 );
               }
             },
+          ),
           ),
         );
       },
@@ -1433,19 +1466,140 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         secondary: Container(
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
-            color: const Color(0xFF25D366).withValues(alpha: 0.1),
+            color: AppColors.primaryPurple.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(10),
           ),
-          child: const Icon(FontAwesomeIcons.whatsapp, color: Color(0xFF25D366), size: 20),
+          child: const Icon(FontAwesomeIcons.whatsapp, color: AppColors.primaryPurple, size: 20),
         ),
         title: const Text("Lembretes de WhatsApp",
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
         subtitle: const Text("Envio automático de lembretes para os clientes via WhatsApp.",
             style: TextStyle(fontSize: 12, color: Colors.grey)),
         value: _whatsappEnabled,
-        activeColor: const Color(0xFF25D366),
+        activeColor: AppColors.primaryPurple,
         onChanged: (v) => setState(() => _whatsappEnabled = v),
       ),
+      // Painel de configuração de antecedência (visível só quando WhatsApp está ativo)
+      if (_whatsappEnabled) ...[
+        const Divider(height: 1),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                "Antecedência do Lembrete",
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.black87),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                "Defina com quanto tempo antes do agendamento o cliente será notificado.",
+                style: TextStyle(fontSize: 11, color: Colors.grey),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () => setState(() {
+                        _reminderTimeUnit = 'hours';
+                        if (_reminderTimeValue > 72) _reminderTimeValue = 48;
+                      }),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        decoration: BoxDecoration(
+                          color: _reminderTimeUnit == 'hours'
+                              ? AppColors.primaryPurple.withValues(alpha: 0.12)
+                              : Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: _reminderTimeUnit == 'hours'
+                                ? AppColors.primaryPurple
+                                : Colors.grey.shade300,
+                            width: _reminderTimeUnit == 'hours' ? 2 : 1,
+                          ),
+                        ),
+                        child: Center(
+                          child: Text(
+                            "Horas",
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                              color: _reminderTimeUnit == 'hours'
+                                  ? AppColors.primaryPurple
+                                  : Colors.grey.shade600,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () => setState(() {
+                        _reminderTimeUnit = 'days';
+                        if (_reminderTimeValue > 7) _reminderTimeValue = 2;
+                      }),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        decoration: BoxDecoration(
+                          color: _reminderTimeUnit == 'days'
+                              ? AppColors.primaryPurple.withValues(alpha: 0.12)
+                              : Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: _reminderTimeUnit == 'days'
+                                ? AppColors.primaryPurple
+                                : Colors.grey.shade300,
+                            width: _reminderTimeUnit == 'days' ? 2 : 1,
+                          ),
+                        ),
+                        child: Center(
+                          child: Text(
+                            "Dias",
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                              color: _reminderTimeUnit == 'days'
+                                  ? AppColors.primaryPurple
+                                  : Colors.grey.shade600,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Center(
+                child: Text(
+                  _reminderTimeUnit == 'hours'
+                      ? "Enviar com ${_reminderTimeValue.round()} horas de antecedência"
+                      : "Enviar com ${_reminderTimeValue.round()} ${_reminderTimeValue.round() == 1 ? 'dia' : 'dias'} de antecedência",
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                    color: AppColors.primaryPurple,
+                  ),
+                ),
+              ),
+              Slider(
+                value: _reminderTimeValue,
+                min: 1,
+                max: _reminderTimeUnit == 'hours' ? 72 : 7,
+                divisions: _reminderTimeUnit == 'hours' ? 71 : 6,
+                activeColor: AppColors.primaryPurple,
+                label: _reminderTimeValue.round().toString(),
+                onChanged: (val) {
+                  setState(() => _reminderTimeValue = val);
+                },
+              ),
+            ],
+          ),
+        ),
+      ],
       const Divider(height: 1),
       ListTile(
         leading: const Icon(Icons.chat_bubble_outline_rounded, color: AppColors.primaryPurple, size: 22),
@@ -1456,7 +1610,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           if (shopId != null) {
             Navigator.push(
               context,
-              MaterialPageRoute(builder: (context) => MessageTemplatesPage(shopId: shopId!)),
+              MaterialPageRoute(builder: (context) => MessageTemplatesPage(
+                shopId: shopId!,
+                isFreePlan: _currentFeatures == planFeaturesConfig[PlanKey.free]
+              )),
             );
           }
         },
@@ -1469,12 +1626,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       // Google Meu Negócio
       ListTile(
         leading: Container(
-          padding: const EdgeInsets.all(10),
+          padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
-            color: Colors.blue.shade50,
+            color: AppColors.primaryPurple.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(10),
           ),
-          child: Icon(Icons.star, color: Colors.orange.shade700, size: 24),
+          child: const Icon(Icons.store, color: AppColors.primaryPurple, size: 20),
         ),
         title: const Text(
           "Google Meu Negócio",
@@ -1482,30 +1639,36 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         ),
         subtitle: const Text(
           "Exiba suas avaliações do Google na página da sua loja",
-          style: TextStyle(fontSize: 12),
+          style: TextStyle(fontSize: 12, color: Colors.grey),
         ),
-        trailing: ElevatedButton.icon(
-          onPressed: () async {
-            if (shopId != null) {
-              await Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => LinkGoogleBusinessPage(shopId: shopId!),
-                ),
-              );
-              // Recarrega configurações ao voltar para atualizar o status do botão
-              _loadSettings();
-            }
-          },
-          icon: Icon(_googleBusiness != null ? Icons.link_off : Icons.link,
-              size: 18),
-          label: Text(_googleBusiness != null ? "DESCONECTAR" : "CONECTAR"),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: _googleBusiness != null
-                ? Colors.red[600]
-                : AppColors.primaryPurple,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      ),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16).copyWith(bottom: 12),
+        child: SizedBox(
+          width: double.infinity,
+          height: 40,
+          child: ElevatedButton.icon(
+            onPressed: () async {
+              if (shopId != null) {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => LinkGoogleBusinessPage(shopId: shopId!),
+                  ),
+                );
+                _loadSettings();
+              }
+            },
+            icon: Icon(_googleBusiness != null ? Icons.link_off : Icons.link,
+                size: 16),
+            label: Text(_googleBusiness != null ? "DESCONECTAR" : "CONECTAR",
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primaryPurple,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8)),
+            ),
           ),
         ),
       ),
@@ -1623,5 +1786,88 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               style: const TextStyle(
                   fontSize: 12, color: Colors.blueGrey, height: 1.4))
         ]));
+  }
+
+  // --- MÉTODOS DE CONTROLE DE SAÍDA (UNSAVED CHANGES) ---
+
+  Map<String, dynamic> _buildCurrentSnapshot() {
+    return {
+      'allow_multiple': _allowMultiple,
+      'allow_reschedule': _allowReschedule,
+      'client_chooses_professional': _clientChoosesProfessional,
+      'online_booking_active': _onlineBookingActive,
+      'auto_block_holidays': _autoBlockHolidays,
+      'appointment_interval_minutes': _appointmentIntervalMinutes,
+      'prevent_gaps': _preventGaps,
+      'booking_window_days': _bookingWindowDays.round(),
+      'min_advance_hours': _minAdvanceHours.round(),
+      'cancel_time_unit': _cancelUnit,
+      'cancel_time_value': _cancelValue.round(),
+      'cartao_online': _cartaoOnline,
+      'debito_presencial': _debitoPresencial,
+      'pagar_pessoalmente': _pagarPessoalmente,
+      'require_deposit': _requireDeposit,
+      'deposit_percent': _depositPercent,
+      'credit_tax_percent': _creditTaxPercent,
+      'trusted_clients_only_pay_in_person': _trustedOnlyPayInPerson,
+      'birthday_pix_discount_enabled': _birthdayPixDiscountEnabled,
+      'birthday_pix_discount_percent': _birthdayPixDiscountPercent,
+      'vip_extra_booking_days': _vipExtraDays.round(),
+      'restrict_problematic_clients': _restrictProblematicClients,
+      'vip_min_visits': _vipMinVisits.round(),
+      'vip_avg_interval': _vipAvgInterval.round(),
+      'sumido_max_days': _sumidoMaxDays.round(),
+      'require_cpf': _requireCpf,
+      'whatsapp_enabled': _whatsappEnabled,
+      'reminder_time_unit': _reminderTimeUnit,
+      'reminder_time_value': _reminderTimeValue.round(),
+    };
+  }
+
+  bool _hasUnsavedChanges() {
+    if (_savedSnapshot.isEmpty) return false;
+    final current = _buildCurrentSnapshot();
+    for (var key in current.keys) {
+      if (current[key] != _savedSnapshot[key]) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Future<bool?> _showUnsavedChangesDialog() {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text("Sair sem salvar?", style: TextStyle(color: AppColors.primaryPurple)),
+        content: const Text(
+          "Você fez alterações nas configurações da loja que ainda não foram salvas.\nSe você sair agora, perderá todas elas.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true), // Retorna true -> pode sair (descarta)
+            child: const Text("Descartar", style: TextStyle(color: Colors.red)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false), // Retorna false -> cancela a saída
+            child: const Text("Cancelar"),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(ctx, false); // Fecha o modal
+              await _saveSettings(); // Salva
+              if (mounted) Navigator.pop(context); // E sai da tela!
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primaryPurple,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text("Salvar e Sair"),
+          ),
+        ],
+      ),
+    );
   }
 }

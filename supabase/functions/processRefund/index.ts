@@ -92,11 +92,24 @@ serve(async (req: Request) => {
     }
 
     // Validação c: user.id bate com shops.owner_id
-    const shopOwnerId = Array.isArray(appointment.shops) 
+    // IMPORTANTE: Neste sistema, shop.id === user.id por design (ver login_page.dart).
+    // owner_id pode estar vazio em lojas antigas — usamos shop_id como fallback confiável.
+    const shopOwnerIdRaw = Array.isArray(appointment.shops) 
       ? appointment.shops[0]?.owner_id 
       : appointment.shops?.owner_id
 
-    if (user.id !== shopOwnerId) {
+    // Normaliza ambos os lados para evitar falhas por tipo (TEXT vs UUID) ou espaços
+    const shopOwnerIdNormalized = shopOwnerIdRaw?.toString().trim().toLowerCase() ?? ''
+    const userId = user.id?.toString().trim().toLowerCase() ?? ''
+
+    // Fallback: se owner_id estiver vazio, usa shop_id (pois shop.id === user.id neste sistema)
+    const shopId = appointment.shop_id?.toString().trim().toLowerCase() ?? ''
+    const effectiveOwnerId = shopOwnerIdNormalized || shopId
+
+    console.log(`[processRefund] Verificando permissão: user.id="${userId}" vs owner_id="${shopOwnerIdNormalized}" (fallback shop_id="${shopId}")`)
+
+    if (!effectiveOwnerId || userId !== effectiveOwnerId) {
+      console.warn(`[processRefund] Permissão negada: user.id="${userId}", effective_owner_id="${effectiveOwnerId}", appointment_id="${appointment_id}"`)
       return new Response(
         JSON.stringify({ error: 'Sem permissão. Apenas o dono da loja pode realizar estornos financeiros.' }),
         { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

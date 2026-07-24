@@ -75,9 +75,9 @@ function extractButtonEvent(body: any): { from: string; payload: string; phoneNu
   }
 }
 
-/** Extrai telefone do agendamento considerando campos legados (Setmore, Firebase) */
+/** Extrai telefone do agendamento */
 function getAppointmentPhone(appt: any): string {
-  return (appt.client_phone || appt.clientPhone || appt.cliente_telefone || '').replace(/\D/g, '')
+  return (appt.client_phone || '').replace(/\D/g, '')
 }
 
 /**
@@ -165,6 +165,14 @@ async function sendWhatsAppInteractive(
 
     if (interactiveType === 'button') {
       interactive.action.buttons = buttonsOrUrl
+    } else if (interactiveType === 'cta_url') {
+      interactive.action = {
+        name: 'cta_url',
+        parameters: {
+          display_text: buttonsOrUrl.display_text,
+          url: buttonsOrUrl.url
+        }
+      }
     }
 
     const payload = {
@@ -317,8 +325,9 @@ serve(async (req) => {
         console.log(`[whatsapp-webhook] Tentando lookup direto por contextMessageId: ${contextMessageId}`)
         
         const baseQuery = `
-            id, shop_id, client_name, client_phone, clientPhone, cliente_telefone, service_name, scheduled_at, status, confirmation_state,
+            id, shop_id, client_name, client_phone, service_name, scheduled_at, status, confirmation_state,
             shops (
+              name,
               plan_id,
               phone,
               whatsapp,
@@ -362,8 +371,9 @@ serve(async (req) => {
           let q = supabase
             .from('appointments')
             .select(`
-              id, shop_id, client_name, client_phone, clientPhone, cliente_telefone, service_name, scheduled_at, status, confirmation_state,
+              id, shop_id, client_name, client_phone, service_name, scheduled_at, status, confirmation_state,
               shops (
+                name,
                 plan_id,
                 phone,
                 whatsapp,
@@ -384,7 +394,7 @@ serve(async (req) => {
           const { data, error } = await q
           if (error || !data?.length) return null
 
-          // Filtra em memória suportando campos legados (client_phone, clientPhone, cliente_telefone)
+          // Filtra em memória pelo client_phone
           const matches = data.filter((appt: any) => {
             const phone = getAppointmentPhone(appt)
             return phone.slice(-8) === fromSuffix
@@ -433,6 +443,15 @@ serve(async (req) => {
       const phoneNumberId = whatsappConfig.wa_phone_number_id || Deno.env.get('GLOBAL_WA_PHONE_NUMBER_ID') || ''
       const accessToken = whatsappConfig.wa_access_token || Deno.env.get('GLOBAL_WA_ACCESS_TOKEN') || ''
 
+      // ── GUARDA: Bloquear ações em agendamentos já finalizados ──
+      if (appointment.confirmation_state === 'confirmed' || appointment.confirmation_state === 'cancelled') {
+        console.warn(`[whatsapp-webhook] Ação bloqueada — agendamento já finalizado (${appointment.confirmation_state}). ID: ${appointment.id}`)
+        return new Response(JSON.stringify({ ok: true, blocked: true, reason: `already_${appointment.confirmation_state}` }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+
       // ── CONFIRMAR (Etapa 1: Pergunta) ─────────────────────────────────────────
       if (buttonPayload === 'CONFIRM_APPOINTMENT' || buttonPayload.toUpperCase() === 'CONFIRMAR') {
         if (appointment.confirmation_state === 'awaiting_confirmation') {
@@ -440,7 +459,7 @@ serve(async (req) => {
         } else if (phoneNumberId && accessToken) {
           const metaResponse = await sendWhatsAppInteractive(phoneNumberId, accessToken, clientPhone, 'button', 'Você tem certeza que deseja confirmar?', [
             { type: 'reply', reply: { id: 'CONFIRM_SURE', title: 'Sim' } },
-            { type: 'reply', reply: { id: 'CANCEL_SURE', title: 'Não' } }
+            { type: 'reply', reply: { id: 'CONFIRM_UNSURE', title: 'Não' } }
           ])
           
           const newWamid = metaResponse?.messages?.[0]?.id
@@ -462,7 +481,7 @@ serve(async (req) => {
         } else if (phoneNumberId && accessToken) {
           const metaResponse = await sendWhatsAppInteractive(phoneNumberId, accessToken, clientPhone, 'button', 'Você tem certeza que deseja cancelar?', [
             { type: 'reply', reply: { id: 'CANCEL_SURE', title: 'Sim' } },
-            { type: 'reply', reply: { id: 'CONFIRM_SURE', title: 'Não' } }
+            { type: 'reply', reply: { id: 'CANCEL_UNSURE', title: 'Não' } }
           ])
           
           const newWamid = metaResponse?.messages?.[0]?.id
@@ -477,6 +496,54 @@ serve(async (req) => {
         }
       }
 
+      // ── "NÃO TENHO CERTEZA" (UNSURE) ────────────────────────────────────
+      else if (buttonPayload === 'CONFIRM_UNSURE' || buttonPayload === 'CANCEL_UNSURE') {
+        const { data: reset, error: resetError } = await supabase
+          .from('appointments')
+          .update({ confirmation_state: 'not_sent' })
+          .eq('id', appointment.id)
+          .eq('confirmation_state', 'awaiting_confirmation')
+          .select('id')
+
+        if (reset && reset.length > 0) {
+          console.log(`[whatsapp-webhook] Cliente indeciso para ${appointment.id} — estado resetado para not_sent, reenviando pergunta`)
+
+          if (phoneNumberId && accessToken) {
+            const isConfirmFlow = buttonPayload === 'CONFIRM_UNSURE'
+            const questionText = isConfirmFlow ? 'Você tem certeza que deseja confirmar?' : 'Você tem certeza que deseja cancelar?'
+            const buttons = isConfirmFlow
+              ? [
+                  { type: 'reply', reply: { id: 'CONFIRM_SURE', title: 'Sim' } },
+                  { type: 'reply', reply: { id: 'CONFIRM_UNSURE', title: 'Não' } }
+                ]
+              : [
+                  { type: 'reply', reply: { id: 'CANCEL_SURE', title: 'Sim' } },
+                  { type: 'reply', reply: { id: 'CANCEL_UNSURE', title: 'Não' } }
+                ]
+
+            const metaResponse = await sendWhatsAppInteractive(phoneNumberId, accessToken, clientPhone, 'button', questionText, buttons)
+
+            const newWamid = metaResponse?.messages?.[0]?.id
+            if (newWamid) {
+              await supabase.from('wa_interactive_messages').insert({
+                appointment_id: appointment.id,
+                wamid: newWamid,
+                message_kind: 'confirmation_check'
+              })
+              await supabase.from('appointments').update({ confirmation_state: 'awaiting_confirmation', last_wa_message_sent_at: new Date().toISOString() }).eq('id', appointment.id)
+            }
+          }
+        } else {
+          console.warn(`[whatsapp-webhook] Tentativa de "não tenho certeza" em agendamento já finalizado ou sem estado awaiting_confirmation. ID: ${appointment.id}`)
+          return new Response('OK', { status: 200 })
+        }
+
+        return new Response(JSON.stringify({ ok: true, action: 'unsure_reset' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+
       // ── LOGICA COMPARTILHADA DA ETAPA 2 ──────────────────────────────────────
       else if (buttonPayload === 'CONFIRM_SURE' || buttonPayload === 'CANCEL_SURE') {
         let shopPhoneClean = (shop.whatsapp || shop.phone || '').replace(/\D/g, '') || ''
@@ -486,6 +553,7 @@ serve(async (req) => {
         const shopWaLink = shopPhoneClean ? `https://wa.me/${shopPhoneClean}` : 'https://marka.ai'
 
         // ── ATUALIZAÇÃO ATÔMICA DA ETAPA 2 ───────────────────────────────
+        // 1. Atualização principal — SEM a guarda do campo novo, exatamente como já era antes
         const newState = buttonPayload === 'CONFIRM_SURE' ? 'confirmed' : 'cancelled'
         const newStatus = buttonPayload === 'CONFIRM_SURE' ? 'confirmed_by_client' : 'cancelado'
 
@@ -509,11 +577,26 @@ serve(async (req) => {
           return new Response('OK', { status: 200 })
         }
 
+        // 2. Escrita do campo novo — separada, best-effort, nunca bloqueia a confirmação principal
+        if (buttonPayload === 'CONFIRM_SURE') {
+          const { error: reminderUpdateError } = await supabase
+            .from('appointments')
+            .update({
+              whatsapp_reminder_status: 'confirmed',
+              whatsapp_reminder_confirmed_at: new Date().toISOString(),
+            })
+            .eq('id', appointment.id)
+            .eq('whatsapp_reminder_status', 'sent') // idempotência só deste campo, isolada
+          
+          if (reminderUpdateError) {
+            // Não bloqueia o fluxo — a confirmação já aconteceu (passo 1).
+            // Só loga pra investigar depois; não é motivo pra falhar o webhook.
+            console.error('[whatsapp-webhook] Falha ao atualizar whatsapp_reminder_status (não bloqueante):', reminderUpdateError.message)
+          }
+        }
+
         if (buttonPayload === 'CONFIRM_SURE') {
           console.log(`[whatsapp-webhook] ✅ Agendamento ${appointment.id} confirmado pelo cliente`)
-          if (phoneNumberId && accessToken) {
-            await sendWhatsAppText(phoneNumberId, accessToken, clientPhone, `✅ Ação executada com sucesso! Seu agendamento foi confirmado.\n\nPara falar com o salão, clique no link abaixo:\n${shopWaLink}`)
-          }
 
           const d = new Date(appointment.scheduled_at)
           const dateStr = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}`
@@ -529,15 +612,18 @@ serve(async (req) => {
           return new Response(JSON.stringify({ success: true, action: 'CONFIRM_SURE', appointment }), { status: 200 })
         } else if (buttonPayload === 'CANCEL_SURE') {
           console.log(`[whatsapp-webhook] ❌ Agendamento ${appointment.id} cancelado pelo cliente`)
+
           if (phoneNumberId && accessToken) {
-            await sendWhatsAppText(phoneNumberId, accessToken, clientPhone, `❌ Ação executada com sucesso! Seu agendamento foi cancelado.\n\nPara falar com o salão, clique no link abaixo:\n${shopWaLink}`)
+            console.log(`[whatsapp-webhook] 📨 Enviando msg 3 (texto cancel) para ${clientPhone}`)
+            await sendWhatsAppText(phoneNumberId, accessToken, clientPhone, '*Seu agendamento foi cancelado.*')
+            console.log(`[whatsapp-webhook] ✅ Mensagem 3 (cancel) enviada para agendamento ${appointment.id}`)
+          } else {
+            console.error(`[whatsapp-webhook] ❌ Falta phoneNumberId ou accessToken para enviar msg 3 cancel.`)
           }
-          // Não envia notifyOwner explícito pois o banco já possui trigger pra status='cancelado'
+
           return new Response(JSON.stringify({ success: true, action: 'CANCEL_SURE', appointment }), { status: 200 })
         }
       }
-
-      // ── PAYLOAD DESCONHECIDO ───────────────────────────────
       else {
         console.warn(`[whatsapp-webhook] Payload de botão desconhecido: ${buttonPayload}`)
       }

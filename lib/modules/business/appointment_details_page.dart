@@ -13,6 +13,7 @@ import 'package:flutter/services.dart';
 import 'helpers/cancellation_helper.dart';
 import '../../core/models/message_template_model.dart';
 import '../../core/services/message_template_service.dart';
+import '../../utils/payment_summary.dart';
 
 class AppointmentDetailsPage extends StatefulWidget {
   final Map<String, dynamic> appointmentDoc;
@@ -774,6 +775,135 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     }
   }
 
+  Future<void> _restoreAppointment() async {
+    final data = _localDoc;
+    final appointmentId = data['id']?.toString();
+    final shopId = (data['shop_id'] ?? data['shopId'])?.toString();
+    final professionalId = (data['professional_id'] ?? data['profissional_id'] ?? data['profissionalId'])?.toString();
+    final scheduledAt = data['scheduled_at']?.toString();
+    final durationMin = int.tryParse(data['duration_min']?.toString() ?? '') ?? 30;
+    final paymentId = data['payment_id']?.toString();
+
+    if (appointmentId == null || shopId == null || professionalId == null || scheduledAt == null) {
+      _showSnackBar('Dados insuficientes para restaurar o agendamento.', isError: true);
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      final availResult = await Supabase.instance.client.functions.invoke(
+        'checkAvailability',
+        body: {
+          'professional_id': professionalId,
+          'shop_id': shopId,
+          'start_time': scheduledAt,
+          'duration': durationMin,
+        },
+      );
+
+      if (availResult.data['available'] != true) {
+        if (mounted) {
+          setState(() => _isLoading = false);
+          _showSnackBar('Esse horário já foi ocupado por outro agendamento. Não é possível restaurar.', isError: true);
+        }
+        return;
+      }
+
+      if (mounted) setState(() => _isLoading = false);
+
+      final hasPayment = paymentId != null && paymentId.isNotEmpty;
+      final newStatus = await showDialog<String>(
+        context: context,
+        builder: (ctx) {
+          String selected = hasPayment ? 'confirmado' : 'agendado';
+          return StatefulBuilder(
+            builder: (context, setSB) {
+              return AlertDialog(
+                title: const Text('Restaurar Agendamento'),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('Selecione o status ao restaurar:'),
+                    const SizedBox(height: 16),
+                    RadioListTile<String>(
+                      title: const Text('Confirmado'),
+                      value: 'confirmado',
+                      groupValue: selected,
+                      onChanged: (v) => setSB(() => selected = v!),
+                    ),
+                    RadioListTile<String>(
+                      title: const Text('Pendente'),
+                      value: 'agendado',
+                      groupValue: selected,
+                      onChanged: (v) => setSB(() => selected = v!),
+                    ),
+                  ],
+                ),
+                actions: [
+                  TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
+                  ElevatedButton(
+                    onPressed: () => Navigator.pop(ctx, selected),
+                    style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryPurple, foregroundColor: Colors.white),
+                    child: const Text('Restaurar'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+
+      if (newStatus == null) return;
+
+      setState(() => _isLoading = true);
+
+      try {
+        await Supabase.instance.client
+          .from('appointments')
+          .update({ 'status': newStatus })
+          .eq('id', appointmentId);
+      } catch (e) {
+        if (mounted) {
+          setState(() => _isLoading = false);
+          final errorMsg = e.toString();
+          if (errorMsg.contains('appointments_no_overlap')) {
+            _showSnackBar('Esse horário já foi ocupado por outro agendamento. Não é possível restaurar.', isError: true);
+          } else {
+            _showSnackBar('Erro ao restaurar: $e', isError: true);
+          }
+        }
+        return;
+      }
+
+      try {
+        await Supabase.instance.client
+          .from('shop_activity_log')
+          .insert({
+            'shop_id': shopId,
+            'appointment_id': appointmentId,
+            'event_type': 'agendamento_restaurado',
+            'actor_type': 'dono',
+            'actor_name': _selectedClientName ?? 'Cliente',
+            'description': 'Agendamento restaurado manualmente como ${newStatus == 'confirmado' ? 'Confirmado' : 'Pendente'}',
+            'metadata': { 'has_payment_id': hasPayment, 'restored_to': newStatus },
+          });
+      } catch (_) {}
+
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _showSnackBar('Agendamento restaurado com sucesso!', isError: false);
+        _refreshFromDb();
+        widget.onAppointmentUpdated?.call(_localDoc);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _showSnackBar('Erro ao verificar disponibilidade: $e', isError: true);
+      }
+    }
+  }
+
   void _showTemplatesBottomSheet() async {
     final phone = _selectedClientPhone?.replaceAll(RegExp(r'\D'), '');
     if (phone == null || phone.isEmpty) {
@@ -792,7 +922,8 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
         return FutureBuilder<List<MessageTemplate>>(
           future: MessageTemplateService().getTemplates(shopId),
           builder: (context, snapshot) {
-            final templates = snapshot.data ?? [];
+            var templates = snapshot.data ?? [];
+            templates = templates.where((t) => !(t.isDefault && t.title == 'Mensagem de Aniversário')).toList();
             final isLoading = snapshot.connectionState == ConnectionState.waiting;
 
             return Container(
@@ -1015,15 +1146,16 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
   Widget _buildBottomActions() {
     final status = widget.appointmentDoc['status'] ?? '';
     final isHistory = status == 'cancelado' || status == 'concluido';
+    final isCancelado = status == 'cancelado';
 
-    return _isEditing
-        ? ElevatedButton(
+    if (_isEditing) {
+      return ElevatedButton(
             onPressed: _updateAppointment,
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primaryPurple,
               foregroundColor: Colors.white,
               padding:
-                  const EdgeInsets.symmetric(vertical: 12), // Botão mais fino
+                  const EdgeInsets.symmetric(vertical: 12),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(10)),
               minimumSize: const Size(double.infinity, 45),
@@ -1031,8 +1163,10 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
             child: const Text("SALVAR",
                 style: TextStyle(
                     color: Colors.white, fontWeight: FontWeight.bold)),
-          )
-        : Row(
+          );
+    }
+
+    final buttonsRow = Row(
             children: [
               Expanded(
                 child: OutlinedButton.icon(
@@ -1076,6 +1210,37 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
               ),
             ],
           );
+
+    if (isCancelado) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _restoreAppointment,
+              icon: const Icon(Icons.restore, color: Colors.white, size: 18),
+              label: const Text("Restaurar Agendamento",
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.teal,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          buttonsRow,
+        ],
+      );
+    }
+
+    return buttonsRow;
   }
 
   // --- NAVEGAÇÃO PARA O PERFIL DO CLIENTE ---
@@ -1368,34 +1533,8 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     );
   }
 
-  // --- PAINEL FINANCEIRO ULTRA-COMPACTO ---
-  double _getDisplayTotal(Map<String, dynamic> data) {
-    final double totalPrice = double.tryParse(data['total_price']?.toString() ?? '0') ?? 0;
-    final double totalPayable = double.tryParse(data['total_payable']?.toString() ?? '0') ?? 0;
-    final double valorCDesc = double.tryParse(data['valor_com_desconto']?.toString() ?? '0') ?? 0;
-    final double discountAmt = double.tryParse(data['discount_amount']?.toString() ?? '0') ?? 0;
-    final bool hasBirthday = data['birthday_discount_applied'] == true;
-    final bool hasCoupon = data['coupon_applied'] == true;
-
-    if (totalPayable > 0 && totalPrice > 0 && totalPayable < totalPrice - 0.01) return totalPayable;
-    if (valorCDesc > 0 && totalPrice > 0 && valorCDesc < totalPrice - 0.01) return valorCDesc;
-    if (discountAmt > 0.01 && totalPrice > 0) return totalPrice - discountAmt;
-    if (hasBirthday && totalPrice > 0) {
-      final pct = double.tryParse(data['birthday_discount_percent']?.toString() ?? '0') ?? 0;
-      if (pct > 0) return totalPrice * (1 - pct / 100);
-    }
-    if (hasCoupon && totalPrice > 0) {
-      final pct = double.tryParse(data['coupon_discount_percent']?.toString() ?? '0') ?? 0;
-      if (pct > 0) return totalPrice * (1 - pct / 100);
-    }
-    if (totalPayable > 0) return totalPayable;
-    if (valorCDesc > 0) return valorCDesc;
-    if (totalPrice > 0) return totalPrice;
-    return double.tryParse(data['total_value']?.toString() ?? data['labor_value']?.toString() ?? data['valor']?.toString() ?? '0') ?? 0;
-  }
-
   Widget _buildFinancialHeroPanel(Map<String, dynamic> data) {
-    double total = _getDisplayTotal(data);
+    double total = getCalculatedTotal(data);
     final double pago =
         double.tryParse(data['paid_amount']?.toString() ?? data['valor_pago']?.toString() ?? "0") ?? 0.0;
     final double restante = total - pago;
@@ -1755,63 +1894,46 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
             }),
           ],
 
-          // Indicador de Sinal/Adiantamento e Pagamento do Restante
+          // Indicador de Eventos de Pagamento
           Builder(builder: (context) {
-            final double valorSinal = double.tryParse(data['valor_sinal']?.toString() ?? "0") ?? 0.0;
-            final meta = data['metadata'] as Map<String, dynamic>? ?? {};
-            final bool isAdiantamento = valorSinal > 0.01 || (restante > 0.01 && pago > 0.01) || meta['advance_payment_id'] != null;
-            if (!isAdiantamento) return const SizedBox.shrink();
-            
+            final summary = getPaymentSummary(data);
+            if (summary.events.isEmpty) return const SizedBox.shrink();
+
             return Padding(
               padding: const EdgeInsets.only(top: 10),
               child: Column(
-                children: [
-                  Container(
+                children: summary.events.asMap().entries.map((entry) {
+                  final idx = entry.key;
+                  final ev = entry.value;
+                  final isSinal = ev.label.toLowerCase() == 'sinal';
+                  final color = isSinal ? Colors.orange : Colors.green;
+                  final icon = isSinal ? Icons.money_off : Icons.check_circle;
+                  final prefix = summary.events.length > 1 ? '${idx + 1}º PAGAMENTO: ' : '';
+                  final titleText = '$prefix${ev.label}'.toUpperCase();
+
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 4),
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     decoration: BoxDecoration(
-                      color: Colors.orange.withValues(alpha: 0.1),
+                      color: color.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(6),
-                      border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+                      border: Border.all(color: color.withValues(alpha: 0.3)),
                     ),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Row(
                           children: [
-                            const Icon(Icons.money_off, size: 14, color: Colors.orange),
+                            Icon(icon, size: 14, color: color),
                             const SizedBox(width: 6),
-                            const Text('1º PAGAMENTO (SINAL)', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.orange)),
+                            Text(titleText, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: color)),
                           ],
                         ),
-                        Text(valorSinal > 0.01 ? money(valorSinal) : 'Adiantamento Parcial', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.orange)),
+                        Text('${money(ev.valor)} (${ev.metodo.toUpperCase()})', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: color)),
                       ],
                     ),
-                  ),
-                  if (meta['completion_payment_id'] != null) ...[
-                    const SizedBox(height: 4),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: Colors.green.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Row(
-                            children: [
-                              const Icon(Icons.check_circle, size: 14, color: Colors.green),
-                              const SizedBox(width: 6),
-                              const Text('2º PAGAMENTO (RESTANTE)', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.green)),
-                            ],
-                          ),
-                          Text(meta['completion_payment_method']?.toString().toUpperCase() ?? 'CONCLUÍDO', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.green)),
-                        ],
-                      ),
-                    ),
-                  ]
-                ],
+                  );
+                }).toList(),
               ),
             );
           }),
@@ -1889,39 +2011,36 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
               ),
             ),
           ],
-          // NOVO: Botão Marcar como Pago (Aprovação Manual)
+          // BOTÕES DE PAGAMENTO
           if (restante > 0.01) ...[
             const SizedBox(height: 15),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.check_circle_outline, size: 16),
-                label: const Text("Marcar como Pago"),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green.withValues(alpha: 0.1),
-                  foregroundColor: Colors.green,
-                  elevation: 0,
-                  shadowColor: Colors.transparent,
-                ),
-                onPressed: () => _marcarComoPagoManual(pago, restante),
-              ),
-            ),
+            SizedBox(width: double.infinity, child: ElevatedButton.icon(
+              icon: const Icon(Icons.add_card, size: 16),
+              label: Text(pago > 0.01 ? "Registrar Pagamento Restante (${money(restante)})" : "Marcar como Pago"),
+              style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryPurple.withValues(alpha: 0.1), foregroundColor: AppColors.primaryPurple, elevation: 0, shadowColor: Colors.transparent),
+              onPressed: () => _marcarComoPagoManual(pago, restante),
+            )),
           ] else if (pago > 0.01) ...[
-            const SizedBox(height: 15),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.undo, size: 16),
-                label: const Text("Marcar como Não Pago"),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red.withValues(alpha: 0.1),
-                  foregroundColor: Colors.red,
-                  elevation: 0,
-                  shadowColor: Colors.transparent,
-                ),
-                onPressed: () => _desmarcarComoPagoManualmente(total),
-              ),
-            ),
+            Builder(builder: (context) {
+              final meta = data['metadata'] is Map ? data['metadata'] as Map : <String, dynamic>{};
+              final temCompletion = meta['completion_payment_id'] != null;
+              final isMP = (data['payment_id']?.toString().isNotEmpty ?? false) && data['payment_id']?.toString() != 'manual';
+              if (temCompletion) {
+                return Padding(padding: const EdgeInsets.only(top: 15), child: SizedBox(width: double.infinity, child: ElevatedButton.icon(
+                  icon: const Icon(Icons.undo, size: 16), label: const Text("Remover Pagamento Restante"),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.orange.withValues(alpha: 0.1), foregroundColor: Colors.orange, elevation: 0, shadowColor: Colors.transparent),
+                  onPressed: () => _removerPagamentoRestante(total, pago),
+                )));
+              }
+              if (!isMP) {
+                return Padding(padding: const EdgeInsets.only(top: 15), child: SizedBox(width: double.infinity, child: ElevatedButton.icon(
+                  icon: const Icon(Icons.edit, size: 16), label: const Text("Editar Pagamento"),
+                  style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryPurple.withValues(alpha: 0.1), foregroundColor: AppColors.primaryPurple, elevation: 0, shadowColor: Colors.transparent),
+                  onPressed: () => _editarValorPagamentoManual(total),
+                )));
+              }
+              return const SizedBox.shrink();
+            }),
           ],
 
           // 🔄 BOTÃO: PROCESSAR ESTORNO (aparece somente para agendamentos cancelados com pagamento pendente de estorno)
@@ -2274,108 +2393,239 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
 
 
   Future<void> _marcarComoPagoManual(double pago, double restante) async {
-    String? selectedMethod = await showDialog<String>(
+    final result = await showDialog<Map<String, dynamic>?>(
       context: context,
       builder: (ctx) {
         String tempMethod = 'Dinheiro';
-        return StatefulBuilder(
-          builder: (context, setStateSB) {
-            return AlertDialog(
-              title: const Text("Marcar como Pago"),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text("Tem certeza que deseja marcar este agendamento como aprovado? O valor pendente será zerado e o status será alterado para confirmado."),
-                  const SizedBox(height: 16),
-                  const Text("Forma de Pagamento (Local):", style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  DropdownButton<String>(
-                    isExpanded: true,
-                    value: tempMethod,
-                    items: ['Dinheiro', 'Cartão de Crédito', 'Cartão de Débito', 'Pix']
-                        .map((m) => DropdownMenuItem(value: m, child: Text(m)))
-                        .toList(),
-                    onChanged: (v) {
-                      if (v != null) setStateSB(() => tempMethod = v);
-                    },
-                  ),
-                ],
+        bool isTotal = true;
+        String valorText = restante.toStringAsFixed(2);
+        return StatefulBuilder(builder: (context, sb) {
+          return Dialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            child: Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx, null),
-                  child: const Text("Cancelar", style: TextStyle(color: Colors.grey)),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: AppColors.primaryPurple.withValues(alpha: 0.1),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.payment, color: AppColors.primaryPurple),
+                        ),
+                        const SizedBox(width: 16),
+                        const Expanded(
+                          child: Text(
+                            "Registrar Pagamento",
+                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 24),
+                    
+                    if (pago > 0.01) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        decoration: BoxDecoration(color: Colors.orange.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12)),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text("Já pago (Sinal)", style: TextStyle(color: Colors.orange, fontWeight: FontWeight.w600)),
+                            Text(money(pago), style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.orange, fontSize: 16)),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      decoration: BoxDecoration(color: Colors.red.withValues(alpha: 0.05), borderRadius: BorderRadius.circular(12)),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text("Valor Pendente", style: TextStyle(color: Colors.red, fontWeight: FontWeight.w600)),
+                          Text(money(restante), style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red, fontSize: 16)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+
+                    const Text("TIPO DE RECEBIMENTO", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey, letterSpacing: 1.1)),
+                    const SizedBox(height: 12),
+                    Row(children: [
+                      Expanded(child: InkWell(
+                        onTap: () => sb(() { isTotal = true; valorText = restante.toStringAsFixed(2); }),
+                        borderRadius: BorderRadius.circular(12),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          decoration: BoxDecoration(
+                            color: isTotal ? AppColors.primaryPurple.withValues(alpha: 0.1) : Colors.grey.withValues(alpha: 0.05),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: isTotal ? AppColors.primaryPurple : Colors.grey.withValues(alpha: 0.2), width: 1.5),
+                          ),
+                          child: Column(children: [
+                            Text("Total", style: TextStyle(fontWeight: FontWeight.bold, color: isTotal ? AppColors.primaryPurple : Colors.grey[600])),
+                            const SizedBox(height: 4),
+                            Text(money(restante), style: TextStyle(fontSize: 12, color: isTotal ? AppColors.primaryPurple : Colors.grey[500])),
+                          ]),
+                        ),
+                      )),
+                      const SizedBox(width: 12),
+                      Expanded(child: InkWell(
+                        onTap: () => sb(() => isTotal = false),
+                        borderRadius: BorderRadius.circular(12),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          decoration: BoxDecoration(
+                            color: !isTotal ? AppColors.primaryPurple.withValues(alpha: 0.1) : Colors.grey.withValues(alpha: 0.05),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: !isTotal ? AppColors.primaryPurple : Colors.grey.withValues(alpha: 0.2), width: 1.5),
+                          ),
+                          child: Column(children: [
+                            Text("Parcial", style: TextStyle(fontWeight: FontWeight.bold, color: !isTotal ? AppColors.primaryPurple : Colors.grey[600])),
+                            const SizedBox(height: 4),
+                            Text("Outro valor", style: TextStyle(fontSize: 12, color: !isTotal ? AppColors.primaryPurple : Colors.grey[500])),
+                          ]),
+                        ),
+                      )),
+                    ]),
+
+                    if (!isTotal) ...[
+                      const SizedBox(height: 16),
+                      TextField(
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: InputDecoration(
+                          labelText: "Valor Recebido (R\$)",
+                          filled: true,
+                          fillColor: Colors.grey[50],
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.primaryPurple, width: 2)),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                          suffixText: "máx ${money(restante)}",
+                        ),
+                        onChanged: (v) => valorText = v,
+                      ),
+                    ],
+                    const SizedBox(height: 24),
+
+                    const Text("FORMA DE PAGAMENTO", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey, letterSpacing: 1.1)),
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[50],
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey.withValues(alpha: 0.2)),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          isExpanded: true,
+                          value: tempMethod,
+                          icon: const Icon(Icons.keyboard_arrow_down, color: AppColors.primaryPurple),
+                          items: ['Dinheiro', 'Cartao de Credito', 'Cartao de Debito', 'Pix']
+                              .map((m) => DropdownMenuItem(value: m, child: Text(m, style: const TextStyle(fontWeight: FontWeight.w500))))
+                              .toList(),
+                          onChanged: (v) { if (v != null) sb(() => tempMethod = v); },
+                        ),
+                      ),
+                    ),
+                    
+                    const SizedBox(height: 32),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            style: TextButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                            child: Text("Cancelar", style: TextStyle(color: Colors.grey[600], fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () {
+                              final valor = isTotal ? restante : (double.tryParse(valorText.replaceAll(',', '.')) ?? restante);
+                              Navigator.pop(ctx, {'method': tempMethod, 'valor': valor.clamp(0.01, restante)});
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primaryPurple,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                            child: const Text("Confirmar", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
-                ElevatedButton(
-                  onPressed: () => Navigator.pop(ctx, tempMethod),
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
-                  child: const Text("Confirmar"),
-                ),
-              ],
-            );
-          }
-        );
+              ),
+            ),
+          );
+        });
       },
     );
 
-    if (selectedMethod == null) return;
+    if (result == null) return;
+    final selectedMethod = result['method'] as String;
+    final valorRecebido = (result['valor'] as num).toDouble();
 
     setState(() => _isLoading = true);
     try {
-      final novoPago = pago + restante;
-      
+      final novoPago = pago + valorRecebido;
+      final novoRestante = restante - valorRecebido;
       final currentMeta = (_localDoc['metadata'] as Map<String, dynamic>?) ?? {};
-      final paymentId = currentMeta['payment_id'] ?? _localDoc['payment_id'];
-      
       Map<String, dynamic> newMeta = Map.from(currentMeta);
-      
-      // Se pago > 0.01, quer dizer que de fato houve um adiantamento financeiro antes.
       if (pago > 0.01) {
-        newMeta['advance_payment_id'] = currentMeta['advance_payment_id'] ?? paymentId;
+        newMeta['advance_payment_id'] = currentMeta['advance_payment_id'] ?? currentMeta['payment_id'] ?? _localDoc['payment_id'];
         newMeta['completion_payment_id'] = 'manual';
         newMeta['completion_payment_method'] = selectedMethod;
         newMeta['completion_paid_at'] = DateTime.now().toIso8601String();
+        newMeta['completion_payment_amount'] = valorRecebido;
       }
-      
-      newMeta['valor_pago'] = novoPago;
-      newMeta['restante_a_pagar'] = 0;
-      
       final Map<String, dynamic> updatePayload = {
-        'status': 'confirmado',
-        'paid_amount': novoPago,
-        'remaining_amount': 0,
-        'payment_method': selectedMethod,
-        'payment_status': 'pago',
-        'pago_em': DateTime.now().toIso8601String(),
-        'metadata': newMeta,
+        'status': novoRestante > 0.01 ? 'agendado' : 'confirmado',
+        'paid_amount': novoPago, 'remaining_amount': novoRestante,
+        'payment_status': novoRestante > 0.01 ? 'parcial' : 'pago', 'metadata': newMeta,
       };
-      
       if (pago <= 0.01) {
-        // Se foi um pagamento integral manual, sobrescrevemos o payment_id original
+        updatePayload['payment_method'] = selectedMethod;
         updatePayload['payment_id'] = 'manual';
+        updatePayload['pago_em'] = DateTime.now().toIso8601String();
+        if (novoRestante > 0.01) updatePayload['payment_status'] = 'parcial';
+        
+        newMeta['full_payment_amount'] = valorRecebido;
+        newMeta['full_payment_method'] = selectedMethod;
+        newMeta['full_payment_origin'] = 'manual';
+        newMeta['full_paid_at'] = DateTime.now().toIso8601String();
       }
-
-      await Supabase.instance.client
-          .from('appointments')
-          .update(updatePayload)
-          .eq('id', widget.appointmentDoc['id']);
+      await Supabase.instance.client.from('appointments').update(updatePayload).eq('id', widget.appointmentDoc['id']);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Pagamento confirmado manualmente!'), backgroundColor: Colors.green),
-        );
-        setState(() {
-          _isEditing = false;
-          _loadData();
-        });
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(novoRestante > 0.01 ? 'Pagamento parcial registrado (${money(valorRecebido)})' : 'Pagamento confirmado manualmente!'), backgroundColor: Colors.green));
+        setState(() => _isEditing = false);
+        _refreshFromDb();
       }
     } catch (e) {
-      debugPrint('Erro ao atualizar pagamento: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao atualizar pagamento: $e'), backgroundColor: Colors.red),
-        );
-      }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao atualizar pagamento: $e'), backgroundColor: Colors.red));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -3263,53 +3513,266 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
   }
 
   Future<void> _desmarcarComoPagoManualmente(double total) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Marcar como Não Pago"),
-        content: const Text(
-            "Deseja realmente remover o registro de pagamento deste agendamento? O valor pago será zerado e ele voltará ao status pendente."),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text("Cancelar", style: TextStyle(color: Colors.grey)),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-            child: const Text("Confirmar"),
-          ),
-        ],
-      ),
-    );
+    final meta = Map<String, dynamic>.from((_localDoc['metadata'] as Map?) ?? {});
+    final double mpProtected = getProtectedMpAmount(_localDoc);
+    
+    if (mpProtected > 0.01) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Este agendamento possui valores processados via Mercado Pago que não podem ser apagados. Tente "Remover Pagamento Restante" para excluir apenas os complementos manuais.'),
+        backgroundColor: Colors.red,
+        duration: Duration(seconds: 5),
+      ));
+      return;
+    }
 
-    if (confirm != true) return;
-
+    final ok = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
+      title: const Text("Remover Pagamento?"),
+      content: const Text("Tem certeza que deseja marcar este agendamento como NÃO PAGO e zerar os valores recebidos?"),
+      actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancelar")), TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Sim, remover", style: TextStyle(color: Colors.red)))],
+    ));
+    if (ok != true) return;
     setState(() => _isLoading = true);
     try {
-      await Supabase.instance.client
-          .from('appointments')
-          .update({
-            'status': 'agendado',
-            'paid_amount': 0,
-            'remaining_amount': total,
-          })
-          .eq('id', widget.appointmentDoc['id']);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Pagamento removido com sucesso!'), backgroundColor: Colors.orange),
-        );
-        _loadData();
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao atualizar: $e'), backgroundColor: Colors.red),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
+      meta.remove('advance_payment_id'); meta.remove('completion_payment_id'); meta.remove('completion_payment_method'); meta.remove('completion_paid_at'); meta.remove('completion_payment_amount');
+      meta.remove('full_payment_amount'); meta.remove('full_payment_method'); meta.remove('advance_payment_amount');
+      await Supabase.instance.client.from('appointments').update({
+        'status': 'agendado', 'paid_amount': 0, 'remaining_amount': total, 'payment_status': 'pendente',
+        'payment_method': null, 'pago_em': null, 'payment_id': null, 'metadata': meta,
+      }).eq('id', widget.appointmentDoc['id']);
+      if (mounted) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pagamento removido!'), backgroundColor: Colors.orange)); _refreshFromDb(); }
+    } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red)); }
+    finally { if (mounted) setState(() => _isLoading = false); }
+  }
+
+  Future<void> _removerPagamentoRestante(double total, double pago) async {
+    final meta = Map<String, dynamic>.from((_localDoc['metadata'] as Map?) ?? {});
+    if (meta['completion_payment_id'] != null && meta['completion_payment_id'] != 'manual') {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Este complemento de pagamento foi processado via Mercado Pago e não pode ser removido.'),
+        backgroundColor: Colors.red,
+      ));
+      return;
     }
+
+    final ok = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
+      title: const Text("Remover Pagamento Restante"), content: const Text("Remove apenas o 2º pagamento manual. O sinal será mantido."),
+      actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancelar")), ElevatedButton(onPressed: () => Navigator.pop(ctx, true), style: ElevatedButton.styleFrom(backgroundColor: Colors.orange, foregroundColor: Colors.white), child: const Text("Remover"))],
+    ));
+    if (ok != true) return;
+    setState(() => _isLoading = true);
+    try {
+      meta.remove('completion_payment_id'); meta.remove('completion_payment_method'); meta.remove('completion_paid_at'); meta.remove('completion_payment_amount');
+      final double mpProtected = getProtectedMpAmount(_localDoc);
+      final double nr = total - mpProtected > 0 ? total - mpProtected : 0.0;
+      await Supabase.instance.client.from('appointments').update({
+        'paid_amount': mpProtected, 'remaining_amount': nr, 'payment_status': mpProtected > 0.01 ? 'parcial' : 'pendente', 
+        'payment_method': mpProtected > 0.01 ? _localDoc['payment_method'] : null, 'metadata': meta
+      }).eq('id', widget.appointmentDoc['id']);
+      if (mounted) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pagamento restante removido.'), backgroundColor: Colors.orange)); _refreshFromDb(); }
+    } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red)); }
+    finally { if (mounted) setState(() => _isLoading = false); }
+  }
+
+  Future<void> _editarValorPagamentoManual(double total) async {
+    final meta = Map<String, dynamic>.from((_localDoc['metadata'] as Map?) ?? {});
+    
+    bool isEditingCompletion = false;
+    double currentManualValue = 0.0;
+    String currentMethod = 'Dinheiro';
+    
+    if (meta['completion_payment_id'] == 'manual') {
+      isEditingCompletion = true;
+      currentManualValue = double.tryParse(meta['completion_payment_amount']?.toString() ?? '0') ?? 0;
+      currentMethod = meta['completion_payment_method']?.toString() ?? 'Dinheiro';
+    } else {
+      // Editar full_payment manual
+      if (meta['full_payment_origin'] == 'manual' || _localDoc['payment_id'] == 'manual' || (_localDoc['payment_id'] == null && _localDoc['paid_amount'] != null && _localDoc['paid_amount'] > 0)) {
+        currentManualValue = double.tryParse(meta['full_payment_amount']?.toString() ?? _localDoc['paid_amount']?.toString() ?? '0') ?? 0;
+        currentMethod = meta['full_payment_method']?.toString() ?? _localDoc['payment_method']?.toString() ?? 'Dinheiro';
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Este pagamento foi processado via Mercado Pago e não pode ser editado.'),
+          backgroundColor: Colors.red,
+        ));
+        return;
+      }
+    }
+
+    final double mpProtected = getProtectedMpAmount(_localDoc);
+    final double rawPrice = double.tryParse(_localDoc['total_price']?.toString() ?? '0') ?? 0.0;
+    final double descontoFinal = (rawPrice > 0 && rawPrice > total) ? (rawPrice - total) : 0.0;
+    
+    double tempValor = currentManualValue;
+    String tempMetodo = currentMethod;
+    final txtCtrl = TextEditingController(text: currentManualValue.toStringAsFixed(2));
+
+    showDialog(context: context, builder: (ctx) {
+      return StatefulBuilder(builder: (c, sb) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)),
+          child: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(color: AppColors.primaryPurple.withValues(alpha: 0.1), shape: BoxShape.circle),
+                    child: const Icon(Icons.edit_document, color: AppColors.primaryPurple),
+                  ),
+                  const SizedBox(width: 16),
+                  const Expanded(
+                    child: Text(
+                      "Editar Valor Recebido",
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              
+              const Text("VALOR LANÇADO MANUALMENTE", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey, letterSpacing: 1.1)),
+              const SizedBox(height: 12),
+              TextField(
+                controller: txtCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: InputDecoration(
+                  labelText: "Valor (R\$)", 
+                  filled: true,
+                  fillColor: Colors.grey[50],
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.primaryPurple, width: 2)),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                ),
+                onChanged: (v) {
+                  final parsed = double.tryParse(v.replaceAll(',', '.')) ?? 0.0;
+                  sb(() => tempValor = parsed);
+                }
+              ),
+              const SizedBox(height: 24),
+
+              const Text("FORMA DE PAGAMENTO", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey, letterSpacing: 1.1)),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.grey[50],
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.withValues(alpha: 0.2)),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    isExpanded: true,
+                    value: tempMetodo,
+                    icon: const Icon(Icons.keyboard_arrow_down, color: AppColors.primaryPurple),
+                    items: ['Dinheiro', 'Cartao de Credito', 'Cartao de Debito', 'Pix'].map((m) => DropdownMenuItem(value: m, child: Text(m, style: const TextStyle(fontWeight: FontWeight.w500)))).toList(),
+                    onChanged: (v) { if (v != null) sb(() => tempMetodo = v); }
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24), 
+              
+              if (descontoFinal > 0) Container(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12), margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12)),
+                child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text("Desconto Aplicado", style: TextStyle(color: Colors.green, fontWeight: FontWeight.w600)), Text("- ${money(descontoFinal)}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green))])),
+              if (mpProtected > 0) Container(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12), margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(color: Colors.orange.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12)),
+                child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text("Já pago (Mercado Pago)", style: TextStyle(color: Colors.orange, fontWeight: FontWeight.w600)), Text(money(mpProtected), style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.orange))])),
+              
+              Container(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12), margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(color: Colors.red.withValues(alpha: 0.05), borderRadius: BorderRadius.circular(12)),
+                child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text("Restante calculado", style: TextStyle(color: Colors.red, fontWeight: FontWeight.w600)), Text(money(total - mpProtected - tempValor > 0 ? total - mpProtected - tempValor : 0.0), style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red, fontSize: 16))])),
+              
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity, 
+                child: TextButton.icon(
+                  icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red), 
+                  label: const Text("Remover Pagamento Manual", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)), 
+                  style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12), backgroundColor: Colors.red.withValues(alpha: 0.05), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                  onPressed: () { Navigator.pop(ctx); isEditingCompletion ? _removerPagamentoRestante(total, mpProtected + currentManualValue) : _desmarcarComoPagoManualmente(total); }
+                )
+              ),
+
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: Text("Cancelar", style: TextStyle(color: Colors.grey[600], fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(ctx, {'valor': tempValor, 'metodo': tempMetodo}),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryPurple,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: const Text("Salvar", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                    ),
+                  ),
+                ],
+              ),
+            ]),
+          ),
+        ),
+      ));
+    }).then((result) async {
+      if (result == null) return;
+      final nv = result['valor'] as double;
+      final nm = result['metodo'] as String;
+
+      if (nv < 0) {
+        final ok = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(title: const Text("Atenção"), content: const Text("O valor digitado é negativo. Confirma essa operação?"), actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancelar")), TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Sim"))]));
+        if (ok != true) return;
+      }
+      if ((mpProtected + nv) > total) {
+        final ok = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(title: const Text("Atenção"), content: const Text("Valor resulta em total pago maior que o valor do serviço, confirma?"), actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancelar")), TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Sim"))]));
+        if (ok != true) return;
+      }
+
+      setState(() => _isLoading = true);
+      try {
+        final nowTs = DateTime.now().toIso8601String();
+        if (isEditingCompletion) {
+          meta['completion_payment_amount'] = nv;
+          meta['completion_payment_method'] = nm;
+          meta['completion_payment_edited_at'] = nowTs;
+          meta['completion_payment_edited_from'] = currentManualValue;
+        } else {
+          meta['full_payment_amount'] = nv;
+          meta['full_payment_method'] = nm;
+          meta['full_payment_edited_at'] = nowTs;
+          meta['full_payment_edited_from'] = currentManualValue;
+        }
+        
+        final finalPaid = mpProtected + nv;
+        final finalRem = total - finalPaid > 0 ? total - finalPaid : 0.0;
+        final statusPag = finalPaid >= total ? 'pago' : 'parcial';
+
+        await Supabase.instance.client.from('appointments').update({
+          'paid_amount': finalPaid, 
+          'remaining_amount': finalRem, 
+          'payment_status': statusPag,
+          'payment_method': nm,
+          'metadata': meta
+        }).eq('id', widget.appointmentDoc['id']);
+        
+        if (mounted) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Valores atualizados'), backgroundColor: Colors.green)); _refreshFromDb(); }
+      } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red)); }
+      finally { if (mounted) setState(() => _isLoading = false); }
+    });
   }
 }
 

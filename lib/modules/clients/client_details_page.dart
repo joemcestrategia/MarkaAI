@@ -1,7 +1,8 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
-import 'package:url_launcher/url_launcher.dart';
+
 import '../../core/theme/app_colors.dart';
 import '../../core/services/session_service.dart';
 import '../../core/services/plan_features_service.dart';
@@ -60,8 +61,12 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
   Future<void> _fetchFullClientData() async {
     try {
       // 1. Tenta buscar por ID (UUID)
-      var query = _supabase.from('users').select().eq('id', widget.clientId);
-      var doc = await query.maybeSingle();
+      Map<String, dynamic>? doc;
+      bool isUuid = RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$').hasMatch(widget.clientId);
+      if (isUuid) {
+        var query = _supabase.from('users').select().eq('id', widget.clientId);
+        doc = await query.maybeSingle();
+      }
 
       // 2. Se não achou por ID (pode ser cliente manual), tenta buscar pelo telefone
       if (doc == null) {
@@ -162,43 +167,42 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
     final List<Map<String, dynamic>> combined = [];
 
     try {
-      // 1. Busca agendamentos do cliente com filtro server-side
-      List<dynamic> apptRows = [];
-      if (widget.clientData['origem'] == 'manual') {
-        final tel = (widget.clientData['telefone'] ?? '').toString();
-        final nome = (widget.clientData['nome'] ?? widget.clientData['name'] ?? '').toString();
-        if (tel.isNotEmpty && tel != 'Não informado') {
-          apptRows = await supabase
-              .from('appointments')
-              .select('id, scheduled_at, status, service_name, professional_name, total_price, payment_method, payment_status, paid_amount')
-              .eq('shop_id', shopId!)
-              .eq('client_phone', tel)
-              .order('scheduled_at', ascending: false)
-              .limit(60);
-        } else {
-          apptRows = await supabase
-              .from('appointments')
-              .select('id, scheduled_at, status, service_name, professional_name, total_price, payment_method, payment_status, paid_amount')
-              .eq('shop_id', shopId!)
-              .eq('client_name', nome)
-              .order('scheduled_at', ascending: false)
-              .limit(60);
-        }
-      } else {
-        apptRows = await supabase
-            .from('appointments')
-            .select('id, scheduled_at, status, service_name, professional_name, total_price, payment_method, payment_status, paid_amount')
-            .eq('shop_id', shopId!)
-            .eq('client_id', widget.clientId)
-            .order('scheduled_at', ascending: false)
-            .limit(60);
+      // Monta os identificadores do cliente para o filtro server-side
+      final tel = (widget.clientData['telefone'] ?? widget.clientData['phone'] ?? '')
+          .toString()
+          .replaceAll(RegExp(r'\D'), '');
+      final aliases = (widget.clientData['ids'] as List<dynamic>? ?? [])
+          .map((e) => e.toString())
+          .where((s) => s.isNotEmpty)
+          .toList();
+
+      // Monta filtro OR no Postgres — sem limit silencioso, sem descarte em memória
+      // Campos reais da tabela: total_price, total_value, labor_value, service_name
+      final orParts = <String>['client_id.eq.${widget.clientId}'];
+      if (aliases.isNotEmpty) {
+        orParts.add('client_id.in.(${aliases.join(',')})');
       }
+      if (tel.isNotEmpty) {
+        orParts.add('client_phone.eq.$tel');
+      }
+
+      final apptRows = await supabase
+          .from('appointments')
+          .select(
+            'id, scheduled_at, status, service_name, professional_name, '
+            'total_price, total_value, labor_value, '
+            'payment_method, payment_status, paid_amount, '
+            'client_id, client_phone, client_name, is_imported',
+          )
+          .eq('shop_id', shopId!)
+          .or(orParts.join(','))
+          .order('scheduled_at', ascending: false);
 
       for (final a in apptRows) {
         combined.add(Map<String, dynamic>.from(a as Map)..['_type'] = 'appointment');
       }
 
-      // 2. Busca log de atividades para estes agendamentos
+      // Busca log de atividades para estes agendamentos
       final apptIds = apptRows
           .map((a) => (a as Map)['id']?.toString())
           .where((id) => id != null && id.isNotEmpty)
@@ -211,12 +215,10 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
             .select()
             .eq('shop_id', shopId!)
             .inFilter('appointment_id', apptIds)
-            .order('created_at', ascending: false)
-            .limit(120);
+            .order('created_at', ascending: false);
 
         for (final l in logs) {
           final et = (l['event_type'] as String? ?? '');
-          // Exibe apenas reagendamentos e pagamentos (cancelamento e criação já visíveis via appointments)
           if (et == 'reagendamento' || et == 'pagamento_confirmado') {
             combined.add(Map<String, dynamic>.from(l as Map)..['_type'] = 'activity');
           }
@@ -330,61 +332,68 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
     _saveTags();
   }
 
-  Future<void> _launchWhatsApp() async {
-    String phone = widget.clientData['telefone'] ?? '';
-    phone = phone.replaceAll(RegExp(r'[^0-9]'), '');
-    if (phone.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Telefone não cadastrado.')));
-      }
-      return;
-    }
-    if (phone.length <= 11) phone = '55$phone';
-    final url = Uri.parse('https://wa.me/$phone');
-    if (await canLaunchUrl(url)) {
-      await launchUrl(url, mode: LaunchMode.externalApplication);
-    }
+  String _cleanServiceName(String name) {
+    if (name.isEmpty || name == '--') return name;
+    // Remove parênteses que contenham "leia" ou "informa" (ex: " (leia as informações)")
+    return name.replaceAll(RegExp(r'\s*\([^)]*(leia|informa)[^)]*\)', caseSensitive: false), '').trim();
   }
 
 
 
-  // Stream de histórico (passado)
+  // Stream de histórico (passado) — filtra no servidor via .or() para não perder agendamentos antigos
   Stream<List<Map<String, dynamic>>> _getHistoryStream() {
     if (shopId == null) return const Stream.empty();
 
-    final query = _supabase
-        .from('appointments')
-        .stream(primaryKey: ['id'])
-        .eq('shop_id', shopId!);
+    // Monta os filtros do cliente uma vez
+    final tel = (widget.clientData['telefone'] ?? widget.clientData['phone'] ?? '')
+        .toString()
+        .replaceAll(RegExp(r'\D'), '');
+    final aliases = (widget.clientData['ids'] as List<dynamic>? ?? [])
+        .map((e) => e.toString())
+        .where((s) => s.isNotEmpty)
+        .toList();
 
-    return query.map((list) {
-      final filtered = list.where((d) {
-        final matchesShop = (d['shop_id'] ?? d['shopId']) == shopId;
-        if (!matchesShop) return false;
+    final orParts = <String>['client_id.eq.${widget.clientId}'];
+    if (aliases.isNotEmpty) {
+      orParts.add('client_id.in.(${aliases.join(',')})');
+    }
+    if (tel.isNotEmpty) {
+      orParts.add('client_phone.eq.$tel');
+    }
 
-        if (widget.clientData['origem'] == 'manual') {
-          final tel = widget.clientData['telefone'] ?? '';
-          final nome = widget.clientData['nome'] ?? '';
-          if (tel.isNotEmpty && tel != 'Não informado') {
-            return d['client_phone'] == tel;
-          } else {
-            return d['client_name'] == nome;
-          }
+    // Usa StreamController para poder fazer query assíncrona filtrada
+    // O stream do Supabase (.stream) não suporta .or(), então gerenciamos manualmente
+    final controller = StreamController<List<Map<String, dynamic>>>();
+
+    Future<void> fetchAndEmit() async {
+      try {
+        final rows = await _supabase
+            .from('appointments')
+            .select(
+              'id, scheduled_at, status, service_name, professional_name, '
+              'total_price, total_value, labor_value, '
+              'payment_method, payment_status, paid_amount, '
+              'client_id, client_phone, client_name, is_imported, shop_id',
+            )
+            .eq('shop_id', shopId!)
+            .or(orParts.join(','))
+            .order('scheduled_at', ascending: false);
+
+        if (!controller.isClosed) {
+          controller.add(List<Map<String, dynamic>>.from(rows));
         }
-        return (d['client_id'] ?? d['clientId']) == widget.clientId;
-      }).toList();
+      } catch (e) {
+        debugPrint('[HistoryStream] Erro: $e');
+        if (!controller.isClosed) controller.add([]);
+      }
+    }
 
-      // Ordenar manualmente já que não podemos usar .order() com filtros no stream
-      filtered.sort((a, b) {
-        final dateA = DateTime.tryParse(a['scheduled_at'].toString()) ?? DateTime(2000);
-        final dateB = DateTime.tryParse(b['scheduled_at'].toString()) ?? DateTime(2000);
-        return dateB.compareTo(dateA); // asscending: false
-      });
+    fetchAndEmit();
 
-      return filtered;
-    });
+    controller.onCancel = () => controller.close();
+    return controller.stream;
   }
+
 
   // Stream de próximos agendamentos
   Stream<List<Map<String, dynamic>>> _getUpcomingStream() {
@@ -401,16 +410,34 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
         final matchesShop = (d['shop_id'] ?? d['shopId']) == shopId;
         if (!matchesShop) return false;
 
-        final appDate = DateTime.tryParse(d['scheduled_at'].toString()) ?? DateTime(2000);
-        if (appDate.isBefore(now)) return false;
+        // Filtro de tempo
+        final eventDate = _parseEventDate(d);
+        if (eventDate.isBefore(now)) return false; // apenas futuros
 
-        if (widget.clientData['origem'] == 'manual') {
-          final tel = widget.clientData['telefone'] ?? '';
-          if (tel.isNotEmpty && tel != 'Não informado') {
-            return d['client_phone'] == tel;
+        // Lógica unificada de match
+        bool isMatch = false;
+        if ((d['client_id'] ?? d['clientId']) == widget.clientId) isMatch = true;
+
+        if (!isMatch) {
+          final aliases = widget.clientData['ids'] as List<dynamic>?;
+          final dId = (d['client_id'] ?? d['clientId'])?.toString();
+          if (aliases != null && dId != null && aliases.contains(dId)) isMatch = true;
+        }
+
+        if (!isMatch) {
+          final tel = (widget.clientData['telefone'] ?? widget.clientData['phone'] ?? '').toString();
+          final cleanTel = tel.replaceAll(RegExp(r'\D'), '');
+          if (cleanTel.isNotEmpty) {
+            final aptPhone = (d['client_phone'] ?? d['client_telefone'] ?? '').toString().replaceAll(RegExp(r'\D'), '');
+            if (aptPhone == cleanTel) isMatch = true;
+          } else {
+            final nome = (widget.clientData['nome'] ?? widget.clientData['name'] ?? '').toString().trim();
+            final aptName = (d['client_name'] ?? d['client_nome'] ?? '').toString().trim();
+            if (nome.isNotEmpty && aptName.isNotEmpty && aptName.toLowerCase() == nome.toLowerCase()) isMatch = true;
           }
         }
-        return (d['client_id'] ?? d['clientId']) == widget.clientId;
+
+        return isMatch;
       }).toList();
 
       filtered.sort((a, b) {
@@ -480,29 +507,7 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
                         ),
                       ),
                       const SizedBox(height: 16),
-                      // Botão WhatsApp direto
-                      Builder(builder: (context) {
-                        final tel = widget.clientData['telefone'] ?? widget.clientData['phone'] ?? '';
-                        if (tel.isEmpty || tel == 'Não informado') return const SizedBox.shrink();
-                        return ElevatedButton.icon(
-                          onPressed: () {
-                            Navigator.pop(ctx);
-                            _launchWhatsApp();
-                          },
-                          icon: const Icon(Icons.chat_rounded, size: 18),
-                          label: const Text(
-                            'Chamar no WhatsApp',
-                            style: TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF25D366),
-                            foregroundColor: Colors.white,
-                            elevation: 0,
-                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                          ),
-                        );
-                      }),
+                      const SizedBox(height: 16),
                       const SizedBox(height: 8),
                       // Dica de fechar
                       const Text(
@@ -549,7 +554,7 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
         if (snapshot.hasData) _currentFeatures = snapshot.data!;
 
         final nome = widget.clientData['nome'] ?? widget.clientData['name'] ?? 'Cliente';
-        final telefone = widget.clientData['telefone'] ?? widget.clientData['phone'] ?? '';
+        
         final foto =
             widget.clientData['photo_url']?.toString().isNotEmpty == true
                 ? widget.clientData['photo_url'].toString()
@@ -642,24 +647,7 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
                             ),
                           ],
                         ),
-                        if (telefone.isNotEmpty && telefone != 'Não informado')
-                          Padding(
-                            padding: const EdgeInsets.only(top: 4),
-                            child: ElevatedButton.icon(
-                              onPressed: _launchWhatsApp,
-                              icon: const Icon(Icons.chat_rounded, size: 14),
-                              label: const Text("WhatsApp", style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.green,
-                                foregroundColor: Colors.white,
-                                elevation: 0,
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
-                                minimumSize: const Size(0, 32),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                              ),
-                            ),
-                          )
-                        else if ((widget.clientData['email'] ?? '').toString().isNotEmpty)
+                        if ((widget.clientData['email'] ?? '').toString().isNotEmpty)
                           Padding(
                             padding: const EdgeInsets.only(top: 4),
                             child: Row(
@@ -790,26 +778,19 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
         // ── ENDEREÇO (se disponível) ──────────────────────────────────
         Builder(builder: (context) {
           final city = widget.clientData['city']?.toString() ?? '';
-          final state = widget.clientData['state']?.toString() ?? '';
-          final street = widget.clientData['street']?.toString() ?? '';
-          final number = widget.clientData['number']?.toString() ?? '';
           final neighborhood = widget.clientData['neighborhood']?.toString() ?? '';
-          final zipCode = widget.clientData['zipCode']?.toString() ?? '';
 
-          if (city.isEmpty && street.isEmpty) return const SizedBox.shrink();
+          if (city.isEmpty && neighborhood.isEmpty) return const SizedBox.shrink();
 
           String line1 = '';
-          if (street.isNotEmpty) {
-            line1 = street;
-            if (number.isNotEmpty) line1 += ', $number';
-            if (neighborhood.isNotEmpty) line1 += ' - $neighborhood';
+          if (neighborhood.isNotEmpty) {
+            line1 = neighborhood;
+            if (city.isNotEmpty) line1 += ' - $city';
+          } else if (city.isNotEmpty) {
+            line1 = city;
           }
+          
           String line2 = '';
-          if (city.isNotEmpty) {
-            line2 = city;
-            if (state.isNotEmpty) line2 += ', $state';
-            if (zipCode.isNotEmpty) line2 += ' - CEP $zipCode';
-          }
 
           return Container(
             margin: const EdgeInsets.fromLTRB(16, 4, 16, 4),
@@ -855,29 +836,59 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
             double totalGasto = 0;
             DateTime? lastVisit;
             int completed = 0;
+            int cancelled = 0;
+            String ultimoServico = '--';
+            List<DateTime> completedDates = [];
 
-            for (final d in docs) {
-              final val =
-                  double.tryParse(d['valor_total']?.toString() ?? '0') ?? 0;
-              final status = (d['status'] ?? '').toString().toLowerCase();
-              if (status == 'concluido' || status == 'pago') {
+            final today = DateTime.now();
+
+            // Ordenar documentos para pegar o serviço mais recente corretamente
+            final sortedDocs = List<Map<String, dynamic>>.from(docs);
+            sortedDocs.sort((a, b) {
+              final dateA = DateTime.tryParse(a['scheduled_at']?.toString() ?? '') ?? DateTime(2000);
+              final dateB = DateTime.tryParse(b['scheduled_at']?.toString() ?? '') ?? DateTime(2000);
+              return dateB.compareTo(dateA); // ascending: false
+            });
+
+            for (final d in sortedDocs) {
+              // Resolução de valor: campos reais do banco
+              // total_price = valor final (com descontos aplicados)
+              // total_value = valor base do serviço
+              // labor_value = fallback (mão de obra pura)
+              final rawVal = (d['total_price'] ?? d['total_value'] ?? d['labor_value'] ?? '0').toString();
+              final cleanVal = rawVal.replaceAll(RegExp(r'[^0-9.]'), '');
+              final val = double.tryParse(cleanVal) ?? 0.0;
+
+              final rawStatus = (d['status'] ?? '').toString().toLowerCase().trim();
+              final dynDate = d['scheduled_at'];
+              DateTime dt = DateTime.tryParse(dynDate?.toString() ?? '') ?? DateTime(2000);
+
+              bool isPast = !dt.isAfter(today);
+              // Status válidos: Setmore usa 'concluido'; MarkaAI usa 'concluido', 'pago', 'completed'
+              bool isCompletedExplicit = rawStatus == 'concluido' ||
+                  rawStatus == 'concluído' ||
+                  rawStatus == 'pago' ||
+                  rawStatus == 'completed';
+              bool isCancelled = rawStatus.contains('cancel') ||
+                  rawStatus.contains('show') ||
+                  rawStatus == 'ausente';
+
+              if (isCompletedExplicit || (isPast && !isCancelled)) {
                 totalGasto += val;
                 completed++;
-              }
-              
-              final dynDate = d['scheduled_at'];
-              if (dynDate != null) {
-                DateTime dt;
-                if (dynDate is DateTime) {
-                  dt = dynDate;
-                } else {
-                  dt = DateTime.parse(dynDate.toString());
-                }
-                
+
+                final dtDay = DateTime(dt.year, dt.month, dt.day);
+                completedDates.add(dtDay);
+
                 if (lastVisit == null || dt.isAfter(lastVisit)) {
-                  // Only past dates for "last visit"
-                  if (dt.isBefore(DateTime.now())) lastVisit = dt;
+                  lastVisit = dt;
+                  // service_name existe tanto em Setmore quanto em MarkaAI nativo
+                  ultimoServico = d['service_name']?.toString().isNotEmpty == true
+                      ? _cleanServiceName(d['service_name'].toString())
+                      : '--';
                 }
+              } else if (isCancelled) {
+                cancelled++;
               }
             }
 
@@ -886,9 +897,27 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
                 ? DateFormat('dd/MM/yy').format(lastVisit)
                 : '--';
 
+            // Calcula o intervalo médio localmente
+            int avgInterval = 0;
+            if (completedDates.length > 1) {
+              completedDates.sort((a, b) => a.compareTo(b));
+              int totalDays = 0;
+              int intervals = 0;
+              for (int i = 1; i < completedDates.length; i++) {
+                final diff = completedDates[i].difference(completedDates[i-1]).inDays;
+                if (diff > 0) { // Ignora serviços no mesmo dia
+                  totalDays += diff;
+                  intervals++;
+                }
+              }
+              if (intervals > 0) avgInterval = (totalDays / intervals).round();
+            } else if (completedDates.length == 1) {
+              final startOfToday = DateTime(today.year, today.month, today.day);
+              avgInterval = startOfToday.difference(completedDates.first).inDays;
+            }
+
             // Dados pré-calculados vindos do BusinessClientsScreen
-            final prefService = widget.clientData['servicoPreferido'] ?? '--';
-            final int avgInterval = widget.clientData['intervaloMedio'] ?? 0;
+            final prefService = _cleanServiceName(widget.clientData['servicoPreferido']?.toString() ?? '--');
 
             return Container(
               color: const Color(0xFFF8F9FD),
@@ -898,28 +927,54 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
                   Row(
                     children: [
                       _kpiItem(
+                          label: 'Total Gasto',
+                          value: totalGasto > 0 ? currency.format(totalGasto) : (completed > 0 ? currency.format(0) : '--'),
+                          icon: Icons.monetization_on_outlined,
+                          color: Colors.green),
+                      _kpiDivider(),
+                      _kpiItem(
+                          label: 'Ticket Médio',
+                          value: ticketMedio > 0 ? currency.format(ticketMedio) : (completed > 0 ? currency.format(0) : '--'),
+                          icon: Icons.receipt_long,
+                          color: Colors.teal),
+                      _kpiDivider(),
+                      _kpiItem(
                           label: 'Última Visita',
                           value: lastVisitStr,
                           icon: Icons.history,
                           color: themeColor),
-                      _kpiDivider(),
-                      _kpiItem(
-                          label: 'Ticket Médio',
-                          value: ticketMedio > 0 ? currency.format(ticketMedio) : '--',
-                          icon: Icons.receipt_long,
-                          color: Colors.green),
-                      _kpiDivider(),
-                      _kpiItem(
-                          label: 'Visitas',
-                          value: '${docs.length}',
-                          icon: Icons.calendar_today,
-                          color: Colors.blue),
                     ],
                   ),
                   const SizedBox(height: 12),
                   const Divider(height: 1),
                   const SizedBox(height: 12),
                   Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _kpiItem(
+                          label: 'Visitas',
+                          value: '$completed',
+                          icon: Icons.calendar_today,
+                          color: Colors.blue),
+                      _kpiDivider(),
+                      _kpiItem(
+                          label: 'Cancelados',
+                          value: '$cancelled',
+                          icon: Icons.cancel_outlined,
+                          color: Colors.red),
+                      _kpiDivider(),
+                      _kpiItem(
+                          label: 'Intervalo Médio',
+                          value: avgInterval > 0 ? '$avgInterval dias' : (completed > 0 ? '0 dias' : '--'),
+                          icon: Icons.timer_outlined,
+                          color: Colors.orange),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  const Divider(height: 1),
+                  const SizedBox(height: 12),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       _kpiItem(
                           label: 'Serviço Preferido',
@@ -928,10 +983,10 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
                           color: Colors.pink),
                       _kpiDivider(),
                       _kpiItem(
-                          label: 'Intervalo Médio',
-                          value: avgInterval > 0 ? '$avgInterval dias' : '--',
-                          icon: Icons.timer_outlined,
-                          color: Colors.orange),
+                          label: 'Último Serviço',
+                          value: ultimoServico,
+                          icon: Icons.cut_outlined,
+                          color: Colors.purple),
                     ],
                   ),
                 ],
@@ -1354,16 +1409,26 @@ class _ClientDetailsPageState extends State<ClientDetailsPage>
             (data['total_price'] ?? data['price'] ?? data['valor_total'] ?? '0')
                 .toString()) ??
         0.0;
-    final String servico = data['servico_nome'] ??
+    final String servico = _cleanServiceName(data['servico_nome'] ??
         data['nome_servico'] ??
         data['service_name'] ??
-        'Serviço';
+        'Serviço');
     final String profissional = data['profissional_nome'] ?? '';
-    final String status = (data['status'] ?? 'agendado').toLowerCase();
+    final String rawStatus = (data['status'] ?? 'agendado').toLowerCase();
+
+    // Lógica para tratar agendamentos passados não-cancelados como concluídos visualmente
+    bool isPast = date.isBefore(DateTime.now().subtract(const Duration(hours: 4))); // Passado
+    bool isCancelled = rawStatus.contains('cancel') || rawStatus.contains('show') || rawStatus == 'ausente';
+    bool isCompletedExplicit = rawStatus == 'concluido' || rawStatus == 'concluído' || rawStatus == 'pago' || rawStatus == 'completed';
+    
+    String status = rawStatus;
+    if (!isCompletedExplicit && isPast && !isCancelled) {
+       status = 'concluido'; // Força para a UI
+    }
 
     Color statusColor = Colors.grey;
     IconData statusIcon = Icons.schedule;
-    if (status == 'concluido' || status == 'pago') {
+    if (status == 'concluido' || status == 'concluído' || status == 'pago' || status == 'completed') {
       statusColor = Colors.green;
       statusIcon = Icons.check_circle;
     } else if (status == 'cancelado') {

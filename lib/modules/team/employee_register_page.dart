@@ -384,8 +384,11 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
     DateTimeRange? pickedRange;
     
     if (existingFolga != null) {
-       final st = existingFolga['start'] is String ? DateTime.parse(existingFolga['start']) : existingFolga['start'];
-       final ed = existingFolga['end'] is String ? DateTime.parse(existingFolga['end']) : existingFolga['end'];
+       final stRaw = existingFolga['start'] is String ? DateTime.parse(existingFolga['start']).toLocal() : (existingFolga['start'] as DateTime).toLocal();
+       final edRaw = existingFolga['end'] is String ? DateTime.parse(existingFolga['end']).toLocal() : (existingFolga['end'] as DateTime).toLocal();
+       // Normaliza para início do dia para o DateRangePicker
+       final st = DateTime(stRaw.year, stRaw.month, stRaw.day);
+       final ed = DateTime(edRaw.year, edRaw.month, edRaw.day);
        pickedRange = DateTimeRange(start: st, end: ed);
     } else {
       pickedRange = await _showCustomDateRangePicker(context);
@@ -637,10 +640,14 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
       }
 
       setState(() {
+        final startDate = pickedRange!.start;
+        final endDate = pickedRange.end;
+        final startStr = '${startDate.year}-${startDate.month.toString().padLeft(2, '0')}-${startDate.day.toString().padLeft(2, '0')}';
+        final endStr = '${endDate.year}-${endDate.month.toString().padLeft(2, '0')}-${endDate.day.toString().padLeft(2, '0')}';
+
         final folgaData = <String, dynamic>{
-          'start': pickedRange!.start.toIso8601String(),
-          'end': (isPartial ? pickedRange.end : pickedRange.end.add(const Duration(hours: 23, minutes: 59)))
-              .toIso8601String(),
+          'start': '${startStr}T00:00:00.000',
+          'end': '${endStr}T23:59:59.000',
           'notes': obs,
         };
 
@@ -1561,11 +1568,11 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
     return Column(
       children: _folgas.asMap().entries.map((e) {
         final start = e.value['start'] is String 
-            ? DateTime.parse(e.value['start'])
-            : (e.value['start'] as DateTime);
+            ? DateTime.parse(e.value['start']).toLocal()
+            : (e.value['start'] as DateTime).toLocal();
         final end = e.value['end'] is String 
-            ? DateTime.parse(e.value['end'])
-            : (e.value['end'] as DateTime);
+            ? DateTime.parse(e.value['end']).toLocal()
+            : (e.value['end'] as DateTime).toLocal();
         final folgaType =
             (e.value['type']?.toString() ?? 'full_day').toLowerCase();
         final isPartial = folgaType == 'partial';

@@ -2,6 +2,57 @@ import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
 import { corsHeaders } from '../_shared/cors.ts'
 import { createSupabaseAdminClient } from '../_shared/supabase.ts'
 
+async function refreshMpToken(
+  refreshToken: string,
+  shopId: string,
+  currentMp: Record<string, any>,
+  supabase: any
+): Promise<string | null> {
+  const clientId = Deno.env.get('MP_CLIENT_ID')
+  const clientSecret = Deno.env.get('MP_CLIENT_SECRET')
+
+  if (!clientId || !clientSecret || !refreshToken) {
+    console.error('refreshMpToken: credenciais ausentes ou refresh_token vazio')
+    return null
+  }
+
+  try {
+    const tokenRes = await fetch('https://api.mercadopago.com/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken,
+      }),
+    })
+
+    const tokens = await tokenRes.json()
+    if (!tokenRes.ok) {
+      console.error('refreshMpToken: erro:', JSON.stringify(tokens))
+      return null
+    }
+
+    const updatedMp = {
+      ...currentMp,
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      user_id: tokens.user_id || currentMp.user_id,
+      public_key: tokens.public_key || currentMp.public_key,
+      connected: true,
+      updated_at: new Date().toISOString(),
+    }
+
+    await supabase.from('shops').update({ mercadopago: updatedMp }).eq('id', shopId)
+    console.log('refreshMpToken: token renovado para shop', shopId)
+    return tokens.access_token
+  } catch (err) {
+    console.error('refreshMpToken: exceção:', err)
+    return null
+  }
+}
+
 // Helper to decode base64 URL
 function base64UrlDecode(str: string): string {
   const base64 = str.replace(/-/g, '+').replace(/_/g, '/')
@@ -89,7 +140,8 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: 'Loja não encontrada.' }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 
-    const accessToken = shopDoc.mercadopago?.access_token
+    let accessToken = shopDoc.mercadopago?.access_token
+    const mpRefreshToken = shopDoc.mercadopago?.refresh_token
     if (!accessToken) {
       return new Response(JSON.stringify({ error: 'Mercado Pago não configurado nesta loja.' }), { status: 412, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
@@ -102,6 +154,7 @@ serve(async (req) => {
       installments: parseInt(installments) || 1,
       payment_method_id: payment_method_id,
       issuer_id: issuer_id,
+      notification_url: 'https://uhccgcojwqvkfyzrmebv.supabase.co/functions/v1/mpPaymentWebhook',
       payer: {
         email: finalEmail,
         identification: finalCpf ? {
@@ -115,7 +168,7 @@ serve(async (req) => {
       ? 'https://api.sandbox.mercadopago.com'
       : 'https://api.mercadopago.com'
 
-    const res = await fetch(`${baseUrl}/v1/payments`, {
+    let res = await fetch(`${baseUrl}/v1/payments`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${accessToken}`,
@@ -124,6 +177,24 @@ serve(async (req) => {
       },
       body: JSON.stringify(paymentData)
     })
+
+    // Auto-refresh: se token expirado (401/403), renova e retenta UMA vez
+    if ((res.status === 401 || res.status === 403) && mpRefreshToken) {
+      console.log('criar-pagamento: token expirado, tentando renovar...')
+      const newToken = await refreshMpToken(mpRefreshToken, shop_id, shopDoc.mercadopago, supabaseAdmin)
+      if (newToken) {
+        accessToken = newToken
+        res = await fetch(`${baseUrl}/v1/payments`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'X-Idempotency-Key': idempotencyKey,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(paymentData)
+        })
+      }
+    }
 
     const data = await res.json()
 

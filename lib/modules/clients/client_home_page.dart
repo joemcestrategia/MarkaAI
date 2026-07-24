@@ -1,10 +1,11 @@
 // ignore_for_file: unused_element, unused_field, unused_local_variable
-import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:http/http.dart' as http;
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:intl/intl.dart';
@@ -21,6 +22,7 @@ import '../login/login_page.dart';
 import '../schedule/booking_page.dart';
 import 'shop_profile_page.dart';
 import 'my_appointments_page.dart';
+import 'appointment_confirmation_page.dart';
 import 'client_service_detail_page.dart';
 import 'address_selector_page.dart';
 import 'client_search_page.dart';
@@ -275,17 +277,16 @@ class _ClientHomePageState extends State<ClientHomePage> {
   }
 
   void _setupNotifications() {
-    // Notificações quando app está em foreground
-    /*
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      final appointmentId = message.data['appointmentId'];
-      final type = message.data['type'];
-      if (appointmentId != null && type == 'confirmacao' && mounted) {
+      final appointmentId = message.data['appointment_id'] ?? message.data['appointmentId'];
+      final title = message.notification?.title ?? '';
+      final body = message.notification?.body ?? '';
+      if (appointmentId != null && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: AppColors.primaryPurple,
-            content:
-                Text(message.notification?.body ?? 'Confirme seu agendamento'),
+            content: Text(body.isNotEmpty ? body : title),
+            duration: const Duration(seconds: 8),
             action: SnackBarAction(
               label: 'VER',
               textColor: Colors.white,
@@ -303,7 +304,6 @@ class _ClientHomePageState extends State<ClientHomePage> {
         );
       }
     });
-    */
   }
 
   Future<void> _loadUserData() async {
@@ -1457,8 +1457,14 @@ class _ClientHomePageState extends State<ClientHomePage> {
             final filtered = shopsRaw.where((doc) {
               final d = doc;
               final bool isActive = d['is_active'] ?? d['ativo'] ?? true;
+              final int servicesCount = d['services_count'] ?? 0;
+              final String logoUrl = (d['logo_url'] ?? d['logoUrl'] ?? "").toString().trim();
               
-              if (!isActive || (d['services_count'] ?? 0) == 0) return false;
+              if (logoUrl.isEmpty) return false;
+
+              // Verifica se a loja está apta a receber clientes (ativa e com serviços)
+              d['is_available'] = isActive && servicesCount > 0;
+
 
               // Filtro adicional por estado se houver ambiguidade (opcional)
               if (cidade.estado.isNotEmpty) {
@@ -1532,6 +1538,8 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
               int getScore(Map<String, dynamic> d) {
                 int s = 0;
+                if (d['is_available'] == false) s -= 1000;
+                
                 if ((d['logo_url'] ?? '').toString().isNotEmpty) s += 10;
                 if ((d['image_url'] ?? '').toString().isNotEmpty) s += 10;
                 
@@ -1565,47 +1573,33 @@ class _ClientHomePageState extends State<ClientHomePage> {
               );
             }
 
-            // Constrói linhas: a cada 6 itens (2 linhas) insere um Native Ad
-            // Constrói linhas: a cada 6 itens (2 linhas) insere um Native Ad
-            final int cols = 3;
-            final List<List<Map<String, dynamic>>?> rows = [];
-            for (int i = 0; i < filtered.length; i += cols) {
-              final endIdx = i + cols < filtered.length ? i + cols : filtered.length;
-              rows.add(filtered.sublist(i, endIdx));
-            }
-
             return SliverPadding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               sliver: SliverList(
                 delegate: SliverChildBuilderDelegate(
                   (context, index) {
-                    final item = rows[index]!; // agora nunca é null
-                    final rowShops = item;
+                    final shop = filtered[index];
                     return Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          for (int c = 0; c < cols; c++) ...[
-                            if (c > 0) const SizedBox(width: 10),
-                            Expanded(
-                              child: c < rowShops.length
-                                  ? AspectRatio(
-                                      aspectRatio: isDesktop ? 0.75 : 0.70,
-                                      child: _ShopCard(
-                                        shop: rowShops[c],
-                                        onTap: () => _openShopProfile(rowShops[c]),
-                                        index: index * cols + c,
-                                      ),
-                                    )
-                                  : const SizedBox.shrink(),
-                            ),
-                          ],
-                        ],
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _ShopCard(
+                        shop: shop,
+                        onTap: () {
+                          if (shop['is_available'] == false) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text("Loja ainda configurando o perfil e indisponível para agendamentos."),
+                                duration: Duration(seconds: 3),
+                              ),
+                            );
+                            return;
+                          }
+                          _openShopProfile(shop);
+                        },
+                        index: index,
                       ),
                     );
                   },
-                  childCount: rows.length,
+                  childCount: filtered.length,
                 ),
               ),
             );
@@ -1835,9 +1829,10 @@ class _ShopCardState extends State<_ShopCard> {
     final Color fallbackColor = ShopCategoryHelper.getCatColor(category);
     final IconData fallbackIcon = ShopCategoryHelper.getCatIcon(category);
 
-    return GestureDetector(
-      onTap: widget.onTap,
-      child: Container(
+    final isAvailable = data['is_available'] ?? true;
+    
+    Widget cardContent = Container(
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(12),
@@ -1848,221 +1843,136 @@ class _ShopCardState extends State<_ShopCard> {
                 offset: const Offset(0, 4))
           ],
         ),
-        child: Column(
+        child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              flex: 4,
-              child: Stack(
-                children: [
-                  // IMAGEM OU FALLBACK
-                  Positioned.fill(
-                    child: ClipRRect(
-                      borderRadius:
-                          const BorderRadius.vertical(top: Radius.circular(12)),
-                      child: imgUrl.isNotEmpty
-                          ? CachedNetworkImage(
-                              imageUrl: imgUrl,
-                              fit: BoxFit.cover,
-                              placeholder: (c, u) =>
-                                  Container(color: Colors.grey[200]),
-                              errorWidget: (c, u, e) => Container(
-                                color: fallbackColor,
-                                child: Icon(fallbackIcon,
-                                    color: Colors.grey[400], size: 40),
-                              ),
-                            )
-                          : PexelsImageWidget(
-                              searchQuery: ShopImageKeywords.getEnglishKeyword(category),
-                              index: widget.index,
+            // FOTO ESQUERDA
+            Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: SizedBox(
+                    width: 72,
+                    height: 72,
+                    child: logoUrl.isNotEmpty 
+                        ? CachedNetworkImage(
+                            imageUrl: logoUrl,
+                            fit: BoxFit.cover,
+                            placeholder: (c, u) => Container(color: Colors.grey[200]),
+                            errorWidget: (c, u, e) => Container(
+                              color: fallbackColor,
+                              child: Icon(fallbackIcon, color: Colors.grey[400], size: 30),
                             ),
-                    ),
+                          )
+                        : PexelsImageWidget(
+                            searchQuery: ShopImageKeywords.getEnglishKeyword(category),
+                            index: widget.index,
+                          ),
                   ),
-
-                  // LOGO OVERLAY (Bottom Left of the cover)
+                ),
+                if (isBoostActive)
                   Positioned(
-                    bottom: 8,
-                    left: 8,
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
                     child: Container(
-                      padding: const EdgeInsets.all(2),
+                      padding: const EdgeInsets.symmetric(vertical: 2),
                       decoration: const BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
+                        color: Color(0xFFFFD700),
+                        borderRadius: BorderRadius.vertical(bottom: Radius.circular(10)),
                       ),
-                      child: logoUrl.isNotEmpty
-                          ? CircleAvatar(
-                              radius: 18,
-                              backgroundColor: Colors.grey[100],
-                              backgroundImage: CachedNetworkImageProvider(logoUrl),
-                            )
-                          : Container(
-                              width: 36,
-                              height: 36,
-                              decoration: const BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: LinearGradient(
-                                  colors: [Color(0xFF6A1B9A), Color(0xFF2D264B)],
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                ),
-                              ),
-                              child: Center(
-                                child: (data['name'] as String? ?? '').isNotEmpty
-                                    ? Text(
-                                        (data['name'] as String)[0].toUpperCase(),
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 18,
-                                        ),
-                                      )
-                                    : const Icon(Icons.store, color: Colors.white, size: 18),
-                              ),
-                            ),
-                    ),
-                  ),
-
-                  // BADGE DESTAQUE (Top Right)
-                  if (isBoostActive)
-                    Positioned(
-                      top: 6,
-                      right: 6,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 5, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFFD700),
-                          borderRadius: BorderRadius.circular(20),
-                          boxShadow: [
-                            BoxShadow(color: Colors.black12, blurRadius: 4)
-                          ],
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: const [
-                            Icon(Icons.rocket_launch,
-                                size: 10, color: Colors.black),
-                            SizedBox(width: 4),
-                            Text("DESTAQUE",
-                                style: TextStyle(
-                                    fontSize: 8,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.black)),
-                          ],
-                        ),
-                      ),
-                    )
-                  else
-                    // AVALIAO (Top Right se no for destaque)
-                    Positioned(
-                      top: 6,
-                      right: 6,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.black54,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.star,
-                                size: 10, color: Colors.amber),
-                            const SizedBox(width: 2),
-                            Builder(
-                              builder: (context) {
-                                final googleData = data['google_business'] as Map<String, dynamic>?;
-                                final double rating = googleData?['rating']?.toDouble() ?? (data['rating']?.toDouble() ?? 5.0);
-                                final int? totalReviews = googleData?['user_ratings_total'];
-                                
-                                return Row(
-                                  children: [
-                                    Text(
-                                      rating.toStringAsFixed(1),
-                                      style: const TextStyle(
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.bold,
-                                          color: Colors.white),
-                                    ),
-                                    if (totalReviews != null && totalReviews > 0) ...[
-                                      const SizedBox(width: 2),
-                                      Text(
-                                        "($totalReviews)",
-                                        style: const TextStyle(
-                                            fontSize: 8,
-                                            color: Colors.white70),
-                                      ),
-                                    ],
-                                  ],
-                                );
-                              },
-                            ),
-                          ],
-                        ),
+                      child: const Center(
+                        child: Text("DESTAQUE", 
+                          style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Colors.black)),
                       ),
                     ),
-
-                  Positioned(
-                    top: 6,
-                    left: 6,
-                    child: GestureDetector(
-                      onTap: _toggleFavorite,
-                      child: Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.9),
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.1),
-                                blurRadius: 4),
-                          ],
-                        ),
+                  )
+              ],
+            ),
+            const SizedBox(width: 12),
+            
+            // CONTEUDO DIREITA
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(data['name'] ?? data['nome'] ?? "Loja",
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis),
+                      ),
+                      GestureDetector(
+                        onTap: _toggleFavorite,
                         child: Icon(
                           _isFavorite ? Icons.favorite : Icons.favorite_border,
-                          size: 12,
+                          size: 20,
                           color: _isFavorite ? Colors.red : Colors.grey[400],
                         ),
                       ),
-                    ),
+                    ],
                   ),
-
-                  // O LOGO FOI REMOVIDO DAQUI POIS ESTAVA DUPLICADO (J EXISTE NA LINHA 1619)
+                  const SizedBox(height: 4),
+                  Text(category, style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      const Icon(Icons.star, size: 14, color: Colors.amber),
+                      const SizedBox(width: 4),
+                      Builder(
+                        builder: (context) {
+                          final googleData = data['google_business'] as Map<String, dynamic>?;
+                          final double rating = googleData?['rating']?.toDouble() ?? (data['rating']?.toDouble() ?? 5.0);
+                          final int? totalReviews = googleData?['user_ratings_total'];
+                          
+                          return Row(
+                            children: [
+                              Text(rating.toStringAsFixed(1), 
+                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primaryPurple)),
+                              if (totalReviews != null && totalReviews > 0) ...[
+                                const SizedBox(width: 4),
+                                Text("($totalReviews avaliações)", style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                              ],
+                            ],
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                  if (!isAvailable) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[200],
+                        borderRadius: BorderRadius.circular(4)
+                      ),
+                      child: const Text("Configurando Perfil", style: TextStyle(fontSize: 11, color: Colors.black54, fontWeight: FontWeight.bold)),
+                    )
+                  ]
                 ],
               ),
-            ),
-
-            // INFO DA LOJA
-            Expanded(
-              flex: 2,
-              child: Padding(
-                padding: const EdgeInsets.all(8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(data['name'] ?? data['nome'] ?? "Loja",
-                            style: const TextStyle(
-                                fontWeight: FontWeight.bold, fontSize: 11),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis),
-                        const SizedBox(height: 2),
-                        Text(data['category'] ?? data['categoria'] ?? "Serviços",
-                            style: TextStyle(
-                                color: Colors.grey[600], fontSize: 9)),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
+            )
           ],
         ),
-      ),
+      );
+
+    return GestureDetector(
+      onTap: widget.onTap,
+      child: isAvailable 
+        ? cardContent 
+        : ColorFiltered(
+            colorFilter: const ColorFilter.matrix(<double>[
+              0.2126, 0.7152, 0.0722, 0, 0,
+              0.2126, 0.7152, 0.0722, 0, 0,
+              0.2126, 0.7152, 0.0722, 0, 0,
+              0,      0,      0,      1, 0,
+            ]),
+            child: cardContent,
+          ),
     );
   }
 }

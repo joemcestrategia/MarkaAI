@@ -83,6 +83,13 @@ class ClientCacheService {
             '__type__': 'DateTime',
             'value': value.toIso8601String()
           };
+        } else if (value is List) {
+          newItem[key] = value.map((e) {
+            if (e is DateTime) {
+              return {'__type__': 'DateTime', 'value': e.toIso8601String()};
+            }
+            return e;
+          }).toList();
         }
       });
       return newItem;
@@ -97,6 +104,13 @@ class ClientCacheService {
           if (value['__type__'] == 'DateTime') {
             newItem[key] = DateTime.parse(value['value'] as String);
           }
+        } else if (value is List) {
+          newItem[key] = value.map((e) {
+            if (e is Map && e['__type__'] == 'DateTime') {
+              return DateTime.parse(e['value'] as String);
+            }
+            return e;
+          }).toList();
         }
       });
       return newItem;

@@ -16,6 +16,7 @@ import 'core/constants/api_keys.dart';
 import 'package:app_links/app_links.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'modules/business/business_schedule_page.dart';
+import 'modules/business/business_home_page.dart';
 
 import 'core/services/session_service.dart';
 import 'core/services/shop_data_cache_service.dart';
@@ -151,15 +152,15 @@ void main(List<String> args) async {
             if (date != null) {
               final shopId = await SessionService.getShopId();
               if (shopId != null && shopId.isNotEmpty) {
-                // Navega para a agenda abrindo no agendamento exato
-                MarkaAIApp.navigatorKey.currentState?.push(
+                // Navega para a home abrindo na aba de agendamento exata
+                MarkaAIApp.navigatorKey.currentState?.pushAndRemoveUntil(
                   MaterialPageRoute(
-                    builder: (context) => BusinessSchedulePage(
-                      shopId: shopId,
+                    builder: (context) => BusinessHomePage(
                       initialDate: date,
                       initialAppointmentId: appointmentId,
                     ),
                   ),
+                  (route) => false,
                 );
               }
             }
@@ -179,14 +180,14 @@ void main(List<String> args) async {
                 Future.delayed(const Duration(seconds: 4), () async {
                   final shopId = await SessionService.getShopId();
                   if (shopId != null && shopId.isNotEmpty) {
-                    MarkaAIApp.navigatorKey.currentState?.push(
+                    MarkaAIApp.navigatorKey.currentState?.pushAndRemoveUntil(
                       MaterialPageRoute(
-                        builder: (context) => BusinessSchedulePage(
-                          shopId: shopId,
+                        builder: (context) => BusinessHomePage(
                           initialDate: date,
                           initialAppointmentId: appointmentId,
                         ),
                       ),
+                      (route) => false,
                     );
                   }
                 });

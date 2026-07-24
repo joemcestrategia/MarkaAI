@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import '../../core/models/message_template_model.dart';
 import '../../core/services/message_template_service.dart';
 import '../../core/theme/app_colors.dart';
+import '../../widgets/upgrade_modal.dart';
 
 class MessageTemplatesPage extends StatefulWidget {
   final String shopId;
+  final bool isFreePlan;
 
-  const MessageTemplatesPage({super.key, required this.shopId});
+  const MessageTemplatesPage({super.key, required this.shopId, required this.isFreePlan});
 
   @override
   State<MessageTemplatesPage> createState() => _MessageTemplatesPageState();
@@ -107,7 +109,13 @@ class _MessageTemplatesPageState extends State<MessageTemplatesPage> {
         iconTheme: const IconThemeData(color: Colors.black87),
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showTemplateModal(),
+        onPressed: () {
+          if (widget.isFreePlan) {
+            UpgradeModal.show(context, featureName: 'Mensagens Personalizadas Extras', requiredPlan: 'START');
+          } else {
+            _showTemplateModal();
+          }
+        },
         backgroundColor: AppColors.primaryPurple,
         icon: const Icon(Icons.add, color: Colors.white),
         label: const Text("Novo Template", style: TextStyle(color: Colors.white)),
@@ -152,7 +160,13 @@ class _MessageTemplatesPageState extends State<MessageTemplatesPage> {
         side: BorderSide(color: Colors.grey[200]!),
       ),
       child: InkWell(
-        onTap: () => _showTemplateModal(template),
+        onTap: () {
+          if (widget.isFreePlan && !template.isDefault) {
+            UpgradeModal.show(context, featureName: 'Mensagens Personalizadas Extras', requiredPlan: 'START');
+          } else {
+            _showTemplateModal(template);
+          }
+        },
         borderRadius: BorderRadius.circular(16),
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -192,19 +206,23 @@ class _MessageTemplatesPageState extends State<MessageTemplatesPage> {
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                             decoration: BoxDecoration(
-                              color: Colors.blue[100],
+                              color: template.title == 'Mensagem de Aniversário' ? Colors.pink[100] : Colors.blue[100],
                               borderRadius: BorderRadius.circular(12),
                             ),
-                            child: const Text(
-                              'PADRÃO',
-                              style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.blue),
+                            child: Text(
+                              template.title == 'Mensagem de Aniversário' ? 'ANIVERSÁRIO' : 'PADRÃO',
+                              style: TextStyle(
+                                fontSize: 10, 
+                                fontWeight: FontWeight.bold, 
+                                color: template.title == 'Mensagem de Aniversário' ? Colors.pink : Colors.blue
+                              ),
                             ),
                           ),
                       ],
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      template.isDefault 
+                      (template.isDefault && template.title == 'Confirmação de Agendamento')
                           ? 'Mensagem padrão de confirmação do sistema.'
                           : (template.content ?? ''),
                       maxLines: 2,
@@ -272,7 +290,8 @@ class _TemplateModalState extends State<_TemplateModal> {
   }
 
   void _insertVariable(String variable) {
-    if (widget.template?.isDefault == true) return; // Variáveis não inseríveis no padrão dessa forma
+    bool isConfirmation = widget.template?.isDefault == true && widget.template?.title == 'Confirmação de Agendamento';
+    if (isConfirmation) return; // Variáveis não inseríveis no padrão dessa forma
 
     final text = _contentController.text;
     final selection = _contentController.selection;
@@ -289,14 +308,15 @@ class _TemplateModalState extends State<_TemplateModal> {
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isSaving = true);
+    bool isConfirmation = widget.template?.isDefault == true && widget.template?.title == 'Confirmação de Agendamento';
     try {
       final template = MessageTemplate(
         id: widget.template?.id,
         shopId: widget.shopId,
         title: widget.template?.isDefault == true ? widget.template!.title : _titleController.text,
-        content: widget.template?.isDefault == true ? null : _contentController.text,
-        headerText: widget.template?.isDefault == true ? _headerController.text : null,
-        footerText: widget.template?.isDefault == true ? _footerController.text : null,
+        content: isConfirmation ? null : _contentController.text,
+        headerText: isConfirmation ? _headerController.text : null,
+        footerText: isConfirmation ? _footerController.text : null,
         isDefault: widget.template?.isDefault ?? false,
       );
 
@@ -326,6 +346,7 @@ class _TemplateModalState extends State<_TemplateModal> {
   @override
   Widget build(BuildContext context) {
     final isDefault = widget.template?.isDefault ?? false;
+    final isConfirmation = isDefault && widget.template?.title == 'Confirmação de Agendamento';
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
     
     return Container(
@@ -372,7 +393,7 @@ class _TemplateModalState extends State<_TemplateModal> {
                     validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
                   ),
                 
-                if (isDefault)
+                if (isConfirmation)
                   Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
@@ -396,7 +417,7 @@ class _TemplateModalState extends State<_TemplateModal> {
                   
                 const SizedBox(height: 16),
 
-                if (!isDefault) ...[
+                if (!isConfirmation) ...[
                   // Botões de Variáveis
                   SingleChildScrollView(
                     scrollDirection: Axis.horizontal,

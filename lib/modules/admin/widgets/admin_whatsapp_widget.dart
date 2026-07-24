@@ -212,6 +212,12 @@ class _AdminWhatsappWidgetState extends State<AdminWhatsappWidget> {
                 itemBuilder: (_, i) {
                   final e = _logs[i];
                   final shopName = (e['shops'] != null) ? e['shops']['name'] : 'Sem Loja';
+                  String clientName = 'Cliente (Antigo)';
+                  final reqPayload = e['request_payload'];
+                  if (reqPayload is Map<String, dynamic> && reqPayload['clientName'] != null) {
+                    clientName = reqPayload['clientName'].toString();
+                  }
+
                   final phone = e['to_phone']?.toString() ?? '';
                   final template = e['template_name']?.toString() ?? 'unknown';
                   final status  = e['status']?.toString() ?? 'pending';
@@ -219,7 +225,7 @@ class _AdminWhatsappWidgetState extends State<AdminWhatsappWidget> {
                   return ListTile(
                     dense: true,
                     onTap: () => _showDetails(e),
-                    title: Text(phone, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.onSurface), overflow: TextOverflow.ellipsis),
+                    title: Text('$phone ($clientName)', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.onSurface), overflow: TextOverflow.ellipsis),
                     subtitle: Text("$shopName - $template", style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.8)), overflow: TextOverflow.ellipsis),
                     trailing: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.end, children: [
                       _statusChip(status),

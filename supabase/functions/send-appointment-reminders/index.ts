@@ -1,14 +1,13 @@
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
+import { checkWhatsAppReminderEligibility } from '../_shared/reminder-eligibility.ts'
 
 // ──────────────────────────────────────────────────────────────
 // Formatadores de data/hora
 // ──────────────────────────────────────────────────────────────
 
-/** Formata data no padrão dd/MM/yyyy pegando direto da string ISO (sem shift de fuso) */
 function formatDate(isoDate: string): string {
-  // isoDate ex: "2026-06-23T18:00:00Z" ou "2026-06-23T18:00:00+00:00"
   if (!isoDate || isoDate.length < 10) return ''
   const year = isoDate.substring(0, 4)
   const month = isoDate.substring(5, 7)
@@ -16,7 +15,6 @@ function formatDate(isoDate: string): string {
   return `${day}/${month}/${year}`
 }
 
-/** Formata hora no padrão HH:mm pegando direto da string ISO */
 function formatTime(isoDate: string): string {
   if (!isoDate || isoDate.length < 16) return ''
   return isoDate.substring(11, 16)
@@ -56,15 +54,11 @@ async function sendReminderTemplate(params: {
     serviceName,
   } = params
 
-  // Garantir formato E.164 sem "+" para a Meta API
   let to = toPhone.replace(/\D/g, '')
   
-  // Regra especial para Brasil (55)
-  // Meta recomenda remover o 9 para DDDs fora de 11-28 para garantir entrega
   if (to.startsWith('55') && to.length === 13) {
     const ddd = parseInt(to.substring(2, 4), 10)
     if (ddd > 28) {
-      console.log(`[send-reminders] Aplicando normalização de 9º dígito para DDD ${ddd}`)
       to = to.substring(0, 4) + to.substring(5)
     }
   }
@@ -82,9 +76,9 @@ async function sendReminderTemplate(params: {
           parameters: [
             { type: 'text', text: clientName },
             { type: 'text', text: businessName },
-            { type: 'text', text: serviceName },     // O template da Meta espera o SERVIÇO na variável 3
-            { type: 'text', text: appointmentDate }, // O template da Meta espera a DATA na variável 4
-            { type: 'text', text: appointmentTime }  // O template da Meta espera a HORA na variável 5
+            { type: 'text', text: serviceName },
+            { type: 'text', text: appointmentDate },
+            { type: 'text', text: appointmentTime }
           ]
         }
       ]
@@ -113,8 +107,33 @@ async function sendReminderTemplate(params: {
     const errorCode = data?.error?.code?.toString() ?? `HTTP_${res.status}`
     return { success: false, errorCode, rawResponse: data }
   } catch (err) {
-    console.error('[send-reminders] fetch error:', err)
     return { success: false, errorCode: 'NETWORK_ERROR', rawResponse: String(err) }
+  }
+}
+
+// ──────────────────────────────────────────────────────────────
+// Notificação Push Lojista (Reutilizando a mesma lógica do webhook)
+// ──────────────────────────────────────────────────────────────
+async function notifyOwnerPush(
+  supabase: any,
+  ownerId: string,
+  title: string,
+  body: string
+): Promise<void> {
+  try {
+    const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+
+    await fetch(`${supabaseUrl}/functions/v1/sendPushNotification`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${serviceKey}`,
+      },
+      body: JSON.stringify({ user_id: ownerId, title, message: body }),
+    })
+  } catch (e) {
+    console.error('[send-reminders] Erro ao notificar dono por push:', e)
   }
 }
 
@@ -135,47 +154,34 @@ serve(async (req) => {
   const results = {
     sent: 0,
     skipped: 0,
+    failed: 0,
     errors: 0,
     details: [] as string[],
   }
 
   try {
-    const now = new Date()
+    const realNow = new Date()
+    // ATENÇÃO: As datas no banco de dados (scheduled_at e whatsapp_scheduled_send_at)
+    // são salvas pela aplicação Flutter como se fossem locais, mas a string ISO
+    // não carrega fuso, o que faz o Postgres interpretá-las como UTC.
+    // Exemplo: 08:00 BRT vira 08:00 UTC no banco (que na verdade é 05:00 BRT).
+    // Para consultar corretamente na cronjob sem estourar o limite 3 horas antes,
+    // precisamos subtrair 3 horas do "now" atual para ele virar o "falso UTC" do banco.
+    const fakeDbBrtNow = new Date(realNow.getTime() - 3 * 60 * 60 * 1000);
+    const now = fakeDbBrtNow; // Usado daqui pra frente nas consultas e lógicas de envio
 
-    // Permite forçar a execução via POST body { "force": true, "testPhone": "996759238" }
     let force = false;
-    let testPhone = '';
+    let appointmentId = '';
+
     try {
       const reqBody = await req.clone().json();
       if (reqBody.force === true) force = true;
-      if (reqBody.testPhone) testPhone = reqBody.testPhone;
+      if (reqBody.appointmentId) appointmentId = reqBody.appointmentId;
     } catch (e) {
       // Body vazio ou inválido, segue normal
     }
 
-    // ────────────────────────────────────────────────────────
-    // Regra: Lembretes apenas no período da manhã (08:00 às 10:59 BRT)
-    // ────────────────────────────────────────────────────────
-    const brtNow = new Date(now.getTime() - 3 * 60 * 60 * 1000)
-    if (!force && (brtNow.getUTCHours() < 8 || brtNow.getUTCHours() > 10)) {
-      console.log(`[send-reminders] Ignorando: Agora são ${brtNow.getUTCHours()}h. Configurado para rodar apenas de manhã (08h-10h).`)
-      return new Response(
-        JSON.stringify({ ok: true, skipped: true, reason: 'Outside 08:00-10:59 BRT window' }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
-
-    // ────────────────────────────────────────────────────────
-    // Busca agendamentos elegíveis para lembrete:
-    // - reminder_sent = false
-    // - status não cancelado nem já confirmado pelo cliente
-    // - Agendamento deve estar entre 48h e 72h no futuro
-    // ────────────────────────────────────────────────────────
-    const minTimeMs = now.getTime() + 48 * 60 * 60 * 1000;
-    const maxTimeMs = now.getTime() + 72 * 60 * 60 * 1000;
-    const minDateISO = new Date(minTimeMs).toISOString();
-    const maxDateISO = new Date(maxTimeMs).toISOString();
-
+    // Busca agendamentos base:
     let query = supabase
       .from('appointments')
       .select(`
@@ -184,11 +190,16 @@ serve(async (req) => {
         client_phone,
         service_name,
         scheduled_at,
+        created_at,
         shop_id,
+        whatsapp_reminder_status,
+        whatsapp_scheduled_send_at,
+        whatsapp_reminder_retry_count,
         shops!inner (
           id,
           name,
-          plan,
+          owner_id,
+          plan_id,
           config,
           shop_whatsapp_config (
             wa_phone_number_id,
@@ -198,25 +209,23 @@ serve(async (req) => {
           )
         )
       `)
-      .eq('shops.plan', 'pro')
-      .eq('reminder_sent', false)
-      .not('status', 'in', '("cancelado","cancelled","confirmed_by_client")')
-      .limit(15) // Pega apenas 15 por vez para evitar bloqueio de SPAM na Meta
+      .eq('shops.plan_id', 'pro')
 
-    if (force) {
-      // Se forçado, ignora a janela de 48h-72h e pega qualquer agendamento no futuro não lembrado ainda
-      query = query.gt('scheduled_at', now.toISOString())
-      if (testPhone) {
-        query = query.like('client_phone', `%${testPhone}%`)
-      }
+    if (appointmentId) {
+      query = query.eq('id', appointmentId)
     } else {
-      query = query.gt('scheduled_at', minDateISO).lte('scheduled_at', maxDateISO)
+      // Fluxo Cron Automático
+      // Inclui NULL (novos agendamentos que ainda não tiveram o campo preenchido)
+      query = query
+        .in('status', ['agendado', 'confirmado'])
+        .eq('whatsapp_reminder_status', 'pending')
+        .or(`whatsapp_scheduled_send_at.is.null,whatsapp_scheduled_send_at.lte.${now.toISOString()}`)
+        .limit(100)
     }
 
     const { data: appointments, error: queryError } = await query
 
     if (queryError) {
-      console.error('[send-reminders] Erro na query principal:', queryError.message)
       return new Response(
         JSON.stringify({ ok: false, error: queryError.message }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
@@ -224,23 +233,20 @@ serve(async (req) => {
     }
 
     if (!appointments || appointments.length === 0) {
-      console.log('[send-reminders] Nenhum agendamento elegível encontrado.')
       return new Response(
         JSON.stringify({ ok: true, ...results }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
       )
     }
 
-    console.log(`[send-reminders] ${appointments.length} agendamentos candidatos para verificação`)
-
     for (const appt of appointments) {
       const shop = appt.shops as any
-      const whatsappConfig = shop?.shop_whatsapp_config
-
-      // Lógica de Ativação:
-      // 1. Se existir config específica, respeitamos o is_active dela.
-      // 2. Se NÃO existir config, usamos o fallback global se a loja permitir (config.whatsapp_enabled)
       
+      // Robustez: caso o Supabase retorne um array ou objeto (dependendo da inferência da FK)
+      const whatsappConfig = Array.isArray(shop?.shop_whatsapp_config) 
+        ? shop?.shop_whatsapp_config[0] 
+        : shop?.shop_whatsapp_config;
+
       const isConfigActive = whatsappConfig?.is_active ?? (shop?.config?.whatsapp_enabled !== false);
       
       if (!isConfigActive) {
@@ -248,17 +254,116 @@ serve(async (req) => {
         continue
       }
 
+      // ──────────────────────────────────────────────────────
+      // Computar scheduled_send_at on-the-fly se NULL
+      // (agendamentos novos criados após a migration não têm o campo preenchido)
+      // ──────────────────────────────────────────────────────
+      
+      let scheduledSendAt: string | null = appt.whatsapp_scheduled_send_at;
+      let wasNullScheduled = false;
+      if (!scheduledSendAt && !force) {
+        wasNullScheduled = true;
+        const shopConfig = shop?.config || {};
+        const reminderValue = parseFloat(String(shopConfig?.reminder_time_value || '48'));
+        const reminderUnit = String(shopConfig?.reminder_time_unit || 'hours').toLowerCase();
+        const scheduledAt = new Date(appt.scheduled_at);
+
+        let ms: number;
+        if (reminderUnit === 'hours') ms = reminderValue * 60 * 60 * 1000;
+        else if (reminderUnit === 'days') ms = reminderValue * 24 * 60 * 60 * 1000;
+        else ms = reminderValue * 60 * 1000; // minutes
+
+        scheduledSendAt = new Date(scheduledAt.getTime() - ms).toISOString();
+
+        // Persistir para que futuras execuções não precisem recomputar
+        await supabase.from('appointments').update({
+          whatsapp_scheduled_send_at: scheduledSendAt
+        }).eq('id', appt.id);
+      }
+      
+      // ──────────────────────────────────────────────────────
+      // Elegibilidade (Cron vs Force)
+      // ──────────────────────────────────────────────────────
+      
+      if (!force) {
+        const eligibility = checkWhatsAppReminderEligibility(
+          scheduledSendAt,
+          appt.scheduled_at,
+          now
+        );
+
+        if (eligibility.action === 'skip') {
+          results.skipped++;
+          continue;
+        }
+
+        if (eligibility.action === 'expired') {
+          // Registro neutro: sai da fila, não manda push de erro e não exibe tag de alerta.
+          await supabase.from('appointments').update({
+            whatsapp_reminder_status: 'expired',
+            whatsapp_reminder_failure_summary: eligibility.reason
+          }).eq('id', appt.id).eq('whatsapp_reminder_status', 'pending');
+          
+          results.skipped++;
+          results.details.push(`⏭️ Appt ${appt.id}: Expired (${eligibility.reason})`);
+          continue;
+        }
+
+        if (eligibility.action === 'fail') {
+          const retryCount = appt.whatsapp_reminder_retry_count || 0;
+          
+          if (wasNullScheduled && new Date(appt.scheduled_at).getTime() > now.getTime()) {
+            // Catch-up: estava NULL, envia mesmo com tolerancia estourada
+            results.details.push(`🔧 Appt ${appt.id}: Tolerancia estourada mas scheduled_send_at estava NULL — enviando catch-up`);
+          } else if (retryCount < 2) {
+            // Tenta ate 3x (retry 0, 1, 2 = 3 tentativas no total)
+            await supabase.from('appointments').update({
+              whatsapp_reminder_retry_count: retryCount + 1,
+            }).eq('id', appt.id);
+            results.details.push(`🔄 Appt ${appt.id}: Retry ${retryCount + 1}/3 (${eligibility.reason}) — tentando envio`);
+          } else {
+            // 3 tentativas esgotadas — falha definitiva
+            await supabase.from('appointments').update({
+              whatsapp_reminder_status: 'failed',
+              whatsapp_reminder_failed_at: realNow.toISOString(),
+              whatsapp_reminder_failure_summary: eligibility.reason
+            }).eq('id', appt.id).eq('whatsapp_reminder_status', 'pending');
+
+            const clientName = appt.client_name || 'Cliente'
+            const apptDate = formatDate(appt.scheduled_at)
+            const apptTime = formatTime(appt.scheduled_at)
+
+            await notifyOwnerPush(
+              supabase,
+              shop.owner_id,
+              "Lembrete Não Enviado",
+              `Não foi possível enviar a confirmação para ${clientName} — agendamento ${apptDate} às ${apptTime}. Entre em contato manualmente.`
+            );
+
+            results.failed++;
+            results.details.push(`❌ Appt ${appt.id}: Failed definitivo apos 3 tentativas (${eligibility.reason})`);
+            continue;
+          }
+        }
+      } else {
+        // FLUXO MANUAL
+        if (appt.status !== 'agendado') {
+          results.skipped++;
+          results.details.push(`⏭️ Appt ${appt.id}: Ignorado no fluxo manual (status é '${appt.status}', não 'agendado')`);
+          continue;
+        }
+        if (appt.whatsapp_reminder_status === 'sent' || appt.whatsapp_reminder_status === 'confirmed') {
+          results.skipped++;
+          results.details.push(`⏭️ Appt ${appt.id}: Ignorado no modo forçado pois status é ${appt.whatsapp_reminder_status}`);
+          continue;
+        }
+      }
+
       const phoneNumberId = whatsappConfig?.wa_phone_number_id || Deno.env.get('GLOBAL_WA_PHONE_NUMBER_ID');
       const accessToken = whatsappConfig?.wa_access_token || Deno.env.get('GLOBAL_WA_ACCESS_TOKEN');
 
-      if (!phoneNumberId || !accessToken) {
+      if (!phoneNumberId || !accessToken || !appt.client_phone) {
         results.skipped++
-        results.details.push(`Appt ${appt.id}: credenciais Meta não encontradas (loja ou global)`)
-        continue
-      }
-      if (!appt.client_phone) {
-        results.skipped++
-        results.details.push(`Appt ${appt.id}: sem telefone do cliente`)
         continue
       }
 
@@ -269,12 +374,10 @@ serve(async (req) => {
       const businessName = shop?.name || 'Estabelecimento'
       const serviceName = appt.service_name || 'Serviço'
 
-      console.log(`[send-reminders] Enviando lembrete para appt ${appt.id} | ${clientName} | ${appointmentDate} ${appointmentTime}`)
-
       // Enviar via Meta Cloud API
       const sendResult = await sendReminderTemplate({
-        phoneNumberId: phoneNumberId,
-        accessToken: accessToken,
+        phoneNumberId,
+        accessToken,
         templateName,
         toPhone: appt.client_phone,
         clientName,
@@ -285,48 +388,32 @@ serve(async (req) => {
       })
 
       if (sendResult.success) {
-        // Marcar como enviado (idempotência — lock otimista)
-        // Armazena o wamid para que o webhook de confirmação/cancelamento
-        // encontre o agendamento exato via context.id
         const { error: updateError } = await supabase
           .from('appointments')
           .update({
-            reminder_sent: true,
+            whatsapp_reminder_status: 'sent',
+            whatsapp_reminder_sent_at: realNow.toISOString(),
             wa_reminder_message_id: sendResult.messageId || null,
           })
           .eq('id', appt.id)
-          .eq('reminder_sent', false) // Garante que não houve envio concorrente
-
-        if (updateError) {
-          console.warn(`[send-reminders] Erro ao marcar reminder_sent para ${appt.id}:`, updateError.message)
-        }
 
         // Log de sucesso
         try {
-          const requestPayload = {
-            clientName,
-            businessName,
-            serviceName,
-            appointmentDate,
-            appointmentTime
-          }
-
           await supabase.from('whatsapp_send_log').insert({
             shop_id: appt.shop_id,
             to_phone: appt.client_phone.replace(/\D/g, ''),
             template_name: templateName,
             status: 'success',
             response_json: sendResult.rawResponse,
-            request_payload: requestPayload,
+            request_payload: { clientName, businessName, serviceName, appointmentDate, appointmentTime },
           })
-        } catch (e: any) {
-          console.warn('[send-reminders] Erro ao salvar log de sucesso:', e.message)
-        }
+        } catch (e: any) {}
 
         results.sent++
         results.details.push(`✅ Appt ${appt.id}: enviado (msg_id: ${sendResult.messageId})`)
       } else {
-        // Log de erro
+        // Log de erro e marca como falho no cron automático, ou se preferir não falhar de vez,
+        // apenas não marca como sent. A tolerância de 30 minutos capturará e falhará depois.
         try {
           await supabase.from('whatsapp_send_errors').insert({
             appointment_id: appt.id,
@@ -335,23 +422,18 @@ serve(async (req) => {
             raw_response: sendResult.rawResponse,
             attempt_number: 1,
           })
-        } catch (e: any) {
-          console.error('[send-reminders] Erro ao salvar log de erro:', e.message)
-        }
+        } catch (e: any) {}
 
         results.errors++
-        results.details.push(`❌ Appt ${appt.id}: erro ${sendResult.errorCode}`)
-        console.error(`[send-reminders] Falha no envio para appt ${appt.id}:`, sendResult.errorCode)
+        results.details.push(`❌ Appt ${appt.id}: erro de rede/Meta ${sendResult.errorCode}`)
       }
     }
 
-    console.log('[send-reminders] Resultado final:', results)
     return new Response(
       JSON.stringify({ ok: true, ...results }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     )
   } catch (error: any) {
-    console.error('[send-appointment-reminders] Erro inesperado:', error)
     return new Response(
       JSON.stringify({ ok: false, error: error.message }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },

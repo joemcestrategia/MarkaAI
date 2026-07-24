@@ -59,6 +59,7 @@ class PlanFeatures {
   // Fiscal e Segurança
   final bool nfseEmission;
   final bool requireCpfForBooking;
+  final bool rescuePanel;
 
   const PlanFeatures({
     required this.onlineBooking,
@@ -93,6 +94,7 @@ class PlanFeatures {
     required this.clientHeatmap,
     required this.nfseEmission,
     required this.requireCpfForBooking,
+    required this.rescuePanel,
   });
 }
 
@@ -130,6 +132,7 @@ const Map<PlanKey, PlanFeatures> planFeaturesConfig = {
     clientHeatmap: false,
     nfseEmission: false,
     requireCpfForBooking: false,
+    rescuePanel: false,
   ),
   PlanKey.starter: PlanFeatures(
     onlineBooking: true,
@@ -164,6 +167,7 @@ const Map<PlanKey, PlanFeatures> planFeaturesConfig = {
     clientHeatmap: false,
     nfseEmission: false,
     requireCpfForBooking: false,
+    rescuePanel: false,
   ),
   PlanKey.plus: PlanFeatures(
     onlineBooking: true,
@@ -198,6 +202,7 @@ const Map<PlanKey, PlanFeatures> planFeaturesConfig = {
     clientHeatmap: false,
     nfseEmission: false,
     requireCpfForBooking: false,
+    rescuePanel: false,
   ),
   PlanKey.pro: PlanFeatures(
     onlineBooking: true,
@@ -232,5 +237,6 @@ const Map<PlanKey, PlanFeatures> planFeaturesConfig = {
     clientHeatmap: true,
     nfseEmission: true,
     requireCpfForBooking: true,
+    rescuePanel: true,
   ),
 };
