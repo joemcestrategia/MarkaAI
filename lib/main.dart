@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
@@ -35,10 +36,14 @@ void main(List<String> args) async {
     debugPrint("=== BOOT STEP 0: v2 - FlutterBinding Inicializado ===");
     
     // === BOOT STEP 0.5: Iniciando Firebase ===
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-    print('=== BOOT STEP 0.5: Firebase Inicializado ===');
+    try {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      ).timeout(const Duration(seconds: 8));
+      print('=== BOOT STEP 0.5: Firebase Inicializado ===');
+    } catch (e) {
+      print('=== BOOT STEP 0.5: Firebase falhou — continuando sem Firebase: $e ===');
+    }
 
     // 1. Inicializar Supabase (obrigatório antes de runApp)
     print("=== BOOT STEP 1.1: Iniciando Supabase ===");

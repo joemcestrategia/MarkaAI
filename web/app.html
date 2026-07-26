@@ -179,20 +179,39 @@
       };
     })();
   </script>
+  <script>
+    window.flutterWebRenderer = 'html';
+  </script>
   <script src="flutter_bootstrap.js" async></script>
   <script>
+    var _splashHidden = false;
+
     function hideSplash() {
+      if (_splashHidden) return;
       var s = document.getElementById('splash');
       if (!s) return;
       console.log("MarkaAI: Hiding splash screen...");
       s.style.transition = 'opacity 500ms ease';
       s.style.opacity = '0';
+      _splashHidden = true;
       setTimeout(function () { if (s.parentNode) s.parentNode.removeChild(s); }, 600);
     }
+
+    function showSplashFallback() {
+      if (_splashHidden) return;
+      var s = document.getElementById('splash');
+      if (!s) return;
+      var msg = document.createElement('div');
+      msg.style.cssText = 'color:rgba(255,255,255,0.9);text-align:center;font-family:system-ui,sans-serif;padding:20px;font-size:14px;line-height:1.6;position:absolute;bottom:60px;left:0;right:0;';
+      msg.innerHTML = 'O app est\u00e1 demorando mais que o esperado.<br>Tente fechar outras abas e recarregue.';
+      s.appendChild(msg);
+    }
+
     // Flutter web usually dispatches this event when it renders first frame
     window.addEventListener('flutter-first-frame', hideSplash);
-    // Fallback significantly increased for slower mobile connections
-    setTimeout(hideSplash, 10000);
+    // Fallback: after 8s show message; after 15s hide splash
+    setTimeout(showSplashFallback, 8000);
+    setTimeout(hideSplash, 15000);
   </script>
   <script>
     window.addEventListener("dragover", function (e) {

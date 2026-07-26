@@ -12,7 +12,11 @@ class SessionService {
   );
 
   static Future<void> init() async {
-    _prefs ??= await SharedPreferences.getInstance();
+    try {
+      _prefs ??= await SharedPreferences.getInstance();
+    } catch (e) {
+      debugPrint('SessionService: SharedPreferences indisponivel — continuando sem persistencia local');
+    }
   }
 
   static const String _keyUserId = 'ss_userId';
