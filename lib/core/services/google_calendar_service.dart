@@ -4,6 +4,7 @@ import 'package:googleapis_auth/googleapis_auth.dart' as auth;
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'web_auth_interop_stub.dart' if (dart.library.js_interop) 'web_auth_interop_web.dart';
 
 /// Serviço para integração com Google Calendar
 /// Permite backup e sincronização de agendamentos
@@ -39,56 +40,77 @@ class GoogleCalendarService {
     _log('Iniciando autenticação Google Calendar...');
     try {
       _log('Scopes solicitados: $_scopes');
-      final googleSignIn = _getSignIn();
-
-      _log('Verificando se já está logado no Google Sign-In...');
-      final alreadySignedIn = await googleSignIn.isSignedIn();
-      if (alreadySignedIn) {
-        _log('Já estava logado, fazendo signOut para forçar novo consentimento dos scopes...');
-        await googleSignIn.signOut();
-      }
-
-      _log('Chamando googleSignIn.signIn() — abrindo seletor de conta...');
-      final GoogleSignInAccount? gUser = await googleSignIn.signIn();
-      if (gUser == null) {
-        _log('Usuário cancelou o login ou retornou null');
-        return {'success': false, 'error': 'Seleção de conta cancelada pelo usuário.'};
-      }
-
-      _log('Conta selecionada: email=${gUser.email}, displayName=${gUser.displayName}');
-
-      _log('Obtendo tokens de autenticação e serverAuthCode...');
-      final GoogleSignInAuthentication gAuth = await gUser.authentication;
-      final String? serverAuthCode = gUser.serverAuthCode;
-
-      _log(
-        'Tokens obtidos: accessToken=${gAuth.accessToken != null ? "SIM" : "NÃO"}, '
-        'idToken=${gAuth.idToken != null ? "SIM" : "NÃO"}, '
-        'serverAuthCode=${serverAuthCode != null ? "SIM (${serverAuthCode!.length} chars)" : "NÃO (null)"}',
-      );
-
-      if (gAuth.accessToken == null) {
-        _logError('accessToken veio null — possível falta do escopo Calendar no Google Cloud Console', Exception('accessToken null'));
-        return {'success': false, 'error': 'Permissão do Google Calendar não concedida. O escopo calendar precisa estar habilitado no Google Cloud Console.'};
-      }
-
-      _log('Buscando usuário atual do Supabase...');
+      
       final supabase = Supabase.instance.client;
       final user = supabase.auth.currentUser;
-
       if (user == null && employeeId == null) {
         _logError('Usuário Supabase é null — não autenticado no Supabase', Exception('supabaseUser null'));
         return {'success': false, 'error': 'Usuário não autenticado. Faça login novamente.'};
       }
 
+      String? accessToken;
+      String? idToken;
+      String? serverAuthCode;
+      String? email = 'Sua Conta Google (Web)';
+      String? displayName = 'Usuário (Web)';
+
+      if (kIsWeb) {
+        _log('Web: Acionando GIS initCodeClient (sem waits prévios que quebram o popup)...');
+        serverAuthCode = await getGoogleAuthCodeWeb(
+          '170942564821-s8doqh3tcqe4rs7muauefgkdqehcf1l9.apps.googleusercontent.com',
+          _scopes.first,
+        );
+
+        if (serverAuthCode == null || serverAuthCode.isEmpty) {
+          return {'success': false, 'error': 'Permissão de acesso ao Google Calendar cancelada ou negada.'};
+        }
+        accessToken = 'gis_web_flow'; // placeholder seguro
+      } else {
+        // Fluxo nativo (Android/iOS)
+        final googleSignIn = _getSignIn();
+
+        _log('Verificando se já está logado no Google Sign-In...');
+        final alreadySignedIn = await googleSignIn.isSignedIn();
+        if (alreadySignedIn) {
+          _log('Já estava logado, fazendo disconnect para revogar consentimento e forçar nova seleção...');
+          try {
+            await googleSignIn.disconnect();
+          } catch (e) {
+            _log('Erro no disconnect, fazendo signOut fallback: $e');
+            await googleSignIn.signOut();
+          }
+        } else {
+          try { await googleSignIn.signOut(); } catch (_) {}
+        }
+
+        _log('Chamando googleSignIn.signIn() — abrindo seletor de conta...');
+        final GoogleSignInAccount? gUser = await googleSignIn.signIn();
+        if (gUser == null) {
+          _log('Usuário cancelou o login ou retornou null');
+          return {'success': false, 'error': 'Seleção de conta cancelada pelo usuário.'};
+        }
+
+        final GoogleSignInAuthentication gAuth = await gUser.authentication;
+        serverAuthCode = gUser.serverAuthCode;
+        accessToken = gAuth.accessToken;
+        idToken = gAuth.idToken;
+        email = gUser.email;
+        displayName = gUser.displayName;
+
+        if (accessToken == null) {
+          _logError('accessToken veio null', Exception('accessToken null'));
+          return {'success': false, 'error': 'Permissão do Google Calendar não concedida. Verifique os escopos.'};
+        }
+      }
+
       final calendarData = {
         'connected': true,
-        'accessToken': gAuth.accessToken,
-        'idToken': gAuth.idToken,
+        'accessToken': accessToken,
+        'idToken': idToken,
         'expiry': DateTime.now().add(const Duration(hours: 1)).toIso8601String(),
         'connectedAt': DateTime.now().toIso8601String(),
-        'email': gUser.email,
-        'displayName': gUser.displayName,
+        'email': email,
+        'displayName': displayName,
       };
 
       _log('Salvando dados de conexão via Edge Function (bypass RLS)...');
@@ -97,6 +119,10 @@ class GoogleCalendarService {
           'calendarData': calendarData,
         };
         
+        if (kIsWeb) {
+          edgeBody['platform'] = 'web';
+        }
+
         if (employeeId != null) {
           edgeBody['employeeId'] = employeeId;
         } else if (user != null) {
@@ -135,9 +161,9 @@ class GoogleCalendarService {
       _log('Autenticação Google Calendar concluída com sucesso!');
       return {
         'success': true,
-        'accessToken': gAuth.accessToken,
-        'email': gUser.email,
-        'displayName': gUser.displayName,
+        'accessToken': accessToken,
+        'email': email,
+        'displayName': displayName,
       };
     } catch (e, stack) {
       _logError('Erro ao autenticar com Google Calendar', e, stack);
@@ -212,6 +238,12 @@ class GoogleCalendarService {
       }
 
       if (accessToken == null && employeeId == null) {
+        if (kIsWeb) {
+          _log('Fallback: Modo Web ignorado para signInSilently. Necessária reautenticação explícita pelo usuário.');
+          counters['error'] = 'Token expirado. Por favor, conecte a conta novamente.';
+          return counters;
+        }
+
         // Fallback para o modo owner: usa Google Sign-In do dispositivo apenas se falhou via edge function
         _log('Fallback: Modo owner, usando Google Sign-In do dispositivo...');
         final googleSignIn = _getSignIn();
