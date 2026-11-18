@@ -39,6 +39,7 @@ class SupabaseStreamWidget<T> extends StatefulWidget {
 class _SupabaseStreamWidgetState<T> extends State<SupabaseStreamWidget<T>> {
   T? _lastData;
   bool _hasHadData = false;
+  bool _initialFutureDone = false;
 
   @override
   void initState() {
@@ -47,17 +48,20 @@ class _SupabaseStreamWidgetState<T> extends State<SupabaseStreamWidget<T>> {
   }
 
   Future<void> _handleInitialFuture() async {
-    if (widget.initialFuture != null) {
-      try {
-        final data = await widget.initialFuture!;
-        if (mounted && !_hasHadData) {
-          setState(() {
-            _lastData = data;
-          });
-        }
-      } catch (e) {
-        // Erro no future inicial é ignorado para deixar o stream tentar carregar
+    if (widget.initialFuture == null) {
+      _initialFutureDone = true;
+      return;
+    }
+    try {
+      final data = await widget.initialFuture!;
+      if (mounted && !_hasHadData) {
+        _lastData = data;
       }
+    } catch (e) {
+      // Erro no future inicial é ignorado para deixar o stream tentar carregar
+    }
+    if (mounted) {
+      setState(() => _initialFutureDone = true);
     }
   }
 
@@ -80,6 +84,14 @@ class _SupabaseStreamWidgetState<T> extends State<SupabaseStreamWidget<T>> {
           // Mas talvez com um pequeno indicador de erro ou apenas o dado para não quebrar a UX
           if (_lastData != null && !_isCriticalError(error)) {
             return widget.builder(context, _lastData as T);
+          }
+
+          // Ainda aguardando o cache local (initialFuture): não mostra erro prematuro
+          if (!_initialFutureDone) {
+            if (widget.loadingBuilder != null) {
+              return widget.loadingBuilder!(context);
+            }
+            return const Center(child: CircularProgressIndicator(color: AppColors.primaryPurple, strokeWidth: 2));
           }
 
           if (widget.errorBuilder != null) {
@@ -152,41 +164,84 @@ class _DefaultErrorWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    String displayError = error.toString();
-    if (displayError.contains('RealtimeSubscribeException') || displayError.contains('timedOut')) {
-      displayError = "A conexão em tempo real demorou muito a responder.";
-    }
+    String displayError = error.toString().toLowerCase();
+    
+    // Identificar erro de rede
+    final isNetwork = displayError.contains('socket') ||
+        displayError.contains('network') ||
+        displayError.contains('clientexception') ||
+        displayError.contains('timeout') ||
+        displayError.contains('host lookup') ||
+        displayError.contains('connection');
 
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    
+    final textColor = isDark ? Colors.white : const Color(0xFF111827);
+    final subtitleColor = isDark ? Colors.grey[400] : const Color(0xFF6B7280);
+    final circleColor = isDark ? const Color(0x33EF4444) : const Color(0xFFFEE2E2);
+
+    return Material(
+      color: isDark ? const Color(0xFF111827) : const Color(0xFFF9FAFB),
+      child: SizedBox.expand(
+        child: Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.cloud_off_outlined, color: Colors.orange, size: 64),
-            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: circleColor,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.wifi_off_rounded, 
+                size: 64, 
+                color: Color(0xFFEF4444)
+              ),
+            ),
+            const SizedBox(height: 32),
             Text(
-              message ?? 'Erro ao carregar: $displayError',
+              'Sem Conexão',
+              style: TextStyle(
+                fontSize: 24, 
+                fontWeight: FontWeight.bold, 
+                color: textColor,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              isNetwork 
+                  ? 'Não foi possível conectar. Verifique sua rede para sincronizar os dados em tempo real.' 
+                  : (message ?? 'Erro inesperado ao carregar os dados.'),
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey[600], fontSize: 16),
+              style: TextStyle(fontSize: 16, color: subtitleColor, height: 1.5),
             ),
             if (onRetry != null) ...[
-              const SizedBox(height: 24),
+              const SizedBox(height: 40),
               SizedBox(
-                width: 200,
+                width: double.infinity,
+                height: 54,
                 child: ElevatedButton.icon(
                   onPressed: onRetry,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('TENTAR NOVAMENTE'),
+                  icon: const Icon(Icons.refresh_rounded, size: 22),
+                  label: const Text(
+                    'Tentar Novamente', 
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primaryPurple,
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
                 ),
               ),
             ]
           ],
+        ),
+      ),
         ),
       ),
     );

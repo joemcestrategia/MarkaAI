@@ -1,6 +1,7 @@
 -- 20260723225000_create_rescue_panel_rpc.sql
 -- RPC para buscar e agregar os clientes para o Painel de Resgate (Pro Only)
 
+DROP FUNCTION IF EXISTS public.normalize_phone;
 CREATE OR REPLACE FUNCTION public.normalize_phone(p TEXT)
 RETURNS TEXT
 LANGUAGE sql
@@ -29,48 +30,40 @@ AS $$
   SELECT d FROM strip_operator;
 $$;
 
+DROP FUNCTION IF EXISTS public.get_rescue_clients;
 CREATE OR REPLACE FUNCTION public.get_rescue_clients(p_shop_id UUID)
 RETURNS TABLE (
-    canonical_id TEXT,
+    client_uid TEXT,
     client_name TEXT,
     client_phone TEXT,
     client_photo_url TEXT,
     days_since_last_visit INTEGER,
     total_spent DOUBLE PRECISION,
-    total_visits INTEGER,
-    last_visit_date TIMESTAMPTZ
+    total_visits INTEGER
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-    v_plan_id TEXT;
-    v_trial_active BOOLEAN;
-    v_subscription JSONB;
+    v_shop_id_str TEXT := p_shop_id::text;
     v_is_pro BOOLEAN := false;
 BEGIN
     -- 1. Check shop plan
-    SELECT plan_id, trial_active, subscription
-    INTO v_plan_id, v_trial_active, v_subscription
-    FROM public.shops
-    WHERE id = p_shop_id;
-
-    IF v_plan_id = 'pro' THEN
-        v_is_pro := true;
-    ELSIF v_trial_active = true AND v_subscription->>'plan_id' = 'pro' THEN
-        v_is_pro := true;
-    ELSIF v_subscription->>'plan_id' = 'pro' THEN
-        v_is_pro := true;
-    ELSIF v_subscription->>'status' = 'trial' THEN
-        v_is_pro := true;
-    END IF;
+    SELECT EXISTS (
+        SELECT 1 FROM public.shops
+        WHERE id::text = v_shop_id_str
+          AND (
+              plan_id = 'pro'
+              OR subscription->>'plan_id' = 'pro'
+          )
+    ) INTO v_is_pro;
 
     IF NOT v_is_pro THEN
-        RAISE EXCEPTION 'Access Denied: Rescue Panel is a Pro feature.';
+        RAISE EXCEPTION 'Acesso negado: o Painel de Resgate e um recurso exclusivo do Plano Pro.';
     END IF;
 
-    -- 2. Aggregate data
+    -- 2. Aggregate data (apenas concluido, confirmado, confirmed_by_client)
     RETURN QUERY
     WITH base_data AS (
         SELECT 
@@ -79,34 +72,43 @@ BEGIN
             a.client_phone,
             a.client_name,
             a.scheduled_at,
-            COALESCE(a.total_price, a.total_value, 0) AS val
+            COALESCE(a.total_price, a.total_value, 0) AS safe_price
         FROM public.appointments a
-        WHERE a.shop_id = p_shop_id
-          AND a.status = 'concluido'
+        WHERE a.shop_id::text = v_shop_id_str
+          AND a.status IN ('concluido', 'confirmado', 'confirmed_by_client')
+          AND a.scheduled_at <= NOW()
     ),
     aggregated AS (
         SELECT 
-            can_id,
-            MAX(client_id) AS matched_client_id,
-            MAX(client_phone) AS raw_phone,
-            MAX(client_name) AS raw_name,
-            MAX(scheduled_at) AS max_scheduled_at,
-            SUM(val) AS sum_spent,
+            b.can_id,
+            MAX(b.client_id::text) AS matched_client_id,
+            MAX(b.client_phone) AS raw_phone,
+            MAX(b.client_name) AS raw_name,
+            MAX(b.scheduled_at) AS max_scheduled_at,
+            SUM(b.safe_price) AS sum_spent,
             COUNT(1) AS count_visits
-        FROM base_data
-        WHERE can_id IS NOT NULL AND can_id != ''
-        GROUP BY can_id
+        FROM base_data b
+        WHERE b.can_id IS NOT NULL AND b.can_id != ''
+        GROUP BY b.can_id
+    ),
+    enriched AS (
+        SELECT 
+            a.matched_client_id AS out_uid,
+            COALESCE(u.name, a.raw_name) AS out_name,
+            COALESCE(u.phone, a.raw_phone) AS out_phone,
+            u.photo_url AS out_photo_url,
+            EXTRACT(DAY FROM (now() - a.max_scheduled_at))::INTEGER AS out_days_since_last_visit,
+            a.sum_spent::DOUBLE PRECISION AS out_total_spent,
+            a.count_visits::INTEGER AS out_total_visits
+        FROM aggregated a
+        LEFT JOIN public.users u ON u.id::text = a.matched_client_id
     )
-    SELECT 
-        agg.can_id,
-        COALESCE(u.name, agg.raw_name) AS client_name,
-        COALESCE(u.phone, agg.raw_phone) AS client_phone,
-        u.photo_url AS client_photo_url,
-        EXTRACT(DAY FROM (now() - agg.max_scheduled_at))::INTEGER AS days_since_last_visit,
-        agg.sum_spent::DOUBLE PRECISION AS total_spent,
-        agg.count_visits::INTEGER AS total_visits,
-        agg.max_scheduled_at AS last_visit_date
-    FROM aggregated agg
-    LEFT JOIN public.users u ON agg.matched_client_id = u.id::text;
+    SELECT e.out_uid, e.out_name, e.out_phone, e.out_photo_url,
+           e.out_days_since_last_visit, e.out_total_spent, e.out_total_visits
+    FROM enriched e
+    WHERE e.out_name IS NOT NULL
+      AND e.out_name != ''
+      AND e.out_name != 'Desconhecido'
+    ORDER BY e.out_days_since_last_visit DESC;
 END;
 $$;

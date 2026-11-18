@@ -411,14 +411,10 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
                   ..sort((a, b) => ((a['schedule_priority'] ?? 0) as int)
                       .compareTo((b['schedule_priority'] ?? 0) as int));
 
-                final currentIds = _orderedEmployees
-                    .map((e) => e['id'].toString())
-                    .join(',');
-                final serverIds = sortedFromServer
-                    .map((e) => e['id'].toString())
-                    .join(',');
+                final currentDataString = _orderedEmployees.map((e) => e.toString()).join('|');
+                final serverDataString = sortedFromServer.map((e) => e.toString()).join('|');
 
-                if (currentIds != serverIds) {
+                if (currentDataString != serverDataString) {
                   WidgetsBinding.instance.addPostFrameCallback((_) {
                     if (mounted) setState(() => _orderedEmployees = sortedFromServer);
                   });
@@ -525,32 +521,42 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
             ),
           ),
           const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  data['name'] ?? "Sem nome",
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 16,
-                    color: isSelected ? AppColors.primaryPurple : AppColors.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Row(
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(Icons.schedule_rounded, size: 14, color: AppColors.textSecondary),
-                    const SizedBox(width: 4),
                     Text(
-                      "${data['start_time'] ?? '--:--'} às ${data['end_time'] ?? '--:--'}",
-                      style: TextStyle(fontSize: 13, color: AppColors.textSecondary, fontWeight: FontWeight.w500),
+                      data['name'] ?? "Sem nome",
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                        color: isSelected ? AppColors.primaryPurple : AppColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 8,
+                      runSpacing: 4,
+                      children: [
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.schedule_rounded, size: 14, color: AppColors.textSecondary),
+                            const SizedBox(width: 4),
+                            Text(
+                              "${data['start_time'] ?? '--:--'} às ${data['end_time'] ?? '--:--'}",
+                              style: TextStyle(fontSize: 13, color: AppColors.textSecondary, fontWeight: FontWeight.w500),
+                            ),
+                          ],
+                        ),
+                        if (data['employment_type'] != null && data['employment_type'].toString().isNotEmpty)
+                          _buildEmploymentBadge(data['employment_type']),
+                      ],
                     ),
                   ],
                 ),
-              ],
-            ),
-          ),
+              ),
           if (_isSavingPriority)
             const SizedBox(
               width: 24,
@@ -558,13 +564,18 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
               child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primaryPurple),
             )
           else
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.transparent,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(Icons.drag_indicator_rounded, color: AppColors.textSecondary.withValues(alpha: 0.5), size: 24),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.transparent,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(Icons.drag_indicator_rounded, color: AppColors.textSecondary.withValues(alpha: 0.5), size: 24),
+                ),
+              ],
             ),
         ],
       ),
@@ -596,6 +607,62 @@ class _TeamManagementPageState extends State<TeamManagementPage> {
           const SizedBox(height: 16),
           Text("Nenhum membro cadastrado",
               style: TextStyle(color: Colors.grey[600])),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmploymentBadge(dynamic type) {
+    final t = type?.toString() ?? '';
+    String label;
+    IconData icon;
+    Color bgColor;
+    Color textColor;
+
+    switch (t) {
+      case 'clt':
+        label = 'CLT';
+        icon = Icons.badge;
+        bgColor = Colors.blue[50]!;
+        textColor = Colors.blue[700]!;
+        break;
+      case 'pj':
+        label = 'PJ';
+        icon = Icons.business;
+        bgColor = Colors.teal[50]!;
+        textColor = Colors.teal[700]!;
+        break;
+      case 'comissionado':
+        label = 'Parceiro';
+        icon = Icons.handshake;
+        bgColor = Colors.orange[50]!;
+        textColor = Colors.orange[700]!;
+        break;
+      case 'freelancer':
+        label = 'Freelancer';
+        icon = Icons.work_history;
+        bgColor = Colors.purple[50]!;
+        textColor = Colors.purple[700]!;
+        break;
+      default:
+        return const SizedBox.shrink();
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 11, color: textColor),
+          const SizedBox(width: 3),
+          Text(
+            label,
+            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: textColor),
+          ),
         ],
       ),
     );

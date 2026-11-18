@@ -10,7 +10,7 @@ class ClientVerificationService {
   static Future<Map<String, bool>> getClientStatus(
       String userId, String shopId) async {
     try {
-      // 1. Buscar classificação manual do usuário e configuração da loja em paralelo
+      // 1. Buscar classificação manual do usuário, config da loja e shop_clients em paralelo
       final futures = await Future.wait([
         _supabase
             .from('shops')
@@ -28,17 +28,39 @@ class ClientVerificationService {
             .eq('shop_id', shopId)
             .eq('client_id', userId)
             .order('scheduled_at', ascending: false),
+        _supabase
+            .from('shop_clients')
+            .select('classification, manual_tags')
+            .eq('shop_id', shopId)
+            .eq('user_id', userId)
+            .maybeSingle(),
       ]);
 
       final shopDoc = futures[0] as Map<String, dynamic>?;
       final userDoc = futures[1] as Map<String, dynamic>?;
       final appointmentsList = futures[2] as List<dynamic>;
+      final shopClientDoc = futures[3] as Map<String, dynamic>?;
 
       final shopConfig = (shopDoc?['config'] as Map?) ?? {};
 
-      // Flags manuais do dono da loja (persistidos em users)
+      // Flags manuais do dono da loja (persistidos em users — legado)
       final bool manualVip = userDoc?['is_vip'] == true;
       final bool manualProblematic = userDoc?['is_problematic'] == true;
+
+      // Classificação manual via shop_clients (tag VIP/Problemático definida pelo dono da loja)
+      final String shopClientClassification =
+          (shopClientDoc?['classification'] ?? '').toString().toLowerCase();
+      final List<dynamic> shopClientTags =
+          (shopClientDoc?['manual_tags'] as List<dynamic>?) ?? [];
+      final bool shopClientVip = shopClientClassification == 'vip' ||
+          shopClientTags.any(
+              (t) => t.toString().toLowerCase() == 'vip');
+      final bool shopClientProblematic =
+          shopClientClassification == 'problematico' ||
+              shopClientClassification == 'problemático' ||
+              shopClientTags.any(
+                  (t) => t.toString().toLowerCase() == 'problemático' ||
+                      t.toString().toLowerCase() == 'problematico');
       
       final String cpfValue = (userDoc?['cpf'] ?? userDoc?['document_cpf'] ?? '').toString().trim();
       final bool hasCpf = cpfValue.length >= 11;
@@ -51,13 +73,17 @@ class ClientVerificationService {
             status != 'excluido';
       }).toList();
 
+      // Combina flags de users (legado) com shop_clients (fonte primária)
+      final bool effectiveVip = manualVip || shopClientVip;
+      final bool effectiveProblematic = manualProblematic || shopClientProblematic;
+
       if (validAppointments.isEmpty) {
         return {
-          'isVip': manualVip,
+          'isVip': effectiveVip,
           'isSumido': false,
-          'isProblematic': manualProblematic,
-          'isNovo': true,
-          'isTrusted': manualVip || !manualProblematic,
+          'isProblematic': effectiveProblematic,
+          'isNovo': !effectiveVip && !effectiveProblematic,
+          'isTrusted': effectiveVip || !effectiveProblematic,
           'hasCpf': hasCpf,
         };
       }
@@ -72,16 +98,16 @@ class ClientVerificationService {
 
       bool isSumido = now.difference(lastVisit).inDays > sumidoMaxDays;
       bool autoVip = !isSumido && visits >= vipMinVisits;
-      bool isVip = manualVip || autoVip;
+      bool isVip = effectiveVip || autoVip;
       bool isNovo =
           !isSumido && visits == 1 && now.difference(lastVisit).inDays < 30;
 
       return {
         'isVip': isVip,
         'isSumido': isSumido,
-        'isProblematic': manualProblematic,
+        'isProblematic': effectiveProblematic,
         'isNovo': isNovo,
-        'isTrusted': !isSumido && !manualProblematic && (isVip || isNovo || visits > 1),
+        'isTrusted': !isSumido && !effectiveProblematic && (isVip || isNovo || visits > 1),
         'hasCpf': hasCpf,
       };
     } catch (e) {

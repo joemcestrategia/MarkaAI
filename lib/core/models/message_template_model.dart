@@ -54,7 +54,7 @@ class MessageTemplate {
     required String dateStr,
     required String timeStr,
   }) {
-    if (isDefault) {
+    if (isDefault && title != 'Mensagem de Aniversário') {
       final header = headerText ?? 'Olá, [NOME_CLIENTE]! 😊\n\nPassando para confirmar seu agendamento:';
       final footer = footerText ?? 'Te esperamos! Qualquer dúvida é só falar. 🙏';
       

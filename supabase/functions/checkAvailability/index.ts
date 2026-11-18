@@ -1,6 +1,6 @@
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
 import { corsHeaders } from '../_shared/cors.ts'
-import { createSupabaseClient } from '../_shared/supabase.ts'
+import { createSupabaseClient, createSupabaseAdminClient } from '../_shared/supabase.ts'
 import { parseWorkSchedule, jsDowToDartWeekday, hhmmToMin } from '../_shared/workSchedule.ts'
 
 serve(async (req) => {
@@ -10,6 +10,7 @@ serve(async (req) => {
 
   try {
     const supabase = createSupabaseClient(req)
+    let authUserId: string | null = null
     try {
       const { data, error: authError } = await supabase.auth.getUser()
       if (authError || !data?.user) {
@@ -18,6 +19,7 @@ serve(async (req) => {
           { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         )
       }
+      authUserId = data.user.id
     } catch (_) {
       return new Response(
         JSON.stringify({ error: 'Usuário não autenticado' }),
@@ -25,7 +27,7 @@ serve(async (req) => {
       )
     }
 
-    const { professional_id, start_time, duration, shop_id, is_vip, exclude_appointment_id } = await req.json()
+    const { professional_id, start_time, duration, shop_id, is_vip: is_vip_req, exclude_appointment_id } = await req.json()
 
     if (!professional_id || !start_time || !duration) {
       return new Response(
@@ -38,32 +40,68 @@ serve(async (req) => {
     const reqEnd = new Date(reqStart.getTime() + duration * 60000)
     const now = new Date()
 
-    // 1. Buscar Dados da Loja e Profissional
-    const [{ data: shop }, { data: prof }] = await Promise.all([
+    // 1. Buscar Dados da Loja, Profissional e status VIP do cliente em paralelo
+    const adminClient = createSupabaseAdminClient()
+
+    const fetchPromises: Promise<unknown>[] = [
       supabase.from('shops').select('config, configured_holidays, pending_holidays').eq('id', shop_id).maybeSingle(),
-      supabase.from('employees').select('name, work_start, work_end, start_time, end_time, work_days, work_schedule, breaks').eq('id', professional_id).maybeSingle()
-    ])
+      supabase.from('employees').select('name, work_start, work_end, start_time, end_time, work_days, work_schedule, breaks').eq('id', professional_id).maybeSingle(),
+    ]
 
-    if (!prof) throw new Error('Profissional não encontrado')
-    const config = shop?.config || {}
-
-    // 2. Validação: Janela de Agendamento (Dias)
-    if (!is_vip) {
-      const janelaDias = config.janela_agendamento_dias || 90
-      const maxDate = new Date()
-      maxDate.setDate(now.getDate() + janelaDias)
-      if (reqStart > maxDate) {
-         return new Response(JSON.stringify({ available: false, error: 'Fora da janela de agendamento permitida' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
-      }
+    // Verificação VIP server-side: consulta shop_clients e users em paralelo
+    if (authUserId) {
+      fetchPromises.push(
+        adminClient.from('shop_clients')
+          .select('classification, manual_tags')
+          .eq('shop_id', shop_id)
+          .eq('user_id', authUserId)
+          .maybeSingle()
+      )
+      fetchPromises.push(
+        adminClient.from('users')
+          .select('is_vip')
+          .eq('id', authUserId)
+          .maybeSingle()
+      )
     }
 
-    // 3. Validação: Antecedência Mínima (Horas)
-    if (!is_vip) {
-      const minAdvanceHours = config.limite_minimo_agendamento_horas || 0
-      const minAllowedDate = new Date(now.getTime() + minAdvanceHours * 3600000)
-      if (reqStart < minAllowedDate) {
-        return new Response(JSON.stringify({ available: false, error: 'Tempo de antecedência insuficiente' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
-      }
+    const results = await Promise.all(fetchPromises)
+    const shop = (results[0] as { data: Record<string, unknown> }).data
+    const prof = (results[1] as { data: Record<string, unknown> }).data
+
+    if (!prof) throw new Error('Profissional não encontrado')
+    const config = (shop?.config || {}) as Record<string, unknown>
+
+    // Determinar VIP server-side (shop_clients tem prioridade, fallback para users e frontend)
+    let is_vip = is_vip_req === true // fallback: aceita o que o frontend mandou
+    if (authUserId && results.length >= 4) {
+      const shopClientRes = results[2] as { data: Record<string, unknown> | null }
+      const userRes = results[3] as { data: Record<string, unknown> | null }
+
+      const scClassification = ((shopClientRes?.data?.classification as string) ?? '').toLowerCase()
+      const scTags = (shopClientRes?.data?.manual_tags as string[]) ?? []
+      const shopClientVip = scClassification === 'vip' ||
+        scTags.some((t: string) => t.toLowerCase() === 'vip')
+      const userVip = userRes?.data?.is_vip === true
+
+      is_vip = shopClientVip || userVip
+    }
+
+    // 2. Validação: Janela de Agendamento (Dias)
+    // VIPs recebem dias extras, mas ainda têm limite (matching getCalendarAvailability)
+    const janelaDias = (config.janela_agendamento_dias || 90) as number
+    const vipExtraDays = is_vip ? ((config.vip_extra_booking_days || 0) as number) : 0
+    const maxDate = new Date()
+    maxDate.setDate(now.getDate() + janelaDias + vipExtraDays)
+    if (reqStart > maxDate) {
+       return new Response(JSON.stringify({ available: false, error: 'Fora da janela de agendamento permitida' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    }
+
+    // 3. Validação: Antecedência Mínima (Horas) — aplica para todos, inclusive VIPs
+    const minAdvanceHours = config.limite_minimo_agendamento_horas || 0
+    const minAllowedDate = new Date(now.getTime() + minAdvanceHours * 3600000)
+    if (reqStart < minAllowedDate) {
+      return new Response(JSON.stringify({ available: false, error: 'Tempo de antecedência insuficiente' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 
     // 4. Validação: Dia de Trabalho (per-day schedule)
@@ -215,7 +253,7 @@ serve(async (req) => {
     // IMPORTANTE: pendente_pix recente (< 20 min) também conta como ocupado
     // para evitar double-booking enquanto o cliente está pagando.
     // pre_reserva (lock de checkout) também é considerada ocupada.
-    const PENDING_PIX_TTL_MIN = 20
+    const PENDING_PIX_TTL_MIN = 30
     const pendingPixCutoff = new Date(Date.now() - PENDING_PIX_TTL_MIN * 60000).toISOString()
 
     const { data: appointments, error: fetchError } = await supabase

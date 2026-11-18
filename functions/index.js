@@ -13,7 +13,7 @@ try {
   appShellHtml = fs.readFileSync(path.join(__dirname, 'app-shell.html'), 'utf8');
 } catch (e) {
   logger.warn('app-shell.html não encontrado, usando fallback mínimo');
-  appShellHtml = '<!DOCTYPE html><html><head><base href="/"><meta charset="UTF-8"><title>MarkaAI.app</title></head><body><script src="/flutter_bootstrap.js" async></script></body></html>';
+  appShellHtml = '<!DOCTYPE html><html><head><base href="/"><meta charset="UTF-8"><title>MarkaAI.app</title></head><body><script>window.flutterWebRenderer="html";</script><script src="/flutter_bootstrap.js" async></script></body></html>';
 }
 
 /**
@@ -62,12 +62,18 @@ exports.shopPreview = onRequest(
     const slug = rawSlug || '';
     const shopUrl = `https://markaai.com.br/${slug}`;
 
-    if (!slug) {
-      res.redirect(302, 'https://markaai.com.br');
+    const reservedPaths = ['login', 'admin', 'painel', 'registro', 'recuperar-senha', 'dashboard'];
+    if (!slug || reservedPaths.includes(slug.toLowerCase())) {
+      res.set('Content-Type', 'text/html; charset=utf-8');
+      res.set('Cache-Control', 'public, max-age=60');
+      res.send(appShellHtml);
       return;
     }
 
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
+
       const apiRes = await fetch(
         `${SUPABASE_URL}/rest/v1/shops?slug=eq.${encodeURIComponent(slug.toLowerCase())}&select=name,niche,category,city,state,logo_url&limit=1`,
         {
@@ -75,8 +81,10 @@ exports.shopPreview = onRequest(
             apikey: SUPABASE_ANON_KEY,
             Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
           },
+          signal: controller.signal
         }
       );
+      clearTimeout(timeoutId);
 
       const shops = await apiRes.json();
       const shop = Array.isArray(shops) ? shops[0] : null;

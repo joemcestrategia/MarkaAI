@@ -72,7 +72,16 @@ const List<String> _kNichos = [
 
 class StoreProfilePage extends StatefulWidget {
   final bool highlightLocation;
-  const StoreProfilePage({super.key, this.highlightLocation = false});
+  final bool highlightSlug;
+  final bool highlightPhoto;
+  final bool highlightData;
+  const StoreProfilePage({
+    super.key, 
+    this.highlightLocation = false,
+    this.highlightSlug = false,
+    this.highlightPhoto = false,
+    this.highlightData = false,
+  });
 
   @override
   State<StoreProfilePage> createState() => _StoreProfilePageState();
@@ -80,6 +89,9 @@ class StoreProfilePage extends StatefulWidget {
 
 class _StoreProfilePageState extends State<StoreProfilePage> {
   final _formKey = GlobalKey<FormState>();
+  final _slugKey = GlobalKey();
+  final _photoKey = GlobalKey();
+  final _dataKey = GlobalKey();
 
   // Controladores
   final _nameController = TextEditingController();
@@ -236,6 +248,39 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                   if (_locationKey.currentContext != null) {
                     Scrollable.ensureVisible(
                       _locationKey.currentContext!,
+                      duration: const Duration(milliseconds: 700),
+                      curve: Curves.easeInOut,
+                      alignment: 0.1,
+                    );
+                  }
+                });
+              } else if (widget.highlightSlug) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (_slugKey.currentContext != null) {
+                    Scrollable.ensureVisible(
+                      _slugKey.currentContext!,
+                      duration: const Duration(milliseconds: 700),
+                      curve: Curves.easeInOut,
+                      alignment: 0.1,
+                    );
+                  }
+                });
+              } else if (widget.highlightPhoto) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (_photoKey.currentContext != null) {
+                    Scrollable.ensureVisible(
+                      _photoKey.currentContext!,
+                      duration: const Duration(milliseconds: 700),
+                      curve: Curves.easeInOut,
+                      alignment: 0.1,
+                    );
+                  }
+                });
+              } else if (widget.highlightData) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (_dataKey.currentContext != null) {
+                    Scrollable.ensureVisible(
+                      _dataKey.currentContext!,
                       duration: const Duration(milliseconds: 700),
                       curve: Curves.easeInOut,
                       alignment: 0.1,
@@ -809,6 +854,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                         ),
                         // ── Logo circular na esquerda inferior ──────────
                         Positioned(
+                          key: _photoKey,
                           left: 16,
                           bottom: 12,
                           child: GestureDetector(
@@ -1031,6 +1077,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                                       .withValues(alpha: 0.2)),
                             ),
                             child: Column(
+                              key: _slugKey,
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Row(

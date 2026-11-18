@@ -612,7 +612,7 @@ serve(async (req) => {
 
       const notifPromises: Promise<any>[] = [
         data.clientEmail ? sendEmail(data.clientEmail, '✅ Agendamento Confirmado — MarkaAI', emailHtml, attachments) : Promise.resolve(),
-        data.ownerEmail ? sendEmail(data.ownerEmail, '✅ Novo Agendamento — MarkaAI', buildOwnerEmail(data, '✅ Novo Agendamento', '#16a34a')) : Promise.resolve(),
+        data.ownerEmail ? sendEmail(data.ownerEmail, `✅ Novo Agendamento: ${data.payload.clientName} — MarkaAI`, buildOwnerEmail(data, '✅ Novo Agendamento', '#16a34a')) : Promise.resolve(),
         appt.shop_id ? sendOwnerPush(supabase, appt.shop_id, '📅 Novo Agendamento', `${data.payload.clientName} — ${data.payload.serviceName} às ${data.payload.time} (${data.payload.date})`) : Promise.resolve(),
         data.ownerId ? sendOwnerFCM(supabase, data.ownerId, '📅 Novo Agendamento', `${data.payload.clientName} — ${data.payload.serviceName} às ${data.payload.time} (${data.payload.date})`, { scheduled_at: appt.scheduled_at || '', appointment_id: appt.id || '' }) : Promise.resolve(),
       ]
@@ -699,8 +699,8 @@ serve(async (req) => {
         });
         
         const results = await Promise.allSettled([
-          data.clientEmail ? sendEmail(data.clientEmail, '✅ Agendamento Confirmado — MarkaAI', emailHtml, atts) : Promise.resolve(),
-          data.ownerEmail ? sendEmail(data.ownerEmail, '✅ Agendamento Confirmado — MarkaAI', buildOwnerEmail(data, '✅ Agendamento Confirmado', '#16a34a')) : Promise.resolve(),
+          data.clientEmail ? sendEmail(data.clientEmail, `✅ Agendamento Confirmado: ${data.payload.salonName}`, emailHtml, atts) : Promise.resolve(),
+          data.ownerEmail ? sendEmail(data.ownerEmail, `✅ Agendamento Confirmado: ${data.payload.clientName} — MarkaAI`, buildOwnerEmail(data, '✅ Agendamento Confirmado', '#16a34a')) : Promise.resolve(),
           after.shop_id ? sendOwnerPush(supabase, after.shop_id, '✅ Agendamento Confirmado', `${data.payload.clientName} — ${data.payload.serviceName} às ${data.payload.time} (${data.payload.date})`) : Promise.resolve(),
           data.ownerId ? sendOwnerFCM(supabase, data.ownerId, '✅ Agendamento Confirmado', `${data.payload.clientName} — ${data.payload.serviceName} às ${data.payload.time} (${data.payload.date})`, { scheduled_at: after.scheduled_at || '', appointment_id: after.id || '' }) : Promise.resolve(),
         ])
@@ -747,8 +747,8 @@ serve(async (req) => {
         });
         
         const results = await Promise.allSettled([
-          data.clientEmail ? sendEmail(data.clientEmail, '❌ Agendamento Cancelado — MarkaAI', emailHtml, atts) : Promise.resolve(),
-          data.ownerEmail ? sendEmail(data.ownerEmail, '❌ Agendamento Cancelado — MarkaAI', buildOwnerEmail(data, '❌ Agendamento Cancelado', '#ef4444')) : Promise.resolve(),
+          data.clientEmail ? sendEmail(data.clientEmail, `❌ Agendamento Cancelado: ${data.payload.salonName}`, emailHtml, atts) : Promise.resolve(),
+          data.ownerEmail ? sendEmail(data.ownerEmail, `❌ Agendamento Cancelado: ${data.payload.clientName} — MarkaAI`, buildOwnerEmail(data, '❌ Agendamento Cancelado', '#ef4444')) : Promise.resolve(),
           after.shop_id ? sendOwnerPush(supabase, after.shop_id, '❌ Agendamento Cancelado', `${data.payload.clientName} cancelou — ${data.payload.serviceName} de ${data.payload.date} às ${data.payload.time}`) : Promise.resolve(),
           data.ownerId ? sendOwnerFCM(supabase, data.ownerId, '❌ Agendamento Cancelado', `${data.payload.clientName} cancelou — ${data.payload.serviceName} de ${data.payload.date} às ${data.payload.time}`, { scheduled_at: after.scheduled_at || '', appointment_id: after.id || '' }) : Promise.resolve(),
         ])
@@ -789,10 +789,10 @@ serve(async (req) => {
         });
         
         const results = await Promise.allSettled([
-          data.clientEmail ? sendEmail(data.clientEmail, '🔄 Agendamento Atualizado — MarkaAI', emailHtml, atts) : Promise.resolve(),
-          data.ownerEmail ? sendEmail(data.ownerEmail, '🔄 Agendamento Atualizado — MarkaAI', buildOwnerEmail(data, '🔄 Agendamento Atualizado', '#7c3aed')) : Promise.resolve(),
-          after.shop_id ? sendOwnerPush(supabase, after.shop_id, '🔄 Reagendamento', `${data.payload.clientName} reagendou — ${data.payload.serviceName} para ${data.payload.date} às ${data.payload.time}`) : Promise.resolve(),
-          data.ownerId ? sendOwnerFCM(supabase, data.ownerId, '🔄 Reagendamento', `${data.payload.clientName} reagendou — ${data.payload.serviceName} para ${data.payload.date} às ${data.payload.time}`, { scheduled_at: after.scheduled_at || '', appointment_id: after.id || '' }) : Promise.resolve(),
+          data.clientEmail ? sendEmail(data.clientEmail, `🔄 Agendamento Atualizado: ${data.payload.clientName}`, emailHtml, atts) : Promise.resolve(),
+          data.ownerEmail ? sendEmail(data.ownerEmail, `🔄 Agendamento Atualizado: ${data.payload.clientName} — MarkaAI`, buildOwnerEmail(data, '🔄 Agendamento Atualizado', '#7c3aed')) : Promise.resolve(),
+          after.shop_id ? sendOwnerPush(supabase, after.shop_id, '🔄 Agendamento Atualizado', `${data.payload.clientName} reagendou — ${data.payload.serviceName} para ${data.payload.date} às ${data.payload.time}`) : Promise.resolve(),
+          data.ownerId ? sendOwnerFCM(supabase, data.ownerId, '🔄 Agendamento Atualizado', `${data.payload.clientName} reagendou — ${data.payload.serviceName} para ${data.payload.date} às ${data.payload.time}`, { scheduled_at: after.scheduled_at || '', appointment_id: after.id || '' }) : Promise.resolve(),
         ])
         
         results.forEach((r, i) => {

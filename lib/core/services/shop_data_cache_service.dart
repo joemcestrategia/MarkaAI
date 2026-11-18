@@ -10,7 +10,15 @@ class ShopDataCacheService {
   ShopDataCacheService._internal();
 
   static Future<void> init() async {
-    await _instance.loadFromPersistent();
+    await _instance.ensureLoaded();
+  }
+
+  Future<void>? _loadFuture;
+
+  /// Garante que o cache persistido no disco foi carregado para a memória
+  /// (evita corrida com o init disparado no postFrameCallback do main).
+  Future<void> ensureLoaded() {
+    return _loadFuture ??= loadFromPersistent();
   }
 
   final Map<String, dynamic> _cache = {};
@@ -25,13 +33,9 @@ class ShopDataCacheService {
     if (!_cache.containsKey(key)) return null;
     
     final entry = _cache[key] as Map<String, dynamic>;
-    final expiresAt = entry['expiresAt'] as int;
     
-    if (DateTime.now().millisecondsSinceEpoch > expiresAt) {
-      _cache.remove(key);
-      _saveToPersistent();
-      return null;
-    }
+    // Removido o bloqueio por expiresAt para garantir acesso offline infinito.
+    // O cache será atualizado silenciosamente assim que o app voltar a ficar online.
     
     return entry['data'] as Map<String, dynamic>;
   }
@@ -68,9 +72,8 @@ class ShopDataCacheService {
 
       decoded.forEach((key, value) {
         final entry = value as Map<String, dynamic>;
-        if (entry['expiresAt'] > now) {
-          _cache[key] = entry;
-        }
+        // Removida restrição de expiração para garantir persistência offline
+        _cache[key] = entry;
       });
     } catch (e) {
       _cache.clear();
@@ -162,20 +165,82 @@ class ShopDataCacheService {
   }
 
   Future<Map<String, dynamic>?> getShop(String shopId) async {
+    await ensureLoaded();
     final key = 'shop_$shopId';
     final cached = getCached(key);
     if (cached != null) return Map<String, dynamic>.from(cached);
 
-    final data = await Supabase.instance.client
-        .from('shops')
-        .select()
-        .eq('id', shopId)
-        .maybeSingle();
+    try {
+      final data = await Supabase.instance.client
+          .from('shops')
+          .select()
+          .eq('id', shopId)
+          .maybeSingle()
+          .timeout(const Duration(seconds: 8));
 
-    if (data != null) {
-      setCache(key, data, ttlConfig);
+      if (data != null) {
+        setCache(key, data, ttlConfig);
+      }
+      return data;
+    } catch (_) {
+      // Offline e sem cache: retorna null sem quebrar a UI
+      return null;
     }
-    return data;
+  }
+
+  /// Salva os dados da loja (último estado conhecido) para uso offline.
+  /// Só grava no disco se houve mudança real, evitando escrita a cada rebuild.
+  void saveShop(String shopId, Map<String, dynamic> data) {
+    _saveIfChanged('shop_$shopId', data);
+  }
+
+  /// Salva o perfil do usuário (último estado conhecido) para uso offline.
+  void saveUser(String userId, Map<String, dynamic> data) {
+    _saveIfChanged('user_$userId', data);
+  }
+
+  Future<Map<String, dynamic>?> getCachedUser(String userId) async {
+    await ensureLoaded();
+    final cached = getCached('user_$userId');
+    return cached != null ? Map<String, dynamic>.from(cached) : null;
+  }
+
+  /// Busca uma lista online; se der certo, salva como último estado conhecido.
+  /// Se falhar (offline/timeout), devolve a última versão salva no aparelho.
+  /// Listas muito grandes não são persistidas para não pesar o armazenamento.
+  Future<List<Map<String, dynamic>>> fetchListOffline(
+    String key,
+    Future<List<Map<String, dynamic>>> Function() fetcher, {
+    int maxItemsToCache = 3000,
+  }) async {
+    try {
+      final data = await fetcher().timeout(const Duration(seconds: 12));
+      if (data.length <= maxItemsToCache) {
+        _saveIfChanged(key, {'list': data});
+      }
+      return data;
+    } catch (e) {
+      await ensureLoaded();
+      final cached = getCached(key);
+      if (cached != null && cached['list'] is List) {
+        return (cached['list'] as List)
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .toList();
+      }
+      return [];
+    }
+  }
+
+  void _saveIfChanged(String key, Map<String, dynamic> data) {
+    try {
+      final current = _cache[key];
+      if (current is Map && jsonEncode(current['data']) == jsonEncode(data)) {
+        return;
+      }
+      setCache(key, Map<String, dynamic>.from(data), ttlConfig);
+    } catch (_) {
+      // Dados não serializáveis: ignora silenciosamente
+    }
   }
 
   // --- CONTROLE ---

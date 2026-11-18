@@ -179,7 +179,7 @@ class _AdminSimplePageState extends State<AdminSimplePage> {
                 final dId = data['id'];
                 return ListTile(
                     title: Text(data['name'] ?? data['nome'] ?? dId),
-                    subtitle: Text('Plano: ${data['plan_id'] ?? data['plan'] ?? 'starter'}'),
+                    subtitle: Text('Plano: ${data['plan_id'] ?? data['plan'] ?? 'starter'} | Serviços: ${data['services_count'] ?? 0}'),
                     trailing: IconButton(
                         icon: const Icon(Icons.edit),
                         onPressed: () => _editShop(data)));

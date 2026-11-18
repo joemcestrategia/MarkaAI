@@ -7,9 +7,9 @@ class TrialService {
   static const int trialDurationDays = 30;
 
   /// Retorna as informações do trial para a loja logada
-  static Future<Map<String, dynamic>> getTrialStatus() async {
+  static Future<Map<String, dynamic>> getTrialStatus([String? explicitShopId]) async {
     try {
-      final shopId = await SessionService.getShopId();
+      final shopId = explicitShopId ?? await SessionService.getShopId();
       if (shopId == null) return _defaultTrialStatus();
 
       final supabase = Supabase.instance.client;
@@ -22,10 +22,10 @@ class TrialService {
       if (data == null) return _defaultTrialStatus();
 
       final sub = data['subscription'] as Map<String, dynamic>? ?? {};
-      bool trialUsed = sub['trial_used'] ?? false;
+      bool trialUsed = sub['trial_used'] == true || data['has_used_trial'] == true;
       bool trialActive = data['trial_active'] ?? false;
-      String? trialPlan = sub['trial_plan'] ?? sub['plan_id'];
-      String? trialEndDateStr = (sub['trial_end_date'] ?? sub['trial_ends_at'])?.toString();
+      String? trialPlan = sub['trial_plan'] ?? sub['plan_id'] ?? data['plan_id'];
+      String? trialEndDateStr = (sub['trial_end_date'] ?? sub['trial_ends_at'] ?? data['trial_end'])?.toString();
 
       int daysRemaining = 0;
       bool trialExpired = false;
@@ -61,9 +61,9 @@ class TrialService {
   }
 
   /// Verifica e desativa um trial expirado lazily (chamado ao checar planos se estiver expirado)
-  static Future<void> checkAndDeactivateExpiredTrial() async {
+  static Future<void> checkAndDeactivateExpiredTrial([String? explicitShopId]) async {
     try {
-      final shopId = await SessionService.getShopId();
+      final shopId = explicitShopId ?? await SessionService.getShopId();
       if (shopId == null) return;
 
       final supabase = Supabase.instance.client;
@@ -77,7 +77,7 @@ class TrialService {
 
       bool trialActive = data['trial_active'] ?? false;
       final sub = data['subscription'] as Map<String, dynamic>? ?? {};
-      String? trialEndDateStr = (sub['trial_end_date'] ?? sub['trial_ends_at'])?.toString();
+      String? trialEndDateStr = (sub['trial_end_date'] ?? sub['trial_ends_at'] ?? data['trial_end'])?.toString();
 
       if (trialActive && trialEndDateStr != null) {
         final endDate = DateTime.tryParse(trialEndDateStr);
@@ -88,23 +88,44 @@ class TrialService {
               .update({
                 'trial_active': false,
                 'plan_id': 'free',
+                'subscription': {
+                  ...sub,
+                  'status': 'free',
+                  'plan_id': 'free',
+                  'plano': 'free',
+                  'updated_at': DateTime.now().toIso8601String(),
+                },
               })
               .eq('id', shopId);
-          debugPrint("TrialService: Trial expirado e desativado com sucesso.");
+          debugPrint("TrialService: Trial expirado e desativado com sucesso para shop $shopId.");
         }
+      } else if (trialActive && (sub['status'] == 'free' || sub['plan_id'] == 'free' || sub['plano'] == 'free')) {
+        // Se trial_active ficou órfão como true mas subscription é free
+        await supabase
+            .from(_collection)
+            .update({
+              'trial_active': false,
+              'plan_id': 'free',
+            })
+            .eq('id', shopId);
+        debugPrint("TrialService: trial_active órfão corrigido para shop $shopId.");
       }
     } catch (e) {
       debugPrint("Erro ao checar expiração de trial: $e");
     }
   }
 
-  /// Ativa o Trial para o plano selecionado (agora fixo no Plus). Não pode ser desfeito.
-  static Future<bool> activateTrial([String? _]) async {
+  /// Ativa o Trial para o plano selecionado. Não pode ser desfeito.
+  static Future<bool> activateTrial([
+    String? planChoice,
+    int durationDays = trialDurationDays,
+    String? explicitShopId,
+  ]) async {
     try {
-      final shopId = await SessionService.getShopId();
+      final shopId = explicitShopId ?? await SessionService.getShopId();
       if (shopId == null) return false;
 
-      const planId = 'plus'; // Único plano disponível para teste agora
+      final planId = planChoice ?? 'plus';
 
       final supabase = Supabase.instance.client;
       final data = await supabase
@@ -116,22 +137,24 @@ class TrialService {
       if (data == null) return false;
 
       final existingSub = data['subscription'] as Map<String, dynamic>? ?? {};
-      if (existingSub['trial_used'] == true) {
+      if (existingSub['trial_used'] == true && explicitShopId == null) {
         debugPrint("Tentativa inválida: Trial já foi utilizado.");
         return false;
       }
 
       final now = DateTime.now();
-      final endDate = now.add(const Duration(days: trialDurationDays));
+      final endDate = now.add(Duration(days: durationDays));
 
       await supabase
           .from(_collection)
           .update({
         'plan_id': planId,
         'trial_active': true,
+        'has_used_trial': true,
         'subscription': {
           'status': 'trial',
           'plan_id': planId,
+          'plano': planId,
           'trial_used': true,
           'trial_plan': planId,
           'trial_start_date': now.toIso8601String(),

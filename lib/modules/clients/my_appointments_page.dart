@@ -7,11 +7,11 @@ import '../../core/services/mercado_pago_service.dart';
 import '../../core/widgets/loading_page.dart';
 import '../schedule/checkout_transparente_page.dart';
 import '../schedule/booking_page.dart';
-import 'package:markaai/modules/schedule/booking_success_page.dart';
 import '../../pages/pix_payment_page.dart';
 import '../../core/services/client_verification_service.dart';
 import 'dart:async';
 import '../public/public_shop_page.dart';
+import '../login/login_page.dart';
 import '../business/subscription_service.dart';
 import '../../core/widgets/supabase_stream_widget.dart';
 
@@ -50,6 +50,7 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
 
   /// Método público para forçar a atualização (ainda útil para disparar micro-ajustes se necessário)
   Future<void> refreshData() async {
+    _shopDataCache.clear();
     if (mounted) setState(() {});
   }
 
@@ -94,6 +95,7 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
     if (totalPayable > 0 && totalPrice > 0 && totalPayable < totalPrice - 0.01) return totalPayable;
     // valor_com_desconto < total_price → desconto sem taxa de cartão
     if (valorCDesc > 0 && totalPrice > 0 && valorCDesc < totalPrice - 0.01) return valorCDesc;
+    if (totalPayable > 0 && (totalPrice - totalPayable).abs() < 0.01) return totalPayable;
     // discount_amount gravado diretamente
     if (discountAmt > 0.01 && totalPrice > 0) return totalPrice - discountAmt;
     // Fallback percentual de aniversário (registros antigos sem colunas preenchidas)
@@ -131,14 +133,16 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
     try {
       final data = await Supabase.instance.client
           .from('shops')
-          .select('nome, logo_url')
+          .select('name, logo_url, image_url')
           .eq('id', shopId)
           .maybeSingle();
 
       if (data != null) {
+        final rawName = (data['name'] ?? data['nome'] ?? '').toString().trim();
+        final rawLogo = (data['logo_url'] ?? data['image_url'] ?? '').toString().trim();
         return {
-          'nome': data['nome'] ?? 'Estabelecimento',
-          'logo': data['logo_url'] ?? '',
+          'nome': rawName.isNotEmpty ? rawName : 'Estabelecimento',
+          'logo': rawLogo,
         };
       }
     } catch (e) {
@@ -733,7 +737,7 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
     return true;
   }
 
-  Future<void> _cancelAppointment(Map<String, dynamic> appointment) async {
+  Future<void> _cancelAppointment(Map<String, dynamic> appointment, {String? shopName}) async {
     if (!mounted) return;
     final confirm = await showModalBottomSheet<bool>(
       context: context,
@@ -805,7 +809,7 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
                     ),
                   ),
                   const SizedBox(width: 12),
-                  _isLoadingCancel ? const CircularProgressIndicator() : Expanded(
+                  Expanded(
                     child: ElevatedButton(
                       onPressed: () => Navigator.pop(ctx, true),
                       style: ElevatedButton.styleFrom(
@@ -834,7 +838,7 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
     final validation = await ClientVerificationService.canModifyAppointment(appointment);
     if (!validation['can']) {
       if (!mounted) return;
-      _showLatePolicyInfoModal(appointment['shop_name']?.toString() ?? 'o estabelecimento');
+      _showLatePolicyInfoModal(shopName ?? appointment['shop_name']?.toString() ?? 'o estabelecimento');
       return;
     }
 
@@ -882,16 +886,19 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
     }
   }
 
-  bool _isLoadingCancel = false;
-
   // Exibe o modal com os detalhes e as ações do agendamento
   void _showAppointmentDetails(Map<String, dynamic> appointment, bool isUpcoming,
       String shopName, String shopLogo) {
     final valorTotal = _getTotalValue(appointment);
     final valorPago = _getPaidValue(appointment);
-    final valorRestante = valorTotal - valorPago;
+    final valorRestante = (valorTotal - valorPago) > 0.05 ? (valorTotal - valorPago) : 0.0;
     final ts = appointment['scheduled_at'];
     DateTime appointmentDate = ts is String ? DateTime.parse(ts) : ts;
+    final statusRaw = appointment['status']?.toString() ?? '';
+    final isCanceled = statusRaw.toLowerCase().contains('cancelado');
+    final statusColor = _getStatusColor(statusRaw);
+    final rawProfName = (appointment['professional_name'] ?? appointment['profissional_nome'] ?? '').toString().trim();
+    final profName = (rawProfName.isNotEmpty && rawProfName.toLowerCase() != 'null') ? rawProfName : null;
 
     showModalBottomSheet(
       context: context,
@@ -901,364 +908,431 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
         return Container(
           decoration: const BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
           ),
           padding: EdgeInsets.fromLTRB(
-              20, 20, 20, MediaQuery.of(ctx).padding.bottom + 20),
+              20, 16, 20, MediaQuery.of(ctx).padding.bottom + 24),
           child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[300],
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Detalhes do Agendamento',
-                style: Theme.of(context)
-                    .textTheme
-                    .titleLarge
-                    ?.copyWith(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Container(
-                    width: 60,
-                    height: 60,
+                  child: Container(
+                    width: 40,
+                    height: 4,
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.grey.shade300),
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: shopLogo.isNotEmpty
-                          ? CachedNetworkImage(
-                              imageUrl: shopLogo,
-                              fit: BoxFit.cover,
-                              errorWidget: (_, __, ___) => const Icon(
-                                  Icons.store,
-                                  color: AppColors.primaryPurple),
-                            )
-                          : const Icon(Icons.store,
-                                  color: AppColors.primaryPurple),
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(4),
                     ),
                   ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          shopName,
-                          style: const TextStyle(
-                              fontSize: 14,
-                              color: Colors.grey,
-                              fontWeight: FontWeight.w600),
-                        ),
-                        Builder(
-                          builder: (context) {
-                            final rawServiceName = (appointment['service_name'] ?? appointment['servico_nome'] ?? '').toString().trim();
-                            final serviceName = (rawServiceName.toLowerCase() == 'null' || rawServiceName.isEmpty) ? 'Serviço' : rawServiceName;
-                            return Text(
-                              serviceName,
-                              style: const TextStyle(
-                                  fontSize: 18, fontWeight: FontWeight.bold),
-                            );
-                          }
-                        ),
-                      ],
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Detalhes do Agendamento',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.copyWith(fontWeight: FontWeight.bold),
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: AppColors.primaryPurple.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(Icons.calendar_today,
-                      color: AppColors.primaryPurple),
-                ),
-                title: const Text('Data e Hora',
-                    style: TextStyle(fontSize: 14, color: Colors.grey)),
-                subtitle: Text(
-                  '${DateFormat('dd/MM/yyyy').format(appointmentDate)} às ${DateFormat('HH:mm').format(appointmentDate)}',
-                  style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black),
-                ),
-              ),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: Builder(
-                  builder: (context) {
-                    final method = (appointment['payment_method']?.toString() ?? 'local').toLowerCase();
-                    IconData icon = Icons.payments;
-                    if (method.contains('pix')) icon = Icons.qr_code;
-                    else if (method.contains('cart') || method.contains('card')) icon = Icons.credit_card;
-                    
-                    return Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: AppColors.primaryPurple.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Icon(icon, color: AppColors.primaryPurple),
-                    );
-                  },
-                ),
-                title: const Text('Meio de Pagamento',
-                    style: TextStyle(fontSize: 14, color: Colors.grey)),
-                subtitle: Text(
-                  (appointment['payment_method']?.toString() ?? 'Pagamento no Local'),
-                  style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black),
-                ),
-                trailing: Builder(
-                  builder: (context) {
-                    final pStatus = appointment['payment_status']?.toString().toLowerCase();
-                    final isPaid = pStatus == 'pago' || valorPago >= (valorTotal - 0.05);
-                    final color = isPaid ? Colors.green : Colors.orange;
-                    return Container(
+                    Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                       decoration: BoxDecoration(
-                        color: color.withValues(alpha: 0.1),
+                        color: statusColor.withValues(alpha: 0.12),
                         borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: color.withValues(alpha: 0.3)),
+                        border: Border.all(color: statusColor.withValues(alpha: 0.3)),
                       ),
                       child: Text(
-                        isPaid ? "PAGO" : "PENDENTE",
-                        style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 12),
-                      ),
-                    );
-                  },
-                ),
-              ),
-              const Divider(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text('Valor do serviço:',
-                      style: TextStyle(color: Colors.grey)),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Builder(
-                        builder: (context) {
-                          final double original = double.tryParse((appointment['total_price'] ?? 0).toString()) ?? 0;
-                          final double discountAmt = double.tryParse((appointment['discount_amount'] ?? 0).toString()) ?? 0;
-                          final double cDesc = double.tryParse((appointment['valor_com_desconto'] ?? 0).toString()) ?? 0;
-                          final bool hasBd = appointment['birthday_discount_applied'] == true;
-                          final bool hasCp = appointment['coupon_applied'] == true;
-                          double discountValue = 0;
-                          if (discountAmt > 0.01) {
-                            discountValue = discountAmt;
-                          } else if (cDesc > 0 && original > 0 && cDesc < original - 0.01) {
-                            discountValue = original - cDesc;
-                          } else if (hasBd && original > 0) {
-                            final pct = double.tryParse(appointment['birthday_discount_percent']?.toString() ?? '0') ?? 0;
-                            if (pct > 0) discountValue = original * pct / 100;
-                          } else if (hasCp && original > 0) {
-                            final pct = double.tryParse(appointment['coupon_discount_percent']?.toString() ?? '0') ?? 0;
-                            if (pct > 0) discountValue = original * pct / 100;
-                          }
-                          if (discountValue > 0.01 && original > 0) {
-                            return Text(
-                              "${currencyFormat.format(original)} (- ${currencyFormat.format(discountValue)})",
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey,
-                                decoration: TextDecoration.lineThrough,
-                              ),
-                            );
-                          }
-                          return const SizedBox.shrink();
-                        }
-                      ),
-                      Text(currencyFormat.format(valorTotal),
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                ],
-              ),
-              if (appointment['coupon_applied'] == true) ...[
-                const SizedBox(height: 8),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('Cupom aplicado:',
-                        style: TextStyle(color: Colors.blue, fontSize: 13, fontWeight: FontWeight.w500)),
-                    Text(
-                      appointment['coupon_code']?.toString() ?? 'Ativo',
-                      style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold, fontSize: 13),
-                    ),
-                  ],
-                ),
-              ],
-              if (appointment['birthday_discount_applied'] == true) ...[
-                const SizedBox(height: 8),
-                Builder(builder: (ctx) {
-                  final double origBd = double.tryParse(appointment['total_price']?.toString() ?? '0') ?? 0;
-                  final double discAmt = double.tryParse(appointment['discount_amount']?.toString() ?? '0') ?? 0;
-                  final double cDesc = double.tryParse(appointment['valor_com_desconto']?.toString() ?? '0') ?? 0;
-                  final double pct = double.tryParse(appointment['birthday_discount_percent']?.toString() ?? '0') ?? 0;
-                  double bdDiscount = 0;
-                  if (discAmt > 0.01) bdDiscount = discAmt;
-                  else if (cDesc > 0 && origBd > 0 && cDesc < origBd - 0.01) bdDiscount = origBd - cDesc;
-                  else if (pct > 0 && origBd > 0) bdDiscount = origBd * pct / 100;
-                  final String bdText = bdDiscount > 0.01 ? '- ${currencyFormat.format(bdDiscount)}' : 'Aplicado';
-                  return Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Presente aniversário:',
-                          style: TextStyle(color: Colors.pink, fontSize: 13, fontWeight: FontWeight.w500)),
-                      Text(bdText,
-                          style: const TextStyle(color: Colors.pink, fontWeight: FontWeight.bold, fontSize: 13)),
-                    ],
-                  );
-                }),
-              ],
-              const SizedBox(height: 8),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text('Total pago:',
-                      style: TextStyle(color: Colors.grey)),
-                  Text(
-                    currencyFormat.format(valorPago),
-                    style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: valorPago > 0 ? Colors.green : Colors.grey),
-                  ),
-                ],
-              ),
-              if (valorRestante > 0) ...[
-                const SizedBox(height: 8),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('Valor a pagar no local:',
+                        _getStatusText(statusRaw).toUpperCase(),
                         style: TextStyle(
-                            color: Colors.grey, fontWeight: FontWeight.bold)),
-                    Text(
-                      currencyFormat.format(valorRestante),
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold, color: Colors.orange),
+                          color: statusColor,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 11,
+                        ),
+                      ),
                     ),
                   ],
                 ),
-              ],
-              if (valorRestante > 0 && !(appointment['status']?.toString().toLowerCase().contains('cancelado') ?? false)) ...[
                 const SizedBox(height: 16),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      _showPaymentOptions(appointment);
-                    },
-                    icon: const Icon(Icons.payments_outlined),
-                    label: const Text('PAGAR AGORA',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF25D366),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                      elevation: 0,
-                    ),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 16),
-              if (isUpcoming && _shouldShowActions(appointment)) ...[
                 Row(
                   children: [
-                    if (_canCancelAppointment(appointment))
+                    Container(
+                      width: 56,
+                      height: 56,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey.shade200),
+                        color: AppColors.primaryPurple.withValues(alpha: 0.08),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: shopLogo.isNotEmpty
+                            ? CachedNetworkImage(
+                                imageUrl: shopLogo,
+                                fit: BoxFit.cover,
+                                errorWidget: (_, __, ___) => const Icon(
+                                    Icons.store_rounded,
+                                    color: AppColors.primaryPurple),
+                              )
+                            : const Icon(Icons.store_rounded,
+                                color: AppColors.primaryPurple),
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            shopName,
+                            style: const TextStyle(
+                                fontSize: 13,
+                                color: Colors.grey,
+                                fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(height: 2),
+                          Builder(
+                            builder: (context) {
+                              final rawServiceName = (appointment['service_name'] ?? appointment['servico_nome'] ?? '').toString().trim();
+                              final serviceName = (rawServiceName.toLowerCase() == 'null' || rawServiceName.isEmpty) ? 'Serviço' : rawServiceName;
+                              return Text(
+                                serviceName,
+                                style: const TextStyle(
+                                    fontSize: 17, fontWeight: FontWeight.bold),
+                              );
+                            }
+                          ),
+                          if (profName != null) ...[
+                            const SizedBox(height: 2),
+                            Row(
+                              children: [
+                                Icon(Icons.content_cut_rounded, size: 12, color: Colors.grey.shade500),
+                                const SizedBox(width: 4),
+                                Flexible(
+                                  child: Text(
+                                    profName,
+                                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  visualDensity: VisualDensity.compact,
+                  leading: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppColors.primaryPurple.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.calendar_today,
+                        size: 20, color: AppColors.primaryPurple),
+                  ),
+                  title: const Text('Data e Hora',
+                      style: TextStyle(fontSize: 13, color: Colors.grey)),
+                  subtitle: Text(
+                    '${DateFormat('dd/MM/yyyy').format(appointmentDate)} às ${DateFormat('HH:mm').format(appointmentDate)}',
+                    style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87),
+                  ),
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  visualDensity: VisualDensity.compact,
+                  leading: Builder(
+                    builder: (context) {
+                      final method = (appointment['payment_method']?.toString() ?? 'local').toLowerCase();
+                      IconData icon = Icons.payments;
+                      if (method.contains('pix')) {
+                        icon = Icons.qr_code;
+                      } else if (method.contains('cart') || method.contains('card')) {
+                        icon = Icons.credit_card;
+                      }
+                      
+                      return Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: AppColors.primaryPurple.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(icon, size: 20, color: AppColors.primaryPurple),
+                      );
+                    },
+                  ),
+                  title: const Text('Meio de Pagamento',
+                      style: TextStyle(fontSize: 13, color: Colors.grey)),
+                  subtitle: Text(
+                    (appointment['payment_method']?.toString() ?? 'Pagamento no Local'),
+                    style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87),
+                  ),
+                  trailing: Builder(
+                    builder: (context) {
+                      final pStatus = appointment['payment_status']?.toString().toLowerCase();
+                      final isPaid = pStatus == 'pago' || valorPago >= (valorTotal - 0.05);
+                      final isPartial = !isPaid && valorPago > 0.05;
+                      final color = isPaid ? Colors.green : Colors.orange;
+                      final label = isPaid ? "PAGO" : (isPartial ? "PARCIAL" : "PENDENTE");
+                      return Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: color.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: color.withValues(alpha: 0.3)),
+                        ),
+                        child: Text(
+                          label,
+                          style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 11),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const Divider(height: 20),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8F9FA),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('Valor do serviço:',
+                              style: TextStyle(color: Colors.black54, fontSize: 13)),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Builder(
+                                builder: (context) {
+                                  final double original = double.tryParse((appointment['total_price'] ?? 0).toString()) ?? 0;
+                                  final double discountAmt = double.tryParse((appointment['discount_amount'] ?? 0).toString()) ?? 0;
+                                  final double cDesc = double.tryParse((appointment['valor_com_desconto'] ?? 0).toString()) ?? 0;
+                                  final bool hasBd = appointment['birthday_discount_applied'] == true;
+                                  final bool hasCp = appointment['coupon_applied'] == true;
+                                  double discountValue = 0;
+                                  if (discountAmt > 0.01) {
+                                    discountValue = discountAmt;
+                                  } else if (cDesc > 0 && original > 0 && cDesc < original - 0.01) {
+                                    discountValue = original - cDesc;
+                                  } else if (hasBd && original > 0) {
+                                    final pct = double.tryParse(appointment['birthday_discount_percent']?.toString() ?? '0') ?? 0;
+                                    if (pct > 0) discountValue = original * pct / 100;
+                                  } else if (hasCp && original > 0) {
+                                    final pct = double.tryParse(appointment['coupon_discount_percent']?.toString() ?? '0') ?? 0;
+                                    if (pct > 0) discountValue = original * pct / 100;
+                                  }
+                                  if (discountValue > 0.01 && original > 0) {
+                                    return Text(
+                                      "${currencyFormat.format(original)} (- ${currencyFormat.format(discountValue)})",
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.grey,
+                                        decoration: TextDecoration.lineThrough,
+                                      ),
+                                    );
+                                  }
+                                  return const SizedBox.shrink();
+                                }
+                              ),
+                              Text(currencyFormat.format(valorTotal),
+                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                            ],
+                          ),
+                        ],
+                      ),
+                      if (appointment['coupon_applied'] == true) ...[
+                        const SizedBox(height: 8),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Cupom aplicado:',
+                                style: TextStyle(color: Colors.blue, fontSize: 13, fontWeight: FontWeight.w500)),
+                            Text(
+                              appointment['coupon_code']?.toString() ?? 'Ativo',
+                              style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold, fontSize: 13),
+                            ),
+                          ],
+                        ),
+                      ],
+                      if (appointment['birthday_discount_applied'] == true) ...[
+                        const SizedBox(height: 8),
+                        Builder(builder: (ctx) {
+                          final double origBd = double.tryParse(appointment['total_price']?.toString() ?? '0') ?? 0;
+                          final double discAmt = double.tryParse(appointment['discount_amount']?.toString() ?? '0') ?? 0;
+                          final double cDesc = double.tryParse(appointment['valor_com_desconto']?.toString() ?? '0') ?? 0;
+                          final double pct = double.tryParse(appointment['birthday_discount_percent']?.toString() ?? '0') ?? 0;
+                          double bdDiscount = 0;
+                          if (discAmt > 0.01) {
+                            bdDiscount = discAmt;
+                          } else if (cDesc > 0 && origBd > 0 && cDesc < origBd - 0.01) {
+                            bdDiscount = origBd - cDesc;
+                          } else if (pct > 0 && origBd > 0) {
+                            bdDiscount = origBd * pct / 100;
+                          }
+                          final String bdText = bdDiscount > 0.01 ? '- ${currencyFormat.format(bdDiscount)}' : 'Aplicado';
+                          return Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text('Presente aniversário:',
+                                  style: TextStyle(color: Colors.pink, fontSize: 13, fontWeight: FontWeight.w500)),
+                              Text(bdText,
+                                  style: const TextStyle(color: Colors.pink, fontWeight: FontWeight.bold, fontSize: 13)),
+                            ],
+                          );
+                        }),
+                      ],
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('Total pago:',
+                              style: TextStyle(color: Colors.black54, fontSize: 13)),
+                          Text(
+                            currencyFormat.format(valorPago),
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                                color: valorPago > 0 ? Colors.green : Colors.grey),
+                          ),
+                        ],
+                      ),
+                      if (valorRestante > 0.05) ...[
+                        const SizedBox(height: 8),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Valor restante:',
+                                style: TextStyle(
+                                    color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 13)),
+                            Text(
+                              currencyFormat.format(valorRestante),
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 15, color: Colors.orange),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                if (valorRestante > 0.05 && !isCanceled) ...[
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        _showPaymentOptions(appointment);
+                      },
+                      icon: const Icon(Icons.payments_outlined),
+                      label: Text(
+                        'PAGAR AGORA (${currencyFormat.format(valorRestante)})',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF25D366),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        elevation: 0,
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                if (isUpcoming && _shouldShowActions(appointment)) ...[
+                  Row(
+                    children: [
+                      if (_canCancelAppointment(appointment))
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(ctx);
+                              _cancelAppointment(appointment, shopName: shopName);
+                            },
+                            icon: const Icon(Icons.close_rounded, size: 18),
+                            label: const Text('CANCELAR',
+                                style: TextStyle(fontWeight: FontWeight.bold)),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.red,
+                              side: const BorderSide(color: Colors.red),
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12)),
+                            ),
+                          ),
+                        ),
+                      if (_canCancelAppointment(appointment))
+                        const SizedBox(width: 12),
                       Expanded(
-                        child: OutlinedButton(
-                          onPressed: () {
+                        child: ElevatedButton.icon(
+                          onPressed: () async {
                             Navigator.pop(ctx);
-                            _cancelAppointment(appointment);
+                            final validation = await ClientVerificationService.canModifyAppointment(appointment, isReschedule: true);
+                            if (!validation['can']) {
+                              if (!mounted) return;
+                              _showLatePolicyInfoModal(shopName);
+                              return;
+                            }
+
+                            if (!mounted) return;
+                            _promptRescheduleType(appointment, shopName);
                           },
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.red,
-                            side: const BorderSide(color: Colors.red),
+                          icon: const Icon(Icons.edit_calendar_rounded, size: 18),
+                          label: const Text('REAGENDAR',
+                              style: TextStyle(fontWeight: FontWeight.bold)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primaryPurple,
+                            foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(vertical: 16),
                             shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12)),
+                            elevation: 0,
                           ),
-                          child: const Text('CANCELAR',
-                              style: TextStyle(fontWeight: FontWeight.bold)),
                         ),
                       ),
-                    if (_canCancelAppointment(appointment))
-                      const SizedBox(width: 12),
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: () async {
-                          // --- NOVA VALIDAÇÃO DE POLÍTICA ---
-                          final validation = await ClientVerificationService.canModifyAppointment(appointment, isReschedule: true);
-                          if (!validation['can']) {
-                            if (!mounted) return;
-                            _showLatePolicyInfoModal(appointment['shop_name']?.toString() ?? 'o estabelecimento');
-                            return;
-                          }
-
-                          if (!mounted) return;
-                          Navigator.pop(ctx);
-                          // Reagendar usando a tela de agendamento ou escolher novo serviço
-                          _promptRescheduleType(appointment, shopName);
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primaryPurple,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
-                        ),
-                        child: const Text('REAGENDAR',
-                            style: TextStyle(fontWeight: FontWeight.bold)),
-                      ),
-                    ),
-                  ],
-                ),
-              ] else ...[
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.grey[200],
-                      foregroundColor: Colors.black,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                    ),
-                    child: const Text('VOLTAR',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    ],
                   ),
-                )
-              ]
-            ],
-          ),
+                ] else ...[
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.grey[200],
+                        foregroundColor: Colors.black87,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        elevation: 0,
+                      ),
+                      child: const Text('FECHAR',
+                          style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  )
+                ]
+              ],
+            ),
           ),
         );
       },
@@ -1398,9 +1472,9 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
   }
 
   Future<void> _rescheduleViaBookingPage(Map<String, dynamic> appointment) async {
-    final shopId = (appointment['shop_id'] ?? appointment['shopId']) as String;
-    final professionalId = (appointment['professional_id'] ?? appointment['profissionalId']).toString();
-    final serviceId = (appointment['service_id'] ?? appointment['servicoId']).toString();
+    final shopId = (appointment['shop_id'] ?? appointment['shopId'])?.toString() ?? '';
+    final professionalId = (appointment['professional_id'] ?? appointment['profissionalId'])?.toString() ?? '';
+    final serviceId = (appointment['service_id'] ?? appointment['servicoId'])?.toString() ?? '';
 
     showDialog(
       context: context,
@@ -1410,18 +1484,19 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
 
     try {
       final supabase = Supabase.instance.client;
-      // Fetch shop, employee and service
+      // Fetch shop, employee (se houver) e service
       final shopData = await supabase.from('shops').select().eq('id', shopId).maybeSingle();
-      final profData = await supabase.from('employees').select().eq('id', professionalId).maybeSingle();
+      final profData = (professionalId.isNotEmpty && professionalId != 'null')
+          ? await supabase.from('employees').select().eq('id', professionalId).maybeSingle()
+          : null;
       final serviceData = await supabase.from('services').select().eq('id', serviceId).maybeSingle();
 
       if (!mounted) return;
       Navigator.of(context, rootNavigator: true).pop(); // close loading
 
-      if (shopData == null || profData == null || serviceData == null) {
+      if (shopData == null || serviceData == null) {
         String missing = '';
         if (shopData == null) missing += 'Loja ';
-        if (profData == null) missing += 'Profissional ';
         if (serviceData == null) missing += 'Serviço ';
         _showError(
             'Não foi possível carregar os detalhes ($missing) para reagendar.');
@@ -1438,12 +1513,15 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
           builder: (_) => BookingTimePage(
             shop: shopData,
             serviceDoc: serviceData,
-            professionalDoc: profData,
+            professionalDoc: profData ?? shopData,
             shopConfig: shopConfig,
             intervalMinutes: intervalMinutes,
             minAdvanceHours: minAdvanceHours,
             isReschedule: true,
             appointmentId: appointment['id'],
+            oldDate: DateTime.tryParse(appointment['scheduled_at']?.toString() ?? ''),
+            oldProfessional: appointment['professional_id']?.toString(),
+            oldServiceName: appointment['service_name']?.toString(),
           ),
         ),
       );
@@ -1622,13 +1700,19 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
     final user = Supabase.instance.client.auth.currentUser;
 
     if (user == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          Navigator.pushReplacement(context,
+              MaterialPageRoute(builder: (_) => const LoginPage()));
+        }
+      });
       return Scaffold(
         appBar: AppBar(
           title: const Text('Meus Agendamentos'),
           backgroundColor: AppColors.primaryPurple,
           foregroundColor: Colors.white,
         ),
-        body: const Center(child: Text('Você precisa estar logado')),
+        body: const Center(child: CircularProgressIndicator()),
       );
     }
 
@@ -1758,363 +1842,367 @@ class MyAppointmentsPageState extends State<MyAppointmentsPage>
     final shopId = appointment['shop_id'];
     final valorTotal = _getTotalValue(appointment);
     final valorPago = _getPaidValue(appointment);
-    final valorRestante = valorTotal - valorPago;
     final ts = appointment['scheduled_at'];
     DateTime appointmentDate = ts is String ? DateTime.parse(ts) : ts;
+    final durationMin = int.tryParse(appointment['duration_min']?.toString() ?? '30') ?? 30;
+    final endDate = appointmentDate.add(Duration(minutes: durationMin));
+
+    final statusRaw = appointment['status']?.toString().toLowerCase() ?? '';
+    final isCanceled = statusRaw.contains('cancelado');
+    final statusColor = _getStatusColor(statusRaw);
+    final statusText = _getStatusText(statusRaw).toUpperCase();
+
+    final pStatus = appointment['payment_status']?.toString().toLowerCase() ?? '';
+    final isPaid = pStatus == 'pago' || valorPago >= (valorTotal - 0.05);
+    final isPartial = !isPaid && valorPago > 0.05;
+    final Color payColor = isPaid ? Colors.green : (isPartial ? Colors.orange : Colors.grey);
+    final String payText = isPaid ? 'PAGO' : (isPartial ? 'PGTO. PARCIAL' : 'PGTO. PENDENTE');
+
+    final rawServiceNome = (appointment['service_name'] ?? appointment['servico_nome'] ?? '').toString().trim();
+    final String serviceDisplay = (rawServiceNome.toLowerCase() == 'null' || rawServiceNome.isEmpty) ? 'Serviço' : rawServiceNome;
+
+    final rawProfNome = (appointment['professional_name'] ?? appointment['profissional_nome'] ?? '').toString().trim();
+    final bool hasProf = rawProfNome.isNotEmpty && rawProfNome.toLowerCase() != 'null';
 
     return FutureBuilder<Map<String, dynamic>?>(
       future: _getCachedShopData(shopId),
       builder: (context, shopSnapshot) {
-        final shopData =
-            shopSnapshot.data ?? {'nome': 'Carregando...', 'logo': ''};
+        final fallbackShopName = (appointment['shop_name'] ?? appointment['loja_nome'] ?? '').toString().trim();
+        final shopData = shopSnapshot.data ?? {
+          'nome': fallbackShopName.isNotEmpty ? fallbackShopName : 'Carregando...',
+          'logo': '',
+        };
         final shopName = shopData['nome'] as String;
         final shopLogo = shopData['logo'] as String;
+        final shopInitial = shopName.isNotEmpty ? shopName[0].toUpperCase() : 'L';
+        final String professionalNome = hasProf ? rawProfNome : shopName;
 
-        return Card(
-          margin: const EdgeInsets.only(bottom: 12),
-          elevation: 2,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(16),
-            onTap: () => _showAppointmentDetails(
-                appointment, isUpcoming, shopName, shopLogo),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Header com logo e nome do estabelecimento
-                  Row(
-                    children: [
-                      // Logo do estabelecimento
-                      Container(
-                        width: 50,
-                        height: 50,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.grey.shade300),
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: shopLogo.isNotEmpty
-                              ? CachedNetworkImage(
-                                  imageUrl: shopLogo,
-                                  fit: BoxFit.cover,
-                                  placeholder: (_, __) => Container(
-                                    color: AppColors.primaryPurple
-                                        .withValues(alpha: 0.1),
-                                    child: const Icon(Icons.store,
-                                        color: AppColors.primaryPurple),
-                                  ),
-                                  errorWidget: (_, __, ___) => Container(
-                                    color: AppColors.primaryPurple
-                                        .withValues(alpha: 0.1),
-                                    child: const Icon(Icons.store,
-                                        color: AppColors.primaryPurple),
-                                  ),
-                                )
-                              : Container(
-                                  color: AppColors.primaryPurple
-                                      .withValues(alpha: 0.1),
-                                  child: const Icon(Icons.store,
-                                      color: AppColors.primaryPurple),
-                                ),
+        return Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.grey.withValues(alpha: 0.08),
+                blurRadius: 8,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () => _showAppointmentDetails(
+                  appointment, isUpcoming, shopName, shopLogo),
+              child: IntrinsicHeight(
+                child: Row(
+                  children: [
+                    // Barra lateral de status (padrão lojista)
+                    Container(
+                      width: 6,
+                      decoration: BoxDecoration(
+                        color: statusColor,
+                        borderRadius: const BorderRadius.only(
+                          topLeft: Radius.circular(12),
+                          bottomLeft: Radius.circular(12),
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      // Nome do estabelecimento e status
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                    ),
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Row(
                           children: [
-                            Text(
-                              shopName,
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.grey,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 4),
-                            Builder(
-                              builder: (context) {
-                                final rawServiceName = (appointment['service_name'] ?? appointment['servico_nome'] ?? '').toString().trim();
-                                final serviceName = (rawServiceName.toLowerCase() == 'null' || rawServiceName.isEmpty) ? 'Serviço' : rawServiceName;
-                                return Text(
-                                  serviceName,
-                                  style: const TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
+                            // Coluna 1: Logo circular + Horário início/fim + Data curta
+                            Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Container(
+                                  width: 36,
+                                  height: 36,
+                                  decoration: const BoxDecoration(
+                                    color: Color(0x1A7C3AED),
+                                    shape: BoxShape.circle,
                                   ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                );
-                              }
+                                  child: ClipOval(
+                                    child: shopLogo.isNotEmpty
+                                        ? CachedNetworkImage(
+                                            imageUrl: shopLogo,
+                                            width: 36,
+                                            height: 36,
+                                            fit: BoxFit.cover,
+                                            placeholder: (_, __) => Center(
+                                              child: Text(
+                                                shopInitial,
+                                                style: const TextStyle(
+                                                  fontSize: 13,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: AppColors.primaryPurple,
+                                                ),
+                                              ),
+                                            ),
+                                            errorWidget: (_, __, ___) => Center(
+                                              child: Text(
+                                                shopInitial,
+                                                style: const TextStyle(
+                                                  fontSize: 13,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: AppColors.primaryPurple,
+                                                ),
+                                              ),
+                                            ),
+                                          )
+                                        : const Center(
+                                            child: Icon(
+                                              Icons.store_rounded,
+                                              size: 18,
+                                              color: AppColors.primaryPurple,
+                                            ),
+                                          ),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  DateFormat('HH:mm').format(appointmentDate),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 15,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                                Text(
+                                  DateFormat('HH:mm').format(endDate),
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey.shade600,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  DateFormat('dd/MM').format(appointmentDate),
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: Colors.grey.shade400,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(width: 14),
+                            Container(
+                              width: 1,
+                              height: 60,
+                              color: Colors.grey.shade200,
+                            ),
+                            const SizedBox(width: 14),
+
+                            // Coluna 2: Nome da Loja, Serviço, Profissional e Tag de Status
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    shopName,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 15,
+                                      decoration: isCanceled
+                                          ? TextDecoration.lineThrough
+                                          : TextDecoration.none,
+                                      color: isCanceled
+                                          ? Colors.grey
+                                          : Colors.black87,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    serviceDisplay,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: Colors.grey.shade600,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        Icons.content_cut_rounded,
+                                        size: 9,
+                                        color: Colors.grey.shade400,
+                                      ),
+                                      const SizedBox(width: 3),
+                                      Flexible(
+                                        child: Text(
+                                          professionalNome,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: Colors.grey.shade500,
+                                            fontSize: 10,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: statusColor.withValues(alpha: 0.12),
+                                      borderRadius: BorderRadius.circular(4),
+                                      border: Border.all(
+                                        color: statusColor.withValues(alpha: 0.3),
+                                      ),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          isCanceled
+                                              ? Icons.cancel_rounded
+                                              : (statusRaw == 'confirmado' || statusRaw == 'concluido'
+                                                  ? Icons.check_circle_rounded
+                                                  : Icons.schedule_rounded),
+                                          size: 10,
+                                          color: statusColor,
+                                        ),
+                                        const SizedBox(width: 3),
+                                        Flexible(
+                                          child: Text(
+                                            statusText,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              fontSize: 8,
+                                              fontWeight: FontWeight.w800,
+                                              color: statusColor,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+
+                            // Coluna 3: Valor, Tags de Desconto e Badge de Pagamento
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Builder(
+                                  builder: (context) {
+                                    final double originalPrice = double.tryParse(appointment['total_price']?.toString() ?? '0') ?? 0;
+                                    final double discountAmt = double.tryParse(appointment['discount_amount']?.toString() ?? '0') ?? 0;
+                                    final double cDesc = double.tryParse(appointment['valor_com_desconto']?.toString() ?? '0') ?? 0;
+                                    final bool hasBd = appointment['birthday_discount_applied'] == true;
+                                    final bool hasCp = appointment['coupon_applied'] == true;
+                                    double discVal = 0;
+                                    if (discountAmt > 0.01) {
+                                      discVal = discountAmt;
+                                    } else if (cDesc > 0 && originalPrice > 0 && cDesc < originalPrice - 0.01) {
+                                      discVal = originalPrice - cDesc;
+                                    } else if (hasBd && originalPrice > 0) {
+                                      final pct = double.tryParse(appointment['birthday_discount_percent']?.toString() ?? '0') ?? 0;
+                                      if (pct > 0) discVal = originalPrice * pct / 100;
+                                    } else if (hasCp && originalPrice > 0) {
+                                      final pct = double.tryParse(appointment['coupon_discount_percent']?.toString() ?? '0') ?? 0;
+                                      if (pct > 0) discVal = originalPrice * pct / 100;
+                                    }
+                                    if (discVal < 0.01 || originalPrice < 0.01) {
+                                      return const SizedBox.shrink();
+                                    }
+                                    return Text(
+                                      currencyFormat.format(originalPrice),
+                                      style: const TextStyle(
+                                        fontSize: 10,
+                                        color: Colors.grey,
+                                        decoration: TextDecoration.lineThrough,
+                                      ),
+                                    );
+                                  },
+                                ),
+                                Text(
+                                  currencyFormat.format(valorTotal),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 15,
+                                  ),
+                                ),
+                                if (appointment['birthday_discount_applied'] == true) ...[
+                                  const SizedBox(height: 3),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                    decoration: BoxDecoration(
+                                      color: Colors.pink.withValues(alpha: 0.1),
+                                      borderRadius: BorderRadius.circular(4),
+                                      border: Border.all(color: Colors.pink.withValues(alpha: 0.3)),
+                                    ),
+                                    child: const Text(
+                                      '🎂 ANIV.',
+                                      style: TextStyle(
+                                        fontSize: 7,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.pink,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                                if (appointment['coupon_applied'] == true && appointment['coupon_code'] != null) ...[
+                                  const SizedBox(height: 3),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                    decoration: BoxDecoration(
+                                      color: Colors.blue.withValues(alpha: 0.1),
+                                      borderRadius: BorderRadius.circular(4),
+                                      border: Border.all(color: Colors.blue.withValues(alpha: 0.3)),
+                                    ),
+                                    child: Text(
+                                      '🏷 ${appointment['coupon_code']}',
+                                      style: const TextStyle(
+                                        fontSize: 7,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.blue,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                                const SizedBox(height: 4),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: payColor.withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text(
+                                    payText,
+                                    style: TextStyle(
+                                      color: payColor,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 9,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
                       ),
-                      // Status badge
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: _getStatusColor(appointment['status'])
-                              .withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          _getStatusText(appointment['status']),
-                          style: TextStyle(
-                            color: _getStatusColor(appointment['status']),
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // Data e hora
-                  Row(
-                    children: [
-                      const Icon(Icons.calendar_today,
-                          size: 16, color: Colors.grey),
-                      const SizedBox(width: 8),
-                      Text(
-                        DateFormat('dd/MM/yyyy').format(appointmentDate),
-                        style: const TextStyle(
-                            color: Colors.grey, fontWeight: FontWeight.w500),
-                      ),
-                      const SizedBox(width: 16),
-                      const Icon(Icons.access_time,
-                          size: 16, color: Colors.grey),
-                      const SizedBox(width: 8),
-                      Text(
-                        DateFormat('HH:mm').format(appointmentDate),
-                        style: const TextStyle(
-                            color: Colors.grey, fontWeight: FontWeight.w500),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  // Pagamento e Status
-                  Row(
-                    children: [
-                      // Meio de Pagamento
-                      Builder(
-                        builder: (context) {
-                          final method = (appointment['payment_method']?.toString() ?? 'local').toLowerCase();
-                          IconData icon = Icons.payments;
-                          String label = "Local";
-                          Color color = Colors.grey;
-
-                          if (method.contains('pix')) {
-                            icon = Icons.qr_code;
-                            label = "PIX";
-                            color = const Color(0xFF00BFA5);
-                          } else if (method.contains('cart') || method.contains('card')) {
-                            icon = Icons.credit_card;
-                            label = "Cartão";
-                            color = AppColors.primaryPurple;
-                          }
-
-                          return Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: color.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(icon, size: 14, color: color),
-                                const SizedBox(width: 4),
-                                Text(
-                                  label,
-                                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: color),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
-                      const SizedBox(width: 8),
-                      // Status do Pagamento (Pago / Pendente)
-                      Builder(
-                        builder: (context) {
-                          final isPaid = valorPago >= (valorTotal - 0.05); // Margem para erros de double
-                          final color = isPaid ? Colors.green : Colors.orange;
-                          final label = isPaid ? "PAGO" : "PGTO PENDENTE";
-
-                          return Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: color.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              label,
-                              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: color),
-                            ),
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-                  const Divider(height: 32),
-                  // Valores
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('Valor Total:',
-                              style:
-                                  TextStyle(fontSize: 12, color: Colors.grey)),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                                  Builder(
-                                  builder: (context) {
-                                    final double original = double.tryParse(appointment['total_price']?.toString() ?? '0') ?? 0;
-                                    final double discountAmt2 = double.tryParse(appointment['discount_amount']?.toString() ?? '0') ?? 0;
-                                    final double cDesc2 = double.tryParse(appointment['valor_com_desconto']?.toString() ?? '0') ?? 0;
-                                    final bool hasBd2 = appointment['birthday_discount_applied'] == true;
-                                    final bool hasCp2 = appointment['coupon_applied'] == true;
-                                    double discountValue = 0;
-                                    if (discountAmt2 > 0.01) {
-                                      discountValue = discountAmt2;
-                                    } else if (cDesc2 > 0 && original > 0 && cDesc2 < original - 0.01) {
-                                      discountValue = original - cDesc2;
-                                    } else if (hasBd2 && original > 0) {
-                                      final pct = double.tryParse(appointment['birthday_discount_percent']?.toString() ?? '0') ?? 0;
-                                      if (pct > 0) discountValue = original * pct / 100;
-                                    } else if (hasCp2 && original > 0) {
-                                      final pct = double.tryParse(appointment['coupon_discount_percent']?.toString() ?? '0') ?? 0;
-                                      if (pct > 0) discountValue = original * pct / 100;
-                                    }
-                                    if (discountValue > 0.01 && original > 0) {
-                                      return Text(
-                                        "${currencyFormat.format(original)} (- ${currencyFormat.format(discountValue)})",
-                                        style: const TextStyle(
-                                          fontSize: 10,
-                                          color: Colors.grey,
-                                          decoration: TextDecoration.lineThrough,
-                                        ),
-                                      );
-                                    }
-                                    return const SizedBox.shrink();
-                                  }
-                                ),
-                              Text(currencyFormat.format(valorTotal),
-                                  style:
-                                      const TextStyle(fontWeight: FontWeight.bold)),
-                            ],
-                          ),
-                        ],
-                      ),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('Pago:',
-                              style:
-                                  TextStyle(fontSize: 12, color: Colors.grey)),
-                          Text(
-                            currencyFormat.format(valorPago),
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: valorPago > 0 ? Colors.green : Colors.grey,
-                            ),
-                          ),
-                        ],
-                      ),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('Restante:',
-                              style:
-                                  TextStyle(fontSize: 12, color: Colors.grey)),
-                          Text(
-                            currencyFormat.format(valorRestante),
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: valorRestante > 0
-                                  ? Colors.orange
-                                  : Colors.green,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                  if (appointment['coupon_applied'] == true || appointment['birthday_discount_applied'] == true) ...[
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      children: [
-                        if (appointment['coupon_applied'] == true)
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: Colors.blue.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              "CUPOM: ${appointment['coupon_code'] ?? 'ATIVO'}",
-                              style: const TextStyle(color: Colors.blue, fontSize: 9, fontWeight: FontWeight.bold),
-                            ),
-                          ),
-                        if (appointment['birthday_discount_applied'] == true)
-                          Builder(builder: (ctx) {
-                            final double origBd2 = double.tryParse(appointment['total_price']?.toString() ?? '0') ?? 0;
-                            final double discAmt2 = double.tryParse(appointment['discount_amount']?.toString() ?? '0') ?? 0;
-                            final double cDesc2 = double.tryParse(appointment['valor_com_desconto']?.toString() ?? '0') ?? 0;
-                            final double pct2 = double.tryParse(appointment['birthday_discount_percent']?.toString() ?? '0') ?? 0;
-                            double bdDisc2 = 0;
-                            if (discAmt2 > 0.01) bdDisc2 = discAmt2;
-                            else if (cDesc2 > 0 && origBd2 > 0 && cDesc2 < origBd2 - 0.01) bdDisc2 = origBd2 - cDesc2;
-                            else if (pct2 > 0 && origBd2 > 0) bdDisc2 = origBd2 * pct2 / 100;
-                            final String label2 = bdDisc2 > 0.01
-                                ? "🎂 -${currencyFormat.format(bdDisc2)}"
-                                : "🎂 ANIVERSÁRIO";
-                            return Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: Colors.pink.withValues(alpha: 0.1),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(label2,
-                                  style: const TextStyle(color: Colors.pink, fontSize: 9, fontWeight: FontWeight.bold)),
-                            );
-                          }),
-                      ],
                     ),
                   ],
-                  if (valorRestante > 0 && !(appointment['status']?.toString().toLowerCase().contains('cancelado') ?? false)) ...[
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: () => _showPaymentOptions(appointment),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primaryPurple,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8)),
-                        ),
-                        child: const Text('PAGAR RESTANTE',
-                            style: TextStyle(
-                                fontSize: 12, fontWeight: FontWeight.bold)),
-                      ),
-                    ),
-                  ],
-                ],
+                ),
               ),
             ),
           ),

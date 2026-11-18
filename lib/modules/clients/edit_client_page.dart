@@ -1,10 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
-import 'package:geocoding/geocoding.dart';
+import 'package:http/http.dart' as http;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../core/theme/app_colors.dart';
@@ -193,7 +194,7 @@ class _EditClientPageState extends State<EditClientPage> {
           if ((data!['name']?.toString() ?? '').isNotEmpty) {
             _nameController.text = data['name'];
           }
-          _cpfController.text = cpfRaw;
+          _cpfController.text = cpfRaw.isNotEmpty ? _cpfMask.maskText(cpfRaw) : '';
           _birthDateController.text = birthStr;
           _cepController.text = data['zip_code']?.toString() ?? '';
           _streetController.text = data['street']?.toString() ?? '';
@@ -224,35 +225,57 @@ class _EditClientPageState extends State<EditClientPage> {
     _debounceTimer = Timer(const Duration(milliseconds: 800), _updateMap);
   }
 
-  Future<void> _updateMap() async {
-    if (_streetController.text.isEmpty || _cityController.text.isEmpty) return;
-    setState(() => _isLoadingMap = true);
-    try {
-      final address =
-          '${_streetController.text}, ${_numberController.text}, ${_cityController.text} - ${_stateController.text}, Brasil';
-      final locations = await locationFromAddress(address);
-      if (locations.isNotEmpty && mounted) {
-        setState(() {
-          _latitude = locations.first.latitude;
-          _longitude = locations.first.longitude;
-        });
-      }
-    } catch (e) {
-      try {
-        final fallback =
-            '${_streetController.text}, ${_cityController.text} - ${_stateController.text}, Brasil';
-        final locations = await locationFromAddress(fallback);
-        if (locations.isNotEmpty && mounted) {
-          setState(() {
-            _latitude = locations.first.latitude;
-            _longitude = locations.first.longitude;
+      Future<Map<String, double>?> _nominatimGeocode(String address) async {
+        try {
+          final url = Uri.parse(
+            'https://nominatim.openstreetmap.org/search'
+            '?q=${Uri.encodeComponent(address)}'
+            '&format=json&limit=1',
+          );
+          final resp = await http.get(url, headers: {
+            'User-Agent': 'MarkaAI/1.0 (suporte@markaai.com.br)',
           });
+          if (resp.statusCode == 200) {
+            final List results = jsonDecode(resp.body);
+            if (results.isNotEmpty) {
+              return {
+                'lat': double.parse(results[0]['lat'].toString()),
+                'lon': double.parse(results[0]['lon'].toString()),
+              };
+            }
+          }
+        } catch (_) {}
+        return null;
+      }
+
+      Future<void> _updateMap() async {
+        if (_streetController.text.isEmpty || _cityController.text.isEmpty) return;
+        setState(() => _isLoadingMap = true);
+        try {
+          final address =
+              '${_streetController.text}, ${_numberController.text}, ${_cityController.text} - ${_stateController.text}, Brasil';
+          final loc = await _nominatimGeocode(address);
+          if (loc != null && mounted) {
+            setState(() {
+              _latitude = loc['lat'];
+              _longitude = loc['lon'];
+            });
+          } else {
+            final fallback =
+                '${_streetController.text}, ${_cityController.text} - ${_stateController.text}, Brasil';
+            final loc2 = await _nominatimGeocode(fallback);
+            if (loc2 != null && mounted) {
+              setState(() {
+                _latitude = loc2['lat'];
+                _longitude = loc2['lon'];
+              });
+            }
+          }
+        } catch (_) {}
+        finally {
+          if (mounted) setState(() => _isLoadingMap = false);
         }
-      } catch (_) {}
-    } finally {
-      if (mounted) setState(() => _isLoadingMap = false);
-    }
-  }
+      }
 
   Future<void> _buscarCep(String cep) async {
     if (cep.length != 9) return;
@@ -319,15 +342,41 @@ class _EditClientPageState extends State<EditClientPage> {
           .update(updateData)
           .eq('id', widget.clientId);
 
+      // Sincroniza o telefone atualizado nos agendamentos vinculados ao cliente
+      try {
+        await _supabase
+            .from('appointments')
+            .update({'client_phone': updateData['phone']})
+            .eq('client_id', widget.clientId);
+      } catch (e) {
+        debugPrint('Erro ao sincronizar telefone nos agendamentos: $e');
+      }
+
       final shopId = widget.clientData['shop_id'];
       if (shopId != null) {
-        await _supabase.from('shop_clients').upsert({
+        final existing = await _supabase
+            .from('shop_clients')
+            .select('id')
+            .eq('shop_id', shopId)
+            .eq('user_id', widget.clientId)
+            .maybeSingle();
+
+        final dataToSave = {
           'shop_id': shopId,
           'user_id': widget.clientId,
           'nome': updateData['name'],
           'telefone': updateData['phone'],
           'last_updated': DateTime.now().toIso8601String(),
-        }, onConflict: 'shop_id,user_id');
+        };
+
+        if (existing != null) {
+          await _supabase
+              .from('shop_clients')
+              .update(dataToSave)
+              .eq('id', existing['id']);
+        } else {
+          await _supabase.from('shop_clients').insert(dataToSave);
+        }
       }
 
       if (mounted) {

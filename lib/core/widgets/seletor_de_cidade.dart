@@ -5,7 +5,6 @@ import 'dart:convert';
 import 'dart:async';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:geocoding/geocoding.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_typeahead/flutter_typeahead.dart';
 import 'package:markaai/core/utils/string_utils.dart';
@@ -324,41 +323,25 @@ class _SeletorDeCidadeModalState extends State<SeletorDeCidadeModal> {
         timeLimit: const Duration(seconds: 10),
       );
 
-      // 3. Reverse geocode — Nominatim no web, geocoding nativo no mobile
+      // 3. Reverse geocode via Nominatim (OpenStreetMap)
       String rawCity = '';
       String rawState = '';
 
-      if (kIsWeb) {
-        try {
-          final uri = Uri.parse(
-            'https://nominatim.openstreetmap.org/reverse'
-            '?lat=${position.latitude}&lon=${position.longitude}'
-            '&format=json&accept-language=pt-BR',
-          );
-          final resp = await http.get(uri, headers: {'User-Agent': 'MarkaAI/1.0'});
-          if (resp.statusCode == 200) {
-            final json = jsonDecode(resp.body) as Map<String, dynamic>;
-            final addr = json['address'] as Map<String, dynamic>?;
-            rawCity = (addr?['city'] ?? addr?['town'] ?? addr?['village'] ??
-                    addr?['municipality'] ?? '').toString().trim();
-            rawState = (addr?['state_code'] ?? addr?['state'] ?? '').toString().trim();
-          }
-        } catch (_) {}
-      } else {
-        final placemarks = await placemarkFromCoordinates(
-          position.latitude,
-          position.longitude,
-          localeIdentifier: 'pt_BR',
+      try {
+        final uri = Uri.parse(
+          'https://nominatim.openstreetmap.org/reverse'
+          '?lat=${position.latitude}&lon=${position.longitude}'
+          '&format=json&accept-language=pt-BR',
         );
-        if (placemarks.isNotEmpty) {
-          final place = placemarks.first;
-          rawCity = (place.subAdministrativeArea ??
-                  place.locality ??
-                  place.administrativeArea ??
-                  '').trim();
-          rawState = (place.administrativeArea ?? '').trim();
+        final resp = await http.get(uri, headers: {'User-Agent': 'MarkaAI/1.0'});
+        if (resp.statusCode == 200) {
+          final json = jsonDecode(resp.body) as Map<String, dynamic>;
+          final addr = json['address'] as Map<String, dynamic>?;
+          rawCity = (addr?['city'] ?? addr?['town'] ?? addr?['village'] ??
+                  addr?['municipality'] ?? '').toString().trim();
+          rawState = (addr?['state_code'] ?? addr?['state'] ?? '').toString().trim();
         }
-      }
+      } catch (_) {}
 
       if (rawCity.isEmpty) {
         if (mounted) {
@@ -924,35 +907,21 @@ class _SeletorDeCidadePageState extends State<SeletorDeCidadePage> {
       String rawCity = '';
       String rawState = '';
 
-      if (kIsWeb) {
-        try {
-          final uri = Uri.parse(
-            'https://nominatim.openstreetmap.org/reverse'
-            '?lat=${position.latitude}&lon=${position.longitude}'
-            '&format=json&accept-language=pt-BR',
-          );
-          final resp = await http.get(uri, headers: {'User-Agent': 'MarkaAI/1.0'});
-          if (resp.statusCode == 200) {
-            final json = jsonDecode(resp.body) as Map<String, dynamic>;
-            final addr = json['address'] as Map<String, dynamic>?;
-            rawCity = (addr?['city'] ?? addr?['town'] ?? addr?['village'] ??
-                    addr?['municipality'] ?? '').toString().trim();
-            rawState = (addr?['state_code'] ?? addr?['state'] ?? '').toString().trim();
-          }
-        } catch (_) {}
-      } else {
-        final placemarks = await placemarkFromCoordinates(
-            position.latitude, position.longitude,
-            localeIdentifier: 'pt_BR');
-        if (placemarks.isNotEmpty) {
-          final place = placemarks.first;
-          rawCity = (place.subAdministrativeArea ??
-                  place.locality ??
-                  place.administrativeArea ??
-                  '').trim();
-          rawState = (place.administrativeArea ?? '').trim();
+      try {
+        final uri = Uri.parse(
+          'https://nominatim.openstreetmap.org/reverse'
+          '?lat=${position.latitude}&lon=${position.longitude}'
+          '&format=json&accept-language=pt-BR',
+        );
+        final resp = await http.get(uri, headers: {'User-Agent': 'MarkaAI/1.0'});
+        if (resp.statusCode == 200) {
+          final json = jsonDecode(resp.body) as Map<String, dynamic>;
+          final addr = json['address'] as Map<String, dynamic>?;
+          rawCity = (addr?['city'] ?? addr?['town'] ?? addr?['village'] ??
+                  addr?['municipality'] ?? '').toString().trim();
+          rawState = (addr?['state_code'] ?? addr?['state'] ?? '').toString().trim();
         }
-      }
+      } catch (_) {}
 
       if (rawCity.isEmpty) {
         if (mounted) {

@@ -204,21 +204,69 @@ class TransactionAutocompleteService {
     String? search,
   }) async {
     final supabase = Supabase.instance.client;
-    
-    // 1. Busca na tabela appointments por clientes que já agendaram
+    final String? escaped = (search != null && search.trim().isNotEmpty)
+        ? search.trim().replaceAll(r'\', r'\\').replaceAll('%', r'\%').replaceAll('_', r'\_')
+        : null;
+
+    // Normalização usada para evitar duplicar um cliente manual que já
+    // aparece nos agendamentos (mesmo nome + mesmo telefone).
+    String digits(String v) => v.replaceAll(RegExp(r'\D'), '');
+    String norm(String v) => v.trim().toLowerCase();
+
+    // 1. Clientes cadastrados MANUALMENTE pelo lojista (shop_clients).
+    //    Mesmo sem nenhum agendamento anterior, eles precisam aparecer
+    //    imediatamente para que o lojista consiga agendar.
+    //    Só entram registros sem conta Auth (user_id nulo): clientes com
+    //    conta aparecem via appointments/users.
+    var manualQuery = supabase
+        .from('shop_clients')
+        .select('id, nome, telefone, notes')
+        .eq('shop_id', shopId)
+        .eq('is_manual_client', true)
+        .isFilter('user_id', null);
+
+    if (escaped != null) {
+      manualQuery = manualQuery.or('nome.ilike.%$escaped%,telefone.ilike.%$escaped%');
+    }
+
+    List<dynamic> manualRows = [];
+    try {
+      manualRows = await manualQuery.order('last_updated', ascending: false).limit(100);
+    } catch (_) {
+      // Falha na busca de cadastros manuais não deve quebrar o autocomplete.
+    }
+
+    final Map<String, Map<String, dynamic>> uniqueClients = {};
+    final Set<String> manualSignatures = {};
+
+    for (var row in manualRows) {
+      if ((row['notes'] ?? '').toString() == '[DELETED_MANUAL]') continue;
+      final name = row['nome']?.toString() ?? '';
+      final phone = row['telefone']?.toString() ?? '';
+      final scId = row['id']?.toString() ?? '';
+      if (name.isEmpty || scId.isEmpty) continue;
+
+      manualSignatures.add('${norm(name)}|${digits(phone)}');
+      uniqueClients['sc:$scId'] = {
+        'id': null, // sem conta Auth: o agendamento é gravado só com nome/telefone
+        'name': name,
+        'phone': phone,
+        'isManual': true,
+        'shopClientId': scId,
+      };
+    }
+
+    // 2. Busca na tabela appointments por clientes que já agendaram
     var query = supabase
         .from('appointments')
         .select('client_name, client_phone, client_id')
         .eq('shop_id', shopId);
 
-    if (search != null && search.trim().isNotEmpty) {
-      final s = search.trim().replaceAll(r'\', r'\\').replaceAll('%', r'\%').replaceAll('_', r'\_');
-      query = query.or('client_name.ilike.%$s%,client_phone.ilike.%$s%');
+    if (escaped != null) {
+      query = query.or('client_name.ilike.%$escaped%,client_phone.ilike.%$escaped%');
     }
 
     final List<dynamic> apps = await query.order('scheduled_at', ascending: false).limit(200);
-    
-    final Map<String, Map<String, dynamic>> uniqueClients = {};
 
     for (var app in apps) {
       final name = app['client_name']?.toString() ?? '';
@@ -227,9 +275,14 @@ class TransactionAutocompleteService {
 
       if (name.isEmpty && id.isEmpty) continue;
 
+      // Já listado como cadastro manual (mesmo nome + telefone): não duplica.
+      if (id.isEmpty && manualSignatures.contains('${norm(name)}|${digits(phone)}')) {
+        continue;
+      }
+
       // Chave única: ID se existir (registrado), senão Telefone (manual recorrente), senão Nome
       final key = id.isNotEmpty ? id : (phone.isNotEmpty ? phone : name);
-      
+
       if (!uniqueClients.containsKey(key)) {
         uniqueClients[key] = {
           'id': id.isNotEmpty ? id : null,
@@ -239,9 +292,6 @@ class TransactionAutocompleteService {
         };
       }
     }
-
-    // 2. Opcional: Busca na tabela shop_clients para pegar clientes cadastrados sem agendamento
-    // (Poderia ser adicionado aqui se necessário, mas a busca em appointments já cobre a maioria dos casos)
 
     return uniqueClients.values.toList();
   }

@@ -264,6 +264,9 @@ serve(async (req) => {
       duration_min: duration,
       professional_id: professionalId,
       updated_at: new Date().toISOString(),
+      whatsapp_scheduled_send_at: null,
+      whatsapp_reminder_status: 'pending',
+      whatsapp_reminder_retry_count: 0,
     }
 
     if (newServiceId) updateData.service_id = newServiceId

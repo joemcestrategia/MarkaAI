@@ -1,12 +1,15 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:http/http.dart' as http;
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/service_image_keywords.dart';
 import '../../core/widgets/pexels_image_widget.dart';
-import '../../core/constants/api_keys.dart';
 import 'package:markaai/widgets/google_reviews_widget.dart';
 
 class ShopProfilePage extends StatefulWidget {
@@ -932,21 +935,7 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        CachedNetworkImage(
-                          imageUrl: "https://maps.googleapis.com/maps/api/staticmap?center=${Uri.encodeComponent(fullAddress)}&zoom=15&size=600x300&scale=2&maptype=roadmap&markers=color:red%7C${Uri.encodeComponent(fullAddress)}&key=${ApiKeys.mapsApiKey}",
-                          fit: BoxFit.cover,
-                          errorWidget: (c, u, e) => Container(
-                            color: AppColors.softGrey,
-                            child: const Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(Icons.map_outlined, size: 48, color: Colors.grey),
-                                SizedBox(height: 8),
-                                Text("Ver no Mapa", style: TextStyle(color: Colors.grey)),
-                              ],
-                            ),
-                          ),
-                        ),
+                        _MapTileWidget(fullAddress: fullAddress),
                         Container(
                           decoration: BoxDecoration(
                             border: Border.all(color: Colors.grey.shade300),
@@ -1042,6 +1031,78 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
     final query = Uri.encodeComponent(address);
     final uri = Uri.parse('https://waze.com/ul?q=$query&navigate=yes');
     if (await canLaunchUrl(uri)) await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  Future<LatLng?> _geocodeAddress(String address) async {
+    try {
+      final url = Uri.parse(
+        'https://nominatim.openstreetmap.org/search'
+        '?q=${Uri.encodeComponent(address)}'
+        '&format=json&limit=1',
+      );
+      final response = await http.get(url, headers: {
+        'User-Agent': 'MarkaAI/1.0 (suporte@markaai.com.br)',
+      });
+      if (response.statusCode == 200) {
+        final List data = jsonDecode(response.body);
+        if (data.isNotEmpty) {
+          return LatLng(
+            double.parse(data[0]['lat'].toString()),
+            double.parse(data[0]['lon'].toString()),
+          );
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Widget _MapTileWidget({required String fullAddress}) {
+    return FutureBuilder<LatLng?>(
+      future: _geocodeAddress(fullAddress),
+      builder: (context, snapshot) {
+        if (snapshot.hasData && snapshot.data != null) {
+          final pos = snapshot.data!;
+          return FlutterMap(
+            options: MapOptions(
+              center: pos,
+              zoom: 16.0,
+              interactiveFlags: InteractiveFlag.none,
+            ),
+            children: [
+              TileLayer(
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'com.markaai.app',
+              ),
+              MarkerLayer(
+                markers: [
+                  Marker(
+                    point: pos,
+                    child: const Icon(Icons.location_on, color: Colors.red, size: 40),
+                  ),
+                ],
+              ),
+            ],
+          );
+        }
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Container(
+            color: AppColors.softGrey,
+            child: const Center(child: CircularProgressIndicator(strokeWidth: 2, color: Colors.grey)),
+          );
+        }
+        return Container(
+          color: AppColors.softGrey,
+          child: const Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.map_outlined, size: 48, color: Colors.grey),
+              SizedBox(height: 8),
+              Text("Ver no Mapa", style: TextStyle(color: Colors.grey)),
+            ],
+          ),
+        );
+      },
+    );
   }
 }
 

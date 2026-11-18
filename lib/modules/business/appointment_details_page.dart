@@ -7,13 +7,13 @@ import '../clients/client_details_page.dart';
 import 'edit_appointment_date_page.dart';
 import 'transaction_details_page.dart';
 import '../../core/services/mercado_pago_service.dart';
-import '../fiscal/nfse_service.dart';
 import '../../core/services/plan_features_service.dart';
 import 'package:flutter/services.dart';
 import 'helpers/cancellation_helper.dart';
 import '../../core/models/message_template_model.dart';
 import '../../core/services/message_template_service.dart';
 import '../../utils/payment_summary.dart';
+import '../../core/services/appointment_note_service.dart';
 
 class AppointmentDetailsPage extends StatefulWidget {
   final Map<String, dynamic> appointmentDoc;
@@ -75,17 +75,25 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
   String? _clientBirthDate;
   bool _confirmationSent = false;
 
-  // ✨ Estado para emissão de NFS-e
-  bool _nfseEmitida = false;
-  String? _nfseNumero;
+
+  final Map<String, DateTime> _lastMpSyncTimes = {};
+
+  // Cache do valor pago obtido do MP via payment IDs do metadata
+  double? _mpFetchedPaid;
+
+  // Recado opcional do cliente (null = sem recado)
+  Map<String, dynamic>? _clientNote;
 
   @override
   void initState() {
     super.initState();
     _localDoc = Map<String, dynamic>.from(widget.appointmentDoc);
+    _applyMetadataPaidAmount(_localDoc); // Corrige paid_amount do metadata antes do 1º build
     _loadData();
     _refreshFromDb();
     _loadShopConfig();
+    _loadClientNote(); // Recado opcional do cliente
+    _fetchMpAmountIfNeeded(_localDoc); // Busca no MP se metadata tem IDs sem amounts
     if (widget.startInEditMode) {
       _isEditing = true;
     }
@@ -117,17 +125,260 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
           _isBirthdayDiscountApplied = _localDoc['birthday_discount_applied'] == true;
           _isCouponApplied = _localDoc['coupon_applied'] == true;
         });
-        // ✨ Verifica se já existe NFS-e autorizada para este agendamento
-        final numero = await NfseService().getNfseNumero(id);
-        if (mounted) {
-          setState(() {
-            _nfseNumero = numero;
-            _nfseEmitida = numero != null;
-          });
-        }
       }
     } catch (e) {
       debugPrint('Erro ao atualizar agendamento do DB: $e');
+    }
+    
+    // Auto-Sincronização invisível de pagamentos Mercado Pago
+    if (mounted && _localDoc.isNotEmpty) {
+      _autoSyncMercadoPago(_localDoc);
+    }
+  }
+
+  // Busca valor pago no MP quando metadata tem payment IDs mas sem amounts.
+  // Salva no cache _mpFetchedPaid e notifica a UI via setState.
+  Future<void> _fetchMpAmountIfNeeded(Map<String, dynamic> doc) async {
+    final double dbPaid = double.tryParse(doc['paid_amount']?.toString() ?? doc['valor_pago']?.toString() ?? '0') ?? 0.0;
+    final double totalPayable = getCalculatedTotal(doc);
+    if (dbPaid >= totalPayable - 0.01) return; // Já está pago
+
+    final meta = (doc['metadata'] as Map<String, dynamic>?) ?? {};
+    final double metaPaid =
+        (double.tryParse(meta['full_payment_amount']?.toString() ?? '') ?? 0.0) +
+        (double.tryParse(meta['advance_payment_amount']?.toString() ?? '') ?? 0.0) +
+        (double.tryParse(meta['completion_payment_amount']?.toString() ?? '') ?? 0.0);
+    if (metaPaid > 0.01) return; // Metadata já tem amounts, Level 1 resolve
+
+    // Coleta IDs de pagamento do metadata
+    final Set<String> ids = {};
+    final advId = meta['advance_payment_id']?.toString();
+    final compId = meta['completion_payment_id']?.toString();
+    final fullId = meta['full_payment_id']?.toString();
+    final rootId = doc['payment_id']?.toString();
+    if (advId != null && advId.isNotEmpty && advId != 'manual') ids.add(advId);
+    if (compId != null && compId.isNotEmpty && compId != 'manual') ids.add(compId);
+    if (fullId != null && fullId.isNotEmpty) ids.add(fullId);
+    if (rootId != null && rootId.isNotEmpty && rootId != 'manual') ids.add(rootId);
+    if (ids.isEmpty) return;
+
+    final shopId = doc['shop_id']?.toString() ?? doc['shopId']?.toString() ?? '';
+    if (shopId.isEmpty) return;
+
+    try {
+      final results = await Future.wait(
+        ids.map((id) => MercadoPagoService.obterDetalhesPagamento(shopId: shopId, paymentId: id)),
+      );
+      double approvedSum = 0;
+      for (final r in results) {
+        if (r != null && r['status'] == 'approved') {
+          approvedSum += double.tryParse(r['transaction_amount']?.toString() ?? '0') ?? 0;
+        }
+      }
+      if (approvedSum > dbPaid + 0.01 && mounted) {
+        setState(() => _mpFetchedPaid = approvedSum);
+      }
+    } catch (_) {
+      // Silencioso — se falhar, a UI usa metadata ou paid_amount do DB
+    }
+  }
+
+  // Aplica amounts do metadata ao paid_amount antes do build,
+  // garantindo que a UI mostre o valor correto desde o primeiro frame.
+  void _applyMetadataPaidAmount(Map<String, dynamic> doc) {
+    final meta = (doc['metadata'] as Map<String, dynamic>?) ?? {};
+    final double metaPaid =
+        (double.tryParse(meta['full_payment_amount']?.toString() ?? '') ?? 0.0) +
+        (double.tryParse(meta['advance_payment_amount']?.toString() ?? '') ?? 0.0) +
+        (double.tryParse(meta['completion_payment_amount']?.toString() ?? '') ?? 0.0);
+    if (metaPaid > 0.01) {
+      doc['paid_amount'] = metaPaid;
+    }
+  }
+
+  // --- AUTO-SYNC COM MERCADO PAGO ---
+  // Reconcilia paid_amount com a realidade do pagamento usando três níveis:
+  // Nível 1 (sem API): amounts já gravados no metadata pelo webhook/checkout
+  // Nível 2 (API): consulta individual de payment IDs do metadata no MP
+  // Nível 3 (API): busca por external_reference (appointment ID) no MP
+  Future<void> _autoSyncMercadoPago(Map<String, dynamic> data) async {
+    try {
+      final shopId = data['shop_id']?.toString() ?? data['shopId']?.toString() ?? '';
+      final appointmentId = data['id']?.toString() ?? '';
+      if (shopId.isEmpty || appointmentId.isEmpty) return;
+
+      final String? rootPaymentId = data['payment_id']?.toString();
+      final meta = Map<String, dynamic>.from((data['metadata'] as Map?) ?? {});
+      final String? metaAdvanceId = meta['advance_payment_id']?.toString();
+      final String? metaCompId = meta['completion_payment_id']?.toString();
+      final String? metaFullId = meta['full_payment_id']?.toString();
+      final String bookedVia = meta['booked_via']?.toString().toLowerCase() ?? '';
+
+      final bool hasStoredIds = (rootPaymentId != null && rootPaymentId.isNotEmpty) ||
+                                (metaAdvanceId != null && metaAdvanceId.isNotEmpty && metaAdvanceId != 'manual') ||
+                                (metaCompId != null && metaCompId.isNotEmpty && metaCompId != 'manual') ||
+                                (metaFullId != null && metaFullId.isNotEmpty);
+
+      final bool hasAppOrigin = bookedVia.contains('app') || bookedVia.contains('instagram');
+
+      final totalPayable = getCalculatedTotal(data);
+      final double currentPaid = double.tryParse(data['paid_amount']?.toString() ?? data['valor_pago']?.toString() ?? '0') ?? 0.0;
+      final bool isUnpaidWithValue = currentPaid < 0.01 && totalPayable > 0.01;
+      final bool isOverpaid = currentPaid > totalPayable + 0.01 && totalPayable > 0.01;
+      final bool needsSync = hasStoredIds || hasAppOrigin || isUnpaidWithValue || isOverpaid;
+      if (!needsSync) return;
+
+      final now = DateTime.now();
+      if (_lastMpSyncTimes[appointmentId] != null &&
+          now.difference(_lastMpSyncTimes[appointmentId]!).inSeconds < 30) {
+        return;
+      }
+      _lastMpSyncTimes[appointmentId] = now;
+
+      double reconciledAmount = 0.0;
+      List<Map<String, dynamic>> approvedPayments = [];
+
+      // ── Nível 1: Reconciliação por amounts já gravados no metadata ─────
+      final double fullAmt = double.tryParse(meta['full_payment_amount']?.toString() ?? '') ?? 0.0;
+      final double advAmt = double.tryParse(meta['advance_payment_amount']?.toString() ?? '') ?? 0.0;
+      final double compAmt = double.tryParse(meta['completion_payment_amount']?.toString() ?? '') ?? 0.0;
+
+      // Pagamento total via full_payment_amount
+      if (fullAmt > 0.01) {
+        reconciledAmount = fullAmt;
+        final fullId = metaFullId ?? rootPaymentId ?? '';
+        approvedPayments.add({
+          'id': fullId,
+          'payment_type_id': meta['full_payment_method']?.toString() ?? data['payment_method']?.toString() ?? 'pix',
+          'transaction_amount': fullAmt,
+          'date_approved': meta['full_paid_at']?.toString() ?? data['pago_em']?.toString() ?? now.toIso8601String(),
+          'status': 'approved',
+        });
+      }
+      // Sinal + complemento
+      else if (advAmt > 0.01 || compAmt > 0.01) {
+        if (advAmt > 0.01) {
+          reconciledAmount += advAmt;
+          approvedPayments.add({
+            'id': metaAdvanceId ?? '',
+            'payment_type_id': meta['advance_payment_method']?.toString() ?? data['payment_method']?.toString() ?? 'pix',
+            'transaction_amount': advAmt,
+            'date_approved': meta['advance_paid_at']?.toString() ?? data['created_at']?.toString() ?? now.toIso8601String(),
+            'status': 'approved',
+          });
+        }
+        if (compAmt > 0.01) {
+          reconciledAmount += compAmt;
+          approvedPayments.add({
+            'id': metaCompId ?? '',
+            'payment_type_id': meta['completion_payment_method']?.toString() ?? data['payment_method']?.toString() ?? 'pix',
+            'transaction_amount': compAmt,
+            'date_approved': meta['completion_paid_at']?.toString() ?? data['pago_em']?.toString() ?? now.toIso8601String(),
+            'status': 'approved',
+          });
+        }
+      }
+      // ── Nível 3: Fallback — busca por external_reference ──
+      if (reconciledAmount < 0.01 && (hasAppOrigin || isUnpaidWithValue || hasStoredIds)) {
+        final refPayments = await MercadoPagoService.buscarPagamentosPorReferencia(
+          shopId: shopId,
+          externalReference: appointmentId,
+        );
+        if (refPayments != null && refPayments.isNotEmpty) {
+          final newApproved = <Map<String, dynamic>>[];
+          double newTotal = 0.0;
+          for (var p in refPayments) {
+            if (p is Map<String, dynamic> && p['status'] == 'approved') {
+              newApproved.add(p);
+              newTotal += double.tryParse(p['transaction_amount']?.toString() ?? '0') ?? 0.0;
+            }
+          }
+          if (newTotal > 0.01) {
+            reconciledAmount = newTotal;
+            approvedPayments = newApproved;
+            approvedPayments.sort((a, b) => (a['date_approved']?.toString() ?? '').compareTo(b['date_approved']?.toString() ?? ''));
+          }
+        }
+      }
+
+      if (reconciledAmount < 0.01 || (reconciledAmount - currentPaid).abs() <= 0.01) return;
+
+      final novoRestante = (totalPayable - reconciledAmount).clamp(0.0, totalPayable);
+      final isParcial = novoRestante > 0.01;
+      
+      final updates = <String, dynamic>{
+        'paid_amount': reconciledAmount,
+        'valor_pago': reconciledAmount,
+        'remaining_amount': novoRestante,
+        'restante_a_pagar': novoRestante,
+        'payment_status': isParcial ? 'parcial' : 'pago',
+      };
+
+      if (data['status'] != 'cancelado' && data['status'] != 'concluido') {
+        updates['status'] = 'confirmado';
+      }
+
+      // Reconstrói metadata a partir dos approvedPayments
+      if (approvedPayments.isNotEmpty) {
+         final firstP = approvedPayments.first;
+         final firstId = firstP['id']?.toString() ?? '';
+         final firstMethod = firstP['payment_type_id']?.toString() ?? 
+                             meta['full_payment_method']?.toString() ??
+                             meta['advance_payment_method']?.toString() ?? 'pix';
+         final firstAmt = double.tryParse(firstP['transaction_amount']?.toString() ?? '0') ?? 0.0;
+         final firstDate = firstP['date_approved']?.toString() ?? now.toIso8601String();
+         
+         if (approvedPayments.length == 1) {
+            if (isParcial) {
+               meta['advance_payment_id'] = firstId;
+               meta['advance_payment_amount'] = firstAmt;
+               meta['advance_payment_method'] = firstMethod;
+               meta['advance_paid_at'] = firstDate;
+            } else {
+               meta['full_payment_id'] = firstId;
+               meta['full_payment_amount'] = firstAmt;
+               meta['full_payment_method'] = firstMethod;
+               meta['full_paid_at'] = firstDate;
+               updates['payment_id'] = firstId;
+               updates['payment_method'] = firstMethod;
+            }
+         } else {
+            final secondP = approvedPayments[1];
+            final secondId = secondP['id']?.toString() ?? '';
+            final secondMethod = secondP['payment_type_id']?.toString() ?? meta['completion_payment_method']?.toString() ?? 'pix';
+            final secondAmt = double.tryParse(secondP['transaction_amount']?.toString() ?? '0') ?? 0.0;
+            final secondDate = secondP['date_approved']?.toString() ?? now.toIso8601String();
+            
+            meta['advance_payment_id'] = firstId;
+            meta['advance_payment_amount'] = firstAmt;
+            meta['advance_payment_method'] = firstMethod;
+            meta['advance_paid_at'] = firstDate;
+            meta['completion_payment_id'] = secondId;
+            meta['completion_payment_amount'] = secondAmt;
+            meta['completion_payment_method'] = secondMethod;
+            meta['completion_paid_at'] = secondDate;
+            updates['payment_id'] = secondId;
+            updates['payment_method'] = secondMethod;
+         }
+         updates['metadata'] = meta;
+      }
+
+      if (currentPaid <= 0.01 && reconciledAmount > 0.01) {
+        updates['pago_em'] = now.toIso8601String();
+      }
+
+      await Supabase.instance.client
+          .from('appointments')
+          .update(updates)
+          .eq('id', appointmentId);
+          
+      debugPrint('Auto-Sync MP: Corrigido $appointmentId de $currentPaid para $reconciledAmount');
+      
+      if (mounted) {
+        _refreshFromDb();
+      }
+    } catch (e) {
+      debugPrint('Erro na auto-sincronização do Mercado Pago: $e');
     }
   }
 
@@ -164,9 +415,11 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
       // Agendamento diferente: recarrega tudo
       _localDoc = Map<String, dynamic>.from(widget.appointmentDoc);
       setState(() {
+        _clientNote = null;
         _loadData();
       });
       _refreshFromDb();
+      _loadClientNote();
     } else if (!_isEditing) {
       // Mesmo agendamento, atualização externa (ex: modal de edição rápida)
       // Mescla novos campos sem resetar estado de edição
@@ -361,76 +614,6 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     super.dispose();
   }
 
-  // ✨ Emite NFS-e através de um Modal interativo com feedback visual.
-  Future<void> _emitirNfse() async {
-    final shopId = _localDoc['shop_id']?.toString();
-    final appointmentId = _localDoc['id']?.toString();
-    if (shopId == null || appointmentId == null) return;
-
-    // 1. Verificar plano Pro (validação rápida sem travar UI com modal)
-    final features = await PlanFeaturesService.loadFeaturesByShopId(shopId);
-    if (!features.nfseEmission) {
-      _showSnackBar('❌ Emissão de NFS-e disponível apenas no plano Pro.', isError: true);
-      return;
-    }
-
-    // 2. Verificar duplicidade em memória
-    if (_nfseEmitida) {
-      _showSnackBar('⚠️ Nota fiscal nº $_nfseNumero já foi emitida para este agendamento.', isError: false);
-      return;
-    }
-
-    // 2.5. Pedir confirmação ao usuário
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text("Emitir Nota Fiscal"),
-        content: const Text(
-            "Tem certeza que deseja emitir a Nota Fiscal de Serviço (NFS-e) para este agendamento? "
-            "Esta ação não pode ser desfeita e os dados serão enviados à prefeitura."),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text("Cancelar", style: TextStyle(color: Colors.grey)),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.teal,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text("Sim, emitir"),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm != true) return;
-
-    // 3. Abre o modal que fará o processamento
-    final result = await showDialog<Map<String, dynamic>>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => _NfseEmissionModal(
-        appointmentId: appointmentId,
-        shopId: shopId,
-      ),
-    );
-
-    // 4. Atualiza estado local se o modal retornou sucesso
-    if (result != null && result['sucesso'] == true) {
-      if (mounted) {
-        setState(() {
-          _nfseEmitida = true;
-          if (result['numero'] != null) {
-            _nfseNumero = result['numero'];
-          }
-        });
-      }
-    }
-  }
-
 
   Future<void> _updateAppointment() async {
     setState(() => _isLoading = true);
@@ -552,8 +735,8 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
       }
       // --- FIM VALIDAÇÃO AVANÇADA ---
 
-      final double savedPrice = _selectedPrice ??
-          double.tryParse(_priceController.text.replaceAll(',', '.')) ??
+      final double savedPrice = double.tryParse(_priceController.text.replaceAll(',', '.')) ??
+          _selectedPrice ??
           0.0;
 
       // Recalcular desconto se aplicável
@@ -569,6 +752,15 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
       // Obter o valor já pago para calcular o restante a pagar atualizado
       final double paidAmount = double.tryParse(_localDoc['paid_amount']?.toString() ?? '0') ?? 0.0;
       final double remainingAmount = totalWithDiscount - paidAmount;
+
+      String newPaymentStatus = _localDoc['payment_status'] ?? 'pendente';
+      if (remainingAmount <= 0.01 && totalWithDiscount > 0.01) {
+        newPaymentStatus = 'pago'; // Se não há o que pagar (e o total não é de graça), quita.
+      } else if (paidAmount > 0.01 && remainingAmount > 0.01) {
+        newPaymentStatus = 'parcial'; // Se pagou algo, mas não tudo, mantém parcial.
+      } else if (paidAmount <= 0.01 && remainingAmount > 0.01) {
+        newPaymentStatus = 'pendente'; // Se faltam valores e não pagou nada, está pendente.
+      }
 
       final Map<String, dynamic> updateData = {
         'client_id': _selectedClientId,
@@ -586,7 +778,9 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
         'valor_total': savedPrice,
         'total_payable': totalWithDiscount,
         'valor_com_desconto': totalWithDiscount,
+        'discount_amount': currentDiscount,
         'remaining_amount': remainingAmount > 0 ? remainingAmount : 0.0,
+        'payment_status': newPaymentStatus,
         'duration_min': _selectedServiceDuration ?? 30,
         'payment_method': _selectedPaymentMethod,
         'updated_at': DateTime.now().toIso8601String(),
@@ -1055,7 +1249,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
 
   @override
   Widget build(BuildContext context) {
-    // ðŸ›¡ï¸  Ajuste de Padding: Se for embutido, usa menos espaço lateral
+    // 📐 Ajuste de Padding: Se for embutido, usa menos espaço lateral
     final double paddingVal = widget.isEmbedded ? 15 : 20;
 
     final content = _buildBodyContent(paddingVal);
@@ -1117,6 +1311,105 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     );
   }
 
+  // ── Recado opcional do cliente (enviado após o agendamento confirmado) ──
+  Future<void> _loadClientNote() async {
+    final id = widget.appointmentDoc['id']?.toString();
+    if (id == null || id.isEmpty) return;
+    final note = await AppointmentNoteService.getNote(id);
+    if (mounted && widget.appointmentDoc['id']?.toString() == id) {
+      setState(() => _clientNote = note);
+    }
+  }
+
+  Widget _buildClientMessageCard() {
+    final message = (_clientNote?['message'] ?? '').toString();
+    DateTime? sentAt;
+    final raw = (_clientNote?['updated_at'] ?? _clientNote?['created_at'])?.toString();
+    if (raw != null) sentAt = DateTime.tryParse(raw)?.toLocal();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.primaryPurple.withValues(alpha: 0.18)),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primaryPurple.withValues(alpha: 0.05),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: AppColors.primaryPurple.withValues(alpha: 0.10),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.chat_bubble_rounded,
+                    size: 18, color: AppColors.primaryPurple),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Mensagem do cliente',
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14.5,
+                          color: Colors.black87),
+                    ),
+                    if (sentAt != null)
+                      Text(
+                        'Enviada em ${DateFormat('dd/MM/yyyy \'às\' HH:mm').format(sentAt)}',
+                        style: TextStyle(fontSize: 11.5, color: Colors.grey.shade500),
+                      ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: 'Copiar mensagem',
+                visualDensity: VisualDensity.compact,
+                icon: Icon(Icons.copy_rounded, size: 18, color: Colors.grey.shade500),
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: message));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Mensagem copiada')),
+                  );
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8F9FD),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.grey.shade200),
+            ),
+            child: SelectableText(
+              message,
+              style: const TextStyle(
+                  fontSize: 14.5, height: 1.4, color: Colors.black87),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildBodyContent(double hPadding) {
     if (_isLoading) return const Center(child: CircularProgressIndicator());
 
@@ -1134,6 +1427,10 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
           const SizedBox(height: 15),
           _buildFinancialHeroPanel(data),
           const SizedBox(height: 15),
+          if (_clientNote != null) ...[
+            _buildClientMessageCard(),
+            const SizedBox(height: 15),
+          ],
           _buildForm(shopId),
           const SizedBox(height: 15),
           _buildSystemLog(data),
@@ -1341,9 +1638,6 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
 
   // --- HEADER COMPACTO (Focado no Cliente) ---
   Widget _buildCompactHeader(String status) {
-    Color statusColor = status == 'confirmado'
-        ? Colors.green
-        : (status == 'cancelado' ? Colors.red : Colors.orange);
 
     return Container(
       padding: const EdgeInsets.all(12),
@@ -1453,37 +1747,6 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
                             size: 16,
                           ),
                         ),
-                        // ✨ Botão NFS-e — aparece para qualquer agendamento pago (regra PRO aplicada no clique)
-                        Builder(builder: (ctx) {
-                          final pStat = (_localDoc['payment_status'] ?? '').toString().toLowerCase();
-                          final status = (_localDoc['status'] ?? '').toString().toLowerCase();
-                          
-                          double total = double.tryParse(_localDoc['total_payable']?.toString() ?? _localDoc['total_value']?.toString() ?? '0') ?? 0.0;
-                          double pago = double.tryParse(_localDoc['paid_amount']?.toString() ?? _localDoc['paid_value']?.toString() ?? '0') ?? 0.0;
-                          
-                          final isPago = pStat == 'pago' || (pago >= total && total > 0.01) || status == 'concluido';
-                          
-                          if (!isPago) return const SizedBox.shrink();
-
-                          return Padding(
-                            padding: const EdgeInsets.only(left: 6.0),
-                            child: ElevatedButton(
-                                    onPressed: _emitirNfse,
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: _nfseEmitida ? Colors.teal.shade700 : Colors.teal,
-                                      foregroundColor: Colors.white,
-                                      elevation: 0,
-                                      padding: EdgeInsets.zero,
-                                      minimumSize: const Size(36, 36),
-                                      shape: const CircleBorder(),
-                                    ),
-                                    child: Icon(
-                                      _nfseEmitida ? Icons.receipt_long : Icons.receipt_outlined,
-                                      size: 16,
-                                    ),
-                                  ),
-                          );
-                        }),
                       ],
                     ),
                   if (_clientTags.isNotEmpty) ...[
@@ -1515,19 +1778,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
                 ],
               ),
             ),
-            const SizedBox(width: 10),
-            // Tag de Status
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                  color: statusColor.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8)),
-              child: Text(status.toUpperCase(),
-                  style: TextStyle(
-                      color: statusColor,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 10)),
-            ),
+            // Tag de status removida a pedido do usuário
           ],
         ),
     );
@@ -1535,9 +1786,33 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
 
   Widget _buildFinancialHeroPanel(Map<String, dynamic> data) {
     double total = getCalculatedTotal(data);
-    final double pago =
-        double.tryParse(data['paid_amount']?.toString() ?? data['valor_pago']?.toString() ?? "0") ?? 0.0;
-    final double restante = total - pago;
+    
+    // ─── RECONCILIAÇÃO POR METADATA (fonte primária, síncrona, sem API) ────
+    // O metadata é a fonte mais confiável: se o webhook/checkout gravou
+    // full_payment_amount, advance_payment_amount ou completion_payment_amount,
+    // usa esses valores para exibição, independente do paid_amount no DB.
+    final meta = (data['metadata'] as Map<String, dynamic>?) ?? {};
+    final double metaFullAmt = double.tryParse(meta['full_payment_amount']?.toString() ?? '') ?? 0.0;
+    final double metaAdvAmt = double.tryParse(meta['advance_payment_amount']?.toString() ?? '') ?? 0.0;
+    final double metaCompAmt = double.tryParse(meta['completion_payment_amount']?.toString() ?? '') ?? 0.0;
+    final double metaPaid = metaFullAmt + metaAdvAmt + metaCompAmt;
+    
+    final double dbPaid = double.tryParse(data['paid_amount']?.toString() ?? data['valor_pago']?.toString() ?? "0") ?? 0.0;
+    
+    // Prioridade de confiança: MP API > metadata > DB
+    // Se metadata tem amounts (escritos pelo webhook/checkout), confia neles.
+    // Se _mpFetchedPaid foi obtido direto do MP, confia nele acima de tudo.
+    double resolvedPaid = dbPaid;
+    if (metaPaid > 0.01 && (metaPaid - dbPaid).abs() > 0.01) {
+      resolvedPaid = metaPaid;
+    }
+    if (_mpFetchedPaid != null && _mpFetchedPaid! > 0.01 && (_mpFetchedPaid! - resolvedPaid).abs() > 0.01) {
+      resolvedPaid = _mpFetchedPaid!;
+    }
+    
+    final double pago = resolvedPaid;
+    final double restante = (total - pago).clamp(0.0, total);
+    
     String paymentMethod = _selectedPaymentMethod ?? data['payment_method']?.toString() ?? 'Não informado';
     bool hasOnlinePayment = data['metadata'] != null && data['metadata'] is Map && data['metadata']['payment_id'] != null;
     final paymentIdRoot = data['payment_id']?.toString() ?? '';
@@ -1899,17 +2174,70 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
             final summary = getPaymentSummary(data);
             if (summary.events.isEmpty) return const SizedBox.shrink();
 
+            // Separa eventos pagos dos pendentes para numerar corretamente
+            final paidEvents = summary.events.where((e) => !e.isPending).toList();
+            final totalPaidCount = paidEvents.length;
+
             return Padding(
               padding: const EdgeInsets.only(top: 10),
               child: Column(
-                children: summary.events.asMap().entries.map((entry) {
-                  final idx = entry.key;
-                  final ev = entry.value;
+                children: summary.events.map((ev) {
+                  // ── Evento pendente: estilo diferenciado ──────────────────
+                  if (ev.isPending) {
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withValues(alpha: 0.06),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border(
+                          top: BorderSide(color: Colors.orange.withValues(alpha: 0.4), width: 1),
+                          bottom: BorderSide(color: Colors.orange.withValues(alpha: 0.4), width: 1),
+                          left: BorderSide(color: Colors.orange.withValues(alpha: 0.4), width: 1),
+                          right: BorderSide(color: Colors.orange.withValues(alpha: 0.4), width: 1),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(Icons.hourglass_empty, size: 14, color: Colors.orange[700]),
+                              const SizedBox(width: 6),
+                              Text(
+                                'RESTANTE PENDENTE',
+                                style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.orange[700]),
+                              ),
+                            ],
+                          ),
+                          Text(
+                            money(ev.valor),
+                            style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.orange[700]),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+
+                  // ── Evento pago: estilo original com numeração correta ────
+                  final paidIdx = paidEvents.indexOf(ev);
                   final isSinal = ev.label.toLowerCase() == 'sinal';
-                  final color = isSinal ? Colors.orange : Colors.green;
-                  final icon = isSinal ? Icons.money_off : Icons.check_circle;
-                  final prefix = summary.events.length > 1 ? '${idx + 1}º PAGAMENTO: ' : '';
+                  final Color color;
+                  final IconData icon;
+                  if (isSinal) {
+                    color = Colors.orange;
+                    icon = Icons.money_off;
+                  } else if (ev.label.toLowerCase() == 'pagamento total') {
+                    color = Colors.green;
+                    icon = Icons.check_circle;
+                  } else {
+                    color = Colors.green;
+                    icon = Icons.check_circle;
+                  }
+
+                  final prefix = totalPaidCount > 1 ? '${paidIdx + 1}º Pgto: ' : '';
                   final titleText = '$prefix${ev.label}'.toUpperCase();
+                  final metodoText = ev.metodo.isNotEmpty ? ' (${ev.metodo.toUpperCase()})' : '';
 
                   return Container(
                     margin: const EdgeInsets.only(bottom: 4),
@@ -1929,7 +2257,10 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
                             Text(titleText, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: color)),
                           ],
                         ),
-                        Text('${money(ev.valor)} (${ev.metodo.toUpperCase()})', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: color)),
+                        Text(
+                          '${money(ev.valor)}$metodoText',
+                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: color),
+                        ),
                       ],
                     ),
                   );
@@ -1956,61 +2287,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
             );
           }),
 
-          // Botão de verificar pagamento PIX manualmente
-          if (restante > 0.01 && data['payment_id'] != null && data['payment_id'].toString().isNotEmpty && (data['payment_method']?.toString().toLowerCase().contains('pix') ?? false)) ...[
-            const SizedBox(height: 15),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.refresh, size: 16),
-                label: const Text("Verificar Pagamento Pix"),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primaryPurple.withValues(alpha: 0.1),
-                  foregroundColor: AppColors.primaryPurple,
-                  elevation: 0,
-                  shadowColor: Colors.transparent,
-                ),
-                onPressed: () async {
-                  setState(() => _isLoading = true);
-                  try {
-                    final statusPix = await MercadoPagoService.verificarStatusPix(
-                      shopId: data['shop_id'] ?? data['shopId'],
-                      paymentId: data['payment_id'],
-                    );
-                    if (statusPix == 'approved') {
-                      final novoPago = pago + restante;
-                      await Supabase.instance.client
-                          .from('appointments')
-                          .update({
-                        'status': 'confirmado',
-                        'valor_pago': novoPago,
-                        'restante_a_pagar': 0,
-                        'pago_em': DateTime.now().toIso8601String(),
-                      }).eq('id', widget.appointmentDoc['id']);
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Pagamento confirmado e agendamento atualizado!'), backgroundColor: Colors.green),
-                        );
-                        _loadData();
-                      }
-                    } else if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Status atual do pagamento: $statusPix'), backgroundColor: Colors.orange),
-                      );
-                    }
-                  } catch (e) {
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Erro ao verificar pagamento: $e'), backgroundColor: Colors.red),
-                      );
-                    }
-                  } finally {
-                    if (mounted) setState(() => _isLoading = false);
-                  }
-                },
-              ),
-            ),
-          ],
+
           // BOTÕES DE PAGAMENTO
           if (restante > 0.01) ...[
             const SizedBox(height: 15),
@@ -3188,7 +3465,17 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
           onSelected: (Map<String, dynamic> selection) {
             final data = selection;
             setState(() {
-              _selectedClientId = selection['user_id'] ?? selection['id'];
+              final bool isManualRegistered =
+                  selection['user_id'] == null && selection['is_manual_client'] == true;
+              if (isManualRegistered) {
+                // Cliente cadastrado manualmente pelo lojista não tem conta Auth:
+                // nunca gravar o id de shop_clients em appointments.client_id.
+                _selectedClientId = null;
+                final manualPhone = (selection['telefone'] ?? '').toString();
+                if (manualPhone.isNotEmpty) _selectedClientPhone = manualPhone;
+              } else {
+                _selectedClientId = selection['user_id'] ?? selection['id'];
+              }
               _selectedClientName = data['nome'];
             });
           },
@@ -3773,155 +4060,5 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
       } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red)); }
       finally { if (mounted) setState(() => _isLoading = false); }
     });
-  }
-}
-
-// ✨ Modal interativo para emissão de Nota Fiscal
-class _NfseEmissionModal extends StatefulWidget {
-  final String appointmentId;
-  final String shopId;
-
-  const _NfseEmissionModal({
-    required this.appointmentId,
-    required this.shopId,
-  });
-
-  @override
-  State<_NfseEmissionModal> createState() => _NfseEmissionModalState();
-}
-
-class _NfseEmissionModalState extends State<_NfseEmissionModal> {
-  bool _isProcessing = true;
-  bool _isSuccess = false;
-  String _message = "Validando dados...";
-  String? _nfseNumero;
-
-  @override
-  void initState() {
-    super.initState();
-    _startEmissionProcess();
-  }
-
-  Future<void> _startEmissionProcess() async {
-    // Passo 1: Validação
-    final erros = await NfseService().validarDadosParaEmissao(widget.appointmentId, widget.shopId);
-    if (erros.isNotEmpty) {
-      if (mounted) {
-        setState(() {
-          _isProcessing = false;
-          _isSuccess = false;
-          _message = 'Não foi possível emitir a NFS-e:\n\n• ${erros.join('\n• ')}';
-        });
-      }
-      return;
-    }
-
-    if (mounted) {
-      setState(() {
-        _message = "Emitindo Nota Fiscal...";
-      });
-    }
-
-    // Passo 2: Emissão
-    final result = await NfseService().emitirNota(widget.appointmentId);
-    if (mounted) {
-      setState(() {
-        _isProcessing = false;
-        if (result.sucesso) {
-          _isSuccess = true;
-          _message = 'Nota fiscal emitida com sucesso!';
-        } else if (result.erro != null && result.erro!.contains('ja_emitida')) {
-          _isSuccess = true;
-          _message = 'Nota fiscal já havia sido emitida anteriormente para este agendamento.';
-        } else {
-          _isSuccess = false;
-          _message = 'Erro ao emitir NFS-e: ${result.erro ?? 'Tente novamente mais tarde.'}';
-        }
-      });
-
-      if (_isSuccess) {
-        // Tenta recuperar o número para devolver à página
-        _nfseNumero = await NfseService().getNfseNumero(widget.appointmentId);
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      contentPadding: const EdgeInsets.all(24),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          if (_isProcessing)
-            const SizedBox(
-              width: 48,
-              height: 48,
-              child: CircularProgressIndicator(color: Colors.teal, strokeWidth: 3),
-            )
-          else if (_isSuccess)
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.teal.withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.check_circle_outline, color: Colors.teal, size: 40),
-            )
-          else
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.red.withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.error_outline, color: Colors.red, size: 40),
-            ),
-          const SizedBox(height: 20),
-          Text(
-            _isProcessing
-                ? "Aguarde um momento..."
-                : _isSuccess
-                    ? "Sucesso!"
-                    : "Ops! Algo deu errado.",
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            _message,
-            style: TextStyle(
-              fontSize: 14,
-              color: _isProcessing ? Colors.grey[700] : (_isSuccess ? Colors.teal[700] : Colors.red[700]),
-            ),
-            textAlign: TextAlign.center,
-          ),
-          if (!_isProcessing) ...[
-            const SizedBox(height: 24),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () {
-                  if (_isSuccess) {
-                    Navigator.pop(context, {'sucesso': true, 'numero': _nfseNumero});
-                  } else {
-                    Navigator.pop(context, {'sucesso': false});
-                  }
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _isSuccess ? Colors.teal : Colors.grey[800],
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                ),
-                child: const Text("Fechar", style: TextStyle(fontWeight: FontWeight.bold)),
-              ),
-            ),
-          ]
-        ],
-      ),
-    );
   }
 }

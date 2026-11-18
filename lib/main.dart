@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'package:windows_single_instance/windows_single_instance.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
@@ -16,17 +17,20 @@ import 'package:flutter_stripe/flutter_stripe.dart';
 import 'core/constants/api_keys.dart';
 import 'package:app_links/app_links.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'modules/business/business_schedule_page.dart';
 import 'modules/business/business_home_page.dart';
 
 import 'core/services/session_service.dart';
+import 'core/services/splash_config_service.dart';
 import 'core/services/shop_data_cache_service.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'core/widgets/ios_pwa_install_banner.dart';
+import 'core/network/offline_aware_http_client.dart';
+import 'core/navigation/app_navigator.dart';
 
 void main(List<String> args) async {
   try {
-    WidgetsFlutterBinding.ensureInitialized();
+    final widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
+    FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
 
     // Bloqueia logs de debug em produção (evita vazamento de dados via logcat/console)
     if (kReleaseMode) {
@@ -39,22 +43,28 @@ void main(List<String> args) async {
     try {
       await Firebase.initializeApp(
         options: DefaultFirebaseOptions.currentPlatform,
-      ).timeout(const Duration(seconds: 8));
+      ).timeout(Duration(seconds: kDebugMode ? 3 : 8));
       print('=== BOOT STEP 0.5: Firebase Inicializado ===');
     } catch (e) {
       print('=== BOOT STEP 0.5: Firebase falhou — continuando sem Firebase: $e ===');
     }
 
-    // 1. Inicializar Supabase (obrigatório antes de runApp)
+    // 1. Inicializar Supabase (obrigatorio antes de runApp)
     print("=== BOOT STEP 1.1: Iniciando Supabase ===");
-    await Supabase.initialize(
-      url: ApiKeys.supabaseUrl,
-      anonKey: ApiKeys.supabaseAnonKey,
-      authOptions: const FlutterAuthClientOptions(
-        authFlowType: AuthFlowType.pkce,
-      ),
-    );
-    print("=== BOOT STEP 1: Supabase Inicializado ===");
+    try {
+      await Supabase.initialize(
+        url: ApiKeys.supabaseUrl,
+        anonKey: ApiKeys.supabaseAnonKey,
+        // Intercepta gravações (insert/update/delete) sem internet e exibe modal amigável
+        httpClient: OfflineAwareHttpClient(),
+        authOptions: const FlutterAuthClientOptions(
+          authFlowType: AuthFlowType.pkce,
+        ),
+      );
+      print("=== BOOT STEP 1: Supabase Inicializado ===");
+    } catch (e) {
+      print("=== BOOT STEP 1: Supabase falhou — continuando com login offline: $e ===");
+    }
 
     // 1.5 Inicializar Deep Links (OAuth Callback)
     print("=== BOOT STEP 1.5: Configurando Deep Links ===");
@@ -129,6 +139,15 @@ void main(List<String> args) async {
     print("=== BOOT STEP 2: Iniciando SessionService ===");
     await SessionService.init();
     print("=== BOOT STEP 2: SessionService Inicializado ===");
+
+    // 2.1 Splash configuravel pelo admin: le o cache local (ms) e atualiza em
+    // segundo plano. Nunca bloqueia nem derruba o boot.
+    try {
+      await SplashConfigService.instance
+          .warmUp(userTypeFallback: SessionService.getUserType);
+    } catch (e) {
+      print("=== BOOT STEP 2.1: SplashConfig ignorado ($e) ===");
+    }
 
     // 3. Configurar Stripe key (síncrono, não bloqueia)
     try {
@@ -226,28 +245,33 @@ void main(List<String> args) async {
     print("=== BOOT STEP 5: Executando runApp ===");
     runApp(const MarkaAIApp());
 
-    // 5–7. Init pesados rodam em background (não bloqueiam a splash)
-    if (!kIsWeb && defaultTargetPlatform != TargetPlatform.windows) {
-      // Stripe applySettings
-      Stripe.instance.applySettings().catchError((e) {
-        print("=== BOOT BG: Stripe applySettings falhou = $e ===");
-      });
+    // Init pesados adiados para DEPOIS do primeiro frame.
+    // Ads, Stripe, IAP e WebView-dependentes consomem main thread e causam
+    // jank (~42 frames skipped) bem na janela crítica de remoção da splash nativa.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      // FIX CRÍTICO: Garante que a splash nativa (e o bloqueio de first-frame no Web)
+      // seja removido assim que o Flutter renderizar a primeira tela, não importa
+      // se a rota inicial foi o AuthGate, PublicShopPage ou SignUpPage.
+      FlutterNativeSplash.remove();
 
-      // IAP
-      MobileSubscriptionManager.initialize().catchError((e) {
-        print("=== BOOT BG: Mobile IAP falhou = $e ===");
-      });
+      if (!kIsWeb && defaultTargetPlatform != TargetPlatform.windows) {
+        Stripe.instance.applySettings().catchError((e) {
+          print("=== BOOT BG: Stripe applySettings falhou = $e ===");
+        });
 
-      // Mobile Ads
-      MobileAds.instance.initialize().catchError((e) {
-        print("=== BOOT BG: Mobile Ads falhou = $e ===");
-        return InitializationStatus({});
-      });
-    }
+        MobileSubscriptionManager.initialize().catchError((e) {
+          print("=== BOOT BG: Mobile IAP falhou = $e ===");
+        });
 
-    // Cache de dados da loja (não é bloqueante)
-    ShopDataCacheService.init().catchError((e) {
-      print("=== BOOT BG: ShopDataCacheService falhou = $e ===");
+        MobileAds.instance.initialize().catchError((e) {
+          print("=== BOOT BG: Mobile Ads falhou = $e ===");
+          return InitializationStatus({});
+        });
+      }
+
+      ShopDataCacheService.init().catchError((e) {
+        print("=== BOOT BG: ShopDataCacheService falhou = $e ===");
+      });
     });
 
     print("=== BOOT COMPLETO: init background disparado ===");
@@ -260,8 +284,7 @@ void main(List<String> args) async {
 class MarkaAIApp extends StatelessWidget {
   const MarkaAIApp({super.key});
 
-  static final GlobalKey<NavigatorState> navigatorKey =
-      GlobalKey<NavigatorState>();
+  static final GlobalKey<NavigatorState> navigatorKey = appNavigatorKey;
 
   @override
   Widget build(BuildContext context) {

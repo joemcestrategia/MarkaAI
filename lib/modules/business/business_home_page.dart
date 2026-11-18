@@ -14,6 +14,7 @@ import 'package:intl/intl.dart';
 import 'dart:math';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'business_history_page.dart';
+import 'widgets/client_note_badge.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../../core/widgets/splash_loading_widget.dart';
 import 'boost_shop_page.dart';
@@ -45,6 +46,7 @@ import 'business_clients_page.dart';
 import 'rescue_panel/rescue_panel_page.dart';
 // import '../settings/excel_import_page.dart'; // Import removed  recurso 'Importar Dados' descontinuado
 import '../financial/financial_dashboard_page.dart';
+import '../financial/painel_educativo_financeiro_page.dart';
 // import 'financial_wallet_page.dart';
 import 'coupons/manage_coupons_page.dart';
 import '../../core/widgets/supabase_stream_widget.dart';
@@ -57,11 +59,12 @@ import 'price_adjustment_page.dart';
 import '../../pages/privacy_settings_page.dart';
 import 'holidays_page.dart';
 // import '../clients/client_affiliate_page.dart'; // Removido: sistema de afiliados desativado
-import '../fiscal/nfse_dashboard_screen.dart';
+// import '../fiscal/nfse_dashboard_screen.dart'; // Módulo fiscal desativado do front-end
 import '../../features/commissions/commission_management_page.dart';
 import 'products/manage_products_page.dart';
 import 'business_clients_heatmap_page.dart';
 import 'business_refunds_page.dart';
+import 'widgets/business_onboarding_checklist.dart';
 
 class BusinessHomePage extends StatefulWidget {
   final DateTime? initialDate;
@@ -116,6 +119,17 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   int _pendingHolidaysCount = 0;
   String _appVersion = '';
   UpdateInfo? _updateInfo;
+
+  // Estados do Checklist de Onboarding
+  bool _hasProfileData = false;
+  bool _hasProfilePhoto = false;
+  bool _hasSlug = false;
+  bool _hasServices = false;
+  bool _hasProfessionals = false;
+  bool _hasBusinessHours = false;
+  bool _isCheckingOnboarding = true;
+  bool _onboardingDismissed = false;
+  bool get _hasPendingOnboarding => !_isCheckingOnboarding && (!_hasProfileData || !_hasProfilePhoto || !_hasSlug || !_hasServices || !_hasProfessionals || !_hasBusinessHours);
 
   // Cached futures para evitar re-fetch em cada rebuild
   Future<List<Map<String, dynamic>>>? _statsFuture;
@@ -184,6 +198,43 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     _conversationsChannel?.unsubscribe();
     super.dispose();
   }
+
+  Future<void> _checkOnboardingStatus() async {
+    if (shopId == null || shopId!.isEmpty) return;
+    try {
+      final db = sb.Supabase.instance.client;
+      // 1. Dados Básicos (Profile, Logo, Slug)
+      final shopData = await db.from('shops').select('name, category, logo_url, image_url, slug').eq('id', shopId!).maybeSingle();
+      if (shopData != null) {
+        _hasProfileData = shopData['name'] != null && shopData['name'].toString().isNotEmpty && shopData['category'] != null;
+        final hasLogo = shopData['logo_url'] != null && shopData['logo_url'].toString().isNotEmpty;
+        final hasCover = shopData['image_url'] != null && shopData['image_url'].toString().isNotEmpty;
+        _hasProfilePhoto = hasLogo || hasCover;
+        _hasSlug = shopData['slug'] != null && shopData['slug'].toString().isNotEmpty;
+      } else {
+        _hasProfileData = false; _hasProfilePhoto = false; _hasSlug = false;
+      }
+
+      // 2. Serviços
+      final srv = await db.from('services').select('id').eq('shop_id', shopId!).limit(1);
+      _hasServices = srv.isNotEmpty;
+
+      // 3. Profissionais
+      final prof = await db.from('employees').select('id').eq('shop_id', shopId!).eq('is_active', true).limit(1);
+      _hasProfessionals = prof.isNotEmpty; // Se ele mesmo se cadastrou ou cadastrou alguem, dá check
+
+      // 4. Horários dos Profissionais
+      final hrs = await db.from('employees').select('id, work_schedule').eq('shop_id', shopId!).not('work_schedule', 'is', null).limit(1);
+      _hasBusinessHours = hrs.isNotEmpty;
+
+      if (mounted) setState(() => _isCheckingOnboarding = false);
+    } catch (e) {
+      debugPrint("Erro check onboarding: $e");
+      if (mounted) setState(() => _isCheckingOnboarding = false);
+    }
+  }
+
+
 
   void _setupForegroundNotifications() {
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
@@ -308,6 +359,16 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         await SessionService.saveShopId(currentShopId);
       }
 
+      // Persiste o último estado conhecido para uso offline
+      try {
+        final userToCache = Map<String, dynamic>.from(userData);
+        if (currentShopId.isNotEmpty) userToCache['shop_id'] = currentShopId;
+        ShopDataCacheService().saveUser(effectiveUid, userToCache);
+        if (shopData != null && currentShopId.isNotEmpty) {
+          ShopDataCacheService().saveShop(currentShopId, Map<String, dynamic>.from(shopData));
+        }
+      } catch (_) {}
+
       if (mounted) {
         setState(() {
           shopId = currentShopId;
@@ -326,7 +387,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                   _currentFeatures = f;
                   _restrictedIndices = [];
                   if (!_currentFeatures.stockManagement) _restrictedIndices.add(7);
-                  if (!_currentFeatures.financialTab) _restrictedIndices.add(5);
+                   if (!_currentFeatures.financialTab) _restrictedIndices.add(5);
                   if (!_currentFeatures.automaticPriceAdjustment) _restrictedIndices.add(9);
                   _canViewCommissions = _currentFeatures.commissionView;
                   if (!_canViewCommissions) _restrictedIndices.add(13);
@@ -394,13 +455,44 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         } catch (e) {
           debugPrint('❌ Erro síncrono ao inicializar notificações: $e');
         }
+        _checkOnboardingStatus();
       }
     } catch (e) {
       debugPrint('Error loading business data: $e');
-      if (mounted) {
-        setState(() => _isLoading = false);
-        _forceLogout();
+      if (!mounted) return;
+
+      // MODO OFFLINE: restaura o último estado conhecido salvo no dispositivo
+      final cachedShopId = await SessionService.getShopId();
+      if (cachedShopId != null && cachedShopId.isNotEmpty) {
+        debugPrint('BusinessHomePage: Fallback offline usando shopId em cache: $cachedShopId');
+        final authUser = sb.Supabase.instance.client.auth.currentUser;
+        final uid = authUser?.id ?? await SessionService.getUserId();
+        final cachedUser = uid != null ? await ShopDataCacheService().getCachedUser(uid) : null;
+        final cachedShop = await ShopDataCacheService().getShop(cachedShopId);
+
+        if (mounted) {
+          setState(() {
+            shopId = cachedShopId;
+            _restrictedIndices = [];
+            if (cachedUser != null) {
+              userName = cachedUser['name'] ?? userName;
+              final roles = cachedUser['roles'] as List?;
+              _isAdmin = cachedUser['role'] == 'admin' ||
+                  (roles?.contains('admin') ?? false) ||
+                  cachedUser['is_admin_dev'] == true;
+            }
+            userEmail = authUser?.email ?? userEmail;
+            if (cachedShop != null) {
+              _updateFeaturesFromData(cachedShop);
+            }
+            _isLoading = false;
+          });
+        }
+        return;
       }
+
+      setState(() => _isLoading = false);
+      _forceLogout();
     }
   }
 
@@ -525,6 +617,11 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       _restrictedIndices.add(17);
     }
 
+    // Painel Educativo Financeiro (Índice 18)
+    if (!_currentFeatures.financialDashboard) {
+      _restrictedIndices.add(18);
+    }
+
     // Financeiro (Índice 5) — aberto para Plus (básico) e Pro (avançado)
     if (!_currentFeatures.financialTab) {
       _restrictedIndices.add(5);
@@ -551,10 +648,6 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       _restrictedIndices.add(15);
     }
 
-    // Fiscal NFS-e
-    if (!_currentFeatures.nfseEmission) {
-      _restrictedIndices.add(12);
-    }
 
     // Controle de Estornos (Apenas Plus e Pro)
     final bool isPlusOrPro = _currentPlanCode == SubscriptionPlan.plus || 
@@ -722,6 +815,9 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     }
 
     return SupabaseStreamWidget<List<Map<String, dynamic>>>(
+      onRetry: () {
+        if (mounted) setState(() {});
+      },
       initialFuture: shopId != null ? ShopDataCacheService().getShop(shopId!).then((s) => s != null ? [s] : []) : null,
       stream: shopId != null
           ? sb.Supabase.instance.client
@@ -732,6 +828,11 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       builder: (context, snapshotData) {
         if (snapshotData.isNotEmpty) {
           final data = snapshotData.first;
+
+          // Mantém o último estado da loja salvo no dispositivo (uso offline)
+          if (shopId != null) {
+            ShopDataCacheService().saveShop(shopId!, data);
+          }
           
           // Extrair dados da stream de forma síncrona (sem setState durante build)
           // Estes valores são lidos diretamente nos widgets filhos
@@ -804,12 +905,13 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       case 9: return const PriceAdjustmentPage();
       case 10: return const PrivacySettingsPage();
       case 11: return HolidaysPage(shopId: shopId ?? "");
-      case 12: return const NfseDashboardScreen();
+      case 12: return _buildHomeDashboard(isDesktop: isDesktop);
       case 13: return CommissionManagementPage(shopId: shopId ?? "", showAppBar: isDesktop);
       case 14: return ManageProductsPage(shopId: shopId ?? "");
       case 15: return const BusinessClientsHeatmapPage();
       case 16: return BusinessRefundsPage(shopId: shopId ?? "");
       case 17: return const RescuePanelPage();
+      case 18: return PainelEducativoFinanceiro(shopId: shopId ?? "");
       default: return _buildHomeDashboard(isDesktop: isDesktop);
     }
   }
@@ -886,13 +988,21 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 
                 _buildDesktopMenuItem(
                     5,
-                    Icons.account_balance_wallet_rounded,
-                    "Financeiro",
+                    Icons.bar_chart_rounded,
+                    "Relatórios",
                     trailing: !_currentFeatures.financialDashboard
                         ? const Icon(Icons.lock_outline,
                             size: 14, color: Colors.grey)
                         : null),
-                
+
+                _buildDesktopMenuItem(
+                    18,
+                    Icons.trending_up_rounded,
+                    "Gestão Financeira",
+                    trailing: !_currentFeatures.financialDashboard
+                        ? const Icon(Icons.lock, size: 14, color: Colors.grey)
+                        : null),
+
                 _buildDesktopMenuItem(
                     16,
                     Icons.currency_exchange,
@@ -930,11 +1040,6 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                   ),
                 ),
 
-                _buildDesktopMenuItem(
-                    12, Icons.receipt_long_rounded, "Fiscal NFS-e",
-                    trailing: !_currentFeatures.nfseEmission
-                        ? const Icon(Icons.lock, size: 16, color: Colors.grey)
-                        : null),
 
                 _buildDesktopMenuItem(
                     13, 
@@ -1120,7 +1225,17 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       child: ListTile(
         dense: true,
         visualDensity: VisualDensity.compact,
-        leading: Icon(
+        leading: (index == 0 && _hasPendingOnboarding)
+            ? Badge(
+                backgroundColor: Colors.red,
+                smallSize: 8,
+                child: Icon(
+                  icon,
+                  color: isSelected ? AppColors.primaryPurple : Colors.grey[600],
+                  size: 20,
+                ),
+              )
+            : Icon(
           icon,
           color: isSelected ? AppColors.primaryPurple : Colors.grey[600],
           size: 20,
@@ -1286,13 +1401,12 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                         _buildTabletNavIcon(17, Icons.support_agent_rounded, "Resgate"),
                         _buildTabletNavIcon(3, Icons.design_services_rounded, "Serviços"),
                         _buildTabletNavIcon(14, Icons.inventory_2_outlined, "Produtos"),
-                        _buildTabletNavIcon(5, Icons.account_balance_wallet_rounded, "Financeiro"),
+                        _buildTabletNavIcon(5, Icons.bar_chart_rounded, "Relatórios"),
                         _buildTabletNavIcon(16, Icons.currency_exchange, "Estornos"),
                         _buildTabletNavIcon(7, Icons.inventory_2_outlined, "Estoque"),
                         _buildTabletNavIcon(8, Icons.settings, "Config"),
                         _buildTabletNavIcon(11, Icons.beach_access_rounded, "Folgas",
                             badge: _pendingHolidaysCount),
-                        _buildTabletNavIcon(12, Icons.receipt_long_rounded, "NFS-e"),
                         _buildTabletNavIcon(13, Icons.paid_outlined, "Comissões"),
                       ],
                     ),
@@ -1420,7 +1534,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FD),
       drawer: _buildMobileDrawer(),
-      appBar: AppBar(
+      appBar: _selectedIndex == 17 ? null : AppBar(
         backgroundColor: AppColors.primaryPurple,
         elevation: 0,
         centerTitle: false,
@@ -1508,14 +1622,10 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           String requiredPlan = 'Plus';
 
           if (newSelected == 4) label = "Clientes";
-          if (newSelected == 5) label = "Financeiro";
+          if (newSelected == 5) label = "Relatórios";
           if (newSelected == 16) label = "Controle de Estornos";
           if (newSelected == 6) label = "Equipe";
           if (newSelected == 7) label = "Estoque";
-          if (newSelected == 12) {
-            label = "Fiscal NFS-e";
-            requiredPlan = 'Pro';
-          }
           if (newSelected == 13) label = "Comissões";
           
           _showUpgradeDialog(label, requiredPlan: requiredPlan);
@@ -1532,24 +1642,30 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       selectedFontSize: 11,
       unselectedFontSize: 10,
       elevation: 8,
-      items: const [
+      items: [
         BottomNavigationBarItem(
-          icon: Icon(Icons.dashboard, size: 24),
+          icon: _hasPendingOnboarding
+              ? const Badge(
+                  backgroundColor: Colors.red,
+                  smallSize: 8,
+                  child: Icon(Icons.dashboard, size: 24),
+                )
+              : const Icon(Icons.dashboard, size: 24),
           label: "Painel",
         ),
-        BottomNavigationBarItem(
+        const BottomNavigationBarItem(
           icon: Icon(Icons.event, size: 24),
           label: "Agenda",
         ),
-        BottomNavigationBarItem(
+        const BottomNavigationBarItem(
           icon: Icon(Icons.design_services, size: 24),
           label: "Serviços",
         ),
-        BottomNavigationBarItem(
+        const BottomNavigationBarItem(
           icon: Icon(Icons.inventory_2_outlined, size: 24),
           label: "Produtos",
         ),
-        BottomNavigationBarItem(
+        const BottomNavigationBarItem(
           icon: Icon(Icons.settings, size: 24),
           label: "Config",
         ),
@@ -1578,8 +1694,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Image.asset(
-                  'assets/images/logo_white.png',
-                  height: 28,
+                  'assets/images/logo_white_extend.png',
+                  height: 48,
                   fit: BoxFit.contain,
                 ),
                 const SizedBox(height: 8),
@@ -1643,13 +1759,21 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                   index: 7,
                 ),
                 _buildDrawerItem(
-                    icon: Icons.account_balance_wallet,
-                    title: "Financeiro",
+                    icon: Icons.bar_chart_rounded,
+                    title: "Relatórios",
                     index: 5,
                     trailing: !_currentFeatures.financialDashboard
                         ? const Icon(Icons.lock_outline,
                             size: 16, color: Colors.grey)
                         : null),
+                _buildDrawerItem(
+                  icon: Icons.trending_up_rounded,
+                  title: "Gestão Financeira",
+                  index: 18,
+                  trailing: !_currentFeatures.financialDashboard
+                      ? const Icon(Icons.lock, size: 16, color: Colors.grey)
+                      : null,
+                ),
                 _buildDrawerItem(
                   icon: Icons.currency_exchange,
                   title: "Controle de Estornos",
@@ -1682,14 +1806,6 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                         ),
                       )
                     : null,
-                ),
-                _buildDrawerItem(
-                  icon: Icons.receipt_long,
-                  title: "Fiscal NFS-e",
-                  index: 12,
-                  trailing: !_currentFeatures.nfseEmission
-                      ? const Icon(Icons.lock, size: 16, color: Colors.grey)
-                      : null,
                 ),
                 _buildDrawerItem(
                   icon: Icons.paid_outlined,
@@ -2011,12 +2127,8 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
             } else if (_restrictedIndices.contains(index)) {
               String label = "Este recurso";
               String requiredPlan = 'Plus';
-              if (index == 5) label = "Financeiro";
+              if (index == 5) label = "Relatórios";
               if (index == 16) label = "Controle de Estornos";
-              if (index == 12) {
-                label = "Fiscal NFS-e";
-                requiredPlan = 'Pro';
-              }
               if (index == 13) label = "Comissões";
               if (index == 11) {
                 label = "Bloqueio Feriados";
@@ -2047,7 +2159,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
   Future<List<Map<String, dynamic>>> _fetchDashboardStats(int year) async {
     if (shopId == null || shopId!.isEmpty) return [];
-    try {
+    return ShopDataCacheService().fetchListOffline('dash_stats_${shopId}_$year', () async {
       final query = sb.Supabase.instance.client
           .from('shop_monthly_stats')
           .select()
@@ -2056,10 +2168,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           ? await query.order('year').order('month')
           : await query.eq('year', year).order('month');
       return List<Map<String, dynamic>>.from(result);
-    } catch (e) {
-      debugPrint('❌ [DASHBOARD] Erro ao buscar stats: $e');
-      return [];
-    }
+    });
   }
 
   /// Retorna o valor real pós-desconto de um agendamento para cálculos de receita.
@@ -2074,6 +2183,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
     if (totalPayable > 0 && totalPrice > 0 && totalPayable < totalPrice - 0.01) return totalPayable;
     if (valorCDesc > 0 && totalPrice > 0 && valorCDesc < totalPrice - 0.01) return valorCDesc;
+    if (totalPayable > 0 && (totalPrice - totalPayable).abs() < 0.01) return totalPayable;
     if (discountAmt > 0.01 && totalPrice > 0) return totalPrice - discountAmt;
     if (hasBirthday && totalPrice > 0) {
       final pct = double.tryParse(data['birthday_discount_percent']?.toString() ?? '0') ?? 0;
@@ -2095,10 +2205,11 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
   Future<List<Map<String, dynamic>>> _fetchTodayAppointments() async {
     if (shopId == null || shopId!.isEmpty) return [];
-    try {
-      final now = DateTime.now();
-      final start = DateTime(now.year, now.month, now.day);
-      final end = DateTime(now.year, now.month, now.day, 23, 59, 59);
+    final now = DateTime.now();
+    final start = DateTime(now.year, now.month, now.day);
+    final end = DateTime(now.year, now.month, now.day, 23, 59, 59);
+    final dayKey = '${now.year}-${now.month}-${now.day}';
+    return ShopDataCacheService().fetchListOffline('dash_today_${shopId}_$dayKey', () async {
       final result = await sb.Supabase.instance.client
           .from('appointments')
           .select('id, scheduled_at, status, client_name, service_name, total_payable, total_price, total_value, valor_com_desconto, labor_value, discount_amount, birthday_discount_applied, birthday_discount_percent, coupon_applied, coupon_discount_percent')
@@ -2108,16 +2219,14 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           .lte('scheduled_at', end.toIso8601String())
           .order('scheduled_at', ascending: true);
       return List<Map<String, dynamic>>.from(result);
-    } catch (e) {
-      debugPrint('❌ [DASHBOARD] Erro ao buscar agendamentos de hoje: $e');
-      return [];
-    }
+    });
   }
 
   Future<List<Map<String, dynamic>>> _fetchCommissionAppointments(
       DateTime startData, DateTime endData) async {
     if (shopId == null || shopId!.isEmpty) return [];
-    try {
+    final key = 'dash_comm_${shopId}_${startData.toIso8601String()}_${endData.toIso8601String()}';
+    return ShopDataCacheService().fetchListOffline(key, () async {
       final result = await sb.Supabase.instance.client
           .from('appointments')
           .select('professional_id, status, total_payable, total_price, total_value, valor_com_desconto, labor_value, discount_amount, birthday_discount_applied, birthday_discount_percent, coupon_applied, coupon_discount_percent')
@@ -2126,16 +2235,14 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           .gte('scheduled_at', startData.toIso8601String())
           .lte('scheduled_at', endData.toIso8601String());
       return List<Map<String, dynamic>>.from(result);
-    } catch (e) {
-      debugPrint('❌ [DASHBOARD] Erro ao buscar dados de comissão: $e');
-      return [];
-    }
+    });
   }
   
   Future<List<Map<String, dynamic>>> _fetchMonthlyAppointments(
       DateTime startData, DateTime endData) async {
     if (shopId == null || shopId!.isEmpty) return [];
-    try {
+    final key = 'dash_month_${shopId}_${startData.toIso8601String()}_${endData.toIso8601String()}';
+    return ShopDataCacheService().fetchListOffline(key, () async {
       final result = await sb.Supabase.instance.client
           .from('appointments')
           .select('scheduled_at, status, total_payable, total_price, total_value, valor_com_desconto, labor_value, discount_amount, birthday_discount_applied, birthday_discount_percent, coupon_applied, coupon_discount_percent')
@@ -2144,10 +2251,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           .gte('scheduled_at', startData.toIso8601String())
           .lte('scheduled_at', endData.toIso8601String());
       return List<Map<String, dynamic>>.from(result);
-    } catch (e) {
-      debugPrint('❌ [DASHBOARD] Erro ao buscar dados mensais: $e');
-      return [];
-    }
+    });
   }
 
   DateTime _commissionStart() {
@@ -2182,6 +2286,21 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     return DateTime(lastDay.year, lastDay.month, lastDay.day + daysToSat, 23, 59, 59);
   }
 
+  // Alcance da busca de agendamentos usada pelo KPI "Dias Trab.".
+  // Em visão de mês, cobre o mês (semanas cheias). Em visão de ano/todos,
+  // cobre o período inteiro para contabilizar os dias trabalhados corretamente.
+  DateTime _monthlyFetchStart() {
+    if (_selectedYear == -1) return DateTime(2023, 1, 1);
+    if (_selectedMonth > 0) return _weeklyStart();
+    return DateTime(_selectedYear, 1, 1);
+  }
+
+  DateTime _monthlyFetchEnd() {
+    if (_selectedYear == -1) return DateTime(2030, 12, 31, 23, 59, 59);
+    if (_selectedMonth > 0) return _weeklyEnd();
+    return DateTime(_selectedYear, 12, 31, 23, 59, 59);
+  }
+
   void _refreshDashboard() {
     setState(() {
       _statsFuture = null;
@@ -2203,7 +2322,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       _commissionFuture = _fetchCommissionAppointments(
           _commissionStart(), _commissionEnd());
       _monthlyAppointmentsFuture = _fetchMonthlyAppointments(
-          _weeklyStart(), _weeklyEnd());
+          _monthlyFetchStart(), _monthlyFetchEnd());
     } else if (shopIdReady && _lastDashboardMonth != _selectedMonth) {
       _lastDashboardMonth = _selectedMonth;
       if (_canViewCommissions) {
@@ -2211,7 +2330,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           _commissionStart(), _commissionEnd());
       }
       _monthlyAppointmentsFuture = _fetchMonthlyAppointments(
-          _weeklyStart(), _weeklyEnd());
+          _monthlyFetchStart(), _monthlyFetchEnd());
     }
 
     return FutureBuilder<List<Map<String, dynamic>>>(
@@ -2326,8 +2445,28 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
     double ticketMedio =
         totalAtendimentos > 0 ? faturamentoTotal / totalAtendimentos : 0;
 
+    final checklist = (!_onboardingDismissed && !_isCheckingOnboarding && _hasPendingOnboarding) 
+        ? BusinessOnboardingChecklist(
+            hasProfileData: _hasProfileData,
+            hasProfilePhoto: _hasProfilePhoto,
+            hasSlug: _hasSlug,
+            hasServices: _hasServices,
+            hasProfessionals: _hasProfessionals,
+            hasBusinessHours: _hasBusinessHours,
+            onGoToProfile: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StoreProfilePage(highlightData: true))).then((_) => _checkOnboardingStatus()),
+            onGoToPhoto: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StoreProfilePage(highlightPhoto: true))).then((_) => _checkOnboardingStatus()),
+            onGoToSlug: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StoreProfilePage(highlightSlug: true))).then((_) => _checkOnboardingStatus()),
+            onGoToServices: () => setState(() => _selectedIndex = 3),
+            onGoToProfessionals: () => setState(() => _selectedIndex = 6),
+            onGoToHours: () => setState(() => _selectedIndex = 8),
+            onDismiss: () => setState(() => _onboardingDismissed = true),
+          )
+        : const SizedBox.shrink();
+
     if (isDesktop) {
       return _buildDesktopDashboard(
+        checklist: checklist,
+
         isAllYears: isAllYears,
         faturamentoTotal: faturamentoTotal,
         totalAtendimentos: totalAtendimentos,
@@ -2339,9 +2478,12 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         faturamentoProdutos: faturamentoProdutos,
         isRefreshing: isRefreshing,
         monthlyAppointmentsFuture: monthlyAppointmentsFuture,
+      //
       );
     } else {
       return _buildMobileDashboard(
+        checklist: checklist,
+
         isAllYears: isAllYears,
         faturamentoTotal: faturamentoTotal,
         totalAtendimentos: totalAtendimentos,
@@ -2360,6 +2502,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   // ... (RESTANTE DOS WIDGETS DE UI - _buildDesktopDashboard, _buildMobileDashboard, ETC. PERMANECEM IGUAIS PARA NO QUEBRAR O DESIGN)
 
   Widget _buildDesktopDashboard({
+    Widget? checklist,
     required bool isAllYears,
     required double faturamentoTotal,
     required int totalAtendimentos,
@@ -2374,6 +2517,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   }) {
     return Column(
       children: [
+        if (checklist != null) checklist,
         if (isRefreshing)
           const LinearProgressIndicator(
             color: AppColors.primaryPurple,
@@ -2494,6 +2638,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
 
 
   Widget _buildMobileDashboard({
+    Widget? checklist,
     required bool isAllYears,
     required double faturamentoTotal,
     required int totalAtendimentos,
@@ -2518,6 +2663,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (checklist != null) checklist,
             if (isRefreshing)
               const LinearProgressIndicator(
                 color: AppColors.primaryPurple,
@@ -2631,17 +2777,24 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                 builder: (context, snap) {
                   int diasTrabalhados = 0;
                   if (snap.hasData) {
-                    final setDias = <int>{};
-                    final filterY = _selectedYear > 0 ? _selectedYear : DateTime.now().year;
-                    final filterM = _selectedMonth > 0 ? _selectedMonth : DateTime.now().month;
+                    final setDias = <String>{};
                     for (var doc in snap.data!) {
                       final status = (doc['status'] ?? '').toString().toLowerCase();
                       if (status == 'cancelado' || status == 'falta') continue;
                       final dateStr = doc['scheduled_at'] as String?;
                       if (dateStr != null) {
                         final d = DateTime.tryParse(dateStr)?.toLocal();
-                        if (d != null && d.month == filterM && d.year == filterY) {
-                          setDias.add(d.day);
+                        if (d == null) continue;
+                        if (_selectedYear > 0 && _selectedMonth > 0) {
+                          if (d.year == _selectedYear && d.month == _selectedMonth) {
+                            setDias.add('${d.year}-${d.month}-${d.day}');
+                          }
+                        } else if (_selectedYear > 0) {
+                          if (d.year == _selectedYear) {
+                            setDias.add('${d.year}-${d.month}-${d.day}');
+                          }
+                        } else {
+                          setDias.add('${d.year}-${d.month}-${d.day}');
                         }
                       }
                     }
@@ -2676,7 +2829,9 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                         child: _buildKpiCard(
                           title: 'Dias Trab.',
                           value: diasTrabalhados.toString(),
-                          subtitle: 'no mês',
+                          subtitle: (_selectedYear > 0 && _selectedMonth > 0)
+                              ? 'no mês'
+                              : 'no período',
                           icon: Icons.calendar_today_rounded,
                           color: AppColors.gold,
                           isMoney: false,
@@ -2961,9 +3116,21 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(clienteNome,
-                              style: const TextStyle(
-                                  fontSize: 13, fontWeight: FontWeight.w600)),
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(clienteNome,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                        fontSize: 13, fontWeight: FontWeight.w600)),
+                              ),
+                              if (data['id'] != null && shopId != null)
+                                ClientNoteBadge(
+                                  appointmentId: data['id'].toString(),
+                                  shopId: shopId!,
+                                ),
+                            ],
+                          ),
                           if (servico.isNotEmpty)
                             Text(servico,
                                 style: TextStyle(
@@ -3409,12 +3576,15 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                             mainAxisAlignment: MainAxisAlignment.end,
                             children: [
                               if (moneyData[index] > 0)
-                                Text(
-                                  formatVal(moneyData[index]),
-                                  style: const TextStyle(
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.bold,
-                                    color: AppColors.primaryPurple,
+                                ValueListenableBuilder<bool>(
+                                  valueListenable: PrivacyService.instance.isHiddenNotifier,
+                                  builder: (context, isHidden, _) => Text(
+                                    isHidden ? "R\$ *****" : formatVal(moneyData[index]),
+                                    style: const TextStyle(
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.bold,
+                                      color: AppColors.primaryPurple,
+                                    ),
                                   ),
                                 ),
                               const SizedBox(height: 4),
@@ -3481,10 +3651,9 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
   /// Usa appointments para identificar client_ids, depois filtra birth_date.
   Future<List<Map<String, dynamic>>> _fetchBirthdayClients() async {
     if (shopId == null) return [];
-    try {
-      final now = DateTime.now();
-      final mmdd = '${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-
+    final now = DateTime.now();
+    final mmdd = '${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    return ShopDataCacheService().fetchListOffline('dash_bday_${shopId}_$mmdd', () async {
       // Busca clientes distintos desta loja via appointments
       final appts = await sb.Supabase.instance.client
           .from('appointments')
@@ -3499,7 +3668,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           .toSet()
           .toList();
 
-      if (clientIds.isEmpty) return [];
+      if (clientIds.isEmpty) return <Map<String, dynamic>>[];
 
       // Busca perfis desses clientes
       final users = await sb.Supabase.instance.client
@@ -3519,10 +3688,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
           return false;
         }
       }).toList();
-    } catch (e) {
-      debugPrint('[BirthdaysSection] Erro: $e');
-      return [];
-    }
+    });
   }
 
   Widget _buildBirthdaysSection({required bool isDesktop}) {
@@ -3643,7 +3809,7 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         (t) => t.isDefault && t.title == 'Mensagem de Aniversário',
         orElse: () => MessageTemplate(
           shopId: shopId!, 
-          title: '', 
+          title: 'Mensagem de Aniversário', 
           isDefault: true,
           content: 'Olá, [NOME_CLIENTE]! 🎉 Feliz Aniversário! Que seu dia seja muito especial. Um abraço da nossa equipe!',
         )
@@ -3683,9 +3849,13 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
       case 4:
         return "Clientes";
       case 5:
-        return "Financeiro";
+        return "Relatórios";
       case 16:
         return "Controle de Estornos";
+      case 17:
+        return "Painel de Resgate";
+      case 18:
+        return "Gestão Financeira";
       case 6:
         return "Equipe";
       case 7:
@@ -3698,8 +3868,6 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
         return "Privacidade";
       case 11:
         return "Gestão de Folgas";
-      case 12:
-        return "Fiscal NFS-e";
       case 13:
         return "Comissões";
       case 14:
@@ -3845,9 +4013,13 @@ class _BusinessHomePageState extends State<BusinessHomePage> {
                               ),
                           ],
                         ),
-                        Text(fmt.format(valor),
+                        ValueListenableBuilder<bool>(
+                          valueListenable: PrivacyService.instance.isHiddenNotifier,
+                          builder: (context, isHidden, _) => Text(
+                            isHidden ? "R\$ *****" : fmt.format(valor),
                             style: const TextStyle(
                                 fontSize: 11, fontWeight: FontWeight.bold)),
+                        ),
                       ],
                     ),
                     const SizedBox(height: 6),

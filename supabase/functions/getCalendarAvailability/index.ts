@@ -146,7 +146,6 @@ serve(async (req) => {
     )
 
     const { shop_id, service_id, month, professional_id, is_vip: is_vip_req } = await req.json()
-    const is_vip = is_vip_req === true
 
     if (!shop_id || !service_id || !month) {
       return new Response(JSON.stringify({ error: 'Missing parameters' }), {
@@ -155,28 +154,73 @@ serve(async (req) => {
       })
     }
 
-    // 1. Fetch Shop and Service Data
-    const [shopRes, serviceRes] = await Promise.all([
+    // Identificar o usuário autenticado para verificação VIP server-side
+    const { data: authData } = await supabaseClient.auth.getUser()
+    const authUserId = authData?.user?.id ?? null
+
+    // 1. Fetch Shop, Service Data e status VIP do cliente em paralelo
+    const adminClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+    )
+
+    const fetchPromises: Promise<unknown>[] = [
       supabaseClient.from('shops').select('config, configured_holidays, pending_holidays').eq('id', shop_id).single(),
       supabaseClient.from('services').select('duration_min').eq('id', service_id).single(),
-    ])
+    ]
+
+    // Verificação VIP server-side: consulta shop_clients e users em paralelo
+    if (authUserId) {
+      fetchPromises.push(
+        adminClient.from('shop_clients')
+          .select('classification, manual_tags')
+          .eq('shop_id', shop_id)
+          .eq('user_id', authUserId)
+          .maybeSingle()
+      )
+      fetchPromises.push(
+        adminClient.from('users')
+          .select('is_vip')
+          .eq('id', authUserId)
+          .maybeSingle()
+      )
+    }
+
+    const results = await Promise.all(fetchPromises)
+    const shopRes = results[0] as { data: Record<string, unknown>; error: unknown }
+    const serviceRes = results[1] as { data: Record<string, unknown>; error: unknown }
 
     if (shopRes.error || serviceRes.error) {
       throw new Error('Failed to fetch shop or service data')
     }
 
-    const shopConfig = shopRes.data.config || {}
-    const serviceDuration = serviceRes.data.duration_min || 30
-    const preventGaps = shopConfig.evitar_buracos_agenda ?? false
-    const minAdvanceHours = shopConfig.limite_minimo_agendamento_horas ?? 0
-    const intervalMinutes = shopConfig.intervalo_agenda_min ?? 30
-    const autoBlockHolidays = shopConfig.auto_block_holidays ?? false
-    const configuredHolidays = shopRes.data.configured_holidays || {}
-    const pendingHolidays = shopRes.data.pending_holidays || []
+    // Determinar VIP server-side (shop_clients tem prioridade, fallback para users e frontend)
+    let is_vip = is_vip_req === true // fallback: aceita o que o frontend mandou
+    if (authUserId && results.length >= 4) {
+      const shopClientRes = results[2] as { data: Record<string, unknown> | null }
+      const userRes = results[3] as { data: Record<string, unknown> | null }
+
+      const scClassification = ((shopClientRes?.data?.classification as string) ?? '').toLowerCase()
+      const scTags = (shopClientRes?.data?.manual_tags as string[]) ?? []
+      const shopClientVip = scClassification === 'vip' ||
+        scTags.some((t: string) => t.toLowerCase() === 'vip')
+      const userVip = userRes?.data?.is_vip === true
+
+      is_vip = shopClientVip || userVip
+    }
+
+    const shopConfig = (shopRes.data.config || {}) as Record<string, unknown>
+    const serviceDuration = (serviceRes.data.duration_min || 30) as number
+    const preventGaps = (shopConfig.evitar_buracos_agenda ?? false) as boolean
+    const minAdvanceHours = (shopConfig.limite_minimo_agendamento_horas ?? 0) as number
+    const intervalMinutes = (shopConfig.intervalo_agenda_min ?? 30) as number
+    const autoBlockHolidays = (shopConfig.auto_block_holidays ?? false) as boolean
+    const configuredHolidays = (shopRes.data.configured_holidays || {}) as Record<string, unknown>
+    const pendingHolidays = (shopRes.data.pending_holidays || []) as string[]
     
     // Window logic (matching checkAvailability)
-    const windowDays = shopConfig.janela_agendamento_dias || 30
-    const vip_extra_days = is_vip ? (shopConfig.vip_extra_booking_days || 0) : 0
+    const windowDays = (shopConfig.janela_agendamento_dias || 30) as number
+    const vip_extra_days = is_vip ? ((shopConfig.vip_extra_booking_days || 0) as number) : 0
     
     const now = new Date()
     const brazilNow = new Date(now.getTime() - (3 * 60 * 60 * 1000))

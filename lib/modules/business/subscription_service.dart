@@ -121,16 +121,14 @@ class SubscriptionService {
       'customLink': true,
       'maxServicePhotos': 5,
       'advancedScheduling': true,
-      'nfseEmission': true,
+      'nfseEmission': false,
       'features': [
-        'Emissão de Nota Fiscal Eletrônica (NFS-e)',
         'Painel Financeiro Completo (DRE/Caixa)',
         'Gestão de Estoque Completa',
-        'Visitantes e Leads da Loja',
         'Lembrete Automático por WhatsApp',
         'Todas as funções liberadas'
       ],
-      'description': '3 profissionais, NFS-e, estoque, visitantes e WhatsApp. Máximo poder.',
+      'description': '3 profissionais, estoque e WhatsApp. Máximo poder.',
     },
   };
 

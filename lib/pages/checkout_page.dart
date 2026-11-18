@@ -15,7 +15,6 @@ import '../core/services/plan_features_service.dart';
 import '../core/constants/plan_features.dart';
 import '../core/widgets/loading_page.dart';
 import '../modules/clients/my_appointments_page.dart';
-import '../modules/clients/client_home_page.dart';
 import '../core/widgets/intentional_friction_modal.dart';
 import '../core/widgets/coupon_invalid_modal.dart';
 
@@ -67,6 +66,7 @@ class _CheckoutPageState extends State<CheckoutPage>
 
   bool _isLoading = false;
   int _currentStep = 0;
+  bool _isReviewModalOpen = false;
 
   String _selectedPaymentType = 'total';
   String _selectedMethod = 'pix';
@@ -593,31 +593,37 @@ class _CheckoutPageState extends State<CheckoutPage>
       return;
     }
 
+    if (!_paymentConfigLoaded) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text("Aguarde, carregando opções de pagamento...")));
+      return;
+    }
+
     switch (_currentStep) {
       case 0:
-        setState(() => _currentStep = 1);
+        if (_selectedPaymentType == 'local') {
+          await _showConfirmationModal();
+        } else {
+          setState(() => _currentStep = 1);
+        }
         break;
       case 1:
-        // If user explicitly chose "Pagar Pessoalmente", allow proceeding immediately
+        // If user explicitly chose "Pagar Pessoalmente", open review modal directly
         if (_selectedPaymentType == 'local') {
-          setState(() => _currentStep = 2);
+          setState(() => _currentStep = 0);
+          await _showConfirmationModal();
           break;
         }
 
-        // Prevent proceeding if payment configuration still loading for online flows
-        if (!_paymentConfigLoaded) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text("Aguarde, carregando opções de pagamento...")));
-          return;
-        }
         // If no online methods are available, silently fallback to "local" payment.
         if (_selectedPaymentType != 'local' && !aceitaPix && !aceitaCartao) {
           if (aceitaDinheiro) {
             setState(() {
               _selectedPaymentType = 'local';
               _recalculateTotals();
-              _currentStep = 2;
+              _currentStep = 0;
             });
+            await _showConfirmationModal();
           } else {
             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                 content: Text("A loja não possui meios de pagamento ativos.")));
@@ -710,7 +716,10 @@ class _CheckoutPageState extends State<CheckoutPage>
         break;
       case 2:
         setState(() => _currentStep = 3);
-        _showConfirmationModal();
+        await _showConfirmationModal();
+        if (mounted && _currentStep == 3) {
+          setState(() => _currentStep = 2);
+        }
         break;
     }
   }
@@ -739,8 +748,10 @@ class _CheckoutPageState extends State<CheckoutPage>
     if (_currentStep > 0) setState(() => _currentStep--);
   }
 
-  void _showConfirmationModal() {
-    showModalBottomSheet(
+  Future<void> _showConfirmationModal() async {
+    if (mounted) setState(() => _isReviewModalOpen = true);
+    try {
+      await showModalBottomSheet(
       context: context,
       useSafeArea: true,
       isScrollControlled: true,
@@ -1108,7 +1119,10 @@ class _CheckoutPageState extends State<CheckoutPage>
           ),
         ),
       ),
-    );
+      );
+    } finally {
+      if (mounted) setState(() => _isReviewModalOpen = false);
+    }
   }
 
   Future<void> _executeFinalAction() async {
@@ -1507,17 +1521,27 @@ class _CheckoutPageState extends State<CheckoutPage>
   }
 
   Widget _buildStepIndicator() {
-    List<String> stepLabels = ['Valor', 'Método', 'Confirmação', 'Revisão'];
+    final bool isLocalFlow = _selectedPaymentType == 'local';
+    final List<String> stepLabels = isLocalFlow
+        ? ['Valor', 'Revisão']
+        : ['Valor', 'Método', 'Confirmação', 'Revisão'];
+    final int activeStep = isLocalFlow
+        ? (_isReviewModalOpen ? 1 : 0)
+        : (_isReviewModalOpen ? 3 : _currentStep);
+    final int totalSteps = stepLabels.length;
+
     return Container(
       color: Colors.white,
       padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
       child: Column(
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: List.generate(4, (index) {
-              bool isActive = index <= _currentStep;
-              bool isCurrent = index == _currentStep;
+            mainAxisAlignment: isLocalFlow
+                ? MainAxisAlignment.spaceAround
+                : MainAxisAlignment.spaceBetween,
+            children: List.generate(totalSteps, (index) {
+              bool isActive = index <= activeStep;
+              bool isCurrent = index == activeStep;
               return Column(
                 children: [
                   Container(
@@ -1556,7 +1580,7 @@ class _CheckoutPageState extends State<CheckoutPage>
           ClipRRect(
             borderRadius: BorderRadius.circular(10),
             child: LinearProgressIndicator(
-              value: (_currentStep + 1) / 4,
+              value: (activeStep + 1) / totalSteps,
               minHeight: 4,
               backgroundColor: Colors.grey[300],
               valueColor:
@@ -2101,7 +2125,7 @@ class _CheckoutPageState extends State<CheckoutPage>
                       child: CircularProgressIndicator(
                           color: Colors.white, strokeWidth: 2))
                   : Text(
-                      _currentStep == 2 ? "REVISAR" : "PRÓXIMO",
+                      (_currentStep == 2 || (_currentStep == 0 && _selectedPaymentType == 'local')) ? "REVISAR" : "PRÓXIMO",
                       style: const TextStyle(
                           color: Colors.white, fontWeight: FontWeight.bold),
                     ),
@@ -2652,41 +2676,36 @@ class _CheckoutPageState extends State<CheckoutPage>
         try {
           Navigator.pop(context);
         } catch (_) {}
-        if (widget.fromSubdomain) {
-          // Veio de subdomínio: volta para ClientHomePage com aba Agendamentos
-          Navigator.pushAndRemoveUntil(
-            context,
-            MaterialPageRoute(
-                builder: (_) => const ClientHomePage(initialTabIndex: 2)),
-            (_) => false,
-          );
-        } else {
-          final shopD = widget.shopData;
-          final sName = shopD['name']?.toString() ?? '';
-          final addrParts = [
-            shopD['address'],
-            shopD['address_number'] != null
-                ? 'nº ${shopD['address_number']}'
-                : null,
-            shopD['city'],
-          ].where((e) => e != null && e.toString().isNotEmpty).join(', ');
-          Navigator.pushAndRemoveUntil(
-            context,
-            MaterialPageRoute(
-              builder: (c) => BookingSuccessPage(
-                serviceName: svcName,
-                professionalName: profName,
-                date: dateStr,
-                time: timeStr,
-                isPaid: paidFlag,
-                shopName: sName,
-                shopAddress: addrParts,
-                durationMin: duration,
-              ),
+        final shopD = widget.shopData;
+        final sName = shopD['name']?.toString() ?? '';
+        final addrParts = [
+          shopD['address'],
+          shopD['address_number'] != null
+              ? 'nº ${shopD['address_number']}'
+              : null,
+          shopD['city'],
+        ].where((e) => e != null && e.toString().isNotEmpty).join(', ');
+        // Fluxo de subdomínio também mostra a tela de sucesso (com o recado
+        // opcional); de lá o cliente segue para "Meus Agendamentos".
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(
+            builder: (c) => BookingSuccessPage(
+              serviceName: svcName,
+              professionalName: profName,
+              date: dateStr,
+              time: timeStr,
+              isPaid: paidFlag,
+              shopName: sName,
+              shopAddress: addrParts,
+              durationMin: duration,
+              appointmentId: finalAppointmentId,
+              shopId: widget.shopId,
+              goToMyAppointments: widget.fromSubdomain,
             ),
-            (r) => r.isFirst,
-          );
-        }
+          ),
+          (r) => widget.fromSubdomain ? false : r.isFirst,
+        );
       }
     } catch (e) {
       // close loading if present then show error

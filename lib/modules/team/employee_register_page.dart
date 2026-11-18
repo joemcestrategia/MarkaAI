@@ -18,6 +18,7 @@ import 'package:image_cropper/image_cropper.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../backup/calendar_backup_page.dart';
+import 'freelancer_diaries_page.dart';
 
 class EmployeeRegisterPage extends StatefulWidget {
   final Map<String, dynamic>? employeeToEdit;
@@ -36,6 +37,8 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _cargoController = TextEditingController(); // Cargo ou Especialidade
+  final _salaryController = TextEditingController(); // Salário fixo
+  String _employmentType = 'comissionado'; // 'clt', 'pj', 'comissionado'
   double _comissaoValue = 0.0;
 
   // Jornada por dia da semana (1=Seg ... 7=Dom).
@@ -63,6 +66,7 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
   bool _isDeleting = false;
   double _uploadProgress = 0.0;
   String? _currentEmployeeId;
+  bool _includeInFinancialPanel = true;
 
   @override
   void initState() {
@@ -110,6 +114,22 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
       }
     }
 
+    List<String> allServiceIds = [];
+    if (sId != null && sId.isNotEmpty && data == null) {
+      try {
+        final allSrvs = await sb.Supabase.instance.client
+            .from('services')
+            .select('id, is_active, ativo')
+            .eq('shop_id', sId);
+        allServiceIds = (allSrvs as List)
+            .where((s) => (s['is_active'] ?? s['ativo'] ?? true) == true)
+            .map((s) => s['id'].toString())
+            .toList();
+      } catch (e) {
+        debugPrint('[employee_register] failed to load default services: $e');
+      }
+    }
+
     if (mounted) {
       setState(() {
         _shopId = sId;
@@ -126,7 +146,13 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
             if (_comissaoValue < 0) _comissaoValue = 0;
           }
           
+          
           _cargoController.text = data['role'] ?? data['position'] ?? "";
+          _employmentType = data['employment_type'] ?? 'comissionado';
+          if (data['fixed_salary'] != null) {
+            _salaryController.text = (data['fixed_salary'] as num).toStringAsFixed(2).replaceAll('.', ',');
+          }
+
           if (data['services_ids'] != null) {
             _selectedServices = List<String>.from(data['services_ids']);
           }
@@ -135,7 +161,13 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
             _folgas = List<Map<String, dynamic>>.from(data['breaks']);
           }
           
+          if (data['include_in_financial_panel'] != null) {
+            _includeInFinancialPanel = data['include_in_financial_panel'] == true;
+          }
+          
           _currentEmployeeId = data['id'];
+        } else {
+          _selectedServices = allServiceIds;
         }
       });
     }
@@ -785,6 +817,12 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
 
+    if (_selectedServices.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Selecione pelo menos um serviço.'), backgroundColor: Colors.orange));
+      return;
+    }
+
     final scheduleErr = _validateSchedule();
     if (scheduleErr != null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -851,6 +889,9 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
         'shop_id': _shopId,
         'commission_percent': _comissaoValue,
         'role': _cargoController.text.trim(),
+        'employment_type': _employmentType,
+        'fixed_salary': double.tryParse(_salaryController.text.replaceAll(r'R$', '').replaceAll('.', '').replaceAll(',', '.').trim()) ?? 0.0,
+        'include_in_financial_panel': _includeInFinancialPanel,
         'updated_at': DateTime.now().toIso8601String(),
       };
 
@@ -1012,18 +1053,43 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
                 decoration: BoxDecoration(
                   border: Border(bottom: BorderSide(color: AppColors.border.withValues(alpha: 0.5))),
                 ),
-                child: TabBar(
-                  labelColor: AppColors.primaryPurple,
-                  unselectedLabelColor: AppColors.textSecondary,
-                  indicatorColor: AppColors.primaryPurple,
-                  indicatorWeight: 3,
-                  labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                  unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
-                  tabs: const [
-                    Tab(icon: Icon(Icons.person_outline_rounded, size: 20), text: 'Perfil'),
-                    Tab(icon: Icon(Icons.schedule_rounded, size: 20), text: 'Jornada'),
-                    Tab(icon: Icon(Icons.event_busy_rounded, size: 20), text: 'Folgas'),
-                    Tab(icon: Icon(Icons.spa_rounded, size: 20), text: 'Serviços'),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TabBar(
+                        labelColor: AppColors.primaryPurple,
+                        unselectedLabelColor: AppColors.textSecondary,
+                        indicatorColor: AppColors.primaryPurple,
+                        indicatorWeight: 3,
+                        labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                        unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
+                        tabs: const [
+                          Tab(icon: Icon(Icons.person_outline_rounded, size: 20), text: 'Perfil'),
+                          Tab(icon: Icon(Icons.schedule_rounded, size: 20), text: 'Jornada'),
+                          Tab(icon: Icon(Icons.event_busy_rounded, size: 20), text: 'Folgas'),
+                          Tab(icon: Icon(Icons.spa_rounded, size: 20), text: 'Serviços'),
+                        ],
+                      ),
+                    ),
+                    if (_currentEmployeeId != null && _employmentType == 'freelancer')
+                      _TabStyleButton(
+                        icon: Icons.receipt_long_rounded,
+                        label: 'Lançamentos',
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => FreelancerDiariesPage(
+                                employeeId: _currentEmployeeId!,
+                                shopId: _shopId!,
+                                employeeName: _nameController.text.trim().isNotEmpty
+                                    ? _nameController.text.trim()
+                                    : 'Freelancer',
+                              ),
+                            ),
+                          );
+                        },
+                      ),
                   ],
                 ),
               ),
@@ -1169,7 +1235,7 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
                 child: Column(
                   children: [
                     _buildField("Nome Completo", _nameController,
-                        icon: Icons.person_outline, maxLength: 150),
+                        icon: Icons.person_outline, isRequired: true, maxLength: 150),
                     _buildField(
                         "Cargo / Especialidade",
                         _cargoController,
@@ -1179,6 +1245,73 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
               ),
             ],
           ),
+          
+          _sectionTitle("Remuneração e Vínculo"),
+          const SizedBox(height: 8),
+          const Text("Regime de Contratação", style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.textSecondary)),
+          const SizedBox(height: 8),
+           Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              SizedBox(
+                width: (_cardWidth(context, 4)),
+                child: _buildEmploymentTypeCard('clt', 'CLT', Icons.badge),
+              ),
+              SizedBox(
+                width: (_cardWidth(context, 4)),
+                child: _buildEmploymentTypeCard('pj', 'PJ', Icons.business),
+              ),
+              SizedBox(
+                width: (_cardWidth(context, 4)),
+                child: _buildEmploymentTypeCard('comissionado', 'Parceiro', Icons.handshake),
+              ),
+              SizedBox(
+                width: (_cardWidth(context, 4)),
+                child: _buildEmploymentTypeCard('freelancer', 'Freelancer', Icons.work_history),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (_employmentType != 'freelancer') ...[
+            _buildField(
+                "Salário Fixo Mensal (R\$)", 
+                _salaryController, 
+                icon: Icons.attach_money,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true)),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              title: const Text("Lançar salário na DRE?", style: TextStyle(fontSize: 14)),
+              subtitle: const Text("Se ativado, o salário será somado aos custos operacionais do painel financeiro.", style: TextStyle(fontSize: 12)),
+              value: _includeInFinancialPanel,
+              onChanged: (val) => setState(() => _includeInFinancialPanel = val),
+              activeColor: AppColors.primaryPurple,
+              contentPadding: EdgeInsets.zero,
+            ),
+          ] else ...[
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.blue[50],
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.blue[100]!),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline, size: 18, color: Colors.blue[700]),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      "Freelancers não possuem salário fixo. Use a tela de lançamento de diárias para registrar os dias trabalhados e valores.",
+                      style: TextStyle(fontSize: 12, color: Colors.blueGrey),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+
           _sectionTitle("Comissão"),
           Container(
             padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
@@ -1383,6 +1516,40 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
     );
   }
 
+  double _cardWidth(BuildContext context, int cardsPerRow) {
+    final availableWidth = MediaQuery.of(context).size.width - 48 - ((cardsPerRow - 1) * 8);
+    return availableWidth / cardsPerRow;
+  }
+
+  Widget _buildEmploymentTypeCard(String value, String title, IconData icon) {
+    final isSelected = _employmentType == value;
+    return GestureDetector(
+      onTap: () => setState(() => _employmentType = value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.primaryPurple.withValues(alpha: 0.1) : Colors.grey[50],
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isSelected ? AppColors.primaryPurple : Colors.grey.shade300,
+            width: isSelected ? 1.5 : 1,
+          ),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, size: 24, color: isSelected ? AppColors.primaryPurple : Colors.grey),
+            const SizedBox(height: 4),
+            Text(title, style: TextStyle(
+              fontSize: 12, 
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              color: isSelected ? AppColors.primaryPurple : Colors.grey[700]
+            )),
+          ],
+        ),
+      ),
+    );
+  }
+
   // ─── Aba: Serviços ─────────────────────────────────────────────────────────
 
   Widget _buildServicesTab() {
@@ -1433,6 +1600,7 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
   Widget _buildField(String label, TextEditingController controller,
       {IconData? icon,
       TextInputType? keyboardType,
+      bool isRequired = false,
       String? Function(String?)? validator,
       List<MaskTextInputFormatter>? inputFormatters,
       int? maxLength}) {
@@ -1448,8 +1616,8 @@ class _EmployeeRegisterPageState extends State<EmployeeRegisterPage> {
             final result = validator(v);
             if (result != null) return result;
           }
-          if (v == null || v.isEmpty) return "Campo obrigatório";
-          if (maxLength != null && v.length > maxLength!) return "Máximo $maxLength caracteres";
+          if (isRequired && (v == null || v.isEmpty)) return "Campo obrigatório";
+          if (maxLength != null && v != null && v.length > maxLength!) return "Máximo $maxLength caracteres";
           return null;
         },
         decoration: InputDecoration(
@@ -1980,4 +2148,95 @@ class _DaySched {
     required this.breakStart,
     required this.breakEnd,
   });
+}
+
+class _TabStyleButton extends StatefulWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const _TabStyleButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  State<_TabStyleButton> createState() => _TabStyleButtonState();
+}
+
+class _TabStyleButtonState extends State<_TabStyleButton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _colorAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 200),
+      vsync: this,
+    );
+    _colorAnim = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _handleTap() {
+    _controller.forward().then((_) => _controller.reverse());
+    widget.onTap();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _colorAnim,
+      builder: (context, _) {
+        final selected = _colorAnim.value > 0;
+        final color = ColorTween(
+          begin: AppColors.textSecondary,
+          end: AppColors.primaryPurple,
+        ).lerp(_colorAnim.value)!;
+        final fontWeight = selected ? FontWeight.bold : FontWeight.w500;
+
+        return GestureDetector(
+          onTap: _handleTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(
+                  color: selected
+                      ? AppColors.primaryPurple
+                      : Colors.transparent,
+                  width: 3,
+                ),
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(widget.icon, size: 20, color: color),
+                const SizedBox(height: 4),
+                Text(
+                  widget.label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: fontWeight,
+                    color: color,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
 }

@@ -6,7 +6,6 @@ import '../../core/theme/app_colors.dart';
 import '../../core/services/mercado_pago_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/services/plan_features_service.dart';
-import '../fiscal/nfse_service.dart';
 import '../../utils/payment_summary.dart';
 
 class TransactionDetailsPage extends StatefulWidget {
@@ -29,10 +28,6 @@ class _TransactionDetailsPageState extends State<TransactionDetailsPage> {
   Map<String, dynamic>? _legacyTransaction;
   bool _isManualCompletion = false;
   String? _errorMsg;
-  bool _isItabirito = false;
-  bool _isPro = false;
-  bool _nfseEmitida = false;
-  String? _nfseNumero;
 
   final _fmt = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
 
@@ -160,29 +155,6 @@ class _TransactionDetailsPageState extends State<TransactionDetailsPage> {
 
     setState(() => _isLoading = true);
     try {
-      final shopId = widget.appointmentData['shop_id'].toString();
-      final features = await PlanFeaturesService.loadFeaturesByShopId(shopId);
-      final shop = await Supabase.instance.client
-          .from('shops')
-          .select('cidade')
-          .eq('id', shopId)
-          .maybeSingle();
-      final city = (shop?['cidade']?.toString() ?? '').toLowerCase();
-      final numero = await NfseService()
-          .getNfseNumero(widget.appointmentData['id'].toString());
-
-      if (mounted) {
-        setState(() {
-          _isPro = features.nfseEmission;
-          _isItabirito = city.contains('itabirito');
-          _nfseNumero = numero;
-          _nfseEmitida = numero != null;
-        });
-      }
-    } catch (e) {
-      debugPrint('Erro NFSe check: $e');
-    }
-    try {
       final double finalAmount = _resolveDisplayTotal(widget.appointmentData);
 
       if (advancePaymentId != null && advancePaymentId.isNotEmpty) {
@@ -308,76 +280,6 @@ class _TransactionDetailsPageState extends State<TransactionDetailsPage> {
       setState(() => _errorMsg = "Erro ao conectar com a operadora: ");
     } finally {
       setState(() => _isLoading = false);
-    }
-  }
-
-  // ✨ Emite NFS-e através de um Modal interativo com feedback visual.
-  Future<void> _emitirNfse() async {
-    final shopId = widget.appointmentData['shop_id']?.toString();
-    final appointmentId = widget.appointmentData['id']?.toString();
-    if (shopId == null || appointmentId == null) return;
-
-    // 1. Verificar plano Pro (validação rápida sem travar UI com modal)
-    final features = await PlanFeaturesService.loadFeaturesByShopId(shopId);
-    if (!features.nfseEmission) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('❌ Emissão de NFS-e disponível apenas no plano Pro.'), backgroundColor: Colors.red));
-      return;
-    }
-
-    // 2. Verificar duplicidade em memória
-    if (_nfseEmitida) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('⚠️ Nota fiscal nº $_nfseNumero já foi emitida para este agendamento.'), backgroundColor: Colors.green));
-      return;
-    }
-
-    // 2.5. Pedir confirmação ao usuário
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text("Emitir Nota Fiscal"),
-        content: const Text(
-            "Tem certeza que deseja emitir a Nota Fiscal de Serviço (NFS-e) para este agendamento? "
-            "Esta ação não pode ser desfeita e os dados serão enviados à prefeitura."),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text("Cancelar", style: TextStyle(color: Colors.grey)),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.teal,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text("Sim, emitir"),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm != true) return;
-
-    // 3. Abre o modal que fará o processamento
-    final result = await showDialog<Map<String, dynamic>>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => _NfseEmissionModal(
-        appointmentId: appointmentId,
-        shopId: shopId,
-      ),
-    );
-
-    // 4. Atualiza estado local se o modal retornou sucesso
-    if (result != null && result['sucesso'] == true) {
-      if (mounted) {
-        setState(() {
-          _nfseEmitida = true;
-          if (result['numero'] != null) {
-            _nfseNumero = result['numero'];
-          }
-        });
-      }
     }
   }
 
@@ -746,35 +648,6 @@ class _TransactionDetailsPageState extends State<TransactionDetailsPage> {
 
                 const SizedBox(height: 16),
 
-                // ✨ Botão NFS-e
-                if (_isPro &&
-                    _isItabirito &&
-                    _fullTransaction != null &&
-                    (_fullTransaction?['status'] == 'approved' ||
-                        _fullTransaction?['status'] == 'accredited'))
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 16.0),
-                    child: ElevatedButton.icon(
-                      onPressed: _emitirNfse,
-                      icon: Icon(
-                          _nfseEmitida
-                              ? Icons.receipt_long
-                              : Icons.receipt_outlined,
-                          size: 20),
-                      label:
-                          Text(_nfseEmitida ? "NFS-e Emitida" : "Emitir NFS-e"),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor:
-                            _nfseEmitida ? Colors.teal.shade700 : Colors.teal,
-                        foregroundColor: Colors.white,
-                        minimumSize: const Size(double.infinity, 50),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                        elevation: 0,
-                      ),
-                    ),
-                  ),
-
                 // ── INFORMAÇÕES DA TRANSAÇÃO ──
                 if (_legacyTransaction != null)
                   _buildInfoCard("INFORMAÇÕES DA TRANSAÇÃO", [
@@ -1037,167 +910,6 @@ class _TransactionDetailsPageState extends State<TransactionDetailsPage> {
               ],
             ),
           ),
-        ],
-      ),
-    );
-  }
-}
-
-class _NfseEmissionModal extends StatefulWidget {
-  final String appointmentId;
-  final String shopId;
-
-  const _NfseEmissionModal({
-    required this.appointmentId,
-    required this.shopId,
-  });
-
-  @override
-  State<_NfseEmissionModal> createState() => _NfseEmissionModalState();
-}
-
-class _NfseEmissionModalState extends State<_NfseEmissionModal> {
-  bool _isProcessing = true;
-  bool _isSuccess = false;
-  String _message = "Validando dados...";
-  String? _nfseNumero;
-
-  @override
-  void initState() {
-    super.initState();
-    _startEmissionProcess();
-  }
-
-  Future<void> _startEmissionProcess() async {
-    // Passo 1: Validação
-    final erros = await NfseService()
-        .validarDadosParaEmissao(widget.appointmentId, widget.shopId);
-    if (erros.isNotEmpty) {
-      if (mounted) {
-        setState(() {
-          _isProcessing = false;
-          _isSuccess = false;
-          _message =
-              'Não foi possível emitir a NFS-e:\n\n• ${erros.join('\n• ')}';
-        });
-      }
-      return;
-    }
-
-    if (mounted) {
-      setState(() {
-        _message = "Emitindo Nota Fiscal...";
-      });
-    }
-
-    // Passo 2: Emissão
-    final result = await NfseService().emitirNota(widget.appointmentId);
-    if (mounted) {
-      setState(() {
-        _isProcessing = false;
-        if (result.sucesso) {
-          _isSuccess = true;
-          _message = 'Nota fiscal emitida com sucesso!';
-        } else if (result.erro != null && result.erro!.contains('ja_emitida')) {
-          _isSuccess = true;
-          _message =
-              'Nota fiscal já havia sido emitida anteriormente para este agendamento.';
-        } else {
-          _isSuccess = false;
-          _message =
-              'Erro ao emitir NFS-e: ${result.erro ?? 'Tente novamente mais tarde.'}';
-        }
-      });
-
-      if (_isSuccess) {
-        // Tenta recuperar o número para devolver à página
-        _nfseNumero = await NfseService().getNfseNumero(widget.appointmentId);
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      contentPadding: const EdgeInsets.all(24),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          if (_isProcessing)
-            const SizedBox(
-              width: 48,
-              height: 48,
-              child:
-                  CircularProgressIndicator(color: Colors.teal, strokeWidth: 3),
-            )
-          else if (_isSuccess)
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.teal.withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.check_circle_outline,
-                  color: Colors.teal, size: 40),
-            )
-          else
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.red.withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-              ),
-              child:
-                  const Icon(Icons.error_outline, color: Colors.red, size: 40),
-            ),
-          const SizedBox(height: 20),
-          Text(
-            _isProcessing
-                ? "Aguarde um momento..."
-                : _isSuccess
-                    ? "Sucesso!"
-                    : "Ops! Algo deu errado.",
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            _message,
-            style: TextStyle(
-              fontSize: 14,
-              color: _isProcessing
-                  ? Colors.grey[700]
-                  : (_isSuccess ? Colors.teal[700] : Colors.red[700]),
-            ),
-            textAlign: TextAlign.center,
-          ),
-          if (!_isProcessing) ...[
-            const SizedBox(height: 24),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () {
-                  if (_isSuccess) {
-                    Navigator.pop(
-                        context, {'sucesso': true, 'numero': _nfseNumero});
-                  } else {
-                    Navigator.pop(context, {'sucesso': false});
-                  }
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _isSuccess ? Colors.teal : Colors.grey[800],
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10)),
-                ),
-                child: const Text("Fechar",
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-              ),
-            ),
-          ]
         ],
       ),
     );

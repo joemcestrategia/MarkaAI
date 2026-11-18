@@ -61,6 +61,9 @@ class PlanFeatures {
   final bool requireCpfForBooking;
   final bool rescuePanel;
 
+  // Clientes (Pro) - Ficha de Anamnese (visivel so para a loja)
+  final bool clientAnamnesis;
+
   const PlanFeatures({
     required this.onlineBooking,
     required this.canDisableOnlineBooking,
@@ -95,6 +98,7 @@ class PlanFeatures {
     required this.nfseEmission,
     required this.requireCpfForBooking,
     required this.rescuePanel,
+    this.clientAnamnesis = false,
   });
 }
 
@@ -235,8 +239,9 @@ const Map<PlanKey, PlanFeatures> planFeaturesConfig = {
     customLink: true,
     visitorsAnalytics: true,
     clientHeatmap: true,
-    nfseEmission: true,
+    nfseEmission: false,
     requireCpfForBooking: true,
     rescuePanel: true,
+    clientAnamnesis: true,
   ),
 };

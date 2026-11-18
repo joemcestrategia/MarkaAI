@@ -3,6 +3,7 @@ import 'dart:async';
 
 import '../constants/plan_features.dart';
 import '../../modules/business/subscription_service.dart' show SubscriptionPlan;
+import '../../modules/business/trial_service.dart';
 
 class PlanFeaturesService {
   static Stream<Map<String, dynamic>?>? _sharedRawStream;
@@ -130,14 +131,21 @@ class PlanFeaturesService {
     SubscriptionPlan currentPlan = SubscriptionPlan.free;
     bool isTrial = false;
 
-    // 1. Verifica Novo Sistema de Trial (trial data lives in subscription JSONB)
     final trialActive = shopData['trial_active'] == true;
     final sub = shopData['subscription'] as Map<String, dynamic>?;
+
+    // 1. Verifica Novo Sistema de Trial (trial data lives in subscription JSONB)
     if (trialActive && sub != null) {
       final end = _toDateTime(sub['trial_end_date'] ?? sub['trial_ends_at']);
       if (end != null && end.isAfter(DateTime.now())) {
-        currentPlan = parseSubscriptionPlan(_planKeyFromSub(sub));
+        currentPlan = parseSubscriptionPlan(_planKeyFromSub(sub) ?? shopData['plan_id']);
         isTrial = true;
+      } else if (end != null && !end.isAfter(DateTime.now())) {
+        // Trial expirou comprovadamente! Dispara desativação em background no banco
+        final shopId = shopData['id']?.toString();
+        if (shopId != null) {
+          unawaited(TrialService.checkAndDeactivateExpiredTrial(shopId));
+        }
       }
     }
 
@@ -147,28 +155,40 @@ class PlanFeaturesService {
         final status = sub['status']?.toString().toLowerCase();
         if (status == 'active' || status == 'trial') {
           if (status == 'trial') {
-            final end = _toDateTime(sub['trial_ends_at']);
+            final end = _toDateTime(sub['trial_ends_at'] ?? sub['trial_end_date']);
             if (end != null && end.isAfter(DateTime.now())) {
-              currentPlan = SubscriptionPlan.pro;
+              currentPlan = parseSubscriptionPlan(_planKeyFromSub(sub) ?? 'pro');
               isTrial = true;
             }
           } else {
             currentPlan = parseSubscriptionPlan(_planKeyFromSub(sub));
           }
         } else if (status == 'canceled' || status == 'cancelled') {
-          final accessUntil = _toDateTime(sub['access_until']);
+          final accessUntil = _toDateTime(sub['access_until'] ?? shopData['current_period_end']);
           if (accessUntil != null && accessUntil.isAfter(DateTime.now())) {
             currentPlan = parseSubscriptionPlan(_planKeyFromSub(sub));
           }
         }
+        // Nota: Status 'past_due' e 'unpaid' são inadimplência: deliberadamente retornam Free
       }
     }
 
     // 3. Fallback final: plan_id na raiz (FK to plans table)
+    // SÓ entra se não for um trial expirado nem assinatura inadimplente/cancelada
     if (currentPlan == SubscriptionPlan.free) {
-      final rootPlanId = shopData['plan_id'] as String?;
-      if (rootPlanId != null && rootPlanId != 'free') {
-        currentPlan = parseSubscriptionPlan(rootPlanId);
+      final status = sub?['status']?.toString().toLowerCase();
+      final hasExpiredTrialDate = trialActive && () {
+        final end = _toDateTime(sub?['trial_end_date'] ?? sub?['trial_ends_at']);
+        return end != null && !end.isAfter(DateTime.now());
+      }();
+      final isDelinquentOrPastDue = status == 'past_due' || status == 'unpaid';
+      final isOrphanTrialFree = trialActive && (sub?['plan_id'] == 'free' || sub?['plano'] == 'free');
+
+      if (!hasExpiredTrialDate && !isDelinquentOrPastDue && !isOrphanTrialFree) {
+        final rootPlanId = shopData['plan_id'] as String?;
+        if (rootPlanId != null && rootPlanId != 'free') {
+          currentPlan = parseSubscriptionPlan(rootPlanId);
+        }
       }
     }
 

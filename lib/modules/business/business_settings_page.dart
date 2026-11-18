@@ -16,7 +16,6 @@ import 'subscription_plans_page.dart';
 import 'subscription_service.dart';
 import '../../core/widgets/plan_gate_widget.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
-import '../fiscal/nfse_service.dart';
 
 class BusinessSettingsPage extends StatefulWidget {
   const BusinessSettingsPage({super.key});
@@ -84,9 +83,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   // Mercado Pago connection status
   bool _isMpConnected = false;
 
-  // NFS-e automática
-  bool _nfseAutoEmit = false;
-  NfseConfig? _nfseConfig;
 
   // Google Business
   Map<String, dynamic>? _googleBusiness;
@@ -218,14 +214,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             }
           }
 
-          // Busca configuração fiscal da loja (se houver)
-          final nfseCfg = await NfseService().getConfig(shopId!);
-          if (mounted) {
-            setState(() {
-              _nfseConfig = nfseCfg;
-              _nfseAutoEmit = nfseCfg?.emitirAutomaticoCartao ?? false;
-            });
-          }
 
           // Salvar snapshot do estado original após carregamento
           _savedSnapshot = _buildCurrentSnapshot();
@@ -315,12 +303,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         }
       }).eq('id', shopId!);
 
-      // Salva configuração fiscal
-      if (_nfseConfig != null) {
-        await NfseService().saveConfig(
-          _nfseConfig!.copyWith(emitirAutomaticoCartao: _nfseAutoEmit),
-        );
-      }
 
       if (mounted) {
         // Invalida o cache de configuração da loja
@@ -738,37 +720,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 ),
               ),
 
-              // --- NOTA FISCAL (NFS-e) ---
-              const SizedBox(height: 24),
-              _buildSectionHeader('Nota Fiscal (NFS-e)', Icons.receipt_long_outlined),
-              _buildSettingCard([
-                Opacity(
-                  opacity: _currentFeatures.nfseEmission ? 1.0 : 0.6,
-                  child: _buildSwitchTile(
-                    'Emissão Automática por Cartão/Pix',
-                    'Emite NFS-e automaticamente quando pagamento online é confirmado pelo banco.',
-                    _currentFeatures.nfseEmission ? _nfseAutoEmit : false,
-                    _currentFeatures.nfseEmission
-                        ? (v) => setState(() => _nfseAutoEmit = v)
-                        : (v) => _showUpgradeDialog('Emissão Automática de NFS-e', PlanKey.pro),
-                    trailing: !_currentFeatures.nfseEmission ? _buildPremiumBadge() : null,
-                  ),
-                ),
-                if (_nfseConfig == null && _currentFeatures.nfseEmission) ...[
-                  const Divider(height: 1),
-                  Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Row(children: const [
-                      Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 16),
-                      SizedBox(width: 8),
-                      Expanded(child: Text(
-                        'Configure o módulo fiscal (NFS-e) no painel antes de ativar a emissão automática.',
-                        style: TextStyle(fontSize: 12, color: Colors.orange),
-                      )),
-                    ]),
-                  ),
-                ],
-              ]),
 
               // --- INTEGRAÇÕES — sempre ativa ---
               _buildSectionHeader("Integrações", Icons.link),

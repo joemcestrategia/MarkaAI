@@ -655,10 +655,6 @@ class _FinancialDashboardPageState extends State<FinancialDashboardPage> {
         }
 
         if (empId != null) {
-          final apptId = data['id'].toString();
-          final com = apptCommissionsFromView[apptId] ?? 0.0;
-          // Se tiver comissão na view, ela já foi somada no totalCommission acima
-          // Aqui garantimos que usamos a comissão correta para o profissional específico se necessário
           final nome = empNames[empId] ?? data['professional_name'] ?? 'Profissional';
           profissionaisMap[nome.toString()] = (profissionaisMap[nome.toString()] ?? 0) + value;
         }

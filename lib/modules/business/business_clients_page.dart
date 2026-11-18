@@ -42,6 +42,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
   // --- CACHE LOCAL ---
   Map<String, dynamic>? _cachedData;
   int _lastStreamFingerprint = 0;
+  final Set<String> _deletedClientIds = {};
 
   // --- STREAM CACHE ---
   Stream<Map<String, dynamic>>? _combinedStream;
@@ -57,28 +58,37 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
   Future<void> _loadShopId() async {
     final id = await SessionService.getShopId();
     if (mounted) {
+      shopId = id;
       if (id != null) {
         final cached = await ClientCacheService.getCachedClients(id);
-        final stale = await ClientCacheService.isCacheStale(id);
         if (cached != null) {
           _cachedData = cached;
-          _lastStreamFingerprint = (cached['fingerprint']?.toString() ?? '').hashCode;
+          _lastStreamFingerprint =
+              int.tryParse(cached['fingerprint']?.toString() ?? '') ??
+              (cached['fingerprint']?.toString() ?? '').hashCode;
         }
-        if (cached == null) {
-          _fetchInitialData(id);
-        } else if (stale) {
-          _fetchInitialData(id);
-        }
+        // Sempre revalida em segundo plano (stale-while-revalidate) para exibir
+        // imediatamente clientes novos/editados/excluídos sem ficar preso no cache de 2h.
+        _fetchInitialData(id);
         _combinedStream = _buildCombinedStream();
       }
       setState(() {
-        shopId = id;
         if (id == null) {
           debugPrint("Erro: ShopID é null ao carregar BusinessClientsScreen");
         }
         _isLoadingId = false;
       });
     }
+  }
+
+  void _collectPhoneVariants(String? raw, Set<String> target) {
+    if (raw == null || raw.trim().isEmpty) return;
+    final clean = _normalizePhone(raw);
+    if (clean.isNotEmpty) target.add(clean);
+    final digits = raw.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.isNotEmpty) target.add(digits);
+    final trimmed = raw.trim();
+    if (trimmed.isNotEmpty) target.add(trimmed);
   }
 
   Future<void> _fetchInitialData(String shopId) async {
@@ -115,10 +125,12 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
           allUserIds.add(id);
         } else {
           final phone = (a['client_phone'] ?? a['client_telefone'])?.toString();
-          if (phone != null && phone.isNotEmpty) {
-            final cleanPhone = _normalizePhone(phone);
-            if (cleanPhone.isNotEmpty) manualPhones.add(cleanPhone);
-          }
+          _collectPhoneVariants(phone, manualPhones);
+        }
+      }
+      for (final sc in shopClients) {
+        if (sc['is_manual_client'] == true) {
+          _collectPhoneVariants(sc['telefone']?.toString(), manualPhones);
         }
       }
       for (final f in favorites) {
@@ -190,6 +202,12 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
       if (mounted) {
         final processed = _processClientsData(
             appointments, usersMap, shopConfig, favorites, shopClients, shopViews, aliasRows);
+        _lastStreamFingerprint = Object.hash(
+          ClientCacheService.computeAppointmentsFingerprint(appointments),
+          ClientCacheService.computeShopClientsFingerprint(shopClients),
+          _deletedClientIds.length,
+        );
+        processed['fingerprint'] = _lastStreamFingerprint.toString();
         ClientCacheService.saveClients(shopId, processed);
         setState(() {
           _cachedData = processed;
@@ -198,6 +216,42 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
       }
     } catch (e) {
       debugPrint('_fetchInitialData error: $e');
+    }
+  }
+
+  void _handleClientDeletedOptimistically(String clientId) {
+    setState(() {
+      _deletedClientIds.add(clientId);
+      final list = (_cachedData?['clients'] as List?)?.cast<Map<String, dynamic>>();
+      list?.removeWhere((c) => c['id'] == clientId);
+      if (_selectedClientId == clientId) {
+        _selectedClientData = null;
+        _selectedClientId = null;
+      }
+    });
+    if (shopId != null) {
+      if (_cachedData != null) {
+        ClientCacheService.saveClients(shopId!, _cachedData!);
+      }
+      _fetchInitialData(shopId!);
+    }
+  }
+
+  void _handleClientEditedOptimistically(
+      String clientId, Map<String, dynamic> updatedClient) {
+    setState(() {
+      final list = (_cachedData?['clients'] as List?)?.cast<Map<String, dynamic>>();
+      if (list != null) {
+        for (final c in list) {
+          if (c['id'] == clientId) {
+            c.addAll(updatedClient);
+            break;
+          }
+        }
+      }
+    });
+    if (shopId != null) {
+      _fetchInitialData(shopId!);
     }
   }
 
@@ -219,6 +273,8 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
               clientData: client,
               clientId: id,
               onClose: () => Navigator.pop(context),
+              onDeleted: () => _handleClientDeletedOptimistically(id),
+              onChanged: () => _handleClientEditedOptimistically(id, client),
             ),
           ),
         ),
@@ -278,12 +334,15 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
 
     if (isMobile) {
       // ?? MODO CELULAR: Navega para nova tela
-      Navigator.push(
+      await Navigator.push(
         context,
         MaterialPageRoute(
           builder: (context) => const ClientRegisterPage(isBusinessAdding: true),
         ),
       );
+      if (shopId != null) {
+        _fetchInitialData(shopId!);
+      }
     } else {
       // ?? MODO PC: Abre na lateral
       setState(() {
@@ -403,6 +462,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
     ).asyncMap((data) async {
       final appointments = data['appointments'] as List;
       final favorites = data['favorites'] as List;
+      final shopClients = (data['shopClients'] as List?) ?? [];
       final shopViews = data['shopViews'] as List;
 
       // Busca todos os usuários: de agendamentos (ID ou Telefone), favoritos e visualizações
@@ -415,10 +475,12 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
           allUserIds.add(id);
         } else {
           final phone = (a['client_phone'] ?? a['client_telefone'])?.toString();
-          if (phone != null && phone.isNotEmpty) {
-            final cleanPhone = _normalizePhone(phone);
-            if (cleanPhone.isNotEmpty) manualPhones.add(cleanPhone);
-          }
+          _collectPhoneVariants(phone, manualPhones);
+        }
+      }
+      for (final sc in shopClients) {
+        if (sc['is_manual_client'] == true) {
+          _collectPhoneVariants(sc['telefone']?.toString(), manualPhones);
         }
       }
       for (final f in favorites) {
@@ -532,13 +594,25 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                   child: Container(
                     color: Colors.white,
                     child: _showAddPanel
-                        ? const ClientRegisterPage(isBusinessAdding: true)
+                        ? ClientRegisterPage(
+                            isBusinessAdding: true,
+                            onSuccess: () {
+                              _closePanel();
+                              if (shopId != null) {
+                                _fetchInitialData(shopId!);
+                              }
+                            },
+                          )
                         : (_selectedClientData != null
                             ? ClientDetailsPage(
                                 key: ValueKey(_selectedClientId),
                                 clientData: _selectedClientData!,
                                 clientId: _selectedClientId!,
                                 onClose: _closePanel,
+                                onDeleted: () => _handleClientDeletedOptimistically(
+                                    _selectedClientId!),
+                                onChanged: () => _handleClientEditedOptimistically(
+                                    _selectedClientId!, _selectedClientData!),
                               )
                             : _buildPlaceholder()),
                   ),
@@ -620,7 +694,15 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                         final appointmentDocs = (data['appointments'] as List?)?.cast<Map<String, dynamic>>() ?? [];
 
                         // Só re-processa se os appointments mudaram (fingerprint diferente)
-                        final newFingerprint = ClientCacheService.computeAppointmentsFingerprint(appointmentDocs);
+                        // Inclui shop_clients: cadastro/edição/exclusão de cliente manual
+                        // também precisa atualizar a lista em tempo real.
+                        final shopClientsForFingerprint =
+                            (data['shopClients'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+                        final newFingerprint = Object.hash(
+                          ClientCacheService.computeAppointmentsFingerprint(appointmentDocs),
+                          ClientCacheService.computeShopClientsFingerprint(shopClientsForFingerprint),
+                          _deletedClientIds.length,
+                        );
                         if (newFingerprint != _lastStreamFingerprint) {
                           _lastStreamFingerprint = newFingerprint;
 
@@ -661,6 +743,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                     List<Map<String, dynamic>> targetList = (displayData['clients'] as List?)?.cast<Map<String, dynamic>>() ?? [];
 
                     final filteredDocs = targetList.where((client) {
+                      if (_deletedClientIds.contains(client['id'])) return false;
                       final nome = (client['name'] ?? "").toString();
                       final normalizedNome =
                           StringUtils.removeDiacritics(nome).toLowerCase();
@@ -668,6 +751,9 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                           StringUtils.removeDiacritics(_searchText).toLowerCase();
                       if (!normalizedNome.contains(normalizedSearch)) return false;
                       if (_selectedTagFilter == "Todos") return true;
+                      if (_selectedTagFilter == "Manual") {
+                        return client['is_manual_client'] == true;
+                      }
                       final List tags = client['tags'] as List? ?? [];
                       final String? classification =
                           client['classification']?.toString().toLowerCase();
@@ -691,8 +777,11 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                           _selectedTagFilter.toLowerCase());
                     }).toList();
 
-                    // Remove quem nunca agendou (leads puros)
-                    filteredDocs.removeWhere((c) => (c['agendamentosCount'] ?? 0) == 0);
+                    // Remove quem nunca agendou (leads puros),
+                    // EXCETO clientes cadastrados manualmente pela dona do salão
+                    filteredDocs.removeWhere((c) =>
+                        (c['agendamentosCount'] ?? 0) == 0 &&
+                        (c['is_manual_client'] != true));
                     // Ordena alfabeticamente
                     filteredDocs.sort((a, b) {
                       final na = (a['name'] ?? '').toString().toLowerCase();
@@ -714,6 +803,13 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
                             child: Row(
                               children: [
                                 _buildTagFilterChip("Todos"),
+                                const SizedBox(width: 8),
+                                _buildTagFilterChip(
+                                  "Manual",
+                                  icon: Icons.person_pin_outlined,
+                                  color: Colors.orange,
+                                  forceUnlocked: true,
+                                ),
                                 const SizedBox(width: 8),
                                 _buildTagFilterChip("VIP",
                                     icon: Icons.star,
@@ -782,22 +878,8 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
     Map<String, Map<String, dynamic>> allClientsMap = {};
     final now = DateTime.now();
 
-    // 1. Processar dados de 'shop_clients' (Tags manuais e customizações)
-    final Map<String, Map<String, dynamic>> manualDataMap = {
-      for (var doc in shopClients)
-        (doc['user_id'] ?? doc['userId'] ?? '').toString(): doc
-    };
-
-    // 2. Processar Favoritos
-    final Set<String> favoritedIds = favorites.map((f) => (f['user_id'] ?? f['userId'] ?? '').toString()).where((id) => id.isNotEmpty).toSet();
-
-    // 3. Processar Visualizações (Leads)
-    final Map<String, DateTime> visitorIds = {
-      for (var v in shopViews)
-        (v['user_id'] ?? v['userId'] ?? '').toString(): DateTime.tryParse(v['viewed_at']?.toString() ?? "") ?? now
-    };
-
-    // 4. Mapas reversos: telefone/email normalizado → usuário (para vincular agendamentos manuais)
+    // Mapas reversos: telefone/email normalizado → usuário (para vincular agendamentos manuais
+    // e detectar duplicidade em cadastros manuais)
     final Map<String, Map<String, dynamic>> phoneToUser = {};
     final Map<String, Map<String, dynamic>> emailToUser = {};
     for (var entry in usersMap.entries) {
@@ -812,8 +894,143 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
       }
     }
 
-    // 5. Processar Agendamentos (Principal fonte de clientes)
+    // 1. Processar dados de 'shop_clients' (Tags manuais e customizações)
+    //    Separa clientes manuais (is_manual_client=true, user_id=null) dos
+    //    registros de metadados de clientes Auth (user_id preenchido).
+    final Map<String, Map<String, dynamic>> manualDataMap = {
+      for (var doc in shopClients)
+        if ((doc['user_id'] ?? doc['userId']) != null)
+          (doc['user_id'] ?? doc['userId']).toString(): doc
+    };
+
+    // 1b. Clientes puramente manuais (sem conta Auth): entram direto no allClientsMap
+    //     já no início, para que possam ser vistos mesmo sem agendamentos.
+    // Índice telefone normalizado → cadastros manuais, usado para unificar os
+    // agendamentos (gravados só com nome/telefone) ao cadastro manual do cliente.
+    final Map<String, List<MapEntry<String, String>>> manualScByPhone = {};
+    final Set<String> deletedManualSignatures = {};
+    final Map<String, Map<String, dynamic>> duplicatedAuthToManual = {};
+    for (var doc in shopClients) {
+      if (doc['is_manual_client'] != true) continue;
+      if ((doc['user_id'] ?? doc['userId']) != null) continue; // já tem conta, tratado depois
+
+      final scId = doc['id']?.toString() ?? '';
+      if (scId.isEmpty) continue;
+
+      final nome = doc['nome']?.toString() ?? 'Cliente Manual';
+      final telefone = doc['telefone']?.toString() ?? 'Não informado';
+      final normManualPhone = _normalizePhone(telefone);
+      final normManualName = StringUtils.removeDiacritics(nome).trim().toLowerCase();
+
+      final key = 'manual_sc_$scId';
+      if ((doc['notes'] ?? '').toString() == '[DELETED_MANUAL]' ||
+          doc['is_deleted'] == true ||
+          _deletedClientIds.contains(key)) {
+        if (normManualPhone.isNotEmpty && normManualName.isNotEmpty) {
+          deletedManualSignatures.add('$normManualPhone|$normManualName');
+        }
+        continue;
+      }
+
+      if (normManualPhone.isNotEmpty) {
+        manualScByPhone
+            .putIfAbsent(normManualPhone, () => [])
+            .add(MapEntry(key, normManualName));
+      }
+
+      final matchedAuth = normManualPhone.isNotEmpty ? phoneToUser[normManualPhone] : null;
+      final bool hasAuthAccount = (doc['has_auth_account'] == true) || (matchedAuth != null);
+      final matchedAuthId = matchedAuth?['id']?.toString() ?? '';
+      if (matchedAuthId.isNotEmpty) {
+        duplicatedAuthToManual[matchedAuthId] = {
+          'manualKey': key,
+          'manualName': nome,
+          'manualPhone': telefone,
+          'manualScId': scId,
+        };
+      }
+
+      allClientsMap[key] = {
+        'id': key,
+        'name': nome,
+        'nome': nome,
+        'telefone': telefone,
+        'foto': doc['photo_url'] ?? '',
+        'origem': 'manual',
+        'is_manual_client': true,
+        'has_auth_account': hasAuthAccount,
+        'matched_auth_name': matchedAuth?['name']?.toString() ?? '',
+        'matched_auth_id': matchedAuthId,
+        'matched_auth_email': matchedAuth?['email']?.toString() ?? '',
+        'matched_auth_cpf': matchedAuth?['cpf']?.toString() ?? '',
+        'matched_auth_city': matchedAuth?['city']?.toString() ?? '',
+        'totalGasto': 0.0,
+        'visitas': 0,
+        'agendamentosCount': 0,
+        'primeiraVisita': now,
+        'ultimaVisita': DateTime(2000),
+        'email': doc['email'] ?? '',
+        'city': doc['city'] ?? '',
+        'state': doc['state'] ?? '',
+        'street': doc['street'] ?? '',
+        'neighborhood': doc['neighborhood'] ?? '',
+        'number': doc['number'] ?? '',
+        'zipCode': doc['zip_code'] ?? '',
+        'cpf': doc['cpf'] ?? '',
+        'birthDate': doc['birth_date'] ?? '',
+        'isFavorite': false,
+        'isVisitor': false,
+        'lastViewed': null,
+        'tags': List<String>.from(doc['manual_tags'] ?? []),
+        'classification': doc['classification'] ?? '',
+        'servicos': <String, int>{},
+        'visitasDates': <DateTime>[],
+        'ultimoServico': '',
+        'ids': [],
+      };
+    }
+
+    // 2. Processar Favoritos
+    final Set<String> favoritedIds = favorites.map((f) => (f['user_id'] ?? f['userId'] ?? '').toString()).where((id) => id.isNotEmpty).toSet();
+
+    // 3. Processar Visualizações (Leads)
+    final Map<String, DateTime> visitorIds = {
+      for (var v in shopViews)
+        (v['user_id'] ?? v['userId'] ?? '').toString(): DateTime.tryParse(v['viewed_at']?.toString() ?? "") ?? now
+    };
+
+    // 4.5. Desduplicar Agendamentos (Setmore pode criar múltiplas linhas para o mesmo evento)
+    final Map<String, Map<String, dynamic>> dedupedAppointmentsMap = {};
     for (var doc in appointments) {
+      String? userId = (doc['client_id'] ?? doc['clientId'])?.toString();
+      String rawClientPhone = (doc['client_phone'] ?? '').toString();
+      String normalizedPhone = _normalizePhone(rawClientPhone);
+      String clientEmail = (doc['client_email'] ?? '').toString().trim().toLowerCase();
+      
+      String clientKey = userId != null && userId.isNotEmpty ? userId : (normalizedPhone.isNotEmpty ? normalizedPhone : clientEmail);
+      
+      // Normalizar data para garantir que formatos de string diferentes da mesma data agrupem juntos
+      DateTime scheduledDate = DateTime.tryParse((doc['scheduled_at'] ?? "").toString()) ?? DateTime(1970);
+      String scheduledAtKey = scheduledDate.millisecondsSinceEpoch.toString();
+      if (scheduledDate.year == 1970) scheduledAtKey = doc['id'].toString(); // fallback para ID se não tiver data válida
+
+      final String eventKey = "$clientKey-$scheduledAtKey";
+
+      final currentDoc = dedupedAppointmentsMap[eventKey];
+      if (currentDoc == null) {
+        dedupedAppointmentsMap[eventKey] = doc;
+      } else {
+        DateTime currentCreated = DateTime.tryParse(currentDoc['created_at']?.toString() ?? "") ?? DateTime(2000);
+        DateTime docCreated = DateTime.tryParse(doc['created_at']?.toString() ?? "") ?? DateTime(2000);
+        if (docCreated.isAfter(currentCreated)) {
+          dedupedAppointmentsMap[eventKey] = doc;
+        }
+      }
+    }
+    final List<Map<String, dynamic>> dedupedAppointments = dedupedAppointmentsMap.values.toList();
+
+    // 5. Processar Agendamentos (Principal fonte de clientes)
+    for (var doc in dedupedAppointments) {
       final data = doc;
       String? userId = (data['client_id'] ?? data['clientId'])?.toString();
       String rawClientPhone = (data['client_phone'] ?? '').toString();
@@ -854,15 +1071,41 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
         key = "doc_${doc['id']}";
       }
 
+      // Cliente manual excluído pelo lojista que tinha agendamentos passados:
+      // não recriar o cliente na lista (os agendamentos ficam preservados no financeiro).
+      if (matchedUser == null && wasManual && normalizedPhone.isNotEmpty) {
+        final apptName = StringUtils.removeDiacritics(nome).trim().toLowerCase();
+        if (deletedManualSignatures.contains('$normalizedPhone|$apptName')) {
+          continue;
+        }
+      }
+
+      // Agendamento manual (sem conta Auth) de um cliente cadastrado manualmente
+      // (mesmo telefone e mesmo nome): unifica no cadastro manual, sem duplicar.
+      if (matchedUser == null && wasManual && normalizedPhone.isNotEmpty) {
+        final manualCandidates = manualScByPhone[normalizedPhone];
+        if (manualCandidates != null) {
+          final apptName = StringUtils.removeDiacritics(nome).trim().toLowerCase();
+          for (final candidate in manualCandidates) {
+            if (candidate.value == apptName) {
+              key = candidate.key;
+              break;
+            }
+          }
+        }
+      }
+
       double valor = double.tryParse(
-              (data['total_price'] ?? data['price'] ?? data['valor_total'] ?? "0")
+              (data['total_price'] ?? data['total_value'] ?? "0")
                   .toString()) ??
           0.0;
       DateTime dataVisita = DateTime.tryParse(data['scheduled_at'] ?? "") ?? now;
       String status = (data['status'] ?? "").toString().toLowerCase();
       final bool pastAppointment = dataVisita.isBefore(now);
-      final bool countsAsVisit = pastAppointment &&
-          (status == 'concluido' || status == 'pago' || status == 'confirmado');
+      
+      // Definições unificadas de visitas reais (MarkaAI + Setmore)
+      final bool isRealVisitStatus = status == 'concluido' || status == 'pago' || status == 'finalizado' || status == 'confirmado' || status == 'confirmed_by_client';
+      final bool countsAsVisit = pastAppointment && isRealVisitStatus;
 
       if (!allClientsMap.containsKey(key)) {
         final String effectiveUserId = matchedUser?['id']?.toString() ?? userId ?? '';
@@ -874,7 +1117,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
           'telefone': telefone.isNotEmpty ? telefone : "Não informado",
           'foto': photoUrl,
           'origem': wasManual ? 'manual' : 'app',
-          'totalGasto': (status == 'concluido' || status == 'pago') ? valor : 0.0,
+          'totalGasto': countsAsVisit ? valor : 0.0,
           'visitas': countsAsVisit ? 1 : 0,
           'agendamentosCount': 1,
           'primeiraVisita': pastAppointment ? dataVisita : DateTime(2100),
@@ -903,7 +1146,7 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
           if (sName.isNotEmpty) allClientsMap[key]!['servicos'][sName] = 1;
         }
       } else {
-        if (status == 'concluido' || status == 'pago') {
+        if (countsAsVisit) {
           allClientsMap[key]!['totalGasto'] += valor;
         }
         if (countsAsVisit) {
@@ -931,8 +1174,12 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
       }
     }
 
-    // 5. Adicionar Favoritos e Visitantes que ainda não agendaram
-    final Set<String> allUserIds = {...favoritedIds, ...visitorIds.keys};
+    // 5. Adicionar Favoritos, Visitantes e Contas do Sistema com par manual duplicado
+    final Set<String> allUserIds = {
+      ...favoritedIds,
+      ...visitorIds.keys,
+      ...duplicatedAuthToManual.keys,
+    };
     for (var uid in allUserIds) {
       if (!allClientsMap.containsKey(uid) && uid.isNotEmpty) {
         // Para esses leads, tentamos pegar o nome básico se disponível no usersMap
@@ -968,6 +1215,13 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
           'visitasDates': <DateTime>[],
         };
       }
+      final dupInfo = duplicatedAuthToManual[uid];
+      if (dupInfo != null && allClientsMap.containsKey(uid)) {
+        allClientsMap[uid]!['has_manual_duplicate'] = true;
+        allClientsMap[uid]!['manual_duplicate_name'] = dupInfo['manualName'] ?? '';
+        allClientsMap[uid]!['manual_duplicate_phone'] = dupInfo['manualPhone'] ?? '';
+        allClientsMap[uid]!['manual_duplicate_sc_id'] = dupInfo['manualScId'] ?? '';
+      }
     }
 
     // 6. Aplicar Tags Manuais (antes do merge, baseado no user_id de shop_clients)
@@ -994,6 +1248,9 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
     final List<String> keysToRemove = [];
 
     for (var entry in allClientsMap.entries) {
+      // Clientes manuais não devem ser unificados (podem ser dependentes com mesmo telefone)
+      if (entry.value['origem'] == 'manual') continue;
+
       final phone = _normalizePhone((entry.value['telefone'] ?? '').toString());
       if (phone.isEmpty) continue;
 
@@ -1031,6 +1288,8 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
       final List<String> emailKeysToRemove = [];
 
       for (var entry in allClientsMap.entries) {
+        if (entry.value['origem'] == 'manual') continue;
+
         final email = (entry.value['email'] ?? '').toString().trim().toLowerCase();
         if (email.isEmpty) continue;
 
@@ -1145,10 +1404,12 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
     };
   }
 
-  Widget _buildTagFilterChip(String label, {IconData? icon, Color? color, bool isLocked = false}) {
+  Widget _buildTagFilterChip(String label, {IconData? icon, Color? color, bool isLocked = false, bool forceUnlocked = false}) {
     // Garantir que a flag de lock use o plano em cache caso o stream atrase
     final features = PlanFeaturesService.cachedFeatures ?? _currentFeatures;
-    final actuallyLocked = isLocked || (!features.clientFilter && !features.clientClassification);
+    final actuallyLocked = forceUnlocked
+        ? false
+        : (isLocked || (!features.clientFilter && !features.clientClassification));
     
     bool isSelected = _selectedTagFilter == label;
     Color activeColor = color ?? AppColors.primaryPurple;
@@ -1282,9 +1543,16 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
             Wrap(
               spacing: 4,
               runSpacing: 4,
-              children: (client['tags'] as List? ?? [])
-                  .map<Widget>((tag) => _buildTagFromType(tag.toString()))
-                  .toList(),
+              children: [
+                if (client['is_manual_client'] == true &&
+                    client['has_auth_account'] == true)
+                  _buildTag("DUPLICADO", Colors.deepOrange, Icons.compare_arrows)
+                else if (client['is_manual_client'] == true &&
+                    _selectedTagFilter != "Manual")
+                  _buildTag("MANUAL", Colors.orange.shade800, Icons.edit_note),
+                ...(client['tags'] as List? ?? [])
+                    .map<Widget>((tag) => _buildTagFromType(tag.toString())),
+              ],
             )
           ],
         ),
@@ -1425,6 +1693,16 @@ class _BusinessClientsScreenState extends State<BusinessClientsScreen> {
     final sIdx = priority.indexOf(sClass);
     if (sIdx >= 0 && (pIdx < 0 || sIdx < pIdx)) {
       primary['classification'] = sClass;
+    }
+
+    if (secondary['has_manual_duplicate'] == true) {
+      primary['has_manual_duplicate'] = true;
+      primary['manual_duplicate_name'] =
+          secondary['manual_duplicate_name'] ?? primary['manual_duplicate_name'];
+      primary['manual_duplicate_phone'] =
+          secondary['manual_duplicate_phone'] ?? primary['manual_duplicate_phone'];
+      primary['manual_duplicate_sc_id'] =
+          secondary['manual_duplicate_sc_id'] ?? primary['manual_duplicate_sc_id'];
     }
 
     return primary;

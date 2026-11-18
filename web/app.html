@@ -32,13 +32,12 @@
 </head>
 
 <body>
-  <!-- Splash screen: Anti-Gravidade Minimalista -->
+  <!-- Splash screen: Premium -->
   <style>
     #splash {
       position: fixed;
       inset: 0;
-      /* Gradiente radial combinando as duas identidades Roxas */
-      background: radial-gradient(circle at center, #6A1B9A 0%, #2D264B 100%);
+      background: radial-gradient(circle at 50% 43%, #8B25C6 0%, #4A1081 45%, #16072B 100%);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -46,62 +45,152 @@
       z-index: 9999;
     }
 
-    #splash .logo {
-      width: 140px;
-      height: 140px;
-      object-fit: cover;
-      margin-bottom: 32px;
+    /* Orbit ring */
+    #splash .orbit-ring {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 320px;
+      height: 320px;
+      margin-left: -160px;
+      margin-top: -160px;
       border-radius: 50%;
-      /* Flutuação leve e anti-gravidade */
-      animation: float 2s ease-in-out infinite alternate;
+      border: 1.2px solid rgba(255, 255, 255, 0.05);
+      animation: spin 28s linear infinite;
+      pointer-events: none;
+    }
+
+    #splash .orbit-ring::before {
+      content: '';
+      position: absolute;
+      top: 16%;
+      left: 16%;
+      width: 68%;
+      height: 68%;
+      border-radius: 50%;
+      border: 0.8px solid rgba(255, 255, 255, 0.035);
+    }
+
+    #splash .orbit-ring::after {
+      content: '';
+      position: absolute;
+      top: 29%;
+      left: 29%;
+      width: 42%;
+      height: 42%;
+      border-radius: 50%;
+      border: 1.2px dashed rgba(255, 255, 255, 0.045);
+      border-spacing: 20%;
+    }
+
+    /* Gold dots on the inner dashed ring */
+    #splash .orbit-dots {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 134px;
+      height: 134px;
+      margin-left: -67px;
+      margin-top: -67px;
+      animation: spin 28s linear infinite;
+      pointer-events: none;
+    }
+
+    #splash .orbit-dot {
+      position: absolute;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: rgba(255, 215, 0, 0.12);
+      top: -3px;
+      left: 50%;
+      margin-left: -3px;
+      transform-origin: 3px 70px;
+    }
+
+    @keyframes spin {
+      from { transform: translate(-50%, -50%) rotate(0deg); }
+      to { transform: translate(-50%, -50%) rotate(360deg); }
+    }
+
+    #splash .brand-wrapper {
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      z-index: 1;
+    }
+
+    #splash .logo {
+      width: 112px;
+      height: 112px;
+      object-fit: cover;
+      border-radius: 28px;
+      border: 1.5px solid rgba(255, 255, 255, 0.08);
+      box-shadow:
+        0 0 72px -12px rgba(255, 255, 255, 0.12),
+        0 0 96px -20px rgba(255, 215, 0, 0.06);
+      animation: float 2.6s ease-in-out infinite alternate;
     }
 
     @keyframes float {
-      0% { transform: translateY(-8px); }
-      100% { transform: translateY(8px); }
+      0% { transform: translateY(-10px); }
+      100% { transform: translateY(10px); }
     }
 
-    /* Texto MarkaAI */
-    .brand-text {
-      color: white;
-      font-size: 36px;
-      font-weight: 700;
-      letter-spacing: -0.5px;
-      text-shadow: 0 2px 6px rgba(0, 0, 0, 0.26);
+    #splash .wordmark {
       font-family: system-ui, -apple-system, sans-serif;
-      margin-top: 24px;
-      margin-bottom: 64px;
+      font-size: 40px;
+      line-height: 1.1;
+      letter-spacing: 2.4px;
+      color: white;
+      margin-top: 32px;
     }
 
-    /* Linear loading simplificado que combina com SplashLoadingWidget */
-    .linear-loader {
-      width: 150px;
-      height: 4px;
-      background-color: rgba(255, 255, 255, 0.24);
-      border-radius: 10px;
-      overflow: hidden;
-      position: relative;
+    #splash .wordmark .light {
+      font-weight: 200;
     }
 
-    .linear-loader::after {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: 0;
-      bottom: 0;
-      width: 40%;
-      background-color: #ffffff;
-      border-radius: 10px;
-      animation: shiftProgress 1.5s ease-in-out infinite;
+    #splash .wordmark .bold {
+      font-weight: 800;
+      opacity: 0.92;
     }
 
-    @keyframes shiftProgress {
-      0% { left: -40%; width: 40%; }
-      50% { left: 40%; width: 60%; }
-      100% { left: 100%; width: 40%; }
+    #splash .dot-loader {
+      display: flex;
+      gap: 9px;
+      z-index: 1;
+      margin-top: 64px;
     }
 
-    /* Ensure flutter content sits above splash when removed */
+    #splash .dot-loader .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #FFD700;
+      box-shadow: 0 0 8px -1px rgba(255, 215, 0, 0.4);
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    #splash .dot-loader .dot:nth-child(2) {
+      animation-delay: 0.33s;
+    }
+
+    #splash .dot-loader .dot:nth-child(3) {
+      animation-delay: 0.66s;
+    }
+
+    @keyframes pulse {
+      0%, 100% {
+        transform: scale(0.55);
+        opacity: 0.2;
+      }
+      50% {
+        transform: scale(1);
+        opacity: 1;
+      }
+    }
+
     #flutter-root {
       position: relative;
       z-index: 0;
@@ -109,12 +198,28 @@
   </style>
 
   <div id="splash" aria-hidden="true">
-    <div style="text-align: center; display: flex; flex-direction: column; align-items: center;">
-      <img class="logo" src="assets/assets/images/icon.png" alt="MarkaAI" style="margin-bottom: 0;">
-      <div class="brand-text">MarkaAI</div>
+    <div class="orbit-ring"></div>
+    <div class="orbit-dots">
+      <div class="orbit-dot" style="transform: rotate(0deg);"></div>
+      <div class="orbit-dot" style="transform: rotate(45deg);"></div>
+      <div class="orbit-dot" style="transform: rotate(90deg);"></div>
+      <div class="orbit-dot" style="transform: rotate(135deg);"></div>
+      <div class="orbit-dot" style="transform: rotate(180deg);"></div>
+      <div class="orbit-dot" style="transform: rotate(225deg);"></div>
+      <div class="orbit-dot" style="transform: rotate(270deg);"></div>
+      <div class="orbit-dot" style="transform: rotate(315deg);"></div>
     </div>
-    <!-- Simple loading line -->
-    <div class="linear-loader" role="status" aria-label="Carregando"></div>
+    <div class="brand-wrapper">
+      <img class="logo" src="assets/assets/images/icon.png" alt="MarkaAI">
+      <div class="wordmark">
+        <span class="light">Marka</span><span class="bold">AI</span>
+      </div>
+    </div>
+    <div class="dot-loader" role="status" aria-label="Carregando">
+      <div class="dot"></div>
+      <div class="dot"></div>
+      <div class="dot"></div>
+    </div>
   </div>
 
   <!-- Stripe Web SDK (Obrigatório para flutter_stripe_web) -->

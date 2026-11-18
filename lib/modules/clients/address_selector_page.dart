@@ -1,8 +1,9 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:geocoding/geocoding.dart' as geocg;
-import 'dart:async';
+import 'package:http/http.dart' as http;
 
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/splash_loading_widget.dart';
@@ -51,30 +52,37 @@ class _AddressSelectorPageState extends State<AddressSelectorPage> {
 
   Future<void> _searchSuggestions(String query) async {
     try {
-      final locations = await geocg.locationFromAddress(query);
-      final List<Map<String, dynamic>> results = [];
-      for (final loc in locations.take(5)) {
-        try {
-          final placemarks =
-              await geocg.placemarkFromCoordinates(loc.latitude, loc.longitude);
-          if (placemarks.isNotEmpty) {
-            final p = placemarks.first;
-            final city = p.subAdministrativeArea ?? p.locality ?? '';
-            final address = [
-              p.thoroughfare,
-              p.subLocality,
-              p.subAdministrativeArea,
-              p.administrativeArea,
-            ].where((e) => e != null && e.isNotEmpty).join(', ');
-            results.add({
-              'label': city.isNotEmpty ? city : query.split(',').first,
-              'address': address.isNotEmpty ? address : query,
-              'city': city,
-              'lat': loc.latitude,
-              'lng': loc.longitude,
-            });
-          }
-        } catch (_) {}
+      final url = Uri.parse(
+        'https://nominatim.openstreetmap.org/search'
+        '?q=${Uri.encodeComponent(query)}'
+        '&format=json&limit=5&accept-language=pt-BR',
+      );
+      final resp = await http.get(url, headers: {
+        'User-Agent': 'MarkaAI/1.0 (suporte@markaai.com.br)',
+      });
+      if (resp.statusCode != 200) {
+        if (mounted) setState(() => _suggestions = []);
+        return;
+      }
+      final List data = jsonDecode(resp.body);
+      final results = <Map<String, dynamic>>[];
+      for (final item in data) {
+        final addr = item['address'] as Map<String, dynamic>? ?? {};
+        final city = (addr['city'] ?? addr['town'] ?? addr['village'] ??
+                addr['municipality'] ?? item['name'] ?? '').toString().trim();
+        final addressParts = [
+          addr['road'],
+          addr['suburb'],
+          addr['city'] ?? addr['town'],
+          addr['state'],
+        ].where((e) => e != null && e.toString().isNotEmpty).join(', ');
+        results.add({
+          'label': city.isNotEmpty ? city : query.split(',').first,
+          'address': addressParts.isNotEmpty ? addressParts : (item['display_name'] ?? query),
+          'city': city,
+          'lat': double.parse(item['lat'].toString()),
+          'lng': double.parse(item['lon'].toString()),
+        });
       }
       if (mounted) setState(() => _suggestions = results);
     } catch (_) {
@@ -146,21 +154,26 @@ class _AddressSelectorPageState extends State<AddressSelectorPage> {
 
       String city = '';
       try {
-        final places =
-            await geocg.placemarkFromCoordinates(pos.latitude, pos.longitude);
-        if (places.isNotEmpty) {
-          final p = places.first;
-          city = p.subAdministrativeArea ?? p.locality ?? '';
+        final uri = Uri.parse(
+          'https://nominatim.openstreetmap.org/reverse'
+          '?lat=${pos.latitude}&lon=${pos.longitude}'
+          '&format=json&accept-language=pt-BR',
+        );
+        final resp = await http.get(uri, headers: {
+          'User-Agent': 'MarkaAI/1.0 (suporte@markaai.com.br)',
+        });
+        if (resp.statusCode == 200) {
+          final data = jsonDecode(resp.body) as Map<String, dynamic>;
+          final addr = data['address'] as Map<String, dynamic>? ?? {};
+          city = (addr['city'] ?? addr['town'] ?? addr['village'] ??
+                  addr['municipality'] ?? '').toString().trim();
           address = [
-            p.thoroughfare,
-            p.subLocality,
-            p.subAdministrativeArea,
-            p.administrativeArea
-          ].where((e) => e != null && e.isNotEmpty).join(', ');
-          if (address.isEmpty) {
-            address =
-                '${p.street ?? ''} ${p.subLocality ?? ''}, ${p.locality ?? ''}';
-          }
+            addr['road'],
+            addr['suburb'],
+            addr['city'] ?? addr['town'],
+            addr['state'],
+          ].where((e) => e != null && e.toString().isNotEmpty).join(', ');
+          if (address.isEmpty) address = data['display_name']?.toString() ?? '';
         }
       } catch (_) {}
 

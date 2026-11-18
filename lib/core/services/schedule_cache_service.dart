@@ -32,9 +32,7 @@ class ScheduleCacheService {
     try {
       final decoded = jsonDecode(jsonStr) as Map<String, dynamic>;
       final cachedAt = DateTime.tryParse(decoded['cachedAt']?.toString() ?? '');
-      if (cachedAt != null && DateTime.now().difference(cachedAt) > _maxAge) {
-        return null;
-      }
+      // Removed _maxAge check to allow offline viewing of last cached state
       final list = decoded['appointments'] as List;
       return list.map((item) {
         final map = Map<String, dynamic>.from(item as Map);

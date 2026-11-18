@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../core/theme/app_colors.dart';
 import 'appointment_details_page.dart';
+import 'widgets/client_note_badge.dart';
 
 class BusinessHistoryPage extends StatefulWidget {
   final String shopId;
@@ -588,13 +589,24 @@ class _BusinessHistoryPageState extends State<BusinessHistoryPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        clientName,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 15,
-                          color: Colors.black,
-                        ),
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              clientName,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 15,
+                                color: Colors.black,
+                              ),
+                            ),
+                          ),
+                          if ((payload['id'] ?? event['id']) != null)
+                            ClientNoteBadge(
+                              appointmentId: (payload['id'] ?? event['id']).toString(),
+                              shopId: widget.shopId,
+                            ),
+                        ],
                       ),
                       const SizedBox(height: 4),
                       Text(serviceName,

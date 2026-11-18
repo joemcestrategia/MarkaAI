@@ -2,14 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../../../core/theme/app_colors.dart';
 import 'product_form_page.dart';
 
 class ManageProductsPage extends StatefulWidget {
   final String shopId;
+  final bool showAppBar;
 
-  const ManageProductsPage({super.key, required this.shopId});
+  const ManageProductsPage({
+    super.key,
+    required this.shopId,
+    this.showAppBar = false,
+  });
 
   @override
   State<ManageProductsPage> createState() => _ManageProductsPageState();
@@ -34,7 +38,7 @@ class _ManageProductsPageState extends State<ManageProductsPage> {
           .select()
           .eq('shop_id', widget.shopId)
           .order('created_at', ascending: false);
-      
+
       if (mounted) {
         setState(() {
           _products = List<Map<String, dynamic>>.from(response);
@@ -59,9 +63,11 @@ class _ManageProductsPageState extends State<ManageProductsPage> {
           .eq('id', id);
       _loadProducts();
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro ao atualizar produto: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro ao atualizar produto: $e')),
+        );
+      }
     }
   }
 
@@ -70,7 +76,9 @@ class _ManageProductsPageState extends State<ManageProductsPage> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Excluir Produto'),
-        content: const Text('Tem certeza que deseja excluir este produto? Esta ação não pode ser desfeita.'),
+        content: const Text(
+          'Tem certeza que deseja excluir este produto? Esta ação não pode ser desfeita.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -90,9 +98,11 @@ class _ManageProductsPageState extends State<ManageProductsPage> {
         await _supabase.from('products').delete().eq('id', id);
         _loadProducts();
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao excluir produto: $e')),
-        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Erro ao excluir produto: $e')),
+          );
+        }
       }
     }
   }
@@ -131,7 +141,6 @@ class _ManageProductsPageState extends State<ManageProductsPage> {
               debugPrint('Redirecionamento bloqueado: $requestUrl');
               return NavigationDecision.prevent;
             }
-            // Só permite navegação dentro do mesmo domínio do link original
             if (Uri.parse(requestUrl).host != allowedHost) {
               debugPrint('Redirecionamento externo bloqueado: $requestUrl');
               return NavigationDecision.prevent;
@@ -165,7 +174,11 @@ class _ManageProductsPageState extends State<ManageProductsPage> {
                     Expanded(
                       child: Text(
                         productName,
-                        style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -187,28 +200,44 @@ class _ManageProductsPageState extends State<ManageProductsPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Meus Produtos', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-        backgroundColor: Colors.white,
-        foregroundColor: AppColors.textPrimary,
-        elevation: 0,
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(1.0),
-          child: Container(color: Colors.grey[200], height: 1.0),
-        ),
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: AppColors.primaryPurple))
-          : _products.isEmpty
-              ? _buildEmptyState()
-              : _buildProductsList(),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _navigateToForm(),
-        backgroundColor: AppColors.primaryPurple,
-        icon: const Icon(Icons.add, color: Colors.white),
-        label: const Text('Novo Produto', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-      ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bool isMobile = constraints.maxWidth < 850;
+
+        return Scaffold(
+          backgroundColor: const Color(0xFFF5F7FB),
+          appBar: widget.showAppBar
+              ? AppBar(
+                  title: const Text(
+                    'Meus Produtos',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  ),
+                  backgroundColor: Colors.white,
+                  foregroundColor: AppColors.textPrimary,
+                  elevation: 0,
+                  bottom: PreferredSize(
+                    preferredSize: const Size.fromHeight(1.0),
+                    child: Container(color: Colors.grey[200], height: 1.0),
+                  ),
+                )
+              : null,
+          floatingActionButton: isMobile
+              ? FloatingActionButton(
+                  onPressed: () => _navigateToForm(),
+                  backgroundColor: AppColors.primaryPurple,
+                  foregroundColor: Colors.white,
+                  child: const Icon(Icons.add, color: Colors.white),
+                )
+              : null,
+          body: _isLoading
+              ? const Center(
+                  child: CircularProgressIndicator(color: AppColors.primaryPurple),
+                )
+              : _products.isEmpty
+                  ? _buildEmptyState()
+                  : _buildProductsList(isMobile),
+        );
+      },
     );
   }
 
@@ -217,100 +246,167 @@ class _ManageProductsPageState extends State<ManageProductsPage> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.inventory_2_outlined, size: 80, color: Colors.grey[300]),
+          Icon(Icons.inventory_2_outlined, size: 48, color: Colors.grey[300]),
           const SizedBox(height: 16),
           const Text(
             'Nenhum produto cadastrado',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textSecondary),
+            style: TextStyle(color: Colors.grey, fontSize: 16),
           ),
           const SizedBox(height: 8),
           const Text(
-            'Adicione produtos físicos ou links\nde afiliado para vender.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.grey),
+            "Clique em 'Novo Produto' para começar",
+            style: TextStyle(color: Colors.grey, fontSize: 12),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildProductsList() {
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: _products.length,
-      itemBuilder: (context, index) {
-        final p = _products[index];
-        final bool isAffiliate = p['is_affiliate'] == true;
-        final bool isActive = p['is_active'] == true;
-        
-        return Card(
-          elevation: 2,
-          margin: const EdgeInsets.only(bottom: 12),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          child: Opacity(
-            opacity: isActive ? 1.0 : 0.6,
-            child: ListTile(
-              onTap: () {
-                if (isAffiliate) {
-                  _openAffiliatePreview(p['affiliate_url'] as String? ?? '', p['name'] as String? ?? '');
-                }
-              },
-              contentPadding: const EdgeInsets.all(12),
-              leading: Container(
-                width: 60,
-                height: 60,
-                decoration: BoxDecoration(
-                  color: Colors.grey[100],
-                  borderRadius: BorderRadius.circular(8),
+  Widget _buildProductsList(bool isMobile) {
+    return Column(
+      children: [
+        if (!isMobile)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: () => _navigateToForm(),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primaryPurple,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  ),
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text("NOVO PRODUTO"),
                 ),
-                child: p['image_url'] != null && p['image_url'].toString().isNotEmpty
-                    ? ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: CachedNetworkImage(
-                          imageUrl: p['image_url'],
-                          fit: BoxFit.cover,
-                          placeholder: (context, url) => const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
-                          errorWidget: (context, url, error) => const Icon(Icons.image_not_supported, color: Colors.grey),
-                        ),
-                      )
-                    : const Icon(Icons.inventory_2, color: Colors.grey),
+              ],
+            ),
+          ),
+        Expanded(
+          child: ListView.separated(
+            padding: EdgeInsets.fromLTRB(24, isMobile ? 16 : 0, 24, 80),
+            itemCount: _products.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 10),
+            itemBuilder: (context, index) {
+              return _buildCompactCard(_products[index], index);
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCompactCard(Map<String, dynamic> p, int index) {
+    final bool isAffiliate = p['is_affiliate'] == true;
+    final bool isActive = p['is_active'] == true;
+    final String name = p['name'] ?? 'Produto';
+    final String? imageUrl = p['image_url'] as String?;
+    final String priceStr = (p['price'] as num?)?.toStringAsFixed(2).replaceAll('.', ',') ?? '0,00';
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () {
+          if (isAffiliate) {
+            _openAffiliatePreview(p['affiliate_url'] as String? ?? '', name);
+          } else {
+            _navigateToForm(p);
+          }
+        },
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: const [
+              BoxShadow(
+                color: Colors.black12,
+                blurRadius: 4,
+                offset: Offset(0, 2),
               ),
-              title: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      p['name'] ?? 'Produto',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+            ],
+          ),
+          padding: const EdgeInsets.all(10),
+          child: Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: SizedBox(
+                  width: 70,
+                  height: 70,
+                  child: imageUrl != null && imageUrl.isNotEmpty
+                      ? CachedNetworkImage(
+                          imageUrl: imageUrl,
+                          fit: BoxFit.cover,
+                          placeholder: (context, url) => Container(
+                            color: Colors.grey[100],
+                            child: const Center(
+                              child: SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                            ),
+                          ),
+                          errorWidget: (context, url, error) => Container(
+                            color: Colors.grey[100],
+                            child: const Icon(
+                              Icons.image_not_supported,
+                              color: Colors.grey,
+                              size: 28,
+                            ),
+                          ),
+                        )
+                      : Container(
+                          color: Colors.grey[100],
+                          child: const Icon(
+                            Icons.inventory_2_outlined,
+                            color: Colors.grey,
+                            size: 28,
+                          ),
+                        ),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                        color: isActive ? Colors.black87 : Colors.grey,
+                        decoration: isActive ? null : TextDecoration.lineThrough,
+                      ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
-                  ),
-                  if (isAffiliate)
-                    Container(
-                      margin: const EdgeInsets.only(left: 8),
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.amber.shade100,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: const Text(
-                        'AFILIADO',
-                        style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.amber),
-                      ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        _buildTag(
+                          isAffiliate ? Icons.link : Icons.inventory_2_outlined,
+                          isAffiliate ? "Afiliado" : "Físico",
+                          Colors.blue,
+                        ),
+                        const SizedBox(width: 8),
+                        _buildTag(
+                          Icons.attach_money,
+                          "R\$ $priceStr",
+                          Colors.green,
+                        ),
+                      ],
                     ),
-                ],
+                  ],
+                ),
               ),
-              subtitle: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const SizedBox(height: 4),
-                  Text(
-                    'R\$ ${(p['price'] as num?)?.toStringAsFixed(2).replaceAll('.', ',') ?? '0,00'}',
-                    style: const TextStyle(color: AppColors.primaryPurple, fontWeight: FontWeight.w600),
-                  ),
-                ],
-              ),
-              trailing: PopupMenuButton<String>(
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert, size: 20, color: Colors.grey),
+                tooltip: 'Opções',
                 onSelected: (value) {
                   if (value == 'edit') {
                     _navigateToForm(p);
@@ -321,25 +417,72 @@ class _ManageProductsPageState extends State<ManageProductsPage> {
                   }
                 },
                 itemBuilder: (context) => [
-                  const PopupMenuItem(value: 'edit', child: Row(children: [Icon(Icons.edit, size: 18), SizedBox(width: 8), Text('Editar')])),
+                  const PopupMenuItem(
+                    value: 'edit',
+                    child: Row(
+                      children: [
+                        Icon(Icons.edit, size: 18, color: AppColors.primaryPurple),
+                        SizedBox(width: 8),
+                        Text('Editar'),
+                      ],
+                    ),
+                  ),
                   PopupMenuItem(
                     value: 'toggle',
                     child: Row(
                       children: [
-                        Icon(isActive ? Icons.visibility_off : Icons.visibility, size: 18),
+                        Icon(
+                          isActive ? Icons.visibility_off : Icons.visibility,
+                          size: 18,
+                          color: Colors.grey,
+                        ),
                         const SizedBox(width: 8),
                         Text(isActive ? 'Ocultar' : 'Ativar'),
                       ],
                     ),
                   ),
                   const PopupMenuDivider(),
-                  const PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete, color: Colors.red, size: 18), SizedBox(width: 8), Text('Excluir', style: TextStyle(color: Colors.red))])),
+                  const PopupMenuItem(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        Icon(Icons.delete, color: Colors.red, size: 18),
+                        SizedBox(width: 8),
+                        Text('Excluir', style: TextStyle(color: Colors.red)),
+                      ],
+                    ),
+                  ),
                 ],
               ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTag(IconData icon, String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 4),
+          Text(
+            text,
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.w600,
+              fontSize: 11,
             ),
           ),
-        );
-      },
+        ],
+      ),
     );
   }
 }

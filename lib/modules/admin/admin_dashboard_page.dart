@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:markaai/core/services/session_service.dart';
 import 'package:markaai/modules/admin/widgets/admin_overview_widget.dart';
 import 'package:markaai/modules/admin/widgets/admin_metrics_widget.dart';
@@ -8,9 +7,11 @@ import 'package:markaai/modules/admin/widgets/admin_users_widget.dart';
 import 'package:markaai/modules/admin/widgets/admin_support_widget.dart';
 import 'package:markaai/modules/support/admin_tickets_page.dart';
 import 'package:markaai/modules/admin/admin_banners_page.dart';
+import 'package:markaai/modules/admin/admin_splash_page.dart';
 import 'package:markaai/modules/admin/widgets/admin_finance_widget.dart';
 import 'package:markaai/modules/admin/widgets/admin_notifications_widget.dart';
 import 'package:markaai/modules/admin/widgets/admin_monitoring_widget.dart';
+import 'package:markaai/modules/admin/widgets/admin_orphan_payments_widget.dart';
 import 'package:markaai/modules/admin/widgets/admin_feature_flags_widget.dart';
 import 'package:markaai/modules/admin/widgets/admin_emails_widget.dart';
 import 'package:markaai/modules/admin/widgets/admin_whatsapp_widget.dart';
@@ -24,10 +25,12 @@ enum AdminSection {
   finance,
   notifications,
   monitoring,
+  orphanPayments,
   featureFlags,
   support,
   tickets,
   banners,
+  splash,
   emails,
   whatsapp,
 }
@@ -275,12 +278,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   _buildSidebarGroup('COMUNICAÇÃO', localTheme),
                   _buildSidebarItem(AdminSection.notifications, Icons.campaign_outlined, 'Notificações', localTheme),
                   _buildSidebarItem(AdminSection.banners, Icons.photo_library_outlined, 'Banners', localTheme),
+                  _buildSidebarItem(AdminSection.splash, Icons.auto_awesome_outlined, 'Splash Screen', localTheme),
                   _buildSidebarItem(AdminSection.emails, Icons.email_outlined, 'Emails', localTheme),
                   _buildSidebarItem(AdminSection.whatsapp, Icons.chat_bubble_outline, 'WhatsApp Logs', localTheme),
                   
                   const SizedBox(height: 24),
                   _buildSidebarGroup('SISTEMA', localTheme),
                   _buildSidebarItem(AdminSection.monitoring, Icons.monitor_heart_outlined, 'Monitoramento', localTheme),
+                  _buildSidebarItem(AdminSection.orphanPayments, Icons.warning_amber_rounded, 'Pagamentos Órfãos', localTheme),
                   _buildSidebarItem(AdminSection.featureFlags, Icons.flag_outlined, 'Feature Flags', localTheme),
                   
                   const SizedBox(height: 24),
@@ -335,10 +340,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       case AdminSection.finance: return const AdminFinanceWidget();
       case AdminSection.notifications: return const AdminNotificationsWidget();
       case AdminSection.monitoring: return const AdminMonitoringWidget();
+      case AdminSection.orphanPayments: return const AdminOrphanPaymentsWidget();
       case AdminSection.featureFlags: return const AdminFeatureFlagsWidget();
       case AdminSection.support: return const AdminSupportWidget();
       case AdminSection.tickets: return const AdminTicketsPage(embedded: true);
       case AdminSection.banners: return const AdminBannersPage();
+      case AdminSection.splash: return const AdminSplashPage();
       case AdminSection.emails: return const AdminEmailsWidget();
       case AdminSection.whatsapp: return const AdminWhatsappWidget();
     }
@@ -353,10 +360,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       case AdminSection.finance: return 'Financeiro';
       case AdminSection.notifications: return 'Comunicação';
       case AdminSection.monitoring: return 'Monitoramento';
+      case AdminSection.orphanPayments: return 'Pagamentos Órfãos';
       case AdminSection.featureFlags: return 'Feature Flags';
       case AdminSection.support: return 'Suporte';
       case AdminSection.tickets: return 'Tickets';
       case AdminSection.banners: return 'Marketing Banners';
+      case AdminSection.splash: return 'Splash Screen';
       case AdminSection.emails: return 'Emails';
       case AdminSection.whatsapp: return 'WhatsApp Logs';
     }

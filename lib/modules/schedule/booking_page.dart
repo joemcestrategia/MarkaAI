@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:flutter/services.dart';
 import '../../core/theme/app_colors.dart';
 import '../../pages/checkout_page.dart';
 import '../clients/rescheduling_success_page.dart';
@@ -25,6 +26,7 @@ class BookingPage extends StatefulWidget {
   final DateTime? oldDate;
   final String? oldProfessional;
   final String? oldServiceName;
+  final bool isOwnerPreview;
 
   const BookingPage({
     super.key,
@@ -37,6 +39,7 @@ class BookingPage extends StatefulWidget {
     this.oldDate,
     this.oldProfessional,
     this.oldServiceName,
+    this.isOwnerPreview = false,
   });
 
   Map<String, dynamic> get serviceData => serviceDoc;
@@ -77,6 +80,10 @@ class _BookingPageState extends State<BookingPage> {
   }
 
   Future<void> _checkRestriction() async {
+    if (widget.isOwnerPreview) {
+      if (mounted) setState(() => _loadingRestriction = false);
+      return;
+    }
     final user = Supabase.instance.client.auth.currentUser;
     if (user != null) {
       try {
@@ -174,7 +181,7 @@ class _BookingPageState extends State<BookingPage> {
                 constraints: const BoxConstraints(),
               ),
               const SizedBox(width: 10),
-              const Text("Agendamento",
+              Text(widget.isOwnerPreview ? "Vagas Disponíveis" : "Agendamento",
                   style: TextStyle(
                       color: Colors.white,
                       fontSize: 18,
@@ -288,6 +295,7 @@ class _BookingPageState extends State<BookingPage> {
                       // fix: passa todos os profissionais qualificados para que o calendário
                       // mostre disponibilidade combinada (não apenas a do profissional prioridade 0)
                       qualifiedProfessionals: profs,
+                      isOwnerPreview: widget.isOwnerPreview,
                     ),
                   ),
                 );
@@ -427,7 +435,7 @@ class _BookingPageState extends State<BookingPage> {
         return RestrictedClientView(
           title: "Complete seu Perfil",
           message:
-              "Esta loja exige que o cliente tenha CPF cadastrado antes de prosseguir, para fins de emissão de Nota Fiscal.\n\nPor favor, atualize o seu perfil e tente novamente.",
+              "Esta loja exige que o cliente tenha CPF cadastrado antes de prosseguir.\n\nPor favor, atualize o seu perfil e tente novamente.",
           icon: Icons.badge_outlined,
           actionLabel: "ATUALIZAR PERFIL",
           onCustomAction: () async {
@@ -509,6 +517,7 @@ class BookingTimePage extends StatefulWidget {
   /// a disponibilidade de TODOS eles antes de marcar um dia como indisponível.
   /// Quando nula (modo com escolha), o calendário usa apenas professionalDoc.
   final List<Map<String, dynamic>>? qualifiedProfessionals;
+  final bool isOwnerPreview;
 
   const BookingTimePage({
     super.key,
@@ -527,6 +536,7 @@ class BookingTimePage extends StatefulWidget {
     this.oldServiceName,
     this.clientStatus,
     this.qualifiedProfessionals,
+    this.isOwnerPreview = false,
   });
 
   final Map<String, bool>? clientStatus;
@@ -535,6 +545,18 @@ class BookingTimePage extends StatefulWidget {
 
   @override
   State<BookingTimePage> createState() => _BookingTimePageState();
+}
+
+/// Estados visuais dos dias no calendário de agendamento do cliente:
+/// - [available]: Dia liberado com horário disponível -> Preto (clicável)
+/// - [occupied]: Dia que já passou ou dia liberado sem vaga para o serviço -> Riscado (não clicável)
+/// - [closed]: Dia em que a loja/equipe não abre ou foi aplicado feriado -> Vermelho (não clicável)
+/// - [unreleased]: Dia futuro ainda não liberado pela configuração da loja -> Cinza sem risco (não clicável)
+enum _CalendarDayStatus {
+  available,
+  occupied,
+  closed,
+  unreleased,
 }
 
 class _BookingTimePageState extends State<BookingTimePage> {
@@ -546,8 +568,9 @@ class _BookingTimePageState extends State<BookingTimePage> {
   bool _isRestricted = false;
   String? _restrictionReason;
 
-  // Cache de disponibilidade
-  Map<DateTime, bool> _dayAvailability = {};
+  // Cache de status visual de disponibilidade por dia
+  final Map<DateTime, _CalendarDayStatus> _dayStatus = {};
+  final Map<int, List<dynamic>> _holidaysByYear = {};
   List<dynamic> _nationalHolidays = [];
   bool _isLoadingAvailability = false;
   // fix: bloquear dias sem equipe ativa para qualquer estabelecimento
@@ -555,6 +578,16 @@ class _BookingTimePageState extends State<BookingTimePage> {
   // _availabilityVersion: incrementado após cada fetch completo para forçar rebuild do TableCalendar
   bool _availabilityReady = false;
   int _availabilityVersion = 0;
+  List<String> _previewSlots = [];
+  bool _isLoadingPreviewSlots = false;
+
+  DateTime get _today {
+    final now = DateTime.now();
+    return DateTime(now.year, now.month, now.day);
+  }
+
+  DateTime get _lastAllowedDay =>
+      _today.add(Duration(days: _bookingWindowDays));
 
   // ── SHADOW MODE ──────────────────────────────────────────────────────────
   // Quando false (padrão): usa apenas a lógica local (código Dart).
@@ -574,6 +607,7 @@ class _BookingTimePageState extends State<BookingTimePage> {
 
     // Proteção de Rota Direta (Web Bypass Prevention)
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (widget.isOwnerPreview) return;
       final user = Supabase.instance.client.auth.currentUser;
       if (user == null) {
         if (mounted) {
@@ -592,14 +626,16 @@ class _BookingTimePageState extends State<BookingTimePage> {
     final minAdvanceDateRaw = now.add(Duration(hours: widget.minAdvanceHours));
     final minAllowedDate = DateTime(
         minAdvanceDateRaw.year, minAdvanceDateRaw.month, minAdvanceDateRaw.day);
-    final effectiveFocusedDay =
+    final lastAllowed = today.add(Duration(days: _bookingWindowDays));
+    DateTime effectiveFocusedDay =
         minAllowedDate.isAfter(today) ? minAllowedDate : today;
+    if (effectiveFocusedDay.isAfter(lastAllowed)) {
+      effectiveFocusedDay = today;
+    }
     _focusedDay = effectiveFocusedDay;
 
     // fix: bloquear dias sem equipe ativa para qualquer estabelecimento
-    // Pré-popula work_days de forma SÍNCRONA antes do primeiro build.
-    // Isso garante que o calendário aparece imediatamente com o padrão correto
-    // (dias de trabalho habilit., não-trabalho bloqueados) sem depender de Supabase.
+    // Pré-popula os estados de forma SÍNCRONA antes do primeiro build.
     // O _fetchMonthAvailability depois refina com contagem real de slots disponíveis.
     _prePopulateWorkDays(effectiveFocusedDay);
 
@@ -608,48 +644,169 @@ class _BookingTimePageState extends State<BookingTimePage> {
     _initWithVipCheck(); // aguarda VIP antes de buscar disponibilidade
   }
 
-  Future<void> _fetchNationalHolidays(DateTime month) async {
+  Future<List<dynamic>> _ensureNationalHolidays(int year) async {
+    if (_holidaysByYear.containsKey(year)) {
+      return _holidaysByYear[year]!;
+    }
     try {
-      final year = month.year;
-      final response = await BrasilApiService.getHolidays(year);
+      final response = await BrasilApiService.getHolidays(year)
+          .timeout(const Duration(seconds: 4));
+      _holidaysByYear[year] = response;
       if (mounted) {
         setState(() {
           _nationalHolidays = response;
         });
       }
+      return response;
     } catch (e) {
-      debugPrint("Erro ao buscar feriados nacionais: $e");
+      debugPrint("Erro ao buscar feriados nacionais ($year): $e");
+      return _nationalHolidays;
     }
   }
 
+  Future<void> _fetchNationalHolidays(DateTime month) async {
+    await _ensureNationalHolidays(month.year);
+  }
+
+  /// Verifica se a loja/equipe está fechada ou com feriado aplicado na [date].
+  /// Retorna `true` quando o dia deve ser exibido em vermelho (`_CalendarDayStatus.closed`).
+  bool _isShopClosedOrHolidayOnDate(
+      DateTime date, List<dynamic> yearHolidays) {
+    final shopData = widget.shop;
+    final configurados = shopData['configured_holidays'] ?? {};
+    final pendentes = shopData['pending_holidays'] ?? [];
+    final autoBlock = widget.shopConfig['auto_block_holidays'] ?? false;
+    final iso = date.toIso8601String().split('T')[0];
+
+    if (configurados is Map && configurados.containsKey(iso)) {
+      final config = configurados[iso];
+      if (config == 'fechado') {
+        return true;
+      }
+    }
+
+    if (autoBlock && !(configurados is Map && configurados.containsKey(iso))) {
+      final bool isNational = yearHolidays.any((f) => f['date'] == iso);
+      if ((pendentes is List && pendentes.contains(iso)) || isNational) {
+        return true;
+      }
+    }
+
+    final profsToCheck =
+        widget.qualifiedProfessionals ?? [widget.professionalDoc];
+    bool anyProfOpen = false;
+
+    for (final prof in profsToCheck) {
+      final profId = prof['id']?.toString() ?? '';
+      final rawWorkDays = prof['work_days'] ?? [];
+      final workDays = (rawWorkDays as List)
+          .map((e) => int.tryParse(e.toString()) ?? -1)
+          .where((v) => v >= 1 && v <= 7)
+          .toList();
+      if (!workDays.contains(date.weekday)) continue;
+
+      if (configurados is Map && configurados.containsKey(iso)) {
+        final config = configurados[iso];
+        if (config is Map && config.containsKey('escala')) {
+          final List escala = config['escala'] ?? [];
+          if (!escala.contains(profId)) continue;
+        }
+      }
+
+      final wsProf =
+          WorkSchedule.fromEmployeeRow(Map<String, dynamic>.from(prof));
+      final dayCfg = wsProf.forWeekday(date.weekday);
+      if (dayCfg == null) continue;
+
+      // Se o profissional possui folga de dia inteiro cobrindo todo o turno, não abre neste dia
+      final profBreaks = prof['breaks'];
+      if (profBreaks != null && profBreaks is List) {
+        final folgas = AvailabilityUtils.parseFolgasForDate(profBreaks, date);
+        final coversFullShift = folgas.any((f) =>
+            (f['start'] ?? 0) <= dayCfg.startMin &&
+            (f['end'] ?? 0) >= dayCfg.endMin);
+        if (coversFullShift) continue;
+      }
+
+      anyProfOpen = true;
+      break;
+    }
+
+    return !anyProfOpen;
+  }
+
+  /// Resolve o status visual efetivo de qualquer dia do calendário, respeitando
+  /// dinamicamente os limites de hoje e da janela liberada pela loja.
+  _CalendarDayStatus _resolveDayStatus(DateTime day) {
+    final dateKey = DateTime(day.year, day.month, day.day);
+    final today = _today;
+    if (dateKey.isBefore(today)) {
+      return _CalendarDayStatus.occupied;
+    }
+    if (dateKey.isAfter(_lastAllowedDay)) {
+      return _CalendarDayStatus.unreleased;
+    }
+    return _dayStatus[dateKey] ?? _CalendarDayStatus.unreleased;
+  }
+
   // fix: bloquear dias sem equipe ativa para qualquer estabelecimento
-  // Pré-população síncrona: só verifica work_days (sem Supabase, sem slots).
-  // Quando qualifiedProfessionals existe, um dia é habilitado se QUALQUER profissional trabalha nele.
-  // Chamado em initState antes do primeiro build.
+  // Pré-população síncrona: classifica dias passados, não liberados, fechados/feriados e abertos
+  // antes do fetch assíncrono de slots no Supabase.
   void _prePopulateWorkDays(DateTime month) {
     try {
       final endOfMonth = DateTime(month.year, month.month + 1, 0);
-
-      // Coleta os work_days de todos os profissionais relevantes (OR lógico)
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final lastAllowed = today.add(Duration(days: _bookingWindowDays));
+      final minAllowedTime = now.add(Duration(hours: widget.minAdvanceHours));
+      final yearHolidays = _holidaysByYear[month.year] ?? _nationalHolidays;
       final profsToCheck =
           widget.qualifiedProfessionals ?? [widget.professionalDoc];
-      final Set<int> allWorkDays = {};
-      for (final prof in profsToCheck) {
-        final rawWorkDays = prof['work_days'] ?? [];
-        final days = (rawWorkDays as List).map((e) => int.parse(e.toString()));
-        allWorkDays.addAll(days);
-      }
+      final serviceDuration =
+          int.tryParse(widget.serviceData['duration_min'].toString()) ?? 30;
 
       for (int day = 1; day <= endOfMonth.day; day++) {
         final date = DateTime(month.year, month.month, day);
-        // Disponível se qualquer profissional trabalha neste dia da semana
-        _dayAvailability[date] = allWorkDays.contains(date.weekday);
+
+        if (date.isBefore(today)) {
+          _dayStatus[date] = _CalendarDayStatus.occupied;
+          continue;
+        }
+        if (date.isAfter(lastAllowed)) {
+          _dayStatus[date] = _CalendarDayStatus.unreleased;
+          continue;
+        }
+        if (_isShopClosedOrHolidayOnDate(date, yearHolidays)) {
+          _dayStatus[date] = _CalendarDayStatus.closed;
+          continue;
+        }
+
+        // Verifica sincronamente se a antecedência mínima já inviabilizou o expediente deste dia
+        bool canFitAdvanceWindow = false;
+        for (final prof in profsToCheck) {
+          final wsProf =
+              WorkSchedule.fromEmployeeRow(Map<String, dynamic>.from(prof));
+          final dayCfg = wsProf.forWeekday(date.weekday);
+          if (dayCfg == null) continue;
+          final latestStartMin = dayCfg.endMin - serviceDuration;
+          if (latestStartMin < dayCfg.startMin) continue;
+          final latestSlotDt = DateTime(date.year, date.month, date.day,
+              latestStartMin ~/ 60, latestStartMin % 60);
+          if (!latestSlotDt.isBefore(minAllowedTime)) {
+            canFitAdvanceWindow = true;
+            break;
+          }
+        }
+
+        _dayStatus[date] = canFitAdvanceWindow
+            ? _CalendarDayStatus.available
+            : _CalendarDayStatus.occupied;
       }
     } catch (_) {
-      // Se falhar, _dayAvailability fica vazio mas _availabilityReady ainda será true
+      // Se falhar, _dayStatus mantém os valores existentes mas _availabilityReady ainda será true
     }
     _availabilityReady = true;
-    _availabilityVersion = 1;
+    _availabilityVersion++;
   }
 
   /// Chama a Edge Function `getCalendarAvailability` e retorna o mapa de disponibilidade.
@@ -709,15 +866,53 @@ class _BookingTimePageState extends State<BookingTimePage> {
     }
   }
 
-  /// Calcula disponibilidade localmente (lógica Dart original).
-  /// Retorna o mapa de disponibilidade SEM aplicar ao estado.
-  /// Chamado tanto no modo local direto quanto no Shadow Mode para comparação.
-  Future<Map<DateTime, bool>> _fetchLocalAvailability(DateTime month) async {
+  /// Converte um mapa booleano (ex.: retorno da Edge Function) para os 4 estados visuais.
+  Map<DateTime, _CalendarDayStatus> _mapBoolToVisualStatus(
+      DateTime month, Map<DateTime, bool> boolMap, List<dynamic> yearHolidays) {
+    final endOfMonth = DateTime(month.year, month.month + 1, 0);
+    final today = _today;
+    final lastAllowed = _lastAllowedDay;
+    final Map<DateTime, _CalendarDayStatus> out = {};
+
+    for (int day = 1; day <= endOfMonth.day; day++) {
+      final date = DateTime(month.year, month.month, day);
+      if (date.isBefore(today)) {
+        out[date] = _CalendarDayStatus.occupied;
+      } else if (date.isAfter(lastAllowed)) {
+        out[date] = _CalendarDayStatus.unreleased;
+      } else if (_isShopClosedOrHolidayOnDate(date, yearHolidays)) {
+        out[date] = _CalendarDayStatus.closed;
+      } else if (boolMap[date] == true) {
+        out[date] = _CalendarDayStatus.available;
+      } else {
+        out[date] = _CalendarDayStatus.occupied;
+      }
+    }
+    return out;
+  }
+
+  /// Calcula o status visual de cada dia do mês localmente (lógica Dart).
+  /// Retorna o mapa de status SEM aplicar ao estado.
+  Future<Map<DateTime, _CalendarDayStatus>> _fetchLocalAvailability(
+      DateTime month) async {
     final startOfMonth = DateTime(month.year, month.month, 1);
     final endOfMonth = DateTime(month.year, month.month + 1, 0, 23, 59, 59);
+    final today = _today;
+    final lastAllowed = _lastAllowedDay;
+
+    // Otimização: se o mês inteiro está além da janela liberada pela loja,
+    // nenhum dia foi liberado ainda (todos cinza), evitando chamada desnecessária ao banco.
+    if (startOfMonth.isAfter(lastAllowed)) {
+      final Map<DateTime, _CalendarDayStatus> unreleasedMonth = {};
+      for (int day = 1; day <= endOfMonth.day; day++) {
+        unreleasedMonth[DateTime(month.year, month.month, day)] =
+            _CalendarDayStatus.unreleased;
+      }
+      return unreleasedMonth;
+    }
+
     final shopData = widget.shop;
     final configurados = shopData['configured_holidays'] ?? {};
-    final pendentes = shopData['pending_holidays'] ?? [];
     final autoBlock = widget.shopConfig['auto_block_holidays'] ?? false;
     final preventGaps = widget.shopConfig['evitar_buracos_agenda'] ?? false;
     final serviceDuration =
@@ -726,14 +921,23 @@ class _BookingTimePageState extends State<BookingTimePage> {
     final profsToCheck =
         widget.qualifiedProfessionals ?? [widget.professionalDoc];
 
-    final snapshot = await Supabase.instance.client.rpc(
-      'get_shop_blocked_slots',
-      params: {
-        'p_shop_id': shopId,
-        'p_start_date': startOfMonth.toIso8601String(),
-        'p_end_date': endOfMonth.toIso8601String(),
-      },
-    );
+    final futures = await Future.wait<dynamic>([
+      Supabase.instance.client.rpc(
+        'get_shop_blocked_slots',
+        params: {
+          'p_shop_id': shopId,
+          'p_start_date': startOfMonth.toIso8601String(),
+          'p_end_date': endOfMonth.toIso8601String(),
+        },
+      ),
+      autoBlock
+          ? _ensureNationalHolidays(month.year)
+          : Future<List<dynamic>>.value(
+              _holidaysByYear[month.year] ?? _nationalHolidays),
+    ]);
+
+    final snapshot = futures[0] as Iterable<dynamic>;
+    final yearHolidays = futures[1] as List<dynamic>;
 
     Map<String, List<Map<String, int>>> groupedByProfDay = {};
     for (var data in snapshot) {
@@ -741,9 +945,13 @@ class _BookingTimePageState extends State<BookingTimePage> {
       if (status == 'cancelado' ||
           status == 'rejeitado' ||
           status == 'recusado' ||
-          status == 'excluido') continue;
+          status == 'excluido') {
+        continue;
+      }
       if (widget.isReschedule &&
-          data['id'].toString() == widget.appointmentId.toString()) continue;
+          data['id'].toString() == widget.appointmentId.toString()) {
+        continue;
+      }
 
       final profId = data['professional_id']?.toString() ?? '';
       final dt = DateTime.parse(data['scheduled_at']);
@@ -756,36 +964,37 @@ class _BookingTimePageState extends State<BookingTimePage> {
           .add({'start': startMin, 'end': startMin + duration});
     }
 
-    Map<DateTime, bool> newAvail = {};
+    Map<DateTime, _CalendarDayStatus> newStatus = {};
     for (int day = 1; day <= endOfMonth.day; day++) {
       final date = DateTime(month.year, month.month, day);
+
+      if (date.isBefore(today)) {
+        newStatus[date] = _CalendarDayStatus.occupied;
+        continue;
+      }
+
+      if (date.isAfter(lastAllowed)) {
+        newStatus[date] = _CalendarDayStatus.unreleased;
+        continue;
+      }
+
+      if (_isShopClosedOrHolidayOnDate(date, yearHolidays)) {
+        newStatus[date] = _CalendarDayStatus.closed;
+        continue;
+      }
+
       final iso = date.toIso8601String().split('T')[0];
-
-      if (autoBlock) {
-        bool isNational = _nationalHolidays.any((f) => f['date'] == iso);
-        if (pendentes.contains(iso) || isNational) {
-          newAvail[date] = false;
-          continue;
-        }
-      }
-
-      if (configurados.containsKey(iso)) {
-        final config = configurados[iso];
-        if (config == 'fechado') {
-          newAvail[date] = false;
-          continue;
-        }
-      }
-
       bool dayHasSlot = false;
       for (final prof in profsToCheck) {
         final profId = prof['id']?.toString() ?? '';
         final rawWorkDays = prof['work_days'] ?? [];
-        final workDays =
-            (rawWorkDays as List).map((e) => int.parse(e.toString())).toList();
+        final workDays = (rawWorkDays as List)
+            .map((e) => int.tryParse(e.toString()) ?? -1)
+            .where((v) => v >= 1 && v <= 7)
+            .toList();
         if (!workDays.contains(date.weekday)) continue;
 
-        if (configurados.containsKey(iso)) {
+        if (configurados is Map && configurados.containsKey(iso)) {
           final config = configurados[iso];
           if (config is Map && config.containsKey('escala')) {
             final List escala = config['escala'] ?? [];
@@ -801,7 +1010,7 @@ class _BookingTimePageState extends State<BookingTimePage> {
         final startStr = dayCfg.start;
         final endStr = dayCfg.end;
         final key = '${profId}_$day';
-        final busy = [...(groupedByProfDay[key] ?? <Map<String, int>>[])]; 
+        final busy = [...(groupedByProfDay[key] ?? <Map<String, int>>[])];
 
         // Inclui folgas do profissional como busyIntervals
         final profBreaks = prof['breaks'];
@@ -833,16 +1042,30 @@ class _BookingTimePageState extends State<BookingTimePage> {
           break;
         }
       }
-      newAvail[date] = dayHasSlot;
+      newStatus[date] = dayHasSlot
+          ? _CalendarDayStatus.available
+          : _CalendarDayStatus.occupied;
     }
-    return newAvail;
+    return newStatus;
   }
 
   Future<void> _fetchMonthAvailability(DateTime month) async {
+    final startOfMonth = DateTime(month.year, month.month, 1);
+    if (startOfMonth.isAfter(_lastAllowedDay)) {
+      // Mês inteiro ainda não liberado pela loja: já pré-populado como cinza, sem chamada de rede.
+      if (mounted) {
+        setState(() {
+          _prePopulateWorkDays(month);
+          _isLoadingAvailability = false;
+        });
+      }
+      return;
+    }
+
     if (mounted) setState(() => _isLoadingAvailability = true);
 
     try {
-      Map<DateTime, bool> newAvail;
+      Map<DateTime, _CalendarDayStatus> newStatus;
 
       if (_useEdgeFunction) {
         // ── MODO EDGE FUNCTION ───────────────────────────────────────────────
@@ -851,15 +1074,16 @@ class _BookingTimePageState extends State<BookingTimePage> {
         final edgeResult = await _fetchEdgeFunctionAvailability(month);
 
         if (edgeResult != null) {
-          // Edge Function respondeu com sucesso.
-          newAvail = edgeResult;
+          final yearHolidays = await _ensureNationalHolidays(month.year);
+          newStatus =
+              _mapBoolToVisualStatus(month, edgeResult, yearHolidays);
           debugPrint(
               '✅ [Availability] Edge Function entregou ${edgeResult.length} dias.');
         } else {
           // Fallback: Edge Function falhou → usa lógica local.
           debugPrint(
               '⚠️ [Availability] Fallback para lógica LOCAL (Edge falhou).');
-          newAvail = await _fetchLocalAvailability(month);
+          newStatus = await _fetchLocalAvailability(month);
         }
       } else if (_shadowModeCompare) {
         // ── MODO SOMBRA (COMPARAÇÃO) ─────────────────────────────────────────
@@ -867,19 +1091,19 @@ class _BookingTimePageState extends State<BookingTimePage> {
         // O resultado aplicado ao calendário é SEMPRE o local (seguro).
         debugPrint(
             '🔬 [ShadowMode] Executando comparação Local vs Edge Function...');
-        final results = await Future.wait([
+        final results = await Future.wait<dynamic>([
           _fetchLocalAvailability(month),
           _fetchEdgeFunctionAvailability(month)
               .then((v) => v ?? <DateTime, bool>{}),
         ]);
-        final localResult = results[0];
-        final edgeResult = results[1];
+        final localResult = results[0] as Map<DateTime, _CalendarDayStatus>;
+        final edgeResult = results[1] as Map<DateTime, bool>;
 
         // Compara os mapas e loga divergências dia a dia
         int divergencias = 0;
         for (final entry in localResult.entries) {
           final dateKey = entry.key;
-          final localVal = entry.value;
+          final localVal = entry.value == _CalendarDayStatus.available;
           final edgeVal = edgeResult[dateKey];
           if (edgeVal == null) {
             debugPrint(
@@ -903,16 +1127,23 @@ class _BookingTimePageState extends State<BookingTimePage> {
         }
 
         // Calendário usa o resultado LOCAL (mais seguro)
-        newAvail = localResult;
+        newStatus = localResult;
       } else {
         // ── MODO LOCAL (PADRÃO) ──────────────────────────────────────────────
         debugPrint('📱 [Availability] Usando lógica LOCAL (padrão).');
-        newAvail = await _fetchLocalAvailability(month);
+        newStatus = await _fetchLocalAvailability(month);
       }
 
       if (mounted) {
         setState(() {
-          _dayAvailability.addAll(newAvail);
+          _dayStatus.addAll(newStatus);
+          if (_selectedDate != null) {
+            final selKey = DateTime(
+                _selectedDate!.year, _selectedDate!.month, _selectedDate!.day);
+            if (_resolveDayStatus(selKey) != _CalendarDayStatus.available) {
+              _selectedDate = null;
+            }
+          }
           _isLoadingAvailability = false;
           _availabilityReady = true;
           _availabilityVersion++; // força rebuild do TableCalendar via ValueKey
@@ -921,14 +1152,19 @@ class _BookingTimePageState extends State<BookingTimePage> {
     } catch (e) {
       debugPrint('❌ [Availability] Erro geral ao buscar disponibilidade: $e');
       // Em caso de erro, o calendário já está visível (pré-populado em initState).
-      if (mounted)
+      if (mounted) {
         setState(() {
           _isLoadingAvailability = false;
         });
+      }
     }
   }
 
   Future<void> _checkRestriction() async {
+    if (widget.isOwnerPreview) {
+      if (mounted) setState(() => _isRestricted = false);
+      return;
+    }
     final user = Supabase.instance.client.auth.currentUser;
     final planFeatures = PlanFeaturesService.getFeaturesForShop(widget.shop);
     final requireCpf = widget.shopConfig['require_cpf'] == true;
@@ -1019,8 +1255,492 @@ class _BookingTimePageState extends State<BookingTimePage> {
   Future<void> _initWithVipCheck() async {
     await _checkVipStatus();
     if (mounted) {
+      setState(() {
+        _prePopulateWorkDays(_focusedDay);
+      });
       _fetchMonthAvailability(_focusedDay);
     }
+  }
+
+  Widget _buildCalendarDayCell(
+    DateTime day, {
+    bool isSelected = false,
+    bool isToday = false,
+  }) {
+    if (isSelected) {
+      return Container(
+        margin: const EdgeInsets.all(6),
+        alignment: Alignment.center,
+        decoration: const BoxDecoration(
+          color: AppColors.primaryPurple,
+          shape: BoxShape.circle,
+        ),
+        child: Text(
+          '${day.day}',
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+            fontSize: 14,
+          ),
+        ),
+      );
+    }
+
+    final status = _resolveDayStatus(day);
+
+    switch (status) {
+      case _CalendarDayStatus.available:
+        return Container(
+          margin: const EdgeInsets.all(6),
+          alignment: Alignment.center,
+          decoration: isToday
+              ? BoxDecoration(
+                  color: AppColors.primaryPurple.withValues(alpha: 0.14),
+                  shape: BoxShape.circle,
+                )
+              : null,
+          child: Text(
+            '${day.day}',
+            style: TextStyle(
+              color: Colors.black87,
+              fontWeight: isToday ? FontWeight.bold : FontWeight.w500,
+              fontSize: 14,
+            ),
+          ),
+        );
+
+      case _CalendarDayStatus.occupied:
+        return Container(
+          margin: const EdgeInsets.all(6),
+          alignment: Alignment.center,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Text(
+                '${day.day}',
+                style: const TextStyle(
+                  color: Color(0xFF757575),
+                  fontWeight: FontWeight.w400,
+                  fontSize: 14,
+                ),
+              ),
+              const CustomPaint(
+                size: Size(22, 22),
+                painter: StrikeThroughPainter(
+                  color: Color(0xFF616161),
+                  strokeWidth: 1.6,
+                ),
+              ),
+            ],
+          ),
+        );
+
+      case _CalendarDayStatus.closed:
+        return Container(
+          margin: const EdgeInsets.all(6),
+          alignment: Alignment.center,
+          child: Text(
+            '${day.day}',
+            style: const TextStyle(
+              color: Color(0xFFE53935),
+              fontWeight: FontWeight.w500,
+              fontSize: 14,
+            ),
+          ),
+        );
+
+      case _CalendarDayStatus.unreleased:
+        return Container(
+          margin: const EdgeInsets.all(6),
+          alignment: Alignment.center,
+          child: Text(
+            '${day.day}',
+            style: const TextStyle(
+              color: Color(0xFFBDBDBD),
+              fontWeight: FontWeight.w400,
+              fontSize: 14,
+            ),
+          ),
+        );
+    }
+  }
+
+  Widget _buildLegendItem({
+    required Widget indicator,
+    required String label,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        indicator,
+        const SizedBox(width: 4),
+        Text(
+          label,
+          maxLines: 1,
+          style: const TextStyle(
+            fontSize: 11,
+            color: Color(0xFF757575),
+            fontWeight: FontWeight.w400,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCalendarLegend() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 10, left: 4, right: 4),
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildLegendItem(
+              indicator: Container(
+                width: 7,
+                height: 7,
+                decoration: const BoxDecoration(
+                  color: Colors.black87,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              label: 'Disponível',
+            ),
+            const SizedBox(width: 12),
+            _buildLegendItem(
+              indicator: const SizedBox(
+                width: 11,
+                height: 11,
+                child: CustomPaint(
+                  painter: _LegendStrikeIndicatorPainter(),
+                ),
+              ),
+              label: 'Ocupado',
+            ),
+            const SizedBox(width: 12),
+            _buildLegendItem(
+              indicator: Container(
+                width: 7,
+                height: 7,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFE53935),
+                  shape: BoxShape.circle,
+                ),
+              ),
+              label: 'Fechado',
+            ),
+            const SizedBox(width: 12),
+            _buildLegendItem(
+              indicator: Container(
+                width: 7,
+                height: 7,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFBDBDBD),
+                  shape: BoxShape.circle,
+                ),
+              ),
+              label: 'Não liberado',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _loadPreviewSlotsForDay(DateTime date) async {
+    setState(() {
+      _isLoadingPreviewSlots = true;
+      _previewSlots = [];
+    });
+
+    try {
+      final startDay = DateTime(date.year, date.month, date.day);
+      final endDay = startDay.add(const Duration(hours: 23, minutes: 59));
+      final profsToCheck =
+          widget.qualifiedProfessionals ?? [widget.professionalDoc];
+      final profIds =
+          profsToCheck.map((p) => (p['id'] ?? '').toString()).toList();
+
+      final allDocs = await Supabase.instance.client.rpc(
+        'get_shop_blocked_slots',
+        params: {
+          'p_shop_id': (widget.shop['id'] ?? '').toString(),
+          'p_start_date': startDay.toIso8601String(),
+          'p_end_date': endDay.toIso8601String(),
+        },
+      );
+
+      final querySnapshot =
+          (allDocs as List).where((d) => profIds.contains(d['professional_id'])).toList();
+
+      final missingDurationServiceIds = querySnapshot
+          .where((d) =>
+              int.tryParse(d['duration_min']?.toString() ?? '') == null &&
+              d['service_id'] != null)
+          .map((d) => d['service_id'].toString())
+          .toSet()
+          .toList();
+
+      Map<String, int> serviceDurations = {};
+      if (missingDurationServiceIds.isNotEmpty) {
+        try {
+          final servicesData = await Supabase.instance.client
+              .from('services')
+              .select('id, duration_min')
+              .inFilter('id', missingDurationServiceIds);
+
+          for (var s in servicesData) {
+            serviceDurations[s['id'].toString()] =
+                int.tryParse(s['duration_min']?.toString() ?? '') ?? 30;
+          }
+        } catch (_) {}
+      }
+
+      List<Map<String, dynamic>> docs = [];
+      for (var d in querySnapshot) {
+        final data = Map<String, dynamic>.from(d as Map);
+        final status = (data['status'] ?? '').toString().toLowerCase();
+
+        if (status == 'cancelado' ||
+            status == 'rejeitado' ||
+            status == 'recusado' ||
+            status == 'excluido') {
+          continue;
+        }
+
+        if (status == 'pendente_pix') {
+          final createdAtRaw = data['created_at']?.toString();
+          DateTime? createdAt;
+          if (createdAtRaw != null && createdAtRaw.isNotEmpty) {
+            createdAt = DateTime.tryParse(createdAtRaw);
+          }
+          final cutoff = DateTime.now().subtract(const Duration(minutes: 30));
+          if (createdAt == null || createdAt.isBefore(cutoff)) {
+            continue;
+          }
+        }
+
+        int? agDuration = int.tryParse(data['duration_min']?.toString() ?? '');
+        if (agDuration == null) {
+          String? savedServiceId = data['service_id']?.toString();
+          if (savedServiceId != null && savedServiceId.isNotEmpty) {
+            agDuration = serviceDurations[savedServiceId];
+          }
+          agDuration ??= 30;
+        }
+
+        docs.add({
+          ...data,
+          'computed_duration': agDuration,
+        });
+      }
+
+      int duration =
+          int.tryParse(widget.serviceData['duration_min']?.toString() ?? '30') ?? 30;
+      final preventGaps = widget.shopConfig['evitar_buracos_agenda'] ?? false;
+
+      Set<String> collectedSlots = {};
+
+      for (final prof in profsToCheck) {
+        final profId = (prof['id'] ?? '').toString();
+        final rawWorkDays = prof['work_days'] ?? [];
+        final workDays = (rawWorkDays as List)
+            .map((e) => int.parse(e.toString()))
+            .toList();
+        if (!workDays.contains(date.weekday)) continue;
+
+        final profBusy = <Map<String, int>>[];
+        for (var data in docs) {
+          if ((data['professional_id'] ?? '').toString() != profId) continue;
+          final dt = DateTime.parse(data['scheduled_at']);
+          final startMin = dt.hour * 60 + dt.minute;
+          final agDuration = data['computed_duration'] as int;
+          profBusy.add({'start': startMin, 'end': startMin + agDuration});
+        }
+
+        final profBreaks = prof['breaks'];
+        if (profBreaks != null && profBreaks is List) {
+          profBusy.addAll(AvailabilityUtils.parseFolgasForDate(profBreaks, date));
+        }
+
+        final wsProf =
+            WorkSchedule.fromEmployeeRow(Map<String, dynamic>.from(prof));
+        final dayCfg = wsProf.forWeekday(date.weekday);
+        if (dayCfg == null) continue;
+
+        final breakI = dayCfg.breakInterval == null
+            ? null
+            : {
+                'start': dayCfg.breakInterval!.startMin,
+                'end': dayCfg.breakInterval!.endMin,
+              };
+
+        final profSlots = AvailabilityUtils.generateSmartSlots(
+          startStr: dayCfg.start,
+          endStr: dayCfg.end,
+          interval: widget.intervalMinutes,
+          serviceDuration: duration,
+          busyIntervals: profBusy,
+          preventGaps: preventGaps,
+          minAdvanceHours: widget.minAdvanceHours,
+          selectedDate: date,
+          breakInterval: breakI,
+        );
+
+        collectedSlots.addAll(profSlots);
+      }
+
+      final sortedList = collectedSlots.toList()..sort((a, b) => a.compareTo(b));
+
+      if (mounted) {
+        setState(() {
+          _previewSlots = sortedList;
+          _isLoadingPreviewSlots = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoadingPreviewSlots = false;
+        });
+      }
+      debugPrint('Erro ao carregar preview slots: $e');
+    }
+  }
+
+  Widget _buildOwnerPreviewSlotsSection(String svcName) {
+    return Container(
+      margin: const EdgeInsets.only(top: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      DateFormat("EEEE, dd 'de' MMMM", 'pt_BR')
+                          .format(_selectedDate!)
+                          .toUpperCase(),
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primaryPurple,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _isLoadingPreviewSlots
+                          ? "Carregando horários..."
+                          : "${_previewSlots.length} horário(s) disponível(is)",
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (_previewSlots.isNotEmpty)
+                IconButton(
+                  icon: const Icon(Icons.copy, size: 20, color: AppColors.primaryPurple),
+                  tooltip: "Copiar horários",
+                  onPressed: () {
+                    final dateStr = DateFormat("dd/MM (EEEE)", "pt_BR").format(_selectedDate!);
+                    final text = "📅 *Vagas disponíveis para $svcName*\n📆 Data: $dateStr\n⏰ Horários: ${_previewSlots.join(', ')}";
+                    Clipboard.setData(ClipboardData(text: text));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text("Horários copiados para a área de transferência!"),
+                        backgroundColor: Colors.green,
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  },
+                ),
+              IconButton(
+                icon: const Icon(Icons.close, size: 20, color: Colors.grey),
+                tooltip: "Fechar horários (ver mês)",
+                onPressed: () {
+                  setState(() {
+                    _selectedDate = null;
+                    _previewSlots = [];
+                  });
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Divider(height: 1),
+          const SizedBox(height: 14),
+          if (_isLoadingPreviewSlots)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: CircularProgressIndicator(color: AppColors.primaryPurple),
+              ),
+            )
+          else if (_previewSlots.isEmpty)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 20),
+                child: Column(
+                  children: [
+                    Icon(Icons.event_busy, size: 36, color: Colors.grey[400]),
+                    const SizedBox(height: 8),
+                    Text(
+                      "Nenhum horário livre restante neste dia.",
+                      style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: _previewSlots.map((slot) {
+                return Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryPurple.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: AppColors.primaryPurple.withValues(alpha: 0.25),
+                    ),
+                  ),
+                  child: Text(
+                    slot,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.primaryPurple,
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -1030,7 +1750,7 @@ class _BookingTimePageState extends State<BookingTimePage> {
         return RestrictedClientView(
           title: "Complete seu Perfil",
           message:
-              "Esta loja exige que o cliente tenha CPF cadastrado antes de prosseguir, para fins de emissão de Nota Fiscal.\n\nPor favor, atualize o seu perfil e tente novamente.",
+              "Esta loja exige que o cliente tenha CPF cadastrado antes de prosseguir.\n\nPor favor, atualize o seu perfil e tente novamente.",
           icon: Icons.badge_outlined,
           actionLabel: "ATUALIZAR PERFIL",
           onCustomAction: () async {
@@ -1088,21 +1808,19 @@ class _BookingTimePageState extends State<BookingTimePage> {
             .toString();
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
-
-    // Calcula a data mínima real permitida baseado em _minAdvanceHours (regra de 3 dias etc)
-    final minAdvanceDateRaw = now.add(Duration(hours: widget.minAdvanceHours));
-    final minAllowedDate = DateTime(
-        minAdvanceDateRaw.year, minAdvanceDateRaw.month, minAdvanceDateRaw.day);
-
-    // firstDate precisa ser no minimo hoje (por conta do componente), mas usaremos a trava real na validacao visual.
-    final firstDateBound =
-        minAllowedDate.isAfter(today) ? minAllowedDate : today;
-
     final lastAllowedDay = today.add(Duration(days: _bookingWindowDays));
+
+    // Permite ver o mês atual desde o dia 1 (dias passados exibidos com risco)
+    // e navegar pelos próximos meses mesmo quando ainda não liberados pela loja (cinza).
+    final calendarFirstDay = DateTime(today.year, today.month, 1);
+    final minBrowsableMaxDay = DateTime(today.year + 1, today.month + 1, 0);
+    final calendarMaxDay = lastAllowedDay.isAfter(minBrowsableMaxDay)
+        ? DateTime(lastAllowedDay.year, lastAllowedDay.month + 1, 0)
+        : minBrowsableMaxDay;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('Agendamento - $svcName'),
+        title: Text(widget.isOwnerPreview ? 'Vagas Disponíveis — $svcName' : 'Agendamento - $svcName'),
         backgroundColor: AppColors.primaryPurple,
         foregroundColor: Colors.white,
         elevation: 0,
@@ -1145,30 +1863,45 @@ class _BookingTimePageState extends State<BookingTimePage> {
                       // _availabilityReady é true desde initState (pré-população síncrona).
                       // ValueKey com _availabilityVersion força rebuild do TableCalendar
                       // após o fetch async com dados refinados de slots.
-                      if (_availabilityReady)
+                      if (_availabilityReady) ...[
                         TableCalendar(
                           key: ValueKey(
                               'cal_${_focusedDay.year}_${_focusedDay.month}_$_availabilityVersion'),
-                          firstDay: firstDateBound,
-                          lastDay: lastAllowedDay,
-                          focusedDay: _focusedDay.isBefore(firstDateBound)
-                              ? firstDateBound
-                              : (_focusedDay.isAfter(lastAllowedDay)
-                                  ? lastAllowedDay
+                          firstDay: calendarFirstDay,
+                          lastDay: calendarMaxDay,
+                          focusedDay: _focusedDay.isBefore(calendarFirstDay)
+                              ? calendarFirstDay
+                              : (_focusedDay.isAfter(calendarMaxDay)
+                                  ? calendarMaxDay
                                   : _focusedDay),
                           selectedDayPredicate: (day) =>
                               isSameDay(_selectedDate, day),
                           onDaySelected: (selectedDay, focusedDay) {
+                            if (_resolveDayStatus(selectedDay) !=
+                                _CalendarDayStatus.available) {
+                              return;
+                            }
+                            if (widget.isOwnerPreview &&
+                                _selectedDate != null &&
+                                isSameDay(_selectedDate, selectedDay)) {
+                              setState(() {
+                                _selectedDate = null;
+                                _previewSlots = [];
+                              });
+                              return;
+                            }
                             setState(() {
                               _selectedDate = selectedDay;
                               _focusedDay = focusedDay;
                             });
+                            if (widget.isOwnerPreview) {
+                              _loadPreviewSlotsForDay(selectedDay);
+                            }
                           },
                           onPageChanged: (focusedDay) {
                             setState(() {
                               _focusedDay = focusedDay;
-                              // Pré-popula work_days imediatamente para evitar dias
-                              // piscando como bloqueados enquanto o fetch async carrega
+                              // Pré-popula estados imediatamente ao trocar de mês
                               _prePopulateWorkDays(focusedDay);
                             });
                             _fetchMonthAvailability(focusedDay);
@@ -1183,75 +1916,31 @@ class _BookingTimePageState extends State<BookingTimePage> {
                               color: AppColors.primaryPurple,
                             ),
                           ),
-                          calendarStyle: CalendarStyle(
-                            selectedDecoration: const BoxDecoration(
-                              color: AppColors.primaryPurple,
-                              shape: BoxShape.circle,
-                            ),
-                            todayDecoration: BoxDecoration(
-                              color: AppColors.primaryPurple
-                                  .withValues(alpha: 0.3),
-                              shape: BoxShape.circle,
-                            ),
+                          calendarStyle: const CalendarStyle(
                             outsideDaysVisible: false,
                             disabledTextStyle:
-                                const TextStyle(color: Colors.transparent),
+                                TextStyle(color: Colors.transparent),
                           ),
                           enabledDayPredicate: (day) {
-                            final dateKey =
-                                DateTime(day.year, day.month, day.day);
-                            // fix: bloquear dias sem equipe ativa para qualquer estabelecimento
-                            return _dayAvailability[dateKey] ?? false;
+                            return _resolveDayStatus(day) ==
+                                _CalendarDayStatus.available;
                           },
                           calendarBuilders: CalendarBuilders(
-                            defaultBuilder: (context, day, focusedDay) {
-                              final dateKey =
-                                  DateTime(day.year, day.month, day.day);
-                              // fix: bloquear dias sem equipe ativa para qualquer estabelecimento
-                              final isAvailable =
-                                  _dayAvailability[dateKey] ?? false;
-
-                              if (!isAvailable) {
-                                return Center(
-                                  child: Stack(
-                                    alignment: Alignment.center,
-                                    children: [
-                                      Text(
-                                        '${day.day}',
-                                        style:
-                                            const TextStyle(color: Colors.grey),
-                                      ),
-                                      CustomPaint(
-                                        size: const Size(20, 20),
-                                        painter: StrikeThroughPainter(),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              }
-                              return null;
-                            },
-                            disabledBuilder: (context, day, focusedDay) {
-                              return Center(
-                                child: Stack(
-                                  alignment: Alignment.center,
-                                  children: [
-                                    Text(
-                                      '${day.day}',
-                                      style: TextStyle(
-                                          color: Colors.grey
-                                              .withValues(alpha: 0.5)),
-                                    ),
-                                    CustomPaint(
-                                      size: const Size(20, 20),
-                                      painter: StrikeThroughPainter(),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
+                            selectedBuilder: (context, day, focusedDay) =>
+                                _buildCalendarDayCell(day, isSelected: true),
+                            todayBuilder: (context, day, focusedDay) =>
+                                _buildCalendarDayCell(day, isToday: true),
+                            defaultBuilder: (context, day, focusedDay) =>
+                                _buildCalendarDayCell(day),
+                            disabledBuilder: (context, day, focusedDay) =>
+                                _buildCalendarDayCell(
+                              day,
+                              isToday: isSameDay(day, today),
+                            ),
                           ),
                         ),
+                        _buildCalendarLegend(),
+                      ],
                     ],
                   ),
                 ),
@@ -1282,6 +1971,8 @@ class _BookingTimePageState extends State<BookingTimePage> {
                     ],
                   ),
                 ),
+              if (widget.isOwnerPreview && _selectedDate != null)
+                _buildOwnerPreviewSlotsSection(svcName),
               const SizedBox(height: 24),
               // ✅ BOTÕES
               Row(
@@ -2025,7 +2716,7 @@ class _BookingSlotsPageState extends State<BookingSlotsPage> {
         if (createdAtRaw != null && createdAtRaw.isNotEmpty) {
           createdAt = DateTime.tryParse(createdAtRaw);
         }
-        final cutoff = DateTime.now().subtract(const Duration(minutes: 20));
+        final cutoff = DateTime.now().subtract(const Duration(minutes: 30));
         if (createdAt == null || createdAt.isBefore(cutoff)) {
           continue; // PIX abandonado: libera slot
         }
@@ -2752,21 +3443,60 @@ class _RescheduleConfirmSheet extends StatelessWidget {
 }
 
 class StrikeThroughPainter extends CustomPainter {
+  final Color color;
+  final double strokeWidth;
+
+  const StrikeThroughPainter({
+    this.color = const Color(0xFF616161),
+    this.strokeWidth = 1.6,
+  });
+
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = Colors.grey.withValues(alpha: 0.5)
-      ..strokeWidth = 1.0
+      ..color = color
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke;
 
-    // Linha diagonal inclinada (risquinho)
+    // Linha diagonal inclinada nítida sobre o número
     canvas.drawLine(
-      Offset(size.width * 0.2, size.height * 0.8),
-      Offset(size.width * 0.8, size.height * 0.2),
+      Offset(size.width * 0.18, size.height * 0.78),
+      Offset(size.width * 0.82, size.height * 0.22),
       paint,
     );
   }
 
   @override
-  bool shouldRepaint(CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant StrikeThroughPainter oldDelegate) =>
+      oldDelegate.color != color || oldDelegate.strokeWidth != strokeWidth;
+}
+
+class _LegendStrikeIndicatorPainter extends CustomPainter {
+  const _LegendStrikeIndicatorPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final circlePaint = Paint()
+      ..color = const Color(0xFF9E9E9E)
+      ..strokeWidth = 1.2
+      ..style = PaintingStyle.stroke;
+
+    final strikePaint = Paint()
+      ..color = const Color(0xFF616161)
+      ..strokeWidth = 1.5
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.stroke;
+
+    canvas.drawCircle(center, size.width * 0.32, circlePaint);
+    canvas.drawLine(
+      Offset(size.width * 0.14, size.height * 0.86),
+      Offset(size.width * 0.86, size.height * 0.14),
+      strikePaint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

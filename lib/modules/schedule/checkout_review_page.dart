@@ -114,7 +114,7 @@ class _CheckoutReviewPageState extends State<CheckoutReviewPage> {
       }
     } catch (_) {}
 
-    await Supabase.instance.client.from('appointments').insert({
+    final insertedAppt = await Supabase.instance.client.from('appointments').insert({
       'shop_id': widget.shopId,
       'client_id': user.id,
       'client_name': clientName,
@@ -137,7 +137,7 @@ class _CheckoutReviewPageState extends State<CheckoutReviewPage> {
       'duration_min': durationMin,
       'end_at': endDate.toIso8601String(),
       'metadata': {'payment_id': paymentId},
-    });
+    }).select('id').single();
 
     if (mounted) {
       final durationMin =
@@ -166,6 +166,8 @@ class _CheckoutReviewPageState extends State<CheckoutReviewPage> {
             shopName: sName,
             shopAddress: addrParts,
             durationMin: durationMin,
+            appointmentId: insertedAppt['id']?.toString(),
+            shopId: widget.shopId,
           ),
         ),
         (route) => false,

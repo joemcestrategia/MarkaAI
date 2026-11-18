@@ -2,7 +2,7 @@ name: markaai
 description: "A new Flutter project."
 publish_to: 'none'
 
-version: 1.8.9+11
+version: 1.8.16+18
 
 environment:
   sdk: '>=3.1.0 <4.0.0'
@@ -52,7 +52,6 @@ dependencies:
   googleapis: ^13.2.0
   googleapis_auth: ^1.6.0
   geolocator: ^9.0.2
-  geocoding: ^2.0.5
   in_app_purchase: ^3.2.0
   
   # --- Mapas ---
@@ -80,19 +79,23 @@ dependencies:
   package_info_plus: ^9.0.1
   dio: ^5.4.3
   open_filex: ^4.3.4
+  flutter_svg: ^2.3.0
+  flutter_native_splash: ^2.4.4
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
   flutter_launcher_icons: ^0.14.4
-  flutter_native_splash: ^2.4.4
 
 flutter:
   uses-material-design: true
   assets:
     - assets/images/
+    - assets/images/splash_items/
     - assets/payment/
+    - assets/primitives_splash/
+
 
 flutter_icons:
   android: true
@@ -104,13 +107,3 @@ flutter_icons:
     generate: true
     image_path: "assets/images/icon.png"
   image_path: "assets/images/icon.png"
-
-flutter_native_splash:
-  color: "#ffffff"
-  image: "assets/images/icon.png"
-  android_12:
-    image: "assets/images/icon.png"
-    color: "#ffffff"
-  android: true
-  ios: true
-  web: false

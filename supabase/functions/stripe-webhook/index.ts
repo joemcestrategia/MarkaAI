@@ -17,6 +17,19 @@ const supabaseAdmin = createClient(
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 )
 
+// Helper para sincronizar plano do dono na tabela users
+async function syncOwnerPlan(shopId: string, plan: string) {
+  try {
+    await supabaseAdmin
+      .from('users')
+      .update({ plan })
+      .eq('shop_id', shopId)
+      .eq('role', 'dono')
+  } catch (err) {
+    console.warn(`Aviso ao sincronizar plano do dono para shop ${shopId}:`, err)
+  }
+}
+
 serve(async (req: Request) => {
   // Only accept POST requests
   if (req.method !== 'POST') {
@@ -79,7 +92,7 @@ serve(async (req: Request) => {
           if (subscriptionId && !planId) {
             const sub = await stripe.subscriptions.retrieve(subscriptionId)
             const priceId = sub.items.data[0]?.price.id
-            planId = PRICE_IDS_REV[priceId] || 'free'
+            planId = getPlanIdFromPriceId(priceId) || 'free'
           }
 
           if (!planId) throw new Error('Missing plan_id resolving')
@@ -98,6 +111,8 @@ serve(async (req: Request) => {
               updated_at: new Date().toISOString(),
             },
           }).eq('id', shopId)
+
+          await syncOwnerPlan(shopId, planId)
         } else if (session.mode === 'payment') {
           const shopId = session.metadata?.shop_id
           const description = session.metadata?.description || ''
@@ -147,10 +162,13 @@ serve(async (req: Request) => {
             const priceId = subscription.items.data[0]?.price.id
             const planId = getPlanIdFromPriceId(priceId) || subscription.metadata?.plan_id || 'free'
 
+            const { data: currentShop } = await supabaseAdmin.from('shops').select('subscription').eq('id', shopId).maybeSingle()
+
             await supabaseAdmin.from('shops').update({
               plan_id: planId,
               trial_active: false,
               subscription: {
+                ...(currentShop?.subscription || {}),
                 plan_id: planId,
                 status: 'active',
                 payment_provider: 'stripe',
@@ -159,6 +177,8 @@ serve(async (req: Request) => {
                 updated_at: new Date().toISOString(),
               },
             }).eq('id', shopId)
+
+            await syncOwnerPlan(shopId, planId)
           }
         }
         break
@@ -174,17 +194,19 @@ serve(async (req: Request) => {
           
           if (shopId) {
             console.error(`❌ Falha de Pagamento na Assinatura (Past Due): Shop ${shopId}`)
-            // Update the DB to lock out the user due to payment failure
             const { data } = await supabaseAdmin.from('shops').select('subscription').eq('id', shopId).maybeSingle()
-            if (data?.subscription) {
-              await supabaseAdmin.from('shops').update({
-                subscription: {
-                  ...data.subscription,
-                  status: 'past_due',
-                  updated_at: new Date().toISOString(),
-                }
-              }).eq('id', shopId)
-            }
+            
+            // Em caso de falha de pagamento, o plano ativo volta para 'free' para impedir inadimplência
+            await supabaseAdmin.from('shops').update({
+              plan_id: 'free',
+              subscription: {
+                ...(data?.subscription || {}),
+                status: 'past_due',
+                updated_at: new Date().toISOString(),
+              }
+            }).eq('id', shopId)
+
+            await syncOwnerPlan(shopId, 'free')
           }
         }
         break
@@ -226,10 +248,11 @@ serve(async (req: Request) => {
 
           const { data } = await supabaseAdmin.from('shops').select('subscription').eq('id', shopId).maybeSingle()
           
+          // Se estiver cancelado, inadimplente (unpaid) ou falha de cobrança (past_due), volta para free
+          const effectivePlanId = (status === 'canceled' || status === 'unpaid' || status === 'past_due') ? 'free' : planId
+
           await supabaseAdmin.from('shops').update({
-            // Only update root plan_id to free if the status is actually canceled outright, 
-            // OR keep it the new plan_id so downgrades take effect correctly on the cycle virada.
-            plan_id: (status === 'canceled' || status === 'unpaid') ? 'free' : planId,
+            plan_id: effectivePlanId,
             trial_active: false,
             current_period_end: currentPeriodEnd,
             cancel_at_period_end: cancelAtPeriodEnd,
@@ -242,6 +265,8 @@ serve(async (req: Request) => {
               updated_at: new Date().toISOString(),
             }
           }).eq('id', shopId)
+
+          await syncOwnerPlan(shopId, effectivePlanId)
         }
         break
       }
@@ -268,6 +293,8 @@ serve(async (req: Request) => {
               updated_at: new Date().toISOString(),
             }
           }).eq('id', shopId)
+
+          await syncOwnerPlan(shopId, 'free')
         }
         break
       }

@@ -57,6 +57,25 @@ class ClientCacheService {
     return hash;
   }
 
+  /// Computa fingerprint dos cadastros de shop_clients (clientes manuais, tags,
+  /// classificação) para detectar criação, edição e exclusão em tempo real.
+  static int computeShopClientsFingerprint(List<Map<String, dynamic>> rows) {
+    int hash = rows.length;
+    for (final r in rows) {
+      hash = (hash * 31 + (r['id']?.hashCode ?? 0)) & 0x3fffffff;
+      hash = (hash * 31 + (r['nome']?.hashCode ?? 0)) & 0x3fffffff;
+      hash = (hash * 31 + (r['telefone']?.hashCode ?? 0)) & 0x3fffffff;
+      hash = (hash * 31 + (r['photo_url']?.hashCode ?? 0)) & 0x3fffffff;
+      hash = (hash * 31 + (r['classification']?.hashCode ?? 0)) & 0x3fffffff;
+      hash = (hash * 31 + (r['last_updated']?.hashCode ?? 0)) & 0x3fffffff;
+      hash = (hash * 31 + (r['manual_tags']?.toString().hashCode ?? 0)) & 0x3fffffff;
+      hash = (hash * 31 + (r['notes']?.hashCode ?? 0)) & 0x3fffffff;
+      hash = (hash * 31 + (r['has_auth_account']?.hashCode ?? 0)) & 0x3fffffff;
+      hash = (hash * 31 + (r['is_deleted']?.hashCode ?? 0)) & 0x3fffffff;
+    }
+    return hash;
+  }
+
   /// Verifica se a cache está expirada (precisa de refresh em background)
   static Future<bool> isCacheStale(String shopId) async {
     final prefs = await SharedPreferences.getInstance();

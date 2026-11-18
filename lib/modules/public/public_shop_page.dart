@@ -1,15 +1,18 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:http/http.dart' as http;
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:markaai/core/theme/app_colors.dart';
 import 'package:markaai/widgets/google_reviews_widget.dart';
 import 'package:markaai/core/utils/service_image_keywords.dart';
 import 'package:markaai/core/widgets/pexels_image_widget.dart';
 import 'package:markaai/modules/clients/client_service_detail_page.dart';
 import 'package:markaai/core/services/shop_data_cache_service.dart';
-import 'package:markaai/core/constants/api_keys.dart';
 import 'package:markaai/core/widgets/shared_bottom_nav_bar.dart';
 class PublicShopPage extends StatefulWidget {
   final String slug;
@@ -36,6 +39,10 @@ class PublicShopPage extends StatefulWidget {
 class _PublicShopPageState extends State<PublicShopPage> {
   String? _selectedCategoryId;
   int _selectedMainTab = 0; // 0 for Serviços, 1 for Produtos
+
+  // FIX: Future criado UMA vez no initState, não a cada rebuild.
+  // Criar o Future dentro do build() causava loop eterno de ConnectionState.waiting.
+  late Future<Map<String, dynamic>> _shopDataFuture;
   
   Future<void> _launchWhatsApp(String whatsapp) async {
     final phone = whatsapp.replaceAll(RegExp(r'[^0-9]'), '');
@@ -69,6 +76,12 @@ class _PublicShopPageState extends State<PublicShopPage> {
   }
 
 
+
+  @override
+  void initState() {
+    super.initState();
+    _shopDataFuture = _fetchShopData();
+  }
 
   Future<void> _handleServiceTap(
     BuildContext context,
@@ -112,7 +125,7 @@ class _PublicShopPageState extends State<PublicShopPage> {
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<Map<String, dynamic>>(
-      future: _fetchShopData(),
+      future: _shopDataFuture,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
@@ -120,7 +133,7 @@ class _PublicShopPageState extends State<PublicShopPage> {
           );
         }
 
-        if (!snapshot.hasData || snapshot.data == null || snapshot.data!['shop'] == null) {
+        if (snapshot.hasError || !snapshot.hasData || snapshot.data == null || snapshot.data!['shop'] == null) {
           return Scaffold(
             backgroundColor: const Color(0xFFF5F7FA),
             bottomNavigationBar: const SharedBottomNavBar(selectedIndex: 0),
@@ -1071,22 +1084,7 @@ Widget _buildMiniMap(Map<String, dynamic> data) {
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
-                      // Usando imagem estática do Google (Se houver chave no futuro, ou placeholder visual)
-                      CachedNetworkImage(
-                        imageUrl: "https://maps.googleapis.com/maps/api/staticmap?center=${Uri.encodeComponent(fullAddress)}&zoom=15&size=600x300&scale=2&maptype=roadmap&markers=color:red%7C${Uri.encodeComponent(fullAddress)}&key=${ApiKeys.mapsApiKey}",
-                        fit: BoxFit.cover,
-                        errorWidget: (c, u, e) => Container(
-                          color: AppColors.softGrey,
-                          child: const Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.map_outlined, size: 48, color: Colors.grey),
-                              SizedBox(height: 8),
-                              Text("Ver no Mapa", style: TextStyle(color: Colors.grey)),
-                            ],
-                          ),
-                        ),
-                      ),
+                      _MapTileWidget(fullAddress: fullAddress),
                       Container(
                         decoration: BoxDecoration(
                           border: Border.all(color: Colors.grey.shade300),
@@ -1172,6 +1170,84 @@ Future<void> _launchWazeStatic(Map<String, dynamic> data) async {
   final query = Uri.encodeComponent(address);
   final uri = Uri.parse('https://waze.com/ul?q=$query&navigate=yes');
   if (await canLaunchUrl(uri)) await launchUrl(uri, mode: LaunchMode.externalApplication);
+}
+
+Future<LatLng?> _geocodeAddress(String address) async {
+  try {
+    final url = Uri.parse(
+      'https://nominatim.openstreetmap.org/search'
+      '?q=${Uri.encodeComponent(address)}'
+      '&format=json&limit=1',
+    );
+    final response = await http.get(url, headers: {
+      'User-Agent': 'MarkaAI/1.0 (suporte@markaai.com.br)',
+    });
+    if (response.statusCode == 200) {
+      final List data = jsonDecode(response.body);
+      if (data.isNotEmpty) {
+        return LatLng(
+          double.parse(data[0]['lat'].toString()),
+          double.parse(data[0]['lon'].toString()),
+        );
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
+class _MapTileWidget extends StatelessWidget {
+  final String fullAddress;
+  const _MapTileWidget({required this.fullAddress});
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<LatLng?>(
+      future: _geocodeAddress(fullAddress),
+      builder: (context, snapshot) {
+        if (snapshot.hasData && snapshot.data != null) {
+          final pos = snapshot.data!;
+          return FlutterMap(
+            options: MapOptions(
+              center: pos,
+              zoom: 16.0,
+              interactiveFlags: InteractiveFlag.none,
+            ),
+            children: [
+              TileLayer(
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'com.markaai.app',
+              ),
+              MarkerLayer(
+                markers: [
+                  Marker(
+                    point: pos,
+                    child: const Icon(Icons.location_on, color: Colors.red, size: 40),
+                  ),
+                ],
+              ),
+            ],
+          );
+        }
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Container(
+            color: AppColors.softGrey,
+            child: const Center(child: CircularProgressIndicator(strokeWidth: 2, color: Colors.grey)),
+          );
+        }
+        return Container(
+          color: AppColors.softGrey,
+          child: const Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.map_outlined, size: 48, color: Colors.grey),
+              SizedBox(height: 8),
+              Text("Ver no Mapa", style: TextStyle(color: Colors.grey)),
+            ],
+          ),
+        );
+      },
+    );
+  }
 }
 
 class AppMapSelectionDialogAlt extends StatelessWidget {

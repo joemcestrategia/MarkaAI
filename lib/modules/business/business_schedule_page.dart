@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 import 'package:intl/intl.dart';
 import 'package:table_calendar/table_calendar.dart';
+import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
 import 'dart:async';
 import '../../core/theme/app_colors.dart';
 import 'appointment_details_page.dart';
@@ -15,8 +17,8 @@ import '../../core/services/shop_data_cache_service.dart';
 import '../../core/services/schedule_cache_service.dart';
 import '../../core/services/transaction_autocomplete_service.dart';
 import '../../core/services/privacy_service.dart';
-import '../fiscal/nfse_service.dart';
 import '../../utils/payment_summary.dart';
+import 'widgets/client_note_badge.dart';
 
 class BusinessSchedulePage extends StatefulWidget {
   final String shopId;
@@ -1225,7 +1227,43 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
       final TextEditingController nameController = TextEditingController(text: (initialName == 'null' || initialName == 'Null') ? '' : initialName);
       
       final String initialPhone = (editData?['client_phone'] ?? '').toString();
-      final TextEditingController phoneController = TextEditingController(text: (initialPhone == 'null' || initialPhone == 'Null') ? '' : initialPhone);
+      final String rawInitialPhone = (initialPhone == 'null' || initialPhone == 'Null') ? '' : initialPhone.replaceAll(RegExp(r'\D'), '');
+
+      // Formatter de telefone customizado: sempre aceita até 11 dígitos
+      // e formata automaticamente como (XX) XXXXX-XXXX ou (XX) XXXX-XXXX.
+      // Isso elimina o bug do MaskTextInputFormatter que truncava o 11º dígito.
+      String _formatPhone(String digits) {
+        if (digits.isEmpty) return '';
+        if (digits.length <= 2) return '($digits';
+        if (digits.length <= 6) return '(${digits.substring(0, 2)}) ${digits.substring(2)}';
+        if (digits.length <= 10) {
+          return '(${digits.substring(0, 2)}) ${digits.substring(2, 6)}-${digits.substring(6)}';
+        }
+        // 11 dígitos = celular
+        return '(${digits.substring(0, 2)}) ${digits.substring(2, 7)}-${digits.substring(7)}';
+      }
+
+      final phoneFormatter = TextInputFormatter.withFunction((oldValue, newValue) {
+        final digits = newValue.text.replaceAll(RegExp(r'\D'), '');
+        if (digits.length > 11) {
+          // Limita a 11 dígitos
+          final limited = digits.substring(0, 11);
+          final formatted = _formatPhone(limited);
+          return TextEditingValue(
+            text: formatted,
+            selection: TextSelection.collapsed(offset: formatted.length),
+          );
+        }
+        final formatted = _formatPhone(digits);
+        return TextEditingValue(
+          text: formatted,
+          selection: TextSelection.collapsed(offset: formatted.length),
+        );
+      });
+
+      final TextEditingController phoneController = TextEditingController(
+        text: _formatPhone(rawInitialPhone),
+      );
       
       final String initialService = (editData?['service_name'] ?? '').toString();
       final TextEditingController serviceController = TextEditingController(text: (initialService == 'null' || initialService == 'Null') ? '' : initialService);
@@ -1262,7 +1300,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
         isPaid = (double.tryParse(editData['paid_amount']?.toString() ?? '0') ?? 0) > 0.01;
       }
 
-      // --- REVISÃƒO / INTELIGÃŠNCIA INICIAL ---
+      // --- REVISÃO / INTELIGÊNCIA INICIAL ---
       Map<String, dynamic>? suggestedService;
       Map<String, dynamic>? suggestedProfessional;
       bool isServiceConfirmed = false;
@@ -1478,7 +1516,8 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                                 onSelected: (option) {
                                   setModalState(() {
                                     nameController.text = option['name'] ?? '';
-                                    phoneController.text = option['phone'] ?? '';
+                                    final selPhone = (option['phone'] ?? '').toString().replaceAll(RegExp(r'\D'), '');
+                                    phoneController.text = _formatPhone(selPhone);
                                     selectedClientId = option['id'];
                                     if (capturedNameCtrl != null) {
                                       capturedNameCtrl!.text = option['name'] ?? '';
@@ -1567,6 +1606,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                               child: TextField(
                                 controller: phoneController,
                                 keyboardType: TextInputType.phone,
+                                inputFormatters: [phoneFormatter],
                                 style: const TextStyle(fontSize: 14),
                                 decoration: InputDecoration(
                                   hintText: 'Telefone do cliente',
@@ -2136,7 +2176,7 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                                     'shop_id': widget.shopId,
                                     'client_id': selectedClientId,
                                     'client_name': nameController.text.trim(),
-                                    'client_phone': phoneController.text.trim().isEmpty ? null : phoneController.text.trim(),
+                                    'client_phone': phoneController.text.replaceAll(RegExp(r'\D'), '').isEmpty ? null : phoneController.text.replaceAll(RegExp(r'\D'), ''),
                                     'service_name': serviceController.text.isEmpty ? 'Avulso' : serviceController.text,
                                     'service_id': serviceId,
                                     'duration_min': durationMin,
@@ -3392,11 +3432,6 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
     }
   }
 
-  // ✨ Helper para checar se a NFS-e já foi emitida, usando cache
-  Future<bool> _checkNfseEmitida(String appointmentId) async {
-    final numero = await NfseService().getNfseNumero(appointmentId);
-    return numero != null;
-  }
 
   @override
   void dispose() {
@@ -3874,35 +3909,6 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                           crossAxisAlignment: CrossAxisAlignment.start,
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            // ✨ Texto Superior: NFS-e Emitida
-                            if (summary.status == 'pago' || hasOnlinePayment)
-                              FutureBuilder<bool>(
-                                future: _checkNfseEmitida(data['id'].toString()),
-                                builder: (ctx, snap) {
-                                  if (snap.data == true) {
-                                    return Padding(
-                                      padding: const EdgeInsets.only(bottom: 6.0),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          const Icon(Icons.receipt_long, size: 10, color: Colors.teal),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            'NOTA FISCAL EMITIDA',
-                                            style: TextStyle(
-                                              fontSize: 9,
-                                              fontWeight: FontWeight.w800,
-                                              color: Colors.teal.shade700,
-                                              letterSpacing: 0.3,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    );
-                                  }
-                                  return const SizedBox.shrink();
-                                },
-                              ),
                             Row(
                               children: [
                                 Flexible(
@@ -3920,6 +3926,11 @@ class _BusinessSchedulePageState extends State<BusinessSchedulePage>
                                     ),
                                   ),
                                 ),
+                                if (data['id'] != null)
+                                  ClientNoteBadge(
+                                    appointmentId: data['id'].toString(),
+                                    shopId: (data['shop_id'] ?? widget.shopId).toString(),
+                                  ),
                               ],
                             ),
                             const SizedBox(height: 2),

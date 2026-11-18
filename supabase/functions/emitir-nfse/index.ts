@@ -1,5 +1,5 @@
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
-import { createSupabaseAdminClient } from '../_shared/supabase.ts'
+import { createSupabaseAdminClient, createSupabaseClient } from '../_shared/supabase.ts'
 import { corsHeaders } from '../_shared/cors.ts'
 
 function digits(v: string): string { return v.replace(/\D/g, '') }
@@ -223,6 +223,48 @@ async function emitirItabirito(supabase: any, cfg: any, apptData: any, emissaoId
 
 serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+
+  // ── Autenticação dual-mode (OWASP U3) ────────────────────────────────
+  // Aceita: (1) JWT de usuário autenticado, ou (2) service_role (chamada
+  // interna de outra Edge Function, como mpPaymentWebhook auto-emissão).
+  const authHeader = req.headers.get('Authorization') ?? ''
+  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+  const isServiceRole = serviceRoleKey.length > 0 && authHeader.includes(serviceRoleKey)
+
+  if (!isServiceRole) {
+    // Chamada de usuário — validar JWT
+    const supabaseAuth = createSupabaseClient(req)
+    const { data: { user }, error: authErr } = await supabaseAuth.auth.getUser()
+    if (authErr || !user) {
+      return new Response(JSON.stringify({ error: 'Não autenticado' }), {
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
+    // Pré-parse do body para verificar ownership (body será re-lido abaixo)
+    // Precisamos clonar o request pois o body só pode ser lido uma vez
+    const clonedReq = req.clone()
+    try {
+      const bodyCheck = await clonedReq.json()
+      const targetShopId = bodyCheck.shop_id
+      if (targetShopId) {
+        const adminClient = createSupabaseAdminClient()
+        const { data: shop } = await adminClient
+          .from('shops')
+          .select('owner_id')
+          .eq('id', targetShopId)
+          .maybeSingle()
+        if (!shop || shop.owner_id !== user.id) {
+          return new Response(JSON.stringify({ error: 'Acesso negado — você não é dono desta loja' }), {
+            status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        }
+      }
+    } catch (_) {
+      // Se o body não for JSON válido, o try principal vai capturar
+    }
+  }
+  // ── Fim Autenticação ─────────────────────────────────────────────────
 
   const supabase = createSupabaseAdminClient()
   try {

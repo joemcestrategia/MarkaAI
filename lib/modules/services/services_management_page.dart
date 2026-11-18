@@ -10,6 +10,7 @@ import '../../core/widgets/pexels_image_widget.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/services/shop_data_cache_service.dart';
 import '../../core/widgets/supabase_stream_widget.dart';
+import '../schedule/booking_page.dart';
 import 'package:flutter/foundation.dart';
 
 // --- CLASSE DE DETALHES (MANTIDA E OTIMIZADA) ---
@@ -285,6 +286,8 @@ class ServicesManagementPage extends StatefulWidget {
 
 class _ServicesManagementPageState extends State<ServicesManagementPage> {
   String? shopId;
+  Map<String, dynamic>? _shopDoc;
+  bool _isOnlineBookingActive = true;
   bool _isLoading = true;
   int _refreshKey = 0;
 
@@ -311,9 +314,26 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
 
       if (id == null || id.isEmpty) {
         await _loadShopIdFromUser();
+      } else {
+        await _loadShopDoc(id);
       }
     } catch (e) {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _loadShopDoc(String id) async {
+    try {
+      final shop = await ShopDataCacheService().getShop(id);
+      if (shop != null && mounted) {
+        final config = shop['config'] as Map<String, dynamic>?;
+        setState(() {
+          _shopDoc = shop;
+          _isOnlineBookingActive = config?['agendamento_online_ativo'] ?? true;
+        });
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint("Erro load shop doc: $e");
     }
   }
 
@@ -327,11 +347,15 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
             .eq('id', user.id)
             .maybeSingle();
         if (userDoc != null) {
+          final sId = userDoc['shop_id']?.toString();
           if (mounted) {
             setState(() {
-              shopId = userDoc['shop_id'];
+              shopId = sId;
               _isLoading = false;
             });
+          }
+          if (sId != null && sId.isNotEmpty) {
+            await _loadShopDoc(sId);
           }
         }
       }
@@ -341,6 +365,43 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
   }
 
   // 🧠 CÉREBRO DA NAVEGAÇÃO: Decide se abre painel (PC) ou navega (Mobile)
+  Future<void> _openAvailableSlots(Map<String, dynamic> serviceData) async {
+    if (shopId == null || shopId!.isEmpty) return;
+
+    Map<String, dynamic>? shop = _shopDoc;
+    if (shop == null) {
+      shop = await ShopDataCacheService().getShop(shopId!);
+      if (shop != null && mounted) {
+        setState(() => _shopDoc = shop);
+      }
+    }
+
+    if (shop == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Não foi possível carregar as informações do estabelecimento."),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    if (!mounted) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => BookingPage(
+          shop: shop!,
+          serviceDoc: serviceData,
+          isOwnerPreview: true,
+        ),
+      ),
+    );
+  }
+
   void _handleServiceTap(
       BuildContext context, Map<String, dynamic> data, bool isMobile) {
     if (isMobile) {
@@ -863,6 +924,16 @@ class _ServicesManagementPageState extends State<ServicesManagementPage> {
             const SizedBox(height: 12),
 
             // Options
+            if (_isOnlineBookingActive)
+              _buildModalItem(
+                icon: Icons.event_available_outlined,
+                label: "Vagas disponíveis",
+                color: AppColors.primaryPurple,
+                onTap: () {
+                  Navigator.pop(context);
+                  _openAvailableSlots(data);
+                },
+              ),
             _buildModalItem(
               icon: Icons.edit_outlined,
               label: "Editar Informações",

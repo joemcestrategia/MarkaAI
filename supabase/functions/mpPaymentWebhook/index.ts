@@ -88,7 +88,11 @@ Deno.serve(async (req: Request) => {
         })
       }
     } else {
-      console.warn('[mpPaymentWebhook] MERCADOPAGO_WEBHOOK_SECRET não configurada — pulando validação HMAC')
+      console.error('[mpPaymentWebhook] MERCADOPAGO_WEBHOOK_SECRET não configurada — rejeitando webhook por segurança')
+      return new Response(JSON.stringify({ error: 'Configuração de segurança incompleta' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      })
     }
 
     // Só processa eventos de pagamento
@@ -130,13 +134,40 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Fallback: buscar pelo payment_id já salvo no agendamento
+    // Fallback: buscar pelo payment_id em múltiplos locais no agendamento
     if (!accessToken) {
-      const { data: apptRows } = await supabase
+      // Tenta encontrar por payment_id direto, advance_payment_id ou completion_payment_id
+      let apptRows: any[] | null = null;
+
+      ({ data: apptRows } = await supabase
         .from('appointments')
         .select('id, shop_id')
         .eq('payment_id', paymentId)
-        .limit(1)
+        .limit(1));
+
+      if ((!apptRows || apptRows.length === 0)) {
+        ({ data: apptRows } = await supabase
+          .from('appointments')
+          .select('id, shop_id')
+          .eq('metadata->>advance_payment_id', paymentId)
+          .limit(1));
+      }
+
+      if ((!apptRows || apptRows.length === 0)) {
+        ({ data: apptRows } = await supabase
+          .from('appointments')
+          .select('id, shop_id')
+          .eq('metadata->>completion_payment_id', paymentId)
+          .limit(1));
+      }
+
+      if ((!apptRows || apptRows.length === 0)) {
+        ({ data: apptRows } = await supabase
+          .from('appointments')
+          .select('id, shop_id')
+          .eq('metadata->>full_payment_id', paymentId)
+          .limit(1));
+      }
 
       if (apptRows && apptRows.length > 0) {
         shopId = apptRows[0].shop_id
@@ -362,11 +393,29 @@ Deno.serve(async (req: Request) => {
       // Busca total_payable, paid_amount, payment_id e metadata para calcular remaining e consolidar pagamentos
       const { data: currentAppt, error: selectError } = await supabase
         .from('appointments')
-        .select('total_payable, paid_amount, payment_id, metadata, status')
+        .select('total_payable, paid_amount, payment_id, payment_method, metadata, status, cancellation_reason')
         .eq('id', appointmentId)
         .maybeSingle()
 
       if (selectError) throw selectError
+
+      // ── Guarda: NÃO reativar agendamento cancelado por decisão explícita ──
+      // Só reativa automaticamente quando o cancelamento foi por expiração da
+      // pré-reserva (motivo 'pre_reserva_expirada', definido pelo cron).
+      // Cancelamentos feitos pelo cliente/dono (cliente_desistiu, no_show,
+      // salao_cancelou, outro ou sem motivo) exigem revisão manual do dono.
+      const cancelReason = currentAppt?.cancellation_reason ?? null
+      if (currentAppt?.status === 'cancelado' && cancelReason !== 'pre_reserva_expirada') {
+        console.log(`[mpPaymentWebhook] Agendamento ${appointmentId} cancelado (motivo: ${cancelReason ?? 'indefinido'}) — não reativado automaticamente.`)
+        await supabase
+          .from('mp_processed_payments')
+          .update({ reconciliation_status: 'cancelled_by_client' })
+          .eq('payment_id', paymentId)
+        return new Response(
+          JSON.stringify({ ok: false, message: 'Agendamento cancelado pelo cliente/dono. Pagamento registrado para revisão manual.', payment_id: paymentId }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
 
       const paymentTypeId = paymentData.payment_type_id?.toString()?.toLowerCase() || ''
       const paymentMethodId = paymentData.payment_method_id?.toString()?.toLowerCase() || ''
@@ -417,6 +466,10 @@ Deno.serve(async (req: Request) => {
         updatePayload.metadata = {
           ...currentMeta,
           advance_payment_id: currentMeta.advance_payment_id || currentAppt?.payment_id,
+          // Preserva o amount e método do sinal se já estavam gravados
+          advance_payment_amount: currentMeta.advance_payment_amount,
+          advance_payment_method: currentMeta.advance_payment_method || currentMeta.payment_method || currentAppt?.payment_method,
+          advance_paid_at: currentMeta.advance_paid_at,
           payment_id: paymentId,
           completion_payment_id: paymentId,
           completion_payment_method: realPaymentMethod,
@@ -430,15 +483,21 @@ Deno.serve(async (req: Request) => {
         updatePayload.payment_method = realPaymentMethod
         const currentMeta = currentAppt?.metadata || {}
         if (newPaidAmount < (totalPayable - 0.05)) {
+          // Primeiro pagamento é um sinal — grava amount, método e timestamp
           updatePayload.metadata = {
             ...currentMeta,
-            advance_payment_amount: paidAmount
+            advance_payment_id: paymentId,
+            advance_payment_amount: paidAmount,
+            advance_payment_method: realPaymentMethod,
+            advance_paid_at: new Date().toISOString(),
           }
         } else {
+          // Pagamento único cobrindo o total
           updatePayload.metadata = {
             ...currentMeta,
             full_payment_amount: paidAmount,
-            full_payment_method: realPaymentMethod
+            full_payment_method: realPaymentMethod,
+            full_paid_at: new Date().toISOString(),
           }
         }
       }

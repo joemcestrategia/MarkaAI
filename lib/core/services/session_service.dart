@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:markaai/core/services/splash_config_service.dart';
 
 class SessionService {
   static SharedPreferences? _prefs;
@@ -35,6 +36,8 @@ class SessionService {
   }) async {
     await _secureStorage.write(key: _keyUserId, value: userId);
     await _secureStorage.write(key: _keyUserType, value: userType);
+    // Perfil da splash (lojista x cliente): fora do storage seguro e preservado no logout.
+    await SplashConfigService.rememberProfile(userType);
 
     if (shopId != null && shopId.isNotEmpty) {
       await _secureStorage.write(key: _keyShopId, value: shopId);

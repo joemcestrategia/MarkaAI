@@ -11,7 +11,6 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:intl/intl.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:geocoding/geocoding.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/services/auth_service.dart';
@@ -32,8 +31,6 @@ import 'package:markaai/core/utils/string_utils.dart';
 import '../../core/utils/shop_image_keywords.dart';
 import '../../core/utils/shop_category_helper.dart';
 import '../../core/widgets/pexels_image_widget.dart';
-import '../../core/services/ad_service.dart';
-import 'package:google_mobile_ads/google_mobile_ads.dart';
 import '../../core/widgets/shared_bottom_nav_bar.dart';
 import '../../services/update_service.dart';
 
@@ -103,7 +100,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
     _loadUserData();
     _loadCidadeSalva();
     _setupNotifications();
-    
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       UpdateService.checkForUpdateAndPrompt(context);
     });
@@ -153,33 +150,28 @@ class _ClientHomePageState extends State<ClientHomePage> {
       String detectedCity = '';
       String detectedState = '';
 
-      if (kIsWeb) {
-        // No web, geocoding package não funciona — usa Nominatim (OpenStreetMap)
-        try {
-          final uri = Uri.parse(
-            'https://nominatim.openstreetmap.org/reverse'
-            '?lat=${pos.latitude}&lon=${pos.longitude}'
-            '&format=json&accept-language=pt-BR',
-          );
-          final resp = await http.get(uri, headers: {'User-Agent': 'MarkaAI/1.0'});
-          if (resp.statusCode == 200) {
-            final data = jsonDecode(resp.body) as Map<String, dynamic>;
-            final addr = data['address'] as Map<String, dynamic>?;
-            detectedCity = (addr?['city'] ?? addr?['town'] ?? addr?['village'] ??
-                    addr?['municipality'] ?? '').toString().trim();
-            detectedState = (addr?['state_code'] ?? addr?['state'] ?? '').toString().trim();
-          }
-        } catch (_) {}
-      } else {
-        final List<Placemark> placemarks = await placemarkFromCoordinates(
-            pos.latitude, pos.longitude, localeIdentifier: 'pt_BR');
-        if (placemarks.isNotEmpty) {
-          final p = placemarks.first;
-          // locality é mais confiável para o nome da cidade; subAdministrativeArea como fallback
-          detectedCity = (p.locality ?? p.subAdministrativeArea ?? '').trim();
-          detectedState = (p.administrativeArea ?? '').trim();
+      try {
+        final uri = Uri.parse(
+          'https://nominatim.openstreetmap.org/reverse'
+          '?lat=${pos.latitude}&lon=${pos.longitude}'
+          '&format=json&accept-language=pt-BR',
+        );
+        final resp =
+            await http.get(uri, headers: {'User-Agent': 'MarkaAI/1.0'});
+        if (resp.statusCode == 200) {
+          final data = jsonDecode(resp.body) as Map<String, dynamic>;
+          final addr = data['address'] as Map<String, dynamic>?;
+          detectedCity = (addr?['city'] ??
+                  addr?['town'] ??
+                  addr?['village'] ??
+                  addr?['municipality'] ??
+                  '')
+              .toString()
+              .trim();
+          detectedState =
+              (addr?['state_code'] ?? addr?['state'] ?? '').toString().trim();
         }
-      }
+      } catch (_) {}
 
       if (detectedCity.isEmpty || !mounted) return;
 
@@ -278,7 +270,8 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
   void _setupNotifications() {
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      final appointmentId = message.data['appointment_id'] ?? message.data['appointmentId'];
+      final appointmentId =
+          message.data['appointment_id'] ?? message.data['appointmentId'];
       final title = message.notification?.title ?? '';
       final body = message.notification?.body ?? '';
       if (appointmentId != null && mounted) {
@@ -344,7 +337,23 @@ class _ClientHomePageState extends State<ClientHomePage> {
       }
     } catch (e) {
       debugPrint('⚠️ [ClientHome] Erro ao carregar dados do usuário: $e');
-      if (mounted) setState(() => _isLoadingUserData = false);
+      if (mounted) {
+        final user = Supabase.instance.client.auth.currentUser;
+        setState(() {
+          if (user != null) {
+            _userId = user.id;
+            _userName = user.userMetadata?['name'] as String? ??
+                user.userMetadata?['nome'] as String? ??
+                user.email ??
+                'Usuario';
+            _userEmail = user.email ?? '';
+            _userPhotoUrl = user.userMetadata?['avatar_url'] as String? ??
+                user.userMetadata?['picture'] as String?;
+            _userTipo = user.userMetadata?['role'] as String? ?? 'cliente';
+          }
+          _isLoadingUserData = false;
+        });
+      }
     }
   }
 
@@ -378,6 +387,15 @@ class _ClientHomePageState extends State<ClientHomePage> {
     }
   }
 
+  void _redirectToLogin() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        Navigator.pushReplacement(
+            context, MaterialPageRoute(builder: (_) => const LoginPage()));
+      }
+    });
+  }
+
   void _confirmLogout() {
     showModalBottomSheet(
       context: context,
@@ -385,7 +403,12 @@ class _ClientHomePageState extends State<ClientHomePage> {
       backgroundColor: Colors.transparent,
       builder: (ctx) => Container(
         padding: EdgeInsets.fromLTRB(
-            24, 16, 24, MediaQuery.of(ctx).viewInsets.bottom + MediaQuery.of(ctx).padding.bottom + 24),
+            24,
+            16,
+            24,
+            MediaQuery.of(ctx).viewInsets.bottom +
+                MediaQuery.of(ctx).padding.bottom +
+                24),
         decoration: const BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -485,6 +508,10 @@ class _ClientHomePageState extends State<ClientHomePage> {
     switch (value) {
       case 'edit':
         final user = Supabase.instance.client.auth.currentUser;
+        if (user == null) {
+          _redirectToLogin();
+          return;
+        }
         Navigator.push(
           context,
           MaterialPageRoute(
@@ -711,39 +738,43 @@ class _ClientHomePageState extends State<ClientHomePage> {
         });
     if (confirmed != true) return;
 
-      if (!mounted) return;
-      showDialog(
+    if (!mounted) return;
+    showDialog(
         context: context,
         barrierDismissible: false,
         builder: (ctx) => const Center(child: CircularProgressIndicator()));
     try {
       // Forçar refresh do token para garantir JWT válido antes da chamada
-      final sessionResult = await Supabase.instance.client.auth.refreshSession();
+      final sessionResult =
+          await Supabase.instance.client.auth.refreshSession();
       if (sessionResult.session == null) {
         if (mounted) Navigator.pop(context);
-        throw Exception('Sessão expirada. Faça login novamente para excluir a conta.');
+        throw Exception(
+            'Sessão expirada. Faça login novamente para excluir a conta.');
       }
 
       // IMPORTANTE: NÃO passar o header Authorization manualmente.
       // O SDK do Supabase já injeta o JWT atualizado da sessão automaticamente.
       // Passar manualmente causa conflito de headers e resulta em erro 401.
-      final response = await Supabase.instance.client.functions
-          .invoke(
-            'deleteUserAccount',
-            body: {'userId': user.id},
-          )
-          .timeout(
-            const Duration(seconds: 60),
-            onTimeout: () => throw Exception('A operação demorou muito. Tente novamente.'),
-          );
+      final response = await Supabase.instance.client.functions.invoke(
+        'deleteUserAccount',
+        body: {'userId': user.id},
+      ).timeout(
+        const Duration(seconds: 60),
+        onTimeout: () =>
+            throw Exception('A operação demorou muito. Tente novamente.'),
+      );
 
       if (mounted) Navigator.pop(context); // Fecha diálogo de progresso
 
       final responseData = response.data;
       if (responseData is Map && responseData.containsKey('error')) {
         final errMsg = responseData['error'] as String? ?? '';
-        if (errMsg.contains('Sessão') || errMsg.contains('inválida') || errMsg.contains('expirada')) {
-          throw Exception('Sua sessão expirou. Faça login novamente e tente excluir a conta.');
+        if (errMsg.contains('Sessão') ||
+            errMsg.contains('inválida') ||
+            errMsg.contains('expirada')) {
+          throw Exception(
+              'Sua sessão expirou. Faça login novamente e tente excluir a conta.');
         }
         throw Exception(errMsg);
       }
@@ -759,8 +790,10 @@ class _ClientHomePageState extends State<ClientHomePage> {
           context: context,
           barrierDismissible: false,
           builder: (ctx) => AlertDialog(
-            title: const Text('Conta Excluída', style: TextStyle(color: Colors.green)),
-            content: const Text('Sua conta e todos os dados vinculados foram removidos com sucesso.'),
+            title: const Text('Conta Excluída',
+                style: TextStyle(color: Colors.green)),
+            content: const Text(
+                'Sua conta e todos os dados vinculados foram removidos com sucesso.'),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx),
@@ -773,17 +806,17 @@ class _ClientHomePageState extends State<ClientHomePage> {
         if (mounted) {
           Navigator.pushAndRemoveUntil(
               context,
-              MaterialPageRoute(builder: (_) => const LoginPage(skipAutoLogin: true)),
+              MaterialPageRoute(
+                  builder: (_) => const LoginPage(skipAutoLogin: true)),
               (r) => false);
         }
       }
     } catch (e) {
       if (mounted) Navigator.pop(context);
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(
-              content: Text('Erro ao excluir conta: $e'),
-              backgroundColor: Colors.red));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Erro ao excluir conta: $e'),
+          backgroundColor: Colors.red));
     }
   }
 
@@ -796,7 +829,8 @@ class _ClientHomePageState extends State<ClientHomePage> {
     if (mounted) {
       Navigator.pushAndRemoveUntil(
           context,
-          MaterialPageRoute(builder: (context) => const LoginPage(skipAutoLogin: true)),
+          MaterialPageRoute(
+              builder: (context) => const LoginPage(skipAutoLogin: true)),
           (route) => false);
     }
   }
@@ -874,7 +908,8 @@ class _ClientHomePageState extends State<ClientHomePage> {
           .select('id, scheduled_at, status')
           .eq('client_id', uid)
           .eq('shop_id', shop['id'])
-          .not('status', 'in', '("cancelado","rejeitado","recusado","excluido","pendente_pix")')
+          .not('status', 'in',
+              '("cancelado","rejeitado","recusado","excluido","pendente_pix")')
           .gte('scheduled_at', now.toIso8601String())
           .limit(1);
 
@@ -882,15 +917,15 @@ class _ClientHomePageState extends State<ClientHomePage> {
         if (mounted) {
           final appt = clientAppts[0];
           final data = DateTime.parse(appt['scheduled_at']);
-          final dataFmt = '${data.day.toString().padLeft(2, '0')}/${data.month.toString().padLeft(2, '0')}';
+          final dataFmt =
+              '${data.day.toString().padLeft(2, '0')}/${data.month.toString().padLeft(2, '0')}';
           await showDialog(
             context: context,
             builder: (ctx) => AlertDialog(
               title: const Text('Agendamento não permitido'),
               content: Text(
-                'Esta loja não permite múltiplos agendamentos. Você já possui um agendamento ativo para $dataFmt.\n\n'
-                'Cancele o agendamento existente ou aguarde até a data para criar um novo.'
-              ),
+                  'Esta loja não permite múltiplos agendamentos. Você já possui um agendamento ativo para $dataFmt.\n\n'
+                  'Cancele o agendamento existente ou aguarde até a data para criar um novo.'),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(ctx),
@@ -970,8 +1005,9 @@ class _ClientHomePageState extends State<ClientHomePage> {
           canPop: false,
           onPopInvokedWithResult: (didPop, result) async {
             if (didPop) return;
-            
-            final NavigatorState? currentNavigator = _navigatorKeys[_selectedIndex].currentState;
+
+            final NavigatorState? currentNavigator =
+                _navigatorKeys[_selectedIndex].currentState;
             if (currentNavigator != null && currentNavigator.canPop()) {
               currentNavigator.pop();
             } else {
@@ -980,7 +1016,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
               } else {
                 // Se estiver na home e não puder mais voltar internamente, permite fechar o app
                 if (mounted) {
-                   Navigator.of(context).pop();
+                  Navigator.of(context).pop();
                 }
               }
             }
@@ -994,27 +1030,29 @@ class _ClientHomePageState extends State<ClientHomePage> {
                     ? _buildTabNavigator(0, _buildExploreView(isDesktop: false))
                     : const SizedBox.shrink(),
                 _tabVisited[1]
-                    ? _buildTabNavigator(1, _buildFavoritesView(isDesktop: false))
+                    ? _buildTabNavigator(
+                        1, _buildFavoritesView(isDesktop: false))
                     : const SizedBox.shrink(),
                 _tabVisited[2]
-                    ? _buildTabNavigator(2, _buildScheduleView(isDesktop: false))
+                    ? _buildTabNavigator(
+                        2, _buildScheduleView(isDesktop: false))
                     : const SizedBox.shrink(),
               ],
             ),
             bottomNavigationBar: SharedBottomNavBar(
-                  selectedIndex: _selectedIndex,
-                  onDestinationSelected: (idx) {
-                    if (_selectedIndex == idx) {
-                      // Se clicar na mesma aba, volta pro início dela
-                      _navigatorKeys[idx].currentState?.popUntil((r) => r.isFirst);
-                      if (idx == 2) {
-                        _appointmentsKey.currentState?.refreshData();
-                      }
-                    } else {
-                      _onTabChanged(idx);
-                    }
-                  },
-                ),
+              selectedIndex: _selectedIndex,
+              onDestinationSelected: (idx) {
+                if (_selectedIndex == idx) {
+                  // Se clicar na mesma aba, volta pro início dela
+                  _navigatorKeys[idx].currentState?.popUntil((r) => r.isFirst);
+                  if (idx == 2) {
+                    _appointmentsKey.currentState?.refreshData();
+                  }
+                } else {
+                  _onTabChanged(idx);
+                }
+              },
+            ),
           ),
         );
       },
@@ -1050,7 +1088,8 @@ class _ClientHomePageState extends State<ClientHomePage> {
   Widget _buildFavoritesView({required bool isDesktop}) {
     final uid = Supabase.instance.client.auth.currentUser?.id;
     if (uid == null) {
-      return const Center(child: Text('Faa login para ver seus favoritos'));
+      _redirectToLogin();
+      return const Center(child: CircularProgressIndicator());
     }
     return SupabaseStreamWidget<List<Map<String, dynamic>>>(
       stream: Supabase.instance.client
@@ -1078,8 +1117,8 @@ class _ClientHomePageState extends State<ClientHomePage> {
       builder: (context, favDocs) {
         final shopIds = favDocs.map((d) => d['shop_id'] as String).toList();
         return FutureBuilder<List<Map<String, dynamic>>>(
-          future: shopIds.isEmpty 
-              ? Future.value([]) 
+          future: shopIds.isEmpty
+              ? Future.value([])
               : Supabase.instance.client
                   .from('shops')
                   .select()
@@ -1096,58 +1135,105 @@ class _ClientHomePageState extends State<ClientHomePage> {
                     style: TextStyle(color: Colors.grey[500])),
               );
             }
+            final bool useGrid = MediaQuery.of(context).size.width > 650;
             return CustomScrollView(
               physics: const BouncingScrollPhysics(),
               slivers: [
                 SliverAppBar(
-                  backgroundColor: const Color(0xFFF5F7FA),
+                  backgroundColor: Colors.white,
+                  surfaceTintColor: Colors.white,
                   elevation: 0,
                   floating: true,
-                  toolbarHeight: 60,
-                  titleSpacing: 20,
+                  toolbarHeight: 50,
+                  titleSpacing: 16,
+                  bottom: PreferredSize(
+                    preferredSize: const Size.fromHeight(1),
+                    child: Container(height: 1, color: const Color(0xFFECEEF2)),
+                  ),
                   title: Row(children: [
-                    const Icon(Icons.favorite, color: Colors.red, size: 22),
-                    const SizedBox(width: 10),
+                    const Icon(Icons.favorite_rounded,
+                        color: Color(0xFFE53935), size: 20),
+                    const SizedBox(width: 8),
                     const Text('Meus Favoritos',
                         style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black87)),
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.2,
+                            color: Color(0xFF1F2937))),
                     const SizedBox(width: 8),
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 2),
+                          horizontal: 7, vertical: 2),
                       decoration: BoxDecoration(
-                        color: Colors.red.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(12),
+                        color: const Color(0xFFE53935).withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(10),
                       ),
                       child: Text('${shops.length}',
                           style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.red)),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFFE53935))),
                     ),
                   ]),
                 ),
                 SliverPadding(
-                  padding: const EdgeInsets.all(20),
-                  sliver: SliverGrid(
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 2,
-                      childAspectRatio: 0.72,
-                      mainAxisSpacing: 16,
-                      crossAxisSpacing: 16,
-                    ),
-                    delegate: SliverChildBuilderDelegate(
-                      (ctx, i) => _ShopCard(
-                        shop: shops[i],
-                        onTap: () => _openShopProfile(shops[i]),
-                        index: i,
-                      ),
-                      childCount: shops.length,
-                    ),
-                  ),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  sliver: useGrid
+                      ? SliverGrid(
+                          gridDelegate:
+                              const SliverGridDelegateWithMaxCrossAxisExtent(
+                            maxCrossAxisExtent: 420,
+                            mainAxisExtent: 94,
+                            crossAxisSpacing: 12,
+                            mainAxisSpacing: 10,
+                          ),
+                          delegate: SliverChildBuilderDelegate(
+                            (ctx, i) => _ShopCard(
+                              shop: shops[i],
+                              onTap: () {
+                                if (shops[i]['is_available'] == false) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                          "Loja ainda configurando o perfil e indisponível para agendamentos."),
+                                      duration: Duration(seconds: 3),
+                                    ),
+                                  );
+                                  return;
+                                }
+                                _openShopProfile(shops[i]);
+                              },
+                              index: i,
+                            ),
+                            childCount: shops.length,
+                          ),
+                        )
+                      : SliverList(
+                          delegate: SliverChildBuilderDelegate(
+                            (ctx, i) => Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: _ShopCard(
+                                shop: shops[i],
+                                onTap: () {
+                                  if (shops[i]['is_available'] == false) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                            "Loja ainda configurando o perfil e indisponível para agendamentos."),
+                                        duration: Duration(seconds: 3),
+                                      ),
+                                    );
+                                    return;
+                                  }
+                                  _openShopProfile(shops[i]);
+                                },
+                                index: i,
+                              ),
+                            ),
+                            childCount: shops.length,
+                          ),
+                        ),
                 ),
               ],
             );
@@ -1160,455 +1246,735 @@ class _ClientHomePageState extends State<ClientHomePage> {
   // ============ VIEW: EXPLORAR ============
   Widget _buildExploreView({required bool isDesktop}) {
     return ListenableBuilder(
-      listenable: Listenable.merge([_cidadeNotifier, _searchNotifier, _categoryNotifier]),
+      listenable: Listenable.merge(
+          [_cidadeNotifier, _searchNotifier, _categoryNotifier]),
       builder: (context, _) {
         final cidade = _cidadeNotifier.value;
         final searchText = _searchNotifier.value;
         final selectedCategory = _categoryNotifier.value;
         return CustomScrollView(
-      physics: const BouncingScrollPhysics(),
-      slivers: [
-        if (!isDesktop)
-          SliverAppBar(
-            backgroundColor: const Color(0xFFF5F7FA),
-            elevation: 0,
-            floating: true,
-            toolbarHeight: 56,
-            titleSpacing: 0,
-            title: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: [
-                  // Apenas o logo (já contém o nome do app)
-                  Image.asset('assets/images/logo_purple.png', height: 36),
+          physics: const BouncingScrollPhysics(),
+          slivers: [
+            if (!isDesktop)
+              SliverAppBar(
+                backgroundColor: Colors.white,
+                surfaceTintColor: Colors.white,
+                elevation: 0,
+                floating: true,
+                toolbarHeight: 48,
+                titleSpacing: 0,
+                title: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    children: [
+                      // Logo proporcional e clean
+                      Image.asset('assets/images/logo_purple.png', height: 28),
 
-                  const SizedBox(width: 8),
+                      const SizedBox(width: 10),
 
-                  // Seletor de Cidade (Pequeno no topo) - Ajustado para crescer e manter distância
-                  Expanded(
-                    child: Align(
-                      alignment: Alignment.centerRight,
-                      child: SeletorDeCidadeButton(
-                        cidadeSelecionada: cidade,
-                        onTap: _mostrarSeletorDeCidade,
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(width: 12), // Distância segura da foto de perfil
-
-                  // Perfil Mini com PopupMenu
-                  PopupMenuButton<String>(
-                    onSelected: _handleProfileMenu,
-                    offset: const Offset(0, 50),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                    itemBuilder: (_) => [
-                      PopupMenuItem(
-                        value: 'edit',
-                        child: Row(children: const [
-                          Icon(Icons.person_outline,
-                              size: 20, color: AppColors.primaryPurple),
-                          SizedBox(width: 10),
-                          Text('Editar Perfil'),
-                        ]),
-                      ),
-                      const PopupMenuDivider(),
-                      PopupMenuItem(
-                        value: 'privacy',
-                        child: Row(children: const [
-                          Icon(Icons.privacy_tip_outlined,
-                              size: 20, color: Colors.blueGrey),
-                          SizedBox(width: 10),
-                          Text('Privacidade & Dados'),
-                        ]),
-                      ),
-                      const PopupMenuDivider(),
-                      PopupMenuItem(
-                        value: 'logout',
-                        child: Row(children: const [
-                          Icon(Icons.logout, size: 20, color: Colors.red),
-                          SizedBox(width: 10),
-                          Text('Sair da Conta',
-                              style: TextStyle(color: Colors.red)),
-                        ]),
-                      ),
-                    ],
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        CircleAvatar(
-                          radius: 18,
-                          backgroundColor: Colors.grey[200],
-                          child: _userPhotoUrl != null
-                              ? ClipOval(
-                                  child: CachedNetworkImage(
-                                    imageUrl: _userPhotoUrl!,
-                                    width: 36,
-                                    height: 36,
-                                    fit: BoxFit.cover,
-                                    placeholder: (_, __) => const Icon(
-                                        Icons.person,
-                                        color: Colors.grey,
-                                        size: 20),
-                                    errorWidget: (_, __, ___) => const Icon(
-                                        Icons.person,
-                                        color: Colors.grey,
-                                        size: 20),
-                                  ),
-                                )
-                              : const Icon(Icons.person,
-                                  color: Colors.grey, size: 20),
+                      // Seletor de Cidade em pílula estilo iFood/ML
+                      Expanded(
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF3F4F6),
+                              borderRadius: BorderRadius.circular(18),
+                            ),
+                            child: SeletorDeCidadeButton(
+                              cidadeSelecionada: cidade,
+                              onTap: _mostrarSeletorDeCidade,
+                            ),
+                          ),
                         ),
-                        const SizedBox(width: 4),
-                        Icon(Icons.keyboard_arrow_down,
-                            size: 16, color: Colors.grey[500]),
-                      ],
-                    ),
-                  )
-                ],
-              ),
-            ),
-          ),
+                      ),
 
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-            child: Container(
-              height: 48,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(30),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.05),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
-                  )
-                ],
-              ),
-              child: TextField(
-                controller: _searchController,
-                onChanged: (v) => _searchNotifier.value = v,
-                decoration: InputDecoration(
-                  hintText: "O que você procura hoje?",
-                  prefixIcon:
-                      const Icon(Icons.search, color: AppColors.primaryPurple),
-                  suffixIcon: searchText.isNotEmpty
-                      ? IconButton(
-                          icon: const Icon(Icons.close, size: 20),
-                          onPressed: () {
-                            _searchController.clear();
-                            _searchNotifier.value = '';
-                          },
+                      const SizedBox(width: 10),
+
+                      // Perfil Mini compacto com PopupMenu (apenas se logado)
+                      if (_userId != null)
+                        PopupMenuButton<String>(
+                          onSelected: _handleProfileMenu,
+                          offset: const Offset(0, 44),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                          itemBuilder: (_) => [
+                            PopupMenuItem(
+                              value: 'edit',
+                              child: Row(children: const [
+                                Icon(Icons.person_outline,
+                                    size: 18, color: AppColors.primaryPurple),
+                                SizedBox(width: 10),
+                                Text('Editar Perfil',
+                                    style: TextStyle(fontSize: 13.5)),
+                              ]),
+                            ),
+                            const PopupMenuDivider(),
+                            PopupMenuItem(
+                              value: 'privacy',
+                              child: Row(children: const [
+                                Icon(Icons.privacy_tip_outlined,
+                                    size: 18, color: Colors.blueGrey),
+                                SizedBox(width: 10),
+                                Text('Privacidade & Dados',
+                                    style: TextStyle(fontSize: 13.5)),
+                              ]),
+                            ),
+                            const PopupMenuDivider(),
+                            PopupMenuItem(
+                              value: 'logout',
+                              child: Row(children: const [
+                                Icon(Icons.logout, size: 18, color: Colors.red),
+                                SizedBox(width: 10),
+                                Text('Sair da Conta',
+                                    style: TextStyle(
+                                        color: Colors.red, fontSize: 13.5)),
+                              ]),
+                            ),
+                          ],
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: AppColors.primaryPurple
+                                        .withValues(alpha: 0.15),
+                                    width: 1,
+                                  ),
+                                ),
+                                child: CircleAvatar(
+                                  radius: 15,
+                                  backgroundColor: const Color(0xFFF3F4F6),
+                                  child: _userPhotoUrl != null
+                                      ? ClipOval(
+                                          child: CachedNetworkImage(
+                                            imageUrl: _userPhotoUrl!,
+                                            width: 30,
+                                            height: 30,
+                                            fit: BoxFit.cover,
+                                            placeholder: (_, __) => const Icon(
+                                                Icons.person,
+                                                color: Colors.grey,
+                                                size: 16),
+                                            errorWidget: (_, __, ___) =>
+                                                const Icon(Icons.person,
+                                                    color: Colors.grey,
+                                                    size: 16),
+                                          ),
+                                        )
+                                      : const Icon(Icons.person,
+                                          color: Colors.grey, size: 16),
+                                ),
+                              ),
+                              const SizedBox(width: 2),
+                              Icon(Icons.keyboard_arrow_down_rounded,
+                                  size: 15, color: Colors.grey[500]),
+                            ],
+                          ),
                         )
-                      : null,
-                  border: InputBorder.none,
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                      else
+                        IconButton(
+                          icon: const Icon(Icons.login_rounded,
+                              size: 20, color: AppColors.primaryPurple),
+                          tooltip: 'Fazer Login',
+                          onPressed: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (_) => const LoginPage())),
+                        )
+                    ],
+                  ),
+                ),
+              ),
+
+            // Bloco Superior Clean: Busca Compacta + Categorias Estilo Marketplace
+            SliverToBoxAdapter(
+              child: Container(
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  border: Border(
+                    bottom: BorderSide(color: Color(0xFFECEEF2), width: 1),
+                  ),
+                ),
+                padding: const EdgeInsets.only(top: 6, bottom: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Barra de busca compacta (estilo iFood/Mercado Livre)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Container(
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF3F4F6),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: TextField(
+                          controller: _searchController,
+                          onChanged: (v) => _searchNotifier.value = v,
+                          style: const TextStyle(
+                              fontSize: 13.5, color: Color(0xFF1F2937)),
+                          textAlignVertical: TextAlignVertical.center,
+                          decoration: InputDecoration(
+                            isDense: true,
+                            hintText: "Buscar lojas ou serviços...",
+                            hintStyle: TextStyle(
+                                fontSize: 13.5, color: Colors.grey[500]),
+                            prefixIcon: const Icon(
+                              Icons.search_rounded,
+                              size: 18,
+                              color: AppColors.primaryPurple,
+                            ),
+                            prefixIconConstraints: const BoxConstraints(
+                              minWidth: 38,
+                              minHeight: 40,
+                            ),
+                            suffixIcon: searchText.isNotEmpty
+                                ? IconButton(
+                                    icon: const Icon(Icons.close_rounded,
+                                        size: 16),
+                                    padding: EdgeInsets.zero,
+                                    onPressed: () {
+                                      _searchController.clear();
+                                      _searchNotifier.value = '';
+                                    },
+                                  )
+                                : null,
+                            border: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 10),
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    // Categorias estilo Mini-Ícones de Vitrine (iFood / ML)
+                    SizedBox(
+                      height: 68,
+                      child: ListView.builder(
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        itemCount: _categories.length,
+                        itemBuilder: (context, index) {
+                          final cat = _categories[index];
+                          final String catName = cat['name'];
+                          final bool isSelected = selectedCategory == catName;
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 12),
+                            child: GestureDetector(
+                              onTap: () => _categoryNotifier.value = catName,
+                              behavior: HitTestBehavior.opaque,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  AnimatedContainer(
+                                    duration: const Duration(milliseconds: 180),
+                                    width: 44,
+                                    height: 44,
+                                    decoration: BoxDecoration(
+                                      color: isSelected
+                                          ? AppColors.primaryPurple
+                                          : const Color(0xFFF6F3FA),
+                                      borderRadius: BorderRadius.circular(13),
+                                      border: Border.all(
+                                        color: isSelected
+                                            ? AppColors.primaryPurple
+                                            : AppColors.primaryPurple
+                                                .withValues(alpha: 0.08),
+                                        width: 1,
+                                      ),
+                                      boxShadow: isSelected
+                                          ? [
+                                              BoxShadow(
+                                                color: AppColors.primaryPurple
+                                                    .withValues(alpha: 0.22),
+                                                blurRadius: 6,
+                                                offset: const Offset(0, 2),
+                                              )
+                                            ]
+                                          : null,
+                                    ),
+                                    child: Icon(
+                                      cat['icon'],
+                                      size: 20,
+                                      color: isSelected
+                                          ? Colors.white
+                                          : AppColors.primaryPurple
+                                              .withValues(alpha: 0.85),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 5),
+                                  Text(
+                                    catName,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: isSelected
+                                          ? FontWeight.w700
+                                          : FontWeight.w500,
+                                      color: isSelected
+                                          ? AppColors.primaryPurple
+                                          : const Color(0xFF4B5563),
+                                      letterSpacing: -0.1,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
-          ),
-        ),
 
-        // ? SEO DESTAQUES  Banner largo logo abaixo da busca
-        SliverToBoxAdapter(
-          child: _BoostBannerCarousel(
-            cidadeSelecionada: cidade,
-            onShopTap: _openShopProfile,
-          ),
-        ),
+            // Carrossel de Banners (Destaques / Avisos)
+            SliverToBoxAdapter(
+              child: _BoostBannerCarousel(
+                cidadeSelecionada: cidade,
+                onShopTap: _openShopProfile,
+              ),
+            ),
 
-        const SliverToBoxAdapter(child: SizedBox(height: 10)),
+            // GRID / LISTA DE LOJAS E VITRINE HORIZONTAL
+            FutureBuilder<List<Map<String, dynamic>>>(
+              future: cidade == null
+                  ? Future.value([])
+                  : ShopDataCacheService().getShopsByCity(cidade.cidade),
+              builder: (context, snapshot) {
+                if (cidade == null) {
+                  return SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.location_searching_rounded,
+                              size: 48, color: Colors.grey[350]),
+                          const SizedBox(height: 12),
+                          Text(
+                            'Selecione uma cidade no topo para\nencontrar estabelecimentos próximos.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                color: Colors.grey[600],
+                                fontSize: 14,
+                                height: 1.4),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }
 
-        // AdMob banner inline — abaixo do carousel de destaques
-        if (!kIsWeb)
-          const SliverToBoxAdapter(child: _AdFooterBanner()),
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const SliverToBoxAdapter(
+                    child: Padding(
+                      padding: EdgeInsets.only(top: 80),
+                      child: Center(
+                        child: SizedBox(
+                          width: 28,
+                          height: 28,
+                          child: CircularProgressIndicator(
+                            color: AppColors.primaryPurple,
+                            strokeWidth: 2.5,
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }
 
-        const SliverToBoxAdapter(child: SizedBox(height: 10)),
+                if (snapshot.hasError) {
+                  return SliverToBoxAdapter(
+                    child: Center(
+                        child: Padding(
+                      padding: const EdgeInsets.all(32.0),
+                      child: Text("Erro ao carregar lojas: ${snapshot.error}",
+                          style:
+                              const TextStyle(color: Colors.red, fontSize: 13)),
+                    )),
+                  );
+                }
 
-        // Categorias
-        SliverToBoxAdapter(
-          child: SizedBox(
-            height: 38,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              itemCount: _categories.length,
-              itemBuilder: (context, index) {
-                final cat = _categories[index];
-                final isSelected = selectedCategory == cat['name'];
-                return Padding(
-                  padding: const EdgeInsets.only(right: 10),
-                  child: FilterChip(
-                    label: Text(cat['name']),
-                    avatar: isSelected
-                        ? null
-                        : Icon(cat['icon'], size: 16, color: Colors.grey[600]),
-                    selected: isSelected,
-                    onSelected: (_) => _categoryNotifier.value = cat['name'],
-                    backgroundColor: Colors.white,
-                    selectedColor: AppColors.primaryPurple,
-                    labelStyle: TextStyle(
-                        color: isSelected ? Colors.white : Colors.black87,
-                        fontWeight:
-                            isSelected ? FontWeight.bold : FontWeight.normal),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(20),
-                        side: BorderSide(
-                            color: isSelected
-                                ? Colors.transparent
-                                : Colors.grey.shade300)),
-                    showCheckmark: false,
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                  ),
+                final shopsRaw = snapshot.data ?? [];
+
+                if (shopsRaw.isEmpty) {
+                  return SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 32, vertical: 64),
+                      child: Center(
+                        child: Column(
+                          children: [
+                            Icon(Icons.location_off_outlined,
+                                size: 48, color: Colors.grey[350]),
+                            const SizedBox(height: 12),
+                            Text(
+                              'Nenhuma loja encontrada em ${cidade.cidade}.\nTente selecionar outra cidade.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                  color: Colors.grey[600],
+                                  fontSize: 14,
+                                  height: 1.4),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                }
+
+                final filtered = shopsRaw.where((doc) {
+                  final d = doc;
+                  final bool isActive = d['is_active'] ?? d['ativo'] ?? true;
+                  final int servicesCount = d['services_count'] ?? 0;
+                  final String logoUrl =
+                      (d['logo_url'] ?? d['logoUrl'] ?? "").toString().trim();
+
+                  if (logoUrl.isEmpty) return false;
+
+                  // Verifica se a loja está apta a receber clientes (ativa e com serviços)
+                  d['is_available'] = isActive && servicesCount > 0;
+
+                  // Filtro adicional por estado se houver ambiguidade (opcional)
+                  if (cidade.estado.isNotEmpty) {
+                    final String shopEstado =
+                        (d['state'] ?? d['uf'] ?? '').toString().toUpperCase();
+
+                    if (shopEstado.isNotEmpty) {
+                      final sEst = cidade.estado.toUpperCase();
+                      final bool isSameAcronym = shopEstado == sEst;
+
+                      // Verifica se são nomes completos ou siglas que coincidem (ex: MG e MINAS GERAIS)
+                      final bool containsEachOther =
+                          shopEstado.contains(sEst) ||
+                              sEst.contains(shopEstado);
+
+                      // Se for diferente, testa as siglas comuns para evitar falso negativo.
+                      // Uma validação básica evita remover uma loja correta. Em caso de dúvida, mantemos.
+                      if (!isSameAcronym && !containsEachOther) {
+                        final Map<String, String> estadosSiglas = {
+                          'ACRE': 'AC',
+                          'ALAGOAS': 'AL',
+                          'AMAPA': 'AP',
+                          'AMAPÁ': 'AP',
+                          'AMAZONAS': 'AM',
+                          'BAHIA': 'BA',
+                          'CEARA': 'CE',
+                          'CEARÁ': 'CE',
+                          'DISTRITO FEDERAL': 'DF',
+                          'ESPIRITO SANTO': 'ES',
+                          'ESPÍRITO SANTO': 'ES',
+                          'GOIAS': 'GO',
+                          'GOIÁS': 'GO',
+                          'MARANHAO': 'MA',
+                          'MARANHÃO': 'MA',
+                          'MATO GROSSO': 'MT',
+                          'MATO GROSSO DO SUL': 'MS',
+                          'MINAS GERAIS': 'MG',
+                          'PARA': 'PA',
+                          'PARÁ': 'PA',
+                          'PARAIBA': 'PB',
+                          'PARAÍBA': 'PB',
+                          'PARANA': 'PR',
+                          'PARANÁ': 'PR',
+                          'PERNAMBUCO': 'PE',
+                          'PIAUI': 'PI',
+                          'PIAUÍ': 'PI',
+                          'RIO DE JANEIRO': 'RJ',
+                          'RIO GRANDE DO NORTE': 'RN',
+                          'RIO GRANDE DO SUL': 'RS',
+                          'RONDONIA': 'RO',
+                          'RONDÔNIA': 'RO',
+                          'RORAIMA': 'RR',
+                          'SANTA CATARINA': 'SC',
+                          'SAO PAULO': 'SP',
+                          'SÃO PAULO': 'SP',
+                          'SERGIPE': 'SE',
+                          'TOCANTINS': 'TO'
+                        };
+
+                        final mappedState = estadosSiglas[shopEstado];
+                        final mappedCityState = estadosSiglas[sEst];
+
+                        if ((mappedState != null && mappedState == sEst) ||
+                            (mappedCityState != null &&
+                                mappedCityState == shopEstado)) {
+                          // Match por mapeamento
+                        } else {
+                          // Se chegou aqui e realmente não bate, descarta.
+                          return false;
+                        }
+                      }
+                    }
+                  }
+
+                  final String searchLower = searchText.isEmpty
+                      ? ""
+                      : StringUtils.removeDiacritics(searchText).toLowerCase();
+                  final matchesText = searchLower.isEmpty ||
+                      StringUtils.removeDiacritics(d['name'] ?? '')
+                          .toLowerCase()
+                          .contains(searchLower) ||
+                      StringUtils.removeDiacritics(d['category'] ?? '')
+                          .toLowerCase()
+                          .contains(searchLower);
+
+                  if (!matchesText) return false;
+
+                  final matchesCat = selectedCategory == "Todos" ||
+                      (() {
+                        final cats = (d['category'] ?? '')
+                            .toString()
+                            .split(';')
+                            .map((c) => c.trim());
+                        return cats.any((c) => c.contains(selectedCategory));
+                      })();
+
+                  return matchesCat && isActive;
+                }).toList();
+
+                // 🏆 Ordenação por Qualidade do Perfil (Media)
+                filtered.sort((a, b) {
+                  final da = a;
+                  final db = b;
+
+                  int getScore(Map<String, dynamic> d) {
+                    int s = 0;
+                    if (d['is_available'] == false) s -= 1000;
+
+                    if ((d['logo_url'] ?? '').toString().isNotEmpty) s += 10;
+                    if ((d['image_url'] ?? '').toString().isNotEmpty) s += 10;
+
+                    // ? Verificação de Boost Ativo (com expiração)
+                    final expiresStr = d['boost_expires_at']?.toString();
+                    final expires = expiresStr != null
+                        ? DateTime.tryParse(expiresStr)
+                        : null;
+                    final bool isBoostActive = d['is_boosted'] == true &&
+                        expires != null &&
+                        expires.isAfter(DateTime.now());
+
+                    if (isBoostActive) s += 10000;
+
+                    // ? Verificação de Nota Alta (Mesmo critério visual do card)
+                    final googleData =
+                        d['google_business'] as Map<String, dynamic>?;
+                    final double rt = googleData?['rating']?.toDouble() ??
+                        (d['rating']?.toDouble() ?? 0.0);
+                    if (rt >= 4.5) s += 50;
+
+                    return s;
+                  }
+
+                  return getScore(db).compareTo(getScore(da));
+                });
+
+                if (filtered.isEmpty) {
+                  return SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 48),
+                      child: Center(
+                        child: Text(
+                          "Nenhuma loja encontrada para este filtro.",
+                          style: TextStyle(
+                              color: Colors.grey[500], fontSize: 13.5),
+                        ),
+                      ),
+                    ),
+                  );
+                }
+
+                final bool useGrid = MediaQuery.of(context).size.width > 650;
+                final now = DateTime.now();
+                final availableFeatured = filtered.where((s) {
+                  if (s['is_available'] == false) return false;
+                  final expiresStr = s['boost_expires_at']?.toString();
+                  final expires =
+                      expiresStr != null ? DateTime.tryParse(expiresStr) : null;
+                  return s['is_boosted'] == true &&
+                      expires != null &&
+                      expires.isAfter(now);
+                }).take(8).toList();
+                final bool showHorizontalHighlights = searchText.isEmpty &&
+                    selectedCategory == "Todos" &&
+                    availableFeatured.isNotEmpty;
+
+                return SliverMainAxisGroup(
+                  slivers: [
+                    // Vitrine Horizontal "Destaques na região" (Estilo "Famosos no iFood")
+                    if (showHorizontalHighlights)
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 14, bottom: 4),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 16),
+                                child: Row(
+                                  children: [
+                                    const Text(
+                                      "Destaques na região",
+                                      style: TextStyle(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w700,
+                                        letterSpacing: -0.2,
+                                        color: Color(0xFF1F2937),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Icon(
+                                      Icons.auto_awesome_rounded,
+                                      size: 14,
+                                      color: AppColors.primaryPurple
+                                          .withValues(alpha: 0.8),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              SizedBox(
+                                height: 112,
+                                child: ListView.builder(
+                                  scrollDirection: Axis.horizontal,
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 16),
+                                  itemCount: availableFeatured.length,
+                                  itemBuilder: (ctx, idx) {
+                                    final fShop = availableFeatured[idx];
+                                    return Padding(
+                                      padding: const EdgeInsets.only(right: 10),
+                                      child: _MiniShopHighlightCard(
+                                        shop: fShop,
+                                        onTap: () => _openShopProfile(fShop),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+
+                    // Cabeçalho da lista principal
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              searchText.isEmpty
+                                  ? (selectedCategory == "Todos"
+                                      ? "Lojas disponíveis"
+                                      : selectedCategory)
+                                  : "Resultados da busca",
+                              style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: -0.2,
+                                color: Color(0xFF1F2937),
+                              ),
+                            ),
+                            Text(
+                              "${filtered.length} ${filtered.length == 1 ? 'local' : 'locais'}",
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.grey[500],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    // Lista / Grid de Lojas
+                    SliverPadding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 2),
+                      sliver: useGrid
+                          ? SliverGrid(
+                              gridDelegate:
+                                  const SliverGridDelegateWithMaxCrossAxisExtent(
+                                maxCrossAxisExtent: 420,
+                                mainAxisExtent: 94,
+                                crossAxisSpacing: 12,
+                                mainAxisSpacing: 10,
+                              ),
+                              delegate: SliverChildBuilderDelegate(
+                                (context, index) {
+                                  final shop = filtered[index];
+                                  return _ShopCard(
+                                    shop: shop,
+                                    onTap: () {
+                                      if (shop['is_available'] == false) {
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                          const SnackBar(
+                                            content: Text(
+                                                "Loja ainda configurando o perfil e indisponível para agendamentos."),
+                                            duration: Duration(seconds: 3),
+                                          ),
+                                        );
+                                        return;
+                                      }
+                                      _openShopProfile(shop);
+                                    },
+                                    index: index,
+                                  );
+                                },
+                                childCount: filtered.length,
+                              ),
+                            )
+                          : SliverList(
+                              delegate: SliverChildBuilderDelegate(
+                                (context, index) {
+                                  final shop = filtered[index];
+                                  return Padding(
+                                    padding: const EdgeInsets.only(bottom: 8),
+                                    child: _ShopCard(
+                                      shop: shop,
+                                      onTap: () {
+                                        if (shop['is_available'] == false) {
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(
+                                            const SnackBar(
+                                              content: Text(
+                                                  "Loja ainda configurando o perfil e indisponível para agendamentos."),
+                                              duration: Duration(seconds: 3),
+                                            ),
+                                          );
+                                          return;
+                                        }
+                                        _openShopProfile(shop);
+                                      },
+                                      index: index,
+                                    ),
+                                  );
+                                },
+                                childCount: filtered.length,
+                              ),
+                            ),
+                    ),
+                  ],
                 );
               },
             ),
-          ),
-        ),
 
-        const SliverToBoxAdapter(child: SizedBox(height: 10)),
-
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
-            child: Text(
-              searchText.isEmpty
-                  ? "Recomendados para você"
-                  : "Resultados da busca",
-              style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black87),
-            ),
-          ),
-        ),
-
-        const SliverToBoxAdapter(child: SizedBox(height: 15)),
-
-        // GRID DE LOJAS
-        FutureBuilder<List<Map<String, dynamic>>>(
-          future: cidade == null ? Future.value([]) : ShopDataCacheService().getShopsByCity(cidade.cidade),
-          builder: (context, snapshot) {
-            if (cidade == null) {
-              return SliverFillRemaining(
-                hasScrollBody: false,
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.search, size: 60, color: Colors.grey[300]),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Digite uma cidade para encontrar\nserviços próximos a você.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.grey[600], fontSize: 16),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            }
-
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return const SliverToBoxAdapter(
-                child: Padding(
-                  padding: EdgeInsets.only(top: 100),
-                  child: Center(child: CircularProgressIndicator(color: AppColors.primaryPurple)),
-                ),
-              );
-            }
-
-            if (snapshot.hasError) {
-              return SliverToBoxAdapter(
-                child: Center(child: Padding(
-                  padding: const EdgeInsets.all(40.0),
-                  child: Text("Erro ao carregar lojas: ${snapshot.error}", style: const TextStyle(color: Colors.red)),
-                )),
-              );
-            }
-
-            final shopsRaw = snapshot.data ?? [];
-
-            if (shopsRaw.isEmpty) {
-              return SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 80),
-                  child: Center(
-                    child: Column(
-                      children: [
-                        Icon(Icons.location_off_outlined,
-                            size: 60, color: Colors.grey[300]),
-                        const SizedBox(height: 16),
-                        Text(
-                          'Nenhuma loja encontrada em ${cidade.cidade}.\nTente outra cidade.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: Colors.grey[600], fontSize: 16),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            }
-
-            final filtered = shopsRaw.where((doc) {
-              final d = doc;
-              final bool isActive = d['is_active'] ?? d['ativo'] ?? true;
-              final int servicesCount = d['services_count'] ?? 0;
-              final String logoUrl = (d['logo_url'] ?? d['logoUrl'] ?? "").toString().trim();
-              
-              if (logoUrl.isEmpty) return false;
-
-              // Verifica se a loja está apta a receber clientes (ativa e com serviços)
-              d['is_available'] = isActive && servicesCount > 0;
-
-
-              // Filtro adicional por estado se houver ambiguidade (opcional)
-              if (cidade.estado.isNotEmpty) {
-                final String shopEstado = (d['state'] ?? d['uf'] ?? '').toString().toUpperCase();
-                
-                if (shopEstado.isNotEmpty) {
-                  final sEst = cidade.estado.toUpperCase();
-                  final bool isSameAcronym = shopEstado == sEst;
-                  
-                  // Verifica se são nomes completos ou siglas que coincidem (ex: MG e MINAS GERAIS)
-                  final bool containsEachOther = shopEstado.contains(sEst) || sEst.contains(shopEstado);
-                  
-                  // Se for diferente, testa as siglas comuns para evitar falso negativo.
-                  // Uma validação básica evita remover uma loja correta. Em caso de dúvida, mantemos.
-                  if (!isSameAcronym && !containsEachOther) {
-                    final Map<String, String> estadosSiglas = {
-                      'ACRE': 'AC', 'ALAGOAS': 'AL', 'AMAPA': 'AP', 'AMAPÁ': 'AP', 'AMAZONAS': 'AM',
-                      'BAHIA': 'BA', 'CEARA': 'CE', 'CEARÁ': 'CE', 'DISTRITO FEDERAL': 'DF',
-                      'ESPIRITO SANTO': 'ES', 'ESPÍRITO SANTO': 'ES', 'GOIAS': 'GO', 'GOIÁS': 'GO',
-                      'MARANHAO': 'MA', 'MARANHÃO': 'MA', 'MATO GROSSO': 'MT', 'MATO GROSSO DO SUL': 'MS',
-                      'MINAS GERAIS': 'MG', 'PARA': 'PA', 'PARÁ': 'PA', 'PARAIBA': 'PB', 'PARAÍBA': 'PB',
-                      'PARANA': 'PR', 'PARANÁ': 'PR', 'PERNAMBUCO': 'PE', 'PIAUI': 'PI', 'PIAUÍ': 'PI',
-                      'RIO DE JANEIRO': 'RJ', 'RIO GRANDE DO NORTE': 'RN', 'RIO GRANDE DO SUL': 'RS',
-                      'RONDONIA': 'RO', 'RONDÔNIA': 'RO', 'RORAIMA': 'RR', 'SANTA CATARINA': 'SC',
-                      'SAO PAULO': 'SP', 'SÃO PAULO': 'SP', 'SERGIPE': 'SE', 'TOCANTINS': 'TO'
-                    };
-                    
-                    final mappedState = estadosSiglas[shopEstado];
-                    final mappedCityState = estadosSiglas[sEst];
-                    
-                    if ((mappedState != null && mappedState == sEst) || 
-                        (mappedCityState != null && mappedCityState == shopEstado)) {
-                      // Match por mapeamento
-                    } else {
-                      // Se chegou aqui e realmente não bate, descarta.
-                      return false;
-                    }
-                  }
-                }
-              }
-
-              final String searchLower = searchText.isEmpty
-                  ? ""
-                  : StringUtils.removeDiacritics(searchText).toLowerCase();
-              final matchesText = searchLower.isEmpty ||
-                  StringUtils.removeDiacritics(d['name'] ?? '')
-                      .toLowerCase()
-                      .contains(searchLower) ||
-                  StringUtils.removeDiacritics(d['category'] ?? '')
-                      .toLowerCase()
-                      .contains(searchLower);
-
-              if (!matchesText) return false;
-
-              final matchesCat = selectedCategory == "Todos" ||
-                  (() {
-                    final cats = (d['category'] ?? '')
-                        .toString()
-                        .split(';')
-                        .map((c) => c.trim());
-                    return cats.any((c) => c.contains(selectedCategory));
-                  })();
-
-              return matchesCat && isActive;
-            }).toList();
-
-            // 🏆 Ordenação por Qualidade do Perfil (Media)
-            filtered.sort((a, b) {
-              final da = a;
-              final db = b;
-
-              int getScore(Map<String, dynamic> d) {
-                int s = 0;
-                if (d['is_available'] == false) s -= 1000;
-                
-                if ((d['logo_url'] ?? '').toString().isNotEmpty) s += 10;
-                if ((d['image_url'] ?? '').toString().isNotEmpty) s += 10;
-                
-                // ? Verificação de Boost Ativo (com expiração)
-                final expiresStr = d['boost_expires_at']?.toString();
-                final expires = expiresStr != null ? DateTime.tryParse(expiresStr) : null;
-                final bool isBoostActive = d['is_boosted'] == true && 
-                    expires != null && expires.isAfter(DateTime.now());
-
-                if (isBoostActive) s += 100;
-
-                // ? Verificação de Nota Alta (Mesmo critério visual do card)
-                final googleData = d['google_business'] as Map<String, dynamic>?;
-                final double rt = googleData?['rating']?.toDouble() ?? (d['rating']?.toDouble() ?? 0.0);
-                if (rt >= 4.5) s += 50;
-
-                return s;
-              }
-
-              return getScore(db).compareTo(getScore(da));
-            });
-
-            if (filtered.isEmpty) {
-              return const SliverToBoxAdapter(
-                child: Padding(
-                  padding: EdgeInsets.only(top: 50),
-                  child: Center(
-                      child: Text("Nenhuma loja encontrada.",
-                          style: TextStyle(color: Colors.grey))),
-                ),
-              );
-            }
-
-            return SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              sliver: SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) {
-                    final shop = filtered[index];
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: _ShopCard(
-                        shop: shop,
-                        onTap: () {
-                          if (shop['is_available'] == false) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text("Loja ainda configurando o perfil e indisponível para agendamentos."),
-                                duration: Duration(seconds: 3),
-                              ),
-                            );
-                            return;
-                          }
-                          _openShopProfile(shop);
-                        },
-                        index: index,
-                      ),
-                    );
-                  },
-                  childCount: filtered.length,
-                ),
-              ),
-            );
-          },
-        ),
-
-        const SliverToBoxAdapter(child: SizedBox(height: 80)),
-      ],
-    );
+            const SliverToBoxAdapter(child: SizedBox(height: 80)),
+          ],
+        );
       },
     );
   }
@@ -1621,30 +1987,28 @@ class _ClientHomePageState extends State<ClientHomePage> {
   // --- DESKTOP WIDGETS ---
   Widget _buildSideMenuDesktop() {
     return Container(
-      width: 250,
-      color: Colors.white,
-      padding: const EdgeInsets.symmetric(vertical: 30),
+      width: 220,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(right: BorderSide(color: Color(0xFFECEEF2), width: 1)),
+      ),
+      padding: const EdgeInsets.symmetric(vertical: 24),
       child: Column(
         children: [
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 20),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Row(
               children: [
-                Icon(Icons.auto_awesome,
-                    color: AppColors.primaryPurple, size: 30),
-                SizedBox(width: 10),
-                Text("MarkaAI",
-                    style:
-                        TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                Image.asset('assets/images/logo_purple.png', height: 28),
               ],
             ),
           ),
-          const SizedBox(height: 40),
-          _menuItemDesktop(0, Icons.explore, "Explorar"),
-          _menuItemDesktop(1, Icons.favorite_border, "Favoritos"),
-          _menuItemDesktop(2, Icons.calendar_month, "Minha Agenda"),
+          const SizedBox(height: 28),
+          _menuItemDesktop(0, Icons.explore_outlined, "Explorar"),
+          _menuItemDesktop(1, Icons.favorite_border_rounded, "Favoritos"),
+          _menuItemDesktop(2, Icons.calendar_today_outlined, "Minha Agenda"),
           const Spacer(),
-          const Divider(),
+          const Divider(color: Color(0xFFECEEF2)),
         ],
       ),
     );
@@ -1653,20 +2017,27 @@ class _ClientHomePageState extends State<ClientHomePage> {
   Widget _menuItemDesktop(int idx, IconData icon, String lbl) {
     bool isSelected = _selectedIndex == idx;
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
       decoration: BoxDecoration(
         color: isSelected
-            ? AppColors.primaryPurple.withValues(alpha: 0.1)
+            ? AppColors.primaryPurple.withValues(alpha: 0.08)
             : Colors.transparent,
         borderRadius: BorderRadius.circular(10),
       ),
       child: ListTile(
+        dense: true,
+        visualDensity: VisualDensity.compact,
         leading: Icon(icon,
-            color: isSelected ? AppColors.primaryPurple : Colors.grey),
+            size: 20,
+            color:
+                isSelected ? AppColors.primaryPurple : const Color(0xFF6B7280)),
         title: Text(lbl,
             style: TextStyle(
-                color: isSelected ? AppColors.primaryPurple : Colors.grey[800],
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
+                fontSize: 13.5,
+                color: isSelected
+                    ? AppColors.primaryPurple
+                    : const Color(0xFF374151),
+                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500)),
         onTap: () => _onTabChanged(idx),
       ),
     );
@@ -1674,15 +2045,17 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
   Widget _buildHeaderDesktop() {
     return Container(
-      height: 80,
-      padding: const EdgeInsets.symmetric(horizontal: 40),
+      height: 60,
+      padding: const EdgeInsets.symmetric(horizontal: 28),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(bottom: BorderSide(color: Color(0xFFECEEF2), width: 1)),
+      ),
       alignment: Alignment.centerLeft,
       child: Row(
         children: [
           Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: Row(
               children: [
                 Text(
                     _selectedIndex == 0
@@ -1691,55 +2064,87 @@ class _ClientHomePageState extends State<ClientHomePage> {
                             ? "Meus Favoritos"
                             : "Minha Agenda",
                     style: const TextStyle(
-                        fontSize: 28, fontWeight: FontWeight.bold)),
-                if (_selectedIndex == 0)
-                  const Text("Encontre os melhores servios perto de voc.",
-                      style: TextStyle(color: Colors.grey)),
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.3,
+                        color: Color(0xFF1F2937))),
+                if (_selectedIndex == 0) ...[
+                  const SizedBox(width: 16),
+                  ValueListenableBuilder<CidadeSelecionada?>(
+                    valueListenable: _cidadeNotifier,
+                    builder: (_, cidade, __) => Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF3F4F6),
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      child: SeletorDeCidadeButton(
+                        cidadeSelecionada: cidade,
+                        onTap: _mostrarSeletorDeCidade,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
-          PopupMenuButton<String>(
-            offset: const Offset(0, 50),
-            color: Colors.white,
-            surfaceTintColor: Colors.white,
-            onSelected: _handleProfileMenu,
-            child: Row(
-              children: [
-                const SizedBox(width: 10),
-                CircleAvatar(
-                  radius: 18,
-                  backgroundColor: Colors.grey[200],
-                  backgroundImage: _userPhotoUrl != null
-                      ? CachedNetworkImageProvider(_userPhotoUrl!)
-                      : null,
-                  child: (_userPhotoUrl == null)
-                      ? const Icon(Icons.person, size: 20)
-                      : null,
-                ),
-                const SizedBox(width: 5),
-                const Icon(Icons.keyboard_arrow_down,
-                    size: 18, color: Colors.grey),
+          if (_userId != null)
+            PopupMenuButton<String>(
+              offset: const Offset(0, 44),
+              color: Colors.white,
+              surfaceTintColor: Colors.white,
+              onSelected: _handleProfileMenu,
+              child: Row(
+                children: [
+                  const SizedBox(width: 10),
+                  CircleAvatar(
+                    radius: 16,
+                    backgroundColor: const Color(0xFFF3F4F6),
+                    backgroundImage: _userPhotoUrl != null
+                        ? CachedNetworkImageProvider(_userPhotoUrl!)
+                        : null,
+                    child: (_userPhotoUrl == null)
+                        ? const Icon(Icons.person, size: 18, color: Colors.grey)
+                        : null,
+                  ),
+                  const SizedBox(width: 4),
+                  const Icon(Icons.keyboard_arrow_down_rounded,
+                      size: 16, color: Colors.grey),
+                ],
+              ),
+              itemBuilder: (context) => [
+                PopupMenuItem(
+                    value: 'edit',
+                    child: Row(children: const [
+                      Icon(Icons.person_outline,
+                          size: 16, color: AppColors.primaryPurple),
+                      SizedBox(width: 8),
+                      Text('Editar Perfil', style: TextStyle(fontSize: 13.5))
+                    ])),
+                const PopupMenuDivider(),
+                PopupMenuItem(
+                    value: 'logout',
+                    child: Row(children: const [
+                      Icon(Icons.logout, color: Colors.red, size: 16),
+                      SizedBox(width: 8),
+                      Text('Sair da Conta',
+                          style: TextStyle(color: Colors.red, fontSize: 13.5))
+                    ])),
               ],
+            )
+          else
+            TextButton.icon(
+              onPressed: () => Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const LoginPage())),
+              icon: const Icon(Icons.login_rounded,
+                  size: 17, color: AppColors.primaryPurple),
+              label: const Text('Fazer Login',
+                  style: TextStyle(
+                      color: AppColors.primaryPurple,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13.5)),
             ),
-            itemBuilder: (context) => [
-              PopupMenuItem(
-                  value: 'edit',
-                  child: Row(children: const [
-                    Icon(Icons.person_outline,
-                        size: 16, color: AppColors.primaryPurple),
-                    SizedBox(width: 8),
-                    Text('Editar Perfil')
-                  ])),
-              const PopupMenuDivider(),
-              PopupMenuItem(
-                  value: 'logout',
-                  child: Row(children: const [
-                    Icon(Icons.logout, color: Colors.red, size: 16),
-                    SizedBox(width: 8),
-                    Text('Sair da Conta', style: TextStyle(color: Colors.red))
-                  ])),
-            ],
-          ),
         ],
       ),
     );
@@ -1747,8 +2152,165 @@ class _ClientHomePageState extends State<ClientHomePage> {
 }
 
 // =============================================================================
-// ?? COMPONENTES VISUAIS (DESIGN SYSTEM)
+// ?? COMPONENTES VISUAIS (DESIGN SYSTEM CLEAN MARKETPLACE)
 // =============================================================================
+
+/// Mini-card vertical compacto para a vitrine horizontal "Destaques na região" (estilo "Famosos no iFood")
+class _MiniShopHighlightCard extends StatelessWidget {
+  final Map<String, dynamic> shop;
+  final VoidCallback onTap;
+
+  const _MiniShopHighlightCard({required this.shop, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final String name = (shop['name'] ?? shop['nome'] ?? 'Loja').toString();
+    final String logoUrl =
+        (shop['logo_url'] ?? shop['logoUrl'] ?? '').toString();
+    final String rawCat =
+        (shop['category'] ?? shop['categoria'] ?? shop['nicho'] ?? 'Serviços')
+            .toString();
+    final String primaryCat = rawCat.split(';').first.trim();
+
+    final expiresStr = shop['boost_expires_at']?.toString();
+    final expires = expiresStr != null ? DateTime.tryParse(expiresStr) : null;
+    final bool isBoostActive = shop['is_boosted'] == true &&
+        expires != null &&
+        expires.isAfter(DateTime.now());
+
+    final googleData = shop['google_business'] as Map<String, dynamic>?;
+    final double rating = googleData?['rating']?.toDouble() ??
+        (shop['rating']?.toDouble() ?? 5.0);
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 96,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isBoostActive
+                ? const Color(0xFFFFD700).withValues(alpha: 0.6)
+                : const Color(0xFFECEEF2),
+            width: 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.02),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Stack(
+              clipBehavior: Clip.none,
+              alignment: Alignment.bottomCenter,
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  padding: const EdgeInsets.all(1.5),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: isBoostActive
+                          ? const Color(0xFFF59E0B)
+                          : AppColors.primaryPurple.withValues(alpha: 0.2),
+                      width: 1.5,
+                    ),
+                  ),
+                  child: ClipOval(
+                    child: logoUrl.isNotEmpty
+                        ? CachedNetworkImage(
+                            imageUrl: logoUrl,
+                            fit: BoxFit.cover,
+                            placeholder: (_, __) =>
+                                Container(color: const Color(0xFFF3F4F6)),
+                            errorWidget: (_, __, ___) => Container(
+                              color: const Color(0xFFF3F4F6),
+                              child: const Icon(Icons.storefront_rounded,
+                                  size: 20, color: Colors.grey),
+                            ),
+                          )
+                        : Container(
+                            color: const Color(0xFFF3F4F6),
+                            child: const Icon(Icons.storefront_rounded,
+                                size: 20, color: Colors.grey),
+                          ),
+                  ),
+                ),
+                Positioned(
+                  bottom: -4,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      border:
+                          Border.all(color: const Color(0xFFECEEF2), width: 1),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.05),
+                          blurRadius: 2,
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.star_rounded,
+                            size: 10, color: Color(0xFFF59E0B)),
+                        const SizedBox(width: 2),
+                        Text(
+                          rating.toStringAsFixed(1),
+                          style: const TextStyle(
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF1F2937),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              name,
+              style: const TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF1F2937),
+                letterSpacing: -0.1,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 1),
+            Text(
+              primaryCat,
+              style: const TextStyle(
+                fontSize: 10,
+                color: Color(0xFF6B7280),
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 class _ShopCard extends StatefulWidget {
   final Map<String, dynamic> shop;
@@ -1817,162 +2379,331 @@ class _ShopCardState extends State<_ShopCard> {
   @override
   Widget build(BuildContext context) {
     final data = widget.shop;
-    final imgUrl = data['cover_url'] ?? data['image_url'] ?? data['imageUrl'] ?? "";
-    final logoUrl = data['logo_url'] ?? data['logoUrl'] ?? "";
-    final category = data['category'] ?? data['categoria'] ?? data['nicho'] ?? 'Outros';
+    final logoUrl = (data['logo_url'] ?? data['logoUrl'] ?? "").toString();
+    final rawCategory =
+        (data['category'] ?? data['categoria'] ?? data['nicho'] ?? 'Outros')
+            .toString();
+
+    // Formata categorias separadas por ';' de forma limpa (ex: "Beleza · Estética")
+    final formattedCategory = rawCategory
+        .split(';')
+        .map((c) => c.trim())
+        .where((c) => c.isNotEmpty)
+        .take(2)
+        .join(' · ');
+
+    // Bairro ou cidade curta opcional para compor a linha estilo iFood
+    final String neighborhood = (data['neighborhood'] ??
+            data['bairro'] ??
+            (data['endereco'] is Map ? data['endereco']['bairro'] : '') ??
+            '')
+        .toString()
+        .trim();
 
     final expiresStr = data['boost_expires_at']?.toString();
     final expires = expiresStr != null ? DateTime.tryParse(expiresStr) : null;
     final bool isBoostActive = data['is_boosted'] == true &&
-        expires != null && expires.isAfter(DateTime.now());
+        expires != null &&
+        expires.isAfter(DateTime.now());
 
-    final Color fallbackColor = ShopCategoryHelper.getCatColor(category);
-    final IconData fallbackIcon = ShopCategoryHelper.getCatIcon(category);
+    final Color fallbackColor = ShopCategoryHelper.getCatColor(rawCategory);
+    final IconData fallbackIcon = ShopCategoryHelper.getCatIcon(rawCategory);
 
     final isAvailable = data['is_available'] ?? true;
-    
+
+    final googleData = data['google_business'] as Map<String, dynamic>?;
+    final double rating = googleData?['rating']?.toDouble() ??
+        (data['rating']?.toDouble() ?? 5.0);
+    final int? totalReviews = googleData?['user_ratings_total'];
+
     Widget cardContent = Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: [
-            BoxShadow(
-                color: Colors.black.withValues(alpha: 0.04),
-                blurRadius: 10,
-                offset: const Offset(0, 4))
-          ],
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isBoostActive
+              ? AppColors.primaryPurple.withValues(alpha: 0.22)
+              : const Color(0xFFECEEF2),
+          width: 1,
         ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // FOTO ESQUERDA
-            Stack(
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: SizedBox(
-                    width: 72,
-                    height: 72,
-                    child: logoUrl.isNotEmpty 
-                        ? CachedNetworkImage(
-                            imageUrl: logoUrl,
-                            fit: BoxFit.cover,
-                            placeholder: (c, u) => Container(color: Colors.grey[200]),
-                            errorWidget: (c, u, e) => Container(
-                              color: fallbackColor,
-                              child: Icon(fallbackIcon, color: Colors.grey[400], size: 30),
-                            ),
-                          )
-                        : PexelsImageWidget(
-                            searchQuery: ShopImageKeywords.getEnglishKeyword(category),
-                            index: widget.index,
-                          ),
-                  ),
-                ),
-                if (isBoostActive)
-                  Positioned(
-                    bottom: 0,
-                    left: 0,
-                    right: 0,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 2),
-                      decoration: const BoxDecoration(
-                        color: Color(0xFFFFD700),
-                        borderRadius: BorderRadius.vertical(bottom: Radius.circular(10)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.025),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          )
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          // AVATAR / LOGO COMPACTO (54x54) COM BORDA SUTIL
+          Container(
+            width: 54,
+            height: 54,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: isBoostActive
+                    ? const Color(0xFFF59E0B).withValues(alpha: 0.5)
+                    : const Color(0xFFF0F0F0),
+                width: 1,
+              ),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(11),
+              child: logoUrl.isNotEmpty
+                  ? CachedNetworkImage(
+                      imageUrl: logoUrl,
+                      fit: BoxFit.cover,
+                      placeholder: (c, u) =>
+                          Container(color: const Color(0xFFF3F4F6)),
+                      errorWidget: (c, u, e) => Container(
+                        color: fallbackColor,
+                        child: Icon(fallbackIcon,
+                            color: Colors.grey[400], size: 24),
                       ),
-                      child: const Center(
-                        child: Text("DESTAQUE", 
-                          style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Colors.black)),
+                    )
+                  : PexelsImageWidget(
+                      searchQuery:
+                          ShopImageKeywords.getEnglishKeyword(rawCategory),
+                      index: widget.index,
+                    ),
+            ),
+          ),
+          const SizedBox(width: 12),
+
+          // CONTEÚDO ESTILO IFOOD / MERCADO LIVRE (ALTA DENSIDADE E LIMPEZA)
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Linha 1: Nome da Loja + Botão Favoritar
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              data['name'] ?? data['nome'] ?? "Loja",
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 14.5,
+                                color: Color(0xFF1F2937),
+                                letterSpacing: -0.2,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (isBoostActive) ...[
+                            const SizedBox(width: 4),
+                            const Icon(
+                              Icons.verified_rounded,
+                              size: 14,
+                              color: AppColors.primaryPurple,
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    GestureDetector(
+                      onTap: _toggleFavorite,
+                      behavior: HitTestBehavior.opaque,
+                      child: Padding(
+                        padding: const EdgeInsets.all(2),
+                        child: Icon(
+                          _isFavorite
+                              ? Icons.favorite_rounded
+                              : Icons.favorite_border_rounded,
+                          size: 18,
+                          color: _isFavorite
+                              ? const Color(0xFFE53935)
+                              : const Color(0xFF9CA3AF),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 3),
+
+                // Linha 2: Nota • Categoria • Bairro (tudo em 1 linha compacta)
+                Row(
+                  children: [
+                    const Icon(Icons.star_rounded,
+                        size: 14, color: Color(0xFFF59E0B)),
+                    const SizedBox(width: 3),
+                    Text(
+                      rating.toStringAsFixed(1),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFFD97706),
+                      ),
+                    ),
+                    if (totalReviews != null && totalReviews > 0) ...[
+                      const SizedBox(width: 2),
+                      Text(
+                        "($totalReviews)",
+                        style: const TextStyle(
+                            fontSize: 11.5, color: Color(0xFF9CA3AF)),
+                      ),
+                    ],
+                    const Text(
+                      "  •  ",
+                      style: TextStyle(fontSize: 11, color: Color(0xFFD1D5DB)),
+                    ),
+                    Expanded(
+                      child: Text(
+                        neighborhood.isNotEmpty
+                            ? "$formattedCategory  •  $neighborhood"
+                            : formattedCategory,
+                        style: const TextStyle(
+                          color: Color(0xFF6B7280),
+                          fontSize: 12,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 6),
+
+                // Linha 3: Micro-tags de status / valor agregado
+                if (!isAvailable)
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF3F4F6),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Text(
+                      "Configurando perfil",
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        color: Color(0xFF6B7280),
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   )
-              ],
-            ),
-            const SizedBox(width: 12),
-            
-            // CONTEUDO DIREITA
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+                else
                   Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(
-                        child: Text(data['name'] ?? data['nome'] ?? "Loja",
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis),
-                      ),
-                      GestureDetector(
-                        onTap: _toggleFavorite,
-                        child: Icon(
-                          _isFavorite ? Icons.favorite : Icons.favorite_border,
-                          size: 20,
-                          color: _isFavorite ? Colors.red : Colors.grey[400],
+                      if (isBoostActive) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFF8E1),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(
+                                color: const Color(0xFFFFE082), width: 0.8),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.bolt_rounded,
+                                  size: 11, color: Color(0xFFD97706)),
+                              SizedBox(width: 2),
+                              Text(
+                                "Destaque",
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFFB45309),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color:
+                              AppColors.primaryPurple.withValues(alpha: 0.06),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.calendar_today_rounded,
+                              size: 9.5,
+                              color: AppColors.primaryPurple
+                                  .withValues(alpha: 0.85),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              "Agendamento online",
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w500,
+                                color: AppColors.primaryPurple
+                                    .withValues(alpha: 0.9),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 4),
-                  Text(category, style: TextStyle(color: Colors.grey[600], fontSize: 13)),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      const Icon(Icons.star, size: 14, color: Colors.amber),
-                      const SizedBox(width: 4),
-                      Builder(
-                        builder: (context) {
-                          final googleData = data['google_business'] as Map<String, dynamic>?;
-                          final double rating = googleData?['rating']?.toDouble() ?? (data['rating']?.toDouble() ?? 5.0);
-                          final int? totalReviews = googleData?['user_ratings_total'];
-                          
-                          return Row(
-                            children: [
-                              Text(rating.toStringAsFixed(1), 
-                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primaryPurple)),
-                              if (totalReviews != null && totalReviews > 0) ...[
-                                const SizedBox(width: 4),
-                                Text("($totalReviews avaliações)", style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                              ],
-                            ],
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-                  if (!isAvailable) ...[
-                    const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.grey[200],
-                        borderRadius: BorderRadius.circular(4)
-                      ),
-                      child: const Text("Configurando Perfil", style: TextStyle(fontSize: 11, color: Colors.black54, fontWeight: FontWeight.bold)),
-                    )
-                  ]
-                ],
-              ),
-            )
-          ],
-        ),
-      );
+              ],
+            ),
+          ),
+
+          // Seta discreta à direita indicando ação (estilo lista clean)
+          const SizedBox(width: 4),
+          Icon(
+            Icons.chevron_right_rounded,
+            size: 18,
+            color: Colors.grey[350],
+          ),
+        ],
+      ),
+    );
 
     return GestureDetector(
       onTap: widget.onTap,
-      child: isAvailable 
-        ? cardContent 
-        : ColorFiltered(
-            colorFilter: const ColorFilter.matrix(<double>[
-              0.2126, 0.7152, 0.0722, 0, 0,
-              0.2126, 0.7152, 0.0722, 0, 0,
-              0.2126, 0.7152, 0.0722, 0, 0,
-              0,      0,      0,      1, 0,
-            ]),
-            child: cardContent,
-          ),
+      child: isAvailable
+          ? cardContent
+          : ColorFiltered(
+              colorFilter: const ColorFilter.matrix(<double>[
+                0.2126,
+                0.7152,
+                0.0722,
+                0,
+                0,
+                0.2126,
+                0.7152,
+                0.0722,
+                0,
+                0,
+                0.2126,
+                0.7152,
+                0.0722,
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+              ]),
+              child: cardContent,
+            ),
     );
   }
 }
@@ -2034,7 +2765,8 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
     if (_shopDoc == null) return;
 
     final shopData = _shopDoc!;
-    final phone = shopData['phone'] ?? shopData['whatsapp'] ?? shopData['telefone'];
+    final phone =
+        shopData['phone'] ?? shopData['whatsapp'] ?? shopData['telefone'];
     if (phone == null || phone.toString().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -2048,7 +2780,8 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
       cleanPhone = '55$cleanPhone';
     }
 
-    final String serviceName = widget.serviceData['name'] ?? widget.serviceData['nome'] ?? 'Serviço';
+    final String serviceName =
+        widget.serviceData['name'] ?? widget.serviceData['nome'] ?? 'Serviço';
     final String shopName = shopData['name'] ?? shopData['nome'] ?? 'loja';
     final String message =
         "Ol, vim pelo App MarkaAI e gostaria de agendar o servio $serviceName na $shopName.";
@@ -2146,8 +2879,8 @@ class _ServiceDetailsPageState extends State<ServiceDetailsPage> {
                                     const EdgeInsets.symmetric(horizontal: 4.0),
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
-                                  color: Colors.white.withValues(alpha: 
-                                      _currentImageIndex == entry.key
+                                  color: Colors.white.withValues(
+                                      alpha: _currentImageIndex == entry.key
                                           ? 0.9
                                           : 0.4),
                                 ),
@@ -2311,8 +3044,8 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
   int _currentPage = 0;
   Timer? _autoScrollTimer;
   List<Map<String, dynamic>> _slides = [];
-  final Set<String> _impressedBannerIds = {}; // evita contar impressão dupla por sessão
-
+  final Set<String> _impressedBannerIds =
+      {}; // evita contar impressão dupla por sessão
 
   @override
   void initState() {
@@ -2323,7 +3056,8 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
   @override
   void didUpdateWidget(_BoostBannerCarousel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.cidadeSelecionada?.cidade != widget.cidadeSelecionada?.cidade) {
+    if (oldWidget.cidadeSelecionada?.cidade !=
+        widget.cidadeSelecionada?.cidade) {
       _loadAndSetSlides();
     }
   }
@@ -2338,7 +3072,8 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
   Future<List<Map<String, dynamic>>> _fetchSlides() async {
     final now = DateTime.now();
     final selectedCityNorm = widget.cidadeSelecionada != null
-        ? StringUtils.removeDiacritics(widget.cidadeSelecionada!.cidade).toLowerCase()
+        ? StringUtils.removeDiacritics(widget.cidadeSelecionada!.cidade)
+            .toLowerCase()
         : null;
 
     // 1. Busca banners fixos do admin (MarkaAI)
@@ -2362,37 +3097,50 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
       try {
         // ? OTIMIZAÇÃO: Usamos o cache service de cidade para evitar múltiplas chamadas ao Supabase
         // Como a lista já carrega esses dados, o cache estará quente.
-        final raw = await ShopDataCacheService().getShopsByCity(widget.cidadeSelecionada!.cidade);
+        final raw = await ShopDataCacheService()
+            .getShopsByCity(widget.cidadeSelecionada!.cidade);
 
-        highlights = List<Map<String, dynamic>>.from(raw).where((d) {
-          final bool isActive = d['is_active'] ?? d['ativo'] ?? true;
-          if (!isActive) return false;
+        highlights = List<Map<String, dynamic>>.from(raw)
+            .where((d) {
+              final bool isActive = d['is_active'] ?? d['ativo'] ?? true;
+              if (!isActive) return false;
 
-          // Filtro de Cidade
-          String cityRaw = (d['city'] ?? d['cidade'] ?? '').toString();
-          if (cityRaw.isEmpty && d['endereco'] is Map) {
-            final em = d['endereco'] as Map;
-            cityRaw = (em['cidade'] ?? em['city'] ?? '').toString();
-          }
-          final cityNorm = StringUtils.removeDiacritics(cityRaw).toLowerCase();
-          if (cityNorm != selectedCityNorm) return false;
+              // Filtro de Cidade
+              String cityRaw = (d['city'] ?? d['cidade'] ?? '').toString();
+              if (cityRaw.isEmpty && d['endereco'] is Map) {
+                final em = d['endereco'] as Map;
+                cityRaw = (em['cidade'] ?? em['city'] ?? '').toString();
+              }
+              final cityNorm =
+                  StringUtils.removeDiacritics(cityRaw).toLowerCase();
+              if (cityNorm != selectedCityNorm) return false;
 
-          // ? Critério de Destaque: Apenas Boost Ativo (pago)
-          final expiresStr = d['boost_expires_at']?.toString();
-          final expires = expiresStr != null ? DateTime.tryParse(expiresStr) : null;
-          final bool isBoostActive = d['is_boosted'] == true && 
-              expires != null && expires.isAfter(now);
+              // ? Critério de Destaque: Apenas Boost Ativo (pago)
+              final expiresStr = d['boost_expires_at']?.toString();
+              final expires =
+                  expiresStr != null ? DateTime.tryParse(expiresStr) : null;
+              final bool isBoostActive = d['is_boosted'] == true &&
+                  expires != null &&
+                  expires.isAfter(now);
 
-          return isBoostActive;
-        }).map((d) => {...d, '_slide_type': 'shop'}).toList();
+              return isBoostActive;
+            })
+            .map((d) => {...d, '_slide_type': 'shop'})
+            .toList();
 
         // Ordenação preferencial: primeiro impulsionados, depois nota
         highlights.sort((a, b) {
-          final expA = a['boost_expires_at'] != null ? DateTime.tryParse(a['boost_expires_at']) : null;
-          final bstA = a['is_boosted'] == true && (expA == null || expA.isAfter(now));
-          
-          final expB = b['boost_expires_at'] != null ? DateTime.tryParse(b['boost_expires_at']) : null;
-          final bstB = b['is_boosted'] == true && (expB == null || expB.isAfter(now));
+          final expA = a['boost_expires_at'] != null
+              ? DateTime.tryParse(a['boost_expires_at'])
+              : null;
+          final bstA =
+              a['is_boosted'] == true && (expA == null || expA.isAfter(now));
+
+          final expB = b['boost_expires_at'] != null
+              ? DateTime.tryParse(b['boost_expires_at'])
+              : null;
+          final bstB =
+              b['is_boosted'] == true && (expB == null || expB.isAfter(now));
 
           if (bstA && !bstB) return -1;
           if (!bstA && bstB) return 1;
@@ -2401,7 +3149,6 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
 
         // Limita a 12 destaques no banner para não poluir
         if (highlights.length > 12) highlights = highlights.sublist(0, 12);
-
       } catch (e) {
         debugPrint('[Carousel] erro ao buscar destaques: $e');
       }
@@ -2428,7 +3175,11 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
   void _insertBannerEvent(String bannerId, String eventType) {
     Supabase.instance.client
         .from('banner_events')
-        .insert({'banner_id': bannerId, 'event_type': eventType, 'platform': 'mobile'})
+        .insert({
+          'banner_id': bannerId,
+          'event_type': eventType,
+          'platform': 'mobile'
+        })
         .then((_) {})
         .catchError((e) {
           debugPrint('[BannerTracking] erro ao registrar $eventType: $e');
@@ -2448,7 +3199,6 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
     });
   }
 
-
   @override
   void dispose() {
     _autoScrollTimer?.cancel();
@@ -2457,122 +3207,130 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
   }
 
   Widget _buildShopSlide(Map<String, dynamic> d) {
-    final img = (d['image_url'] ?? d['imageUrl'] ?? d['coverUrl'] ?? '').toString();
+    final img =
+        (d['image_url'] ?? d['imageUrl'] ?? d['coverUrl'] ?? '').toString();
     final nome = (d['name'] ?? d['nome'] ?? '').toString();
-    final cat = (d['categoria'] ?? d['nicho'] ?? '').toString();
+    final rawCat =
+        (d['category'] ?? d['categoria'] ?? d['nicho'] ?? '').toString();
+    final cat = rawCat
+        .split(';')
+        .map((c) => c.trim())
+        .where((c) => c.isNotEmpty)
+        .take(2)
+        .join(' · ');
     final logo = (d['logo_url'] ?? d['logoUrl'] ?? '').toString();
     return GestureDetector(
       onTap: () => widget.onShopTap(d),
       child: Stack(fit: StackFit.expand, children: [
-            if (img.isNotEmpty)
-              CachedNetworkImage(
-                imageUrl: img,
-                fit: BoxFit.cover,
-                errorWidget: (_, __, ___) =>
-                    Container(color: const Color(0xFF4A148C)),
-              ),
-            Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Colors.transparent, Color(0xDD1A0033)],
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                ),
+        if (img.isNotEmpty)
+          CachedNetworkImage(
+            imageUrl: img,
+            fit: BoxFit.cover,
+            errorWidget: (_, __, ___) => Container(color: AppColors.deepPurple),
+          )
+        else
+          Container(color: AppColors.deepPurple),
+        Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Color(0x11000000), Color(0xCC181028)],
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+            ),
+          ),
+        ),
+        Positioned(
+          top: 10,
+          right: 10,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.45),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: const Color(0xFFFFD700).withValues(alpha: 0.6),
+                width: 0.8,
               ),
             ),
-            Positioned(
-              top: 12, right: 12,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFFFFD700), Color(0xFFFFA000)],
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.bolt_rounded, size: 11, color: Color(0xFFFFD700)),
+                SizedBox(width: 3),
+                Text('DESTAQUE',
+                    style: TextStyle(
+                        fontSize: 8.5,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                        letterSpacing: 0.5)),
+              ],
+            ),
+          ),
+        ),
+        Positioned(
+          bottom: 10,
+          left: 12,
+          right: 12,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              if (logo.isNotEmpty)
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 1.5),
                   ),
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                        color: const Color(0xFFFFD700).withValues(alpha: 0.5),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2)),
-                  ],
+                  child: ClipOval(
+                    child:
+                        CachedNetworkImage(imageUrl: logo, fit: BoxFit.cover),
+                  ),
                 ),
-                child: const Row(
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.rocket_launch, size: 11, color: Colors.white),
-                    SizedBox(width: 4),
-                    Text('DESTAQUE',
-                        style: TextStyle(
-                            fontSize: 9,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                            letterSpacing: 0.6)),
+                    Text(nome,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -0.2,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis),
+                    if (cat.isNotEmpty)
+                      Text(cat,
+                          style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.8),
+                              fontSize: 11),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis),
                   ],
                 ),
               ),
-            ),
-            Positioned(
-              bottom: 12, left: 12, right: 12,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  if (logo.isNotEmpty)
-                    Container(
-                      width: 44, height: 44,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white, width: 2.5),
-                        boxShadow: [
-                          BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.2),
-                              blurRadius: 6),
-                        ],
-                      ),
-                      child: ClipOval(
-                        child: CachedNetworkImage(imageUrl: logo, fit: BoxFit.cover),
-                      ),
-                    ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(nome,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 15,
-                              fontWeight: FontWeight.bold,
-                              shadows: [Shadow(blurRadius: 8, color: Colors.black45)],
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis),
-                        if (cat.isNotEmpty)
-                          Text(cat,
-                              style: TextStyle(
-                                  color: Colors.white.withValues(alpha: 0.8),
-                                  fontSize: 12),
-                              maxLines: 1),
-                      ],
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: Colors.white.withValues(alpha: 0.5)),
-                    ),
-                    child: const Text('Ver loja',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600)),
-                  ),
-                ],
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.4), width: 0.8),
+                ),
+                child: const Text('Ver loja',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w600)),
               ),
-            ),
-          ]),
+            ],
+          ),
+        ),
+      ]),
     );
   }
 
@@ -2591,32 +3349,36 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
         if (ctaUrl.isNotEmpty) {
           final uri = Uri.tryParse(ctaUrl);
           if (uri != null) {
-            try { await launchUrl(uri, mode: LaunchMode.externalApplication); } catch (_) {}
+            try {
+              await launchUrl(uri, mode: LaunchMode.externalApplication);
+            } catch (_) {}
           }
         }
       },
       child: Stack(fit: StackFit.expand, children: [
-            // Imagem de fundo (quando fornecida via admin)
-            if (imgUrl.isNotEmpty)
-              CachedNetworkImage(
-                imageUrl: imgUrl,
-                fit: BoxFit.cover,
-                errorWidget: (_, __, ___) => const SizedBox(),
+        // Imagem de fundo (quando fornecida via admin)
+        if (imgUrl.isNotEmpty)
+          CachedNetworkImage(
+            imageUrl: imgUrl,
+            fit: BoxFit.cover,
+            errorWidget: (_, __, ___) => const SizedBox(),
+          ),
+        // Sem overlay, pois os banners comerciais devem exibir a imagem pura.
+        // Logo branco centralizado (somente quando não há imagem de fundo)
+        if (imgUrl.isEmpty)
+          Positioned(
+            top: 12,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Image.asset(
+                'assets/images/logo_white.png',
+                height: 30,
+                fit: BoxFit.contain,
               ),
-            // Sem overlay, pois os banners comerciais devem exibir a imagem pura.
-            // Logo branco centralizado (somente quando não há imagem de fundo)
-            if (imgUrl.isEmpty)
-              Positioned(
-                top: 12, left: 0, right: 0,
-                child: Center(
-                  child: Image.asset(
-                    'assets/images/logo_white.png',
-                    height: 34,
-                    fit: BoxFit.contain,
-                  ),
-                ),
-              ),
-          ]),
+            ),
+          ),
+      ]),
     );
   }
 
@@ -2625,27 +3387,27 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
     if (_slides.isEmpty) {
       return const SizedBox.shrink();
     }
-    
+
     final bool isDesktop = MediaQuery.of(context).size.width > 900;
-    
+
     return Column(
       children: [
-        const SizedBox(height: 8),
+        const SizedBox(height: 12),
         Container(
-          height: isDesktop ? 220 : 135,
-          margin: const EdgeInsets.symmetric(horizontal: 20),
+          height: isDesktop ? 175 : 116,
+          margin: const EdgeInsets.symmetric(horizontal: 16),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(12),
             boxShadow: [
               BoxShadow(
-                color: const Color(0xFF6A1B9A).withValues(alpha: 0.3),
-                blurRadius: 14,
-                offset: const Offset(0, 6),
+                color: Colors.black.withValues(alpha: 0.06),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
               ),
             ],
           ),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(12),
             child: PageView.builder(
               controller: _pageCtrl,
               itemCount: _slides.length,
@@ -2668,162 +3430,25 @@ class _BoostBannerCarouselState extends State<_BoostBannerCarousel> {
           ),
         ),
         if (_slides.length > 1) ...[
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: List.generate(_slides.length, (i) {
               final active = i == _currentPage;
               return AnimatedContainer(
-                duration: const Duration(milliseconds: 250),
-                margin: const EdgeInsets.symmetric(horizontal: 3),
-                width: active ? 18 : 6,
-                height: 6,
+                duration: const Duration(milliseconds: 220),
+                margin: const EdgeInsets.symmetric(horizontal: 2.5),
+                width: active ? 14 : 4,
+                height: 4,
                 decoration: BoxDecoration(
-                  color: active ? AppColors.primaryPurple : Colors.grey[300],
-                  borderRadius: BorderRadius.circular(3),
+                  color: active ? AppColors.primaryPurple : Colors.grey[350],
+                  borderRadius: BorderRadius.circular(2),
                 ),
               );
             }),
           ),
-          const SizedBox(height: 8),
         ],
       ],
-    );
-  }
-}
-
-// =============================================================================
-// 📢 AD WIDGETS
-// =============================================================================
-
-// Native Ad card — inserted every 6 shops in the explore grid.
-// Shows nothing on web or when the ad fails to load.
-class _NativeAdCard extends StatefulWidget {
-  const _NativeAdCard();
-
-  @override
-  State<_NativeAdCard> createState() => _NativeAdCardState();
-}
-
-class _NativeAdCardState extends State<_NativeAdCard> {
-  NativeAd? _nativeAd;
-  bool _isLoaded = false;
-
-  @override
-  void initState() {
-    super.initState();
-    if (!kIsWeb) _loadAd();
-  }
-
-  void _loadAd() {
-    try {
-      _nativeAd = NativeAd(
-        adUnitId: AdHelper.nativeAdUnitId,
-        listener: NativeAdListener(
-          onAdLoaded: (_) {
-            if (mounted) setState(() => _isLoaded = true);
-          },
-          onAdFailedToLoad: (ad, _) {
-            ad.dispose();
-            _nativeAd = null;
-          },
-        ),
-        request: const AdRequest(),
-        nativeTemplateStyle: NativeTemplateStyle(
-          templateType: TemplateType.medium,
-          mainBackgroundColor: Colors.white,
-          cornerRadius: 12.0,
-        ),
-      )..load();
-    } catch (_) {}
-  }
-
-  @override
-  void dispose() {
-    _nativeAd?.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (kIsWeb || !_isLoaded || _nativeAd == null) {
-      return const SizedBox.shrink();
-    }
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 6),
-      height: 320,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: AdWidget(ad: _nativeAd!),
-      ),
-    );
-  }
-}
-
-// Footer Banner Ad — 52px fixed above the bottom navigation bar.
-// Shows nothing on web or when the ad fails to load.
-class _AdFooterBanner extends StatefulWidget {
-  const _AdFooterBanner();
-
-  @override
-  State<_AdFooterBanner> createState() => _AdFooterBannerState();
-}
-
-class _AdFooterBannerState extends State<_AdFooterBanner> {
-  BannerAd? _bannerAd;
-  bool _isLoaded = false;
-
-  @override
-  void initState() {
-    super.initState();
-    if (!kIsWeb) _loadAd();
-  }
-
-  void _loadAd() {
-    try {
-      _bannerAd = BannerAd(
-        adUnitId: AdHelper.bannerAdUnitId,
-        size: AdSize.banner, // 320x50
-        request: const AdRequest(),
-        listener: BannerAdListener(
-          onAdLoaded: (_) {
-            if (mounted) setState(() => _isLoaded = true);
-          },
-          onAdFailedToLoad: (ad, _) {
-            ad.dispose();
-            _bannerAd = null;
-          },
-        ),
-      )..load();
-    } catch (_) {}
-  }
-
-  @override
-  void dispose() {
-    _bannerAd?.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (kIsWeb || !_isLoaded || _bannerAd == null) {
-      return const SizedBox.shrink();
-    }
-    return Container(
-      height: 52,
-      color: Colors.white,
-      alignment: Alignment.center,
-      child: AdWidget(ad: _bannerAd!),
     );
   }
 }

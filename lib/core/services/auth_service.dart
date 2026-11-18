@@ -62,6 +62,9 @@ class AuthService {
         sb.OAuthProvider.google,
         redirectTo: redirectUrl,
         authScreenLaunchMode: sb.LaunchMode.externalApplication,
+        queryParams: {
+          'prompt': 'select_account',
+        },
       );
     } catch (e) {
       debugPrint('[AuthService] Erro no OAuth Google: $e');
@@ -195,10 +198,8 @@ class AuthService {
   Future<void> sendPasswordReset(String email) async {
     try {
       final String redirectUrl = kIsWeb
-          ? (kDebugMode
-              ? 'http://localhost:3000/reset-password'
-              : '${Uri.base.origin}/reset-password')
-          : 'markaai://reset-password';
+          ? '${Uri.base.origin}/reset-password'
+          : 'https://markaai.com.br/reset-password';
           
       await _supabase.auth.resetPasswordForEmail(
         email.trim(),

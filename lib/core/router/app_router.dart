@@ -20,6 +20,9 @@ import 'package:markaai/core/services/session_service.dart';
 import 'package:markaai/core/services/auth_service.dart';
 import 'package:markaai/core/widgets/splash_loading_widget.dart';
 import 'package:markaai/core/services/plan_features_service.dart';
+import 'package:markaai/core/widgets/animated_splash_screen.dart';
+
+final splashKey = GlobalKey<AnimatedSplashScreenState>();
 
 class AppRouter {
   static Route<dynamic> generateRoute(RouteSettings settings) {
@@ -59,7 +62,7 @@ class AppRouter {
     final querySlug = uri.queryParameters['s'];
     if (querySlug != null && querySlug.isNotEmpty) {
       return MaterialPageRoute(
-        builder: (_) => PublicShopPage(slug: querySlug),
+        builder: (_) => PublicShopPage(slug: querySlug.toLowerCase()),
         settings: settings,
       );
     }
@@ -101,6 +104,14 @@ class AppRouter {
 
     // 3. Rota Raiz (Home)
     if (cleanPath.isEmpty) {
+      final queryParams = uri.queryParameters;
+      if (queryParams['type'] == 'recovery' && queryParams.containsKey('token_hash')) {
+        return MaterialPageRoute(
+          builder: (_) => const _PasswordRecoveryGate(),
+          settings: settings,
+        );
+      }
+      
       return MaterialPageRoute(
         builder: (_) => const AuthGate(),
         settings: settings,
@@ -118,7 +129,7 @@ class AppRouter {
     // 4. Tratamento de Slugs Dinâmicos (/:slug)
     final segments = cleanPath.split('/');
     if (segments.length == 1) {
-      final slug = segments[0];
+      final slug = segments[0].toLowerCase();
 
       // Se NÃO for uma rota fixa conhecida da aplicação, tratamos como slug de loja
       if (!_isKnownRoute(slug)) {
@@ -231,6 +242,8 @@ class AuthGate extends StatefulWidget {
 class _AuthGateState extends State<AuthGate> {
   Timer? _fallbackTimer;
   bool _timeoutReached = false;
+  bool _exitTriggered = false;
+  bool _introCompleta = false;
 
   @override
   void initState() {
@@ -251,9 +264,10 @@ class _AuthGateState extends State<AuthGate> {
         }
       });
     } else {
-      // Mobile: fallback para evitar congelamento eterno em debug (F5) quando
-      // o stream de auth do Supabase demora ou não emite o evento inicial.
-      _fallbackTimer = Timer(const Duration(seconds: 8), () {
+      // Mobile: fallback reduzido. Em debug (F5), o stream de auth pode demorar
+      // mas um timeout muito longo trava a experiência no Android com USB.
+      final seconds = kDebugMode ? 3 : 6;
+      _fallbackTimer = Timer(Duration(seconds: seconds), () {
         if (mounted && !_timeoutReached) {
           setState(() => _timeoutReached = true);
           debugPrint('AuthGate: Mobile timeout atingido — forçando navegação.');
@@ -281,11 +295,27 @@ class _AuthGateState extends State<AuthGate> {
             // Stream nunca emitiu (comum em debug/F5): usa sessão atual diretamente
             final session = supabase.auth.currentSession;
             if (session != null) {
-              return AuthRedirect(user: session.user);
+              if (!_exitTriggered) {
+                _exitTriggered = true;
+                splashKey.currentState?.playExitAnimation().then((_) {
+                  if (mounted) setState(() => _introCompleta = true);
+                });
+                return AnimatedSplashScreen(key: splashKey, progress: 0.9);
+              }
+              if (_introCompleta) return AuthRedirect(user: session.user);
+              return AnimatedSplashScreen(key: splashKey, progress: 0.9);
             }
-            return const LoginPage();
+            if (!_exitTriggered) {
+              _exitTriggered = true;
+              splashKey.currentState?.playExitAnimation().then((_) {
+                if (mounted) setState(() => _introCompleta = true);
+              });
+              return AnimatedSplashScreen(key: splashKey, progress: 0.9);
+            }
+            if (_introCompleta) return const LoginPage();
+            return AnimatedSplashScreen(key: splashKey, progress: 0.9);
           }
-          return const SplashLoadingWidget();
+          return AnimatedSplashScreen(key: splashKey, progress: 0.2);
         }
 
         final event = snapshot.data!.event;
@@ -327,7 +357,7 @@ class _AuthGateState extends State<AuthGate> {
           // Mas caso o timeout do fallback já tenha estourado, seguimos em frente
           if (!_timeoutReached) {
             debugPrint('AuthGate: Aguardando processamento da sessão inicial (event=AuthChangeEvent.initialSession)...');
-            return const SplashLoadingWidget();
+            return AnimatedSplashScreen(key: splashKey, progress: 0.4);
           }
         }
         
@@ -362,11 +392,27 @@ class _AuthGateState extends State<AuthGate> {
 
         // Sem sessão e já passou do initial ou não tem code na URL, ou superou Timeout = deslogado
         if (session == null) {
-          return const LoginPage();
+          if (!_exitTriggered) {
+            _exitTriggered = true;
+            splashKey.currentState?.playExitAnimation().then((_) {
+              if (mounted) setState(() => _introCompleta = true);
+            });
+            return AnimatedSplashScreen(key: splashKey, progress: 0.9);
+          }
+          if (_introCompleta) return const LoginPage();
+          return AnimatedSplashScreen(key: splashKey, progress: 0.9);
         }
 
         // Sessão válida = vai para home
-        return AuthRedirect(user: session.user);
+        if (!_exitTriggered) {
+          _exitTriggered = true;
+          splashKey.currentState?.playExitAnimation().then((_) {
+            if (mounted) setState(() => _introCompleta = true);
+          });
+          return AnimatedSplashScreen(key: splashKey, progress: 0.9);
+        }
+        if (_introCompleta) return AuthRedirect(user: session.user);
+        return AnimatedSplashScreen(key: splashKey, progress: 0.9);
       },
     );
   }
@@ -416,7 +462,8 @@ class _AuthRedirectState extends State<AuthRedirect> {
           .from('users')
           .select()
           .eq('id', widget.user.id)
-          .maybeSingle();
+          .maybeSingle()
+          .timeout(const Duration(seconds: 8), onTimeout: () => null);
       
       debugPrint('AuthRedirect: Resultado: $doc');
 
@@ -498,22 +545,45 @@ class _AuthRedirectState extends State<AuthRedirect> {
       debugPrint('AuthRedirect ERRO: $e');
       debugPrint('AuthRedirect STACK: $stack');
       if (mounted) {
-        final errStr = e.toString();
-        final isNetwork = errStr.contains('SocketException') ||
-            errStr.contains('Failed host lookup') ||
-            errStr.contains('NetworkException') ||
-            errStr.contains('Connection refused') ||
-            errStr.contains('ClientException');
-        _setError(
-          isNetwork
-              ? 'Sem conexão com a internet. Verifique sua rede e tente novamente.'
-              : 'Erro ao carregar perfil: $e',
-          isNetwork: isNetwork,
-        );
+        final errStr = e.toString().toLowerCase();
+        final isNetwork = errStr.contains('socket') ||
+            errStr.contains('host lookup') ||
+            errStr.contains('network') ||
+            errStr.contains('connection refused') ||
+            errStr.contains('clientexception') ||
+            errStr.contains('timeout') ||
+            errStr.contains('fetch') ||
+            errStr.contains('offline') ||
+            errStr.contains('sem internet');
+
+        if (isNetwork) {
+          final cachedType = await SessionService.getUserType();
+          if (cachedType != null && cachedType.isNotEmpty) {
+            debugPrint('AuthRedirect: Offline mode fallback. Usando tipo em cache: $cachedType');
+            if (mounted) {
+              setState(() {
+                if (cachedType == 'dono' || cachedType == 'business' || cachedType == 'admin') {
+                  _targetPage = const BusinessHomePage();
+                } else {
+                  _targetPage = const ClientHomePage();
+                }
+              });
+            }
+            return;
+          }
+        }
+
+        if (mounted) {
+          _setError(
+            isNetwork
+                ? 'Sem conexão com a internet. Verifique sua rede e tente novamente.'
+                : 'Erro ao carregar perfil: $e',
+            isNetwork: isNetwork,
+          );
+        }
       }
     }
   }
-
   void _setError(String message, {required bool isNetwork}) {
     setState(() {
       _error = true;
@@ -587,35 +657,49 @@ class _AuthRedirectState extends State<AuthRedirect> {
     if (_error) {
       if (_isNetworkError) {
         return Scaffold(
-          backgroundColor: Colors.white,
+          backgroundColor: const Color(0xFFF9FAFB),
           body: Center(
             child: Padding(
               padding: const EdgeInsets.all(32),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Icons.wifi_off_rounded, size: 72, color: Colors.grey),
-                  const SizedBox(height: 24),
-                  const Text(
-                    'Sem conexão',
-                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF111827)),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    _errorMessage,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 15, color: Colors.black54),
+                  Container(
+                    padding: const EdgeInsets.all(24),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEE2E2),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.wifi_off_rounded, size: 64, color: Color(0xFFEF4444)),
                   ),
                   const SizedBox(height: 32),
-                  ElevatedButton.icon(
-                    onPressed: _retry,
-                    icon: const Icon(Icons.refresh_rounded),
-                    label: const Text('Tentar novamente'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primaryPurple,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  const Text(
+                    'Você está offline',
+                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF111827)),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Não foi possível conectar. Verifique sua rede e tente novamente para acessar os dados.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 16, color: Color(0xFF6B7280), height: 1.5),
+                  ),
+                  const SizedBox(height: 40),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 54,
+                    child: ElevatedButton.icon(
+                      onPressed: _retry,
+                      icon: const Icon(Icons.refresh_rounded, size: 22),
+                      label: const Text(
+                        'Tentar novamente', 
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryPurple,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
                     ),
                   ),
                 ],
@@ -781,25 +865,15 @@ class _PasswordRecoveryGateState extends State<_PasswordRecoveryGate> {
     // 1. Assina o stream ANTES de qualquer await para não perder eventos futuros
     _sub = supabase.auth.onAuthStateChange.listen((state) {
       debugPrint('[PasswordRecoveryGate] evento: ${state.event}');
-      if (state.event == sb.AuthChangeEvent.passwordRecovery) {
-        if (mounted && !_isRecovery) {
-          setState(() {
-            _isRecovery = true;
-            _ready = true;
-          });
-        }
-        return;
-      }
-      // Fluxo PKCE: o SDK emite signedIn em vez de passwordRecovery
-      // ao trocar o ?code= da URL. Detectamos pela rota atual + sessão.
-      if (state.event == sb.AuthChangeEvent.signedIn &&
-          state.session != null &&
-          !_isRecovery) {
-        final bool onResetRoute = kIsWeb
-            ? Uri.base.path.contains('reset-password')
-            : true; // No mobile o deep link já direcionou para cá
-        if (mounted && onResetRoute) {
-          debugPrint('[PasswordRecoveryGate] signedIn na rota reset-password → recovery');
+      
+      // Qualquer evento de recovery ou de signedIn na rota reset-password aciona a tela de senha.
+      if (state.event == sb.AuthChangeEvent.passwordRecovery || 
+          (state.event == sb.AuthChangeEvent.signedIn && state.session != null && !_isRecovery)) {
+        
+        final bool onResetRoute = kIsWeb ? Uri.base.path.contains('reset-password') : true;
+        
+        if (mounted && onResetRoute && !_isRecovery) {
+          debugPrint('[PasswordRecoveryGate] Validado na rota reset-password → ativando tela de nova senha.');
           if (kIsWeb) html.window.history.replaceState(null, '', '/reset-password');
           setState(() {
             _isRecovery = true;
@@ -809,13 +883,38 @@ class _PasswordRecoveryGateState extends State<_PasswordRecoveryGate> {
       }
     });
 
-    // 2. Tenta processar o hash da URL explicitamente (implicit flow)
-    // O hash terá o formato: #access_token=...&type=recovery
+    // 2. Tenta processar a URL explicitamente
     if (kIsWeb) {
       try {
         final fragment = Uri.base.fragment;
         final hasCodeInQuery = Uri.base.queryParameters.containsKey('code');
-        debugPrint('[PasswordRecoveryGate] Fragment da URL: "$fragment" | hasCodeInQuery: $hasCodeInQuery');
+        final hasTokenHash = Uri.base.queryParameters.containsKey('token_hash');
+        
+        debugPrint('[PasswordRecoveryGate] Fragment: "$fragment" | hasCode: $hasCodeInQuery | hasToken: $hasTokenHash');
+
+        // Tratamento especial para o novo template de e-mail (token_hash via query string)
+        if (hasTokenHash && Uri.base.queryParameters['type'] == 'recovery') {
+          final tokenHash = Uri.base.queryParameters['token_hash'];
+          if (tokenHash != null && tokenHash.isNotEmpty) {
+            debugPrint('[PasswordRecoveryGate] Processando token_hash de recuperação...');
+            
+            // Chama verifyOTP do Supabase SDK. Isso valida o token_hash e cria a sessão.
+            // O evento PASSWORD_RECOVERY será emitido e capturado pelo listener acima.
+            await supabase.auth.verifyOTP(
+              type: sb.OtpType.recovery,
+              tokenHash: tokenHash,
+            );
+            
+            if (mounted) {
+              setState(() {
+                _isRecovery = true;
+                _ready = true;
+              });
+              html.window.history.replaceState(null, '', '/reset-password');
+              return;
+            }
+          }
+        }
 
         // Implicit flow: token no hash
         if (fragment.contains('type=recovery') || fragment.contains('access_token=')) {

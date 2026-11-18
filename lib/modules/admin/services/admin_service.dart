@@ -1,5 +1,5 @@
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:markaai/core/services/session_service.dart';
 
 class AdminService {
   static final AdminService _instance = AdminService._internal();
@@ -36,8 +36,10 @@ class AdminService {
 
   // --- Tenants ---
   Future<void> changeShopPlan(String shopId, String oldPlan, String newPlan, String adminId, {String? reason}) async {
-    // 1. Update shop subscription
+    // 1. Atualiza colunas nativas e JSONB de subscription
     await _supabase.from('shops').update({
+      'plan_id': newPlan,
+      'trial_active': false,
       'subscription': {
         'plan_id': newPlan,
         'plano': newPlan,
@@ -46,7 +48,12 @@ class AdminService {
       }
     }).eq('id', shopId);
 
-    // 2. Record in history
+    // 2. Atualiza users.plan onde shop_id = shopId
+    try {
+      await _supabase.from('users').update({'plan': newPlan}).eq('shop_id', shopId);
+    } catch (_) {}
+
+    // 3. Record in history
     await _supabase.from('subscription_history').insert({
       'shop_id': shopId,
       'old_plan': oldPlan,
@@ -56,13 +63,74 @@ class AdminService {
       'source': 'admin',
     });
 
-    // 3. Log action
+    // 4. Log action
     await logAction(
       adminId: adminId,
       action: 'change_plan',
       targetType: 'shop',
       targetId: shopId,
       details: {'old_plan': oldPlan, 'new_plan': newPlan, 'reason': reason},
+    );
+  }
+
+  /// Aplica um período de teste (trial) de qualquer plano à loja desejada
+  Future<void> applyShopTrial({
+    required String shopId,
+    required String oldPlan,
+    required String targetPlan,
+    required int durationDays,
+    required String adminId,
+    String? reason,
+  }) async {
+    final now = DateTime.now();
+    final endDate = now.add(Duration(days: durationDays));
+
+    // 1. Atualiza na tabela shops com todas as colunas de sincronia
+    await _supabase.from('shops').update({
+      'plan_id': targetPlan,
+      'trial_active': true,
+      'has_used_trial': true,
+      'subscription': {
+        'plan_id': targetPlan,
+        'plano': targetPlan,
+        'status': 'trial',
+        'trial_used': true,
+        'trial_plan': targetPlan,
+        'trial_start_date': now.toIso8601String(),
+        'trial_end_date': endDate.toIso8601String(),
+        'trial_ends_at': endDate.toIso8601String(),
+        'updated_at': now.toIso8601String(),
+      }
+    }).eq('id', shopId);
+
+    // 2. Atualiza users.plan
+    try {
+      await _supabase.from('users').update({'plan': targetPlan}).eq('shop_id', shopId);
+    } catch (_) {}
+
+    // 3. Registra no histórico de assinaturas
+    await _supabase.from('subscription_history').insert({
+      'shop_id': shopId,
+      'old_plan': oldPlan,
+      'new_plan': 'trial_$targetPlan',
+      'changed_by': adminId,
+      'reason': reason ?? 'Trial de $durationDays dias aplicado pelo admin',
+      'source': 'admin_trial',
+    });
+
+    // 4. Registra no log de auditoria
+    await logAction(
+      adminId: adminId,
+      action: 'apply_trial',
+      targetType: 'shop',
+      targetId: shopId,
+      details: {
+        'old_plan': oldPlan,
+        'target_plan': targetPlan,
+        'duration_days': durationDays,
+        'expires_at': endDate.toIso8601String(),
+        'reason': reason,
+      },
     );
   }
 
@@ -103,6 +171,107 @@ class AdminService {
     );
   }
 
+  // --- Diagnóstico e Suporte de Autenticação de Usuários ---
+
+  /// Retorna um mapa (userId -> dados resumidos de auth.users) para enriquecer a listagem do Admin
+  Future<Map<String, Map<String, dynamic>>> getUsersAuthSummary() async {
+    try {
+      final res = await _supabase.functions.invoke(
+        'admin-user-auth',
+        body: {'action': 'summary'},
+      );
+      if (res.status == 200 && res.data is Map) {
+        final rawUsers = res.data['users'];
+        if (rawUsers is Map) {
+          return rawUsers.map(
+            (key, value) => MapEntry(
+              key.toString(),
+              Map<String, dynamic>.from(value as Map),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('[AdminService] Fallback RPC getUsersAuthSummary: $e');
+    }
+
+    try {
+      final rpcRes = await _supabase.rpc('admin_get_users_auth_summary');
+      if (rpcRes is List) {
+        final map = <String, Map<String, dynamic>>{};
+        for (final row in rpcRes) {
+          final m = Map<String, dynamic>.from(row as Map);
+          final uid = (m['user_id'] ?? m['id'] ?? '').toString();
+          if (uid.isNotEmpty) {
+            map[uid] = m;
+          }
+        }
+        return map;
+      }
+    } catch (e) {
+      debugPrint('[AdminService] Erro em admin_get_users_auth_summary: $e');
+    }
+
+    return {};
+  }
+
+  /// Retorna o diagnóstico completo de um usuário (Auth, Identidades, Resend Emails, Agendamentos e Lojas)
+  Future<Map<String, dynamic>> getUserFullDiagnostics(String userId) async {
+    try {
+      final res = await _supabase.functions.invoke(
+        'admin-user-auth',
+        body: {'action': 'details', 'userId': userId},
+      );
+      if (res.status == 200 && res.data is Map) {
+        return Map<String, dynamic>.from(res.data as Map);
+      }
+    } catch (e) {
+      debugPrint('[AdminService] Fallback RPC getUserFullDiagnostics: $e');
+    }
+
+    try {
+      final rpcRes = await _supabase.rpc(
+        'admin_get_user_full_diagnostics',
+        params: {'p_user_id': userId},
+      );
+      if (rpcRes is Map) {
+        return Map<String, dynamic>.from(rpcRes);
+      }
+    } catch (e) {
+      debugPrint('[AdminService] Erro em admin_get_user_full_diagnostics: $e');
+    }
+
+    return {};
+  }
+
+  /// Confirma manualmente o e-mail de um usuário no Supabase Auth e ativa no public.users
+  Future<void> confirmUserEmailManually(String userId) async {
+    final res = await _supabase.functions.invoke(
+      'admin-user-auth',
+      body: {'action': 'confirm_email', 'userId': userId},
+    );
+    if (res.status != 200) {
+      final errMsg = (res.data is Map ? res.data['error'] : null) ?? 'Erro ao confirmar e-mail';
+      throw Exception(errMsg);
+    }
+  }
+
+  /// Define manualmente uma nova senha para o usuário no Supabase Auth (e confirma o e-mail automaticamente)
+  Future<void> setUserPasswordManually(String userId, String newPassword) async {
+    final res = await _supabase.functions.invoke(
+      'admin-user-auth',
+      body: {
+        'action': 'set_password',
+        'userId': userId,
+        'password': newPassword,
+      },
+    );
+    if (res.status != 200) {
+      final errMsg = (res.data is Map ? res.data['error'] : null) ?? 'Erro ao definir nova senha';
+      throw Exception(errMsg);
+    }
+  }
+
   // --- Auditoria ---
   Future<void> logAction({
     required String adminId,
@@ -120,7 +289,7 @@ class AdminService {
         'details': details,
       });
     } catch (e) {
-      print('Erro ao registrar log de auditoria: $e');
+      debugPrint('Erro ao registrar log de auditoria: $e');
     }
   }
 }
