@@ -311,7 +311,7 @@ class _BusinessOnboardingPageState extends State<BusinessOnboardingPage> {
               TextFormField(
                   controller: _categoriaController,
                   decoration: const InputDecoration(
-                      labelText: "Categoria (Ex: Barbearia, Estética)",
+                      labelText: "Categoria (Ex: Barbearia, Trancista, Salão)",
                       border: OutlineInputBorder())),
             ]),
             onNext: () =>

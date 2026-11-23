@@ -1,7 +1,7 @@
 ﻿$ErrorActionPreference = "Stop"
 
 Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host "Iniciando Lançamento v1.8.18 (OTA + Web)" -ForegroundColor Cyan
+Write-Host "Iniciando Lançamento v1.8.19 (OTA + Web)" -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
 
 # 1. Build APK Release
@@ -29,10 +29,10 @@ firebase deploy --only hosting
 Write-Host "Deploy no Firebase Hosting concluido." -ForegroundColor Green
 
 # 4. Criando Release no GitHub com Upload do APK
-Write-Host "`n[4/5] Criando release v1.8.18 no GitHub e fazendo upload do APK..." -ForegroundColor Yellow
-$changelog = "Nova categoria Trancistas com icone exclusivo na vitrine, novo menu de perfil moderno em bottom sheet, melhorias visuais na splash screen e correcoes de layout e estabilidade."
-gh release create v1.8.18 $apkPath --title "v1.8.18" --notes $changelog
-Write-Host "Release v1.8.18 criada no GitHub com sucesso." -ForegroundColor Green
+Write-Host "`n[4/5] Criando release v1.8.19 no GitHub e fazendo upload do APK..." -ForegroundColor Yellow
+$changelog = "Nova categoria Trancista no perfil do empreendimento, campo opcional de Cor das Tranças para agendamentos de trancistas (visível na agenda e nos detalhes apenas quando preenchido), correções de estabilidade e melhorias gerais."
+gh release create v1.8.19 $apkPath --title "v1.8.19" --notes $changelog
+Write-Host "Release v1.8.19 criada no GitHub com sucesso." -ForegroundColor Green
 
 # 5. Inserindo nova versao no Supabase
 Write-Host "`n[5/5] Registrando nova versao no Supabase (app_versions)..." -ForegroundColor Yellow
@@ -48,9 +48,9 @@ $headers = @{
 
 $body = @{
     platform     = "android"
-    version_name = "1.8.18"
-    version_code = 20
-    apk_url      = "https://github.com/joemcestrategia/MarkaAI/releases/download/v1.8.18/app-release.apk"
+    version_name = "1.8.19"
+    version_code = 21
+    apk_url      = "https://github.com/joemcestrategia/MarkaAI/releases/download/v1.8.19/app-release.apk"
     changelog    = $changelog
     force_update = $false
 } | ConvertTo-Json
@@ -60,5 +60,5 @@ Write-Host "Versao registrada no Supabase com sucesso:" -ForegroundColor Green
 $response | ConvertTo-Json
 
 Write-Host "`n==========================================" -ForegroundColor Cyan
-Write-Host "Lançamento v1.8.18 Finalizado com Sucesso!" -ForegroundColor Cyan
+Write-Host "Lançamento v1.8.19 Finalizado com Sucesso!" -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan

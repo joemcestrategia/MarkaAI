@@ -7,13 +7,14 @@ import '../clients/client_details_page.dart';
 import 'edit_appointment_date_page.dart';
 import 'transaction_details_page.dart';
 import '../../core/services/mercado_pago_service.dart';
-import '../../core/services/plan_features_service.dart';
 import 'package:flutter/services.dart';
 import 'helpers/cancellation_helper.dart';
 import '../../core/models/message_template_model.dart';
 import '../../core/services/message_template_service.dart';
 import '../../utils/payment_summary.dart';
+import '../../core/utils/shop_category_helper.dart';
 import '../../core/services/appointment_note_service.dart';
+import 'widgets/appointment_history_sheet.dart';
 
 class AppointmentDetailsPage extends StatefulWidget {
   final Map<String, dynamic> appointmentDoc;
@@ -24,6 +25,7 @@ class AppointmentDetailsPage extends StatefulWidget {
   final bool startInEditMode; // ?? Iniciar direto em modo de edição
   final VoidCallback? onEdit; // ?? Callback para edição externa (Modal Refatorado)
   final void Function(Map<String, dynamic> updatedData)? onAppointmentUpdated;
+  final String? shopCategory;
 
   const AppointmentDetailsPage({
     super.key,
@@ -33,6 +35,7 @@ class AppointmentDetailsPage extends StatefulWidget {
     this.startInEditMode = false,
     this.onEdit,
     this.onAppointmentUpdated,
+    this.shopCategory,
   });
 
   @override
@@ -62,6 +65,9 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
   double? _selectedPrice;
   int? _selectedServiceDuration;
   final TextEditingController _priceController = TextEditingController();
+  final TextEditingController _colorController = TextEditingController();
+  String? _shopCategory;
+  bool get _isTrancistaShop => ShopCategoryHelper.isTrancista(_shopCategory);
   List<String> _clientTags = [];
   double _shopBirthdayDiscount = 0.0;
   String? _selectedPaymentMethod;
@@ -87,6 +93,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
   @override
   void initState() {
     super.initState();
+    _shopCategory = widget.shopCategory;
     _localDoc = Map<String, dynamic>.from(widget.appointmentDoc);
     _applyMetadataPaidAmount(_localDoc); // Corrige paid_amount do metadata antes do 1º build
     _loadData();
@@ -144,30 +151,43 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     if (dbPaid >= totalPayable - 0.01) return; // Já está pago
 
     final meta = (doc['metadata'] as Map<String, dynamic>?) ?? {};
-    final double metaPaid =
-        (double.tryParse(meta['full_payment_amount']?.toString() ?? '') ?? 0.0) +
-        (double.tryParse(meta['advance_payment_amount']?.toString() ?? '') ?? 0.0) +
-        (double.tryParse(meta['completion_payment_amount']?.toString() ?? '') ?? 0.0);
-    if (metaPaid > 0.01) return; // Metadata já tem amounts, Level 1 resolve
+    final bool hasAnyMetaAmount =
+        (double.tryParse(meta['full_payment_amount']?.toString() ?? '') ?? 0.0) > 0.01 ||
+        (double.tryParse(meta['advance_payment_amount']?.toString() ?? '') ?? 0.0) > 0.01 ||
+        (double.tryParse(meta['completion_payment_amount']?.toString() ?? '') ?? 0.0) > 0.01 ||
+        (meta['transactions'] is List && (meta['transactions'] as List).isNotEmpty);
+    if (hasAnyMetaAmount) return; // Metadata já tem amounts, Level 1 resolve
 
-    // Coleta IDs de pagamento do metadata
+    // Coleta IDs de pagamento do metadata e raiz (incluindo metadata.payment_id e pending_completion_payment_id)
     final Set<String> ids = {};
-    final advId = meta['advance_payment_id']?.toString();
-    final compId = meta['completion_payment_id']?.toString();
-    final fullId = meta['full_payment_id']?.toString();
-    final rootId = doc['payment_id']?.toString();
-    if (advId != null && advId.isNotEmpty && advId != 'manual') ids.add(advId);
-    if (compId != null && compId.isNotEmpty && compId != 'manual') ids.add(compId);
-    if (fullId != null && fullId.isNotEmpty) ids.add(fullId);
-    if (rootId != null && rootId.isNotEmpty && rootId != 'manual') ids.add(rootId);
+    final candidates = [
+      meta['advance_payment_id'],
+      meta['completion_payment_id'],
+      meta['full_payment_id'],
+      meta['payment_id'],
+      meta['pending_completion_payment_id'],
+      doc['payment_id'],
+    ];
+    for (final c in candidates) {
+      final s = c?.toString().trim() ?? '';
+      if (s.isNotEmpty && s.toLowerCase() != 'null' && s.toLowerCase() != 'manual') {
+        ids.add(s);
+      }
+    }
     if (ids.isEmpty) return;
 
     final shopId = doc['shop_id']?.toString() ?? doc['shopId']?.toString() ?? '';
     if (shopId.isEmpty) return;
 
+    final String? preferredMpUid = meta['mp_user_id']?.toString().trim();
+
     try {
       final results = await Future.wait(
-        ids.map((id) => MercadoPagoService.obterDetalhesPagamento(shopId: shopId, paymentId: id)),
+        ids.map((id) => MercadoPagoService.obterDetalhesPagamento(
+          shopId: shopId,
+          paymentId: id,
+          mpUserId: (preferredMpUid != null && preferredMpUid.isNotEmpty) ? preferredMpUid : null,
+        )),
       );
       double approvedSum = 0;
       for (final r in results) {
@@ -183,16 +203,12 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     }
   }
 
-  // Aplica amounts do metadata ao paid_amount antes do build,
+  // Aplica o valor pago resolvido pela fonte única ao paid_amount antes do build,
   // garantindo que a UI mostre o valor correto desde o primeiro frame.
   void _applyMetadataPaidAmount(Map<String, dynamic> doc) {
-    final meta = (doc['metadata'] as Map<String, dynamic>?) ?? {};
-    final double metaPaid =
-        (double.tryParse(meta['full_payment_amount']?.toString() ?? '') ?? 0.0) +
-        (double.tryParse(meta['advance_payment_amount']?.toString() ?? '') ?? 0.0) +
-        (double.tryParse(meta['completion_payment_amount']?.toString() ?? '') ?? 0.0);
-    if (metaPaid > 0.01) {
-      doc['paid_amount'] = metaPaid;
+    final summary = getPaymentSummary(doc);
+    if (summary.paidAmount > 0.01) {
+      doc['paid_amount'] = summary.paidAmount;
     }
   }
 
@@ -207,22 +223,41 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
       final appointmentId = data['id']?.toString() ?? '';
       if (shopId.isEmpty || appointmentId.isEmpty) return;
 
-      final String? rootPaymentId = data['payment_id']?.toString();
       final meta = Map<String, dynamic>.from((data['metadata'] as Map?) ?? {});
-      final String? metaAdvanceId = meta['advance_payment_id']?.toString();
-      final String? metaCompId = meta['completion_payment_id']?.toString();
-      final String? metaFullId = meta['full_payment_id']?.toString();
+      final List<String> storedMpIds = [];
+      final seenStoredIds = <String>{};
+      for (final rawId in [
+        data['payment_id'],
+        meta['advance_payment_id'],
+        meta['completion_payment_id'],
+        meta['full_payment_id'],
+        meta['payment_id'],
+        meta['pending_completion_payment_id'],
+      ]) {
+        final s = rawId?.toString().trim() ?? '';
+        if (s.isNotEmpty &&
+            s.toLowerCase() != 'null' &&
+            s.toLowerCase() != 'manual' &&
+            seenStoredIds.add(s)) {
+          storedMpIds.add(s);
+        }
+      }
       final String bookedVia = meta['booked_via']?.toString().toLowerCase() ?? '';
 
-      final bool hasStoredIds = (rootPaymentId != null && rootPaymentId.isNotEmpty) ||
-                                (metaAdvanceId != null && metaAdvanceId.isNotEmpty && metaAdvanceId != 'manual') ||
-                                (metaCompId != null && metaCompId.isNotEmpty && metaCompId != 'manual') ||
-                                (metaFullId != null && metaFullId.isNotEmpty);
+      final bool hasStoredIds = storedMpIds.isNotEmpty;
 
       final bool hasAppOrigin = bookedVia.contains('app') || bookedVia.contains('instagram');
 
       final totalPayable = getCalculatedTotal(data);
       final double currentPaid = double.tryParse(data['paid_amount']?.toString() ?? data['valor_pago']?.toString() ?? '0') ?? 0.0;
+
+      // Não sobrescrever cancelamento já marcado como estornado manualmente
+      final String apptStatusLower = (data['status'] ?? '').toString().toLowerCase().trim();
+      final String refundStatusLower = (data['refund_status'] ?? '').toString().toLowerCase().trim();
+      if (apptStatusLower == 'cancelado' && refundStatusLower == 'estornado' && currentPaid > 0.01) {
+        return;
+      }
+
       final bool isUnpaidWithValue = currentPaid < 0.01 && totalPayable > 0.01;
       final bool isOverpaid = currentPaid > totalPayable + 0.01 && totalPayable > 0.01;
       final bool needsSync = hasStoredIds || hasAppOrigin || isUnpaidWithValue || isOverpaid;
@@ -236,146 +271,270 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
       _lastMpSyncTimes[appointmentId] = now;
 
       double reconciledAmount = 0.0;
+      bool fromMpApi = false;
       List<Map<String, dynamic>> approvedPayments = [];
 
-      // ── Nível 1: Reconciliação por amounts já gravados no metadata ─────
-      final double fullAmt = double.tryParse(meta['full_payment_amount']?.toString() ?? '') ?? 0.0;
-      final double advAmt = double.tryParse(meta['advance_payment_amount']?.toString() ?? '') ?? 0.0;
-      final double compAmt = double.tryParse(meta['completion_payment_amount']?.toString() ?? '') ?? 0.0;
+      // ── Nível 1: Reconciliação por fonte única local (sem rebaixar paid_amount) ──
+      final summaryLocal = getPaymentSummary(data);
+      if (summaryLocal.paidAmount > currentPaid + 0.01) {
+        reconciledAmount = summaryLocal.paidAmount;
+      }
 
-      // Pagamento total via full_payment_amount
-      if (fullAmt > 0.01) {
-        reconciledAmount = fullAmt;
-        final fullId = metaFullId ?? rootPaymentId ?? '';
-        approvedPayments.add({
-          'id': fullId,
-          'payment_type_id': meta['full_payment_method']?.toString() ?? data['payment_method']?.toString() ?? 'pix',
-          'transaction_amount': fullAmt,
-          'date_approved': meta['full_paid_at']?.toString() ?? data['pago_em']?.toString() ?? now.toIso8601String(),
-          'status': 'approved',
-        });
-      }
-      // Sinal + complemento
-      else if (advAmt > 0.01 || compAmt > 0.01) {
-        if (advAmt > 0.01) {
-          reconciledAmount += advAmt;
-          approvedPayments.add({
-            'id': metaAdvanceId ?? '',
-            'payment_type_id': meta['advance_payment_method']?.toString() ?? data['payment_method']?.toString() ?? 'pix',
-            'transaction_amount': advAmt,
-            'date_approved': meta['advance_paid_at']?.toString() ?? data['created_at']?.toString() ?? now.toIso8601String(),
-            'status': 'approved',
-          });
-        }
-        if (compAmt > 0.01) {
-          reconciledAmount += compAmt;
-          approvedPayments.add({
-            'id': metaCompId ?? '',
-            'payment_type_id': meta['completion_payment_method']?.toString() ?? data['payment_method']?.toString() ?? 'pix',
-            'transaction_amount': compAmt,
-            'date_approved': meta['completion_paid_at']?.toString() ?? data['pago_em']?.toString() ?? now.toIso8601String(),
-            'status': 'approved',
-          });
-        }
-      }
-      // ── Nível 3: Fallback — busca por external_reference ──
-      if (reconciledAmount < 0.01 && (hasAppOrigin || isUnpaidWithValue || hasStoredIds)) {
+      // ── Nível 3 + Fallback Nível 2: Busca por external_reference ou IDs armazenados ──
+      if (reconciledAmount < 0.01 &&
+          ((currentPaid < 0.01 && (hasAppOrigin || hasStoredIds)) ||
+              isOverpaid ||
+              hasStoredIds)) {
+        final seenIds = <String>{};
+        final newApproved = <Map<String, dynamic>>[];
+        double mpTotal = 0.0;
+
         final refPayments = await MercadoPagoService.buscarPagamentosPorReferencia(
           shopId: shopId,
           externalReference: appointmentId,
         );
         if (refPayments != null && refPayments.isNotEmpty) {
-          final newApproved = <Map<String, dynamic>>[];
-          double newTotal = 0.0;
-          for (var p in refPayments) {
-            if (p is Map<String, dynamic> && p['status'] == 'approved') {
-              newApproved.add(p);
-              newTotal += double.tryParse(p['transaction_amount']?.toString() ?? '0') ?? 0.0;
+          for (final p in refPayments) {
+            if (p is! Map<String, dynamic>) continue;
+            final pStatus = (p['status'] ?? '').toString().toLowerCase().trim();
+            if (pStatus != 'approved' && pStatus != 'accredited') continue;
+            final pid = p['id']?.toString().trim() ?? '';
+            if (pid.isNotEmpty) {
+              if (seenIds.contains(pid)) continue;
+              seenIds.add(pid);
             }
+            newApproved.add(p);
+            mpTotal +=
+                double.tryParse(p['transaction_amount']?.toString() ?? '0') ??
+                    0.0;
           }
-          if (newTotal > 0.01) {
-            reconciledAmount = newTotal;
-            approvedPayments = newApproved;
-            approvedPayments.sort((a, b) => (a['date_approved']?.toString() ?? '').compareTo(b['date_approved']?.toString() ?? ''));
+        }
+
+        // Nível 2 fallback: consulta diretamente os IDs salvos se a busca por referência vier vazia
+        if (newApproved.isEmpty && storedMpIds.isNotEmpty) {
+          final String? preferredMpUid = meta['mp_user_id']?.toString().trim();
+          final directResults = await Future.wait(
+            storedMpIds.map(
+              (pid) => MercadoPagoService.obterDetalhesPagamento(
+                shopId: shopId,
+                paymentId: pid,
+                mpUserId: (preferredMpUid != null && preferredMpUid.isNotEmpty)
+                    ? preferredMpUid
+                    : null,
+              ),
+            ),
+          );
+          for (final p in directResults) {
+            if (p == null) continue;
+            final pStatus = (p['status'] ?? '').toString().toLowerCase().trim();
+            if (pStatus != 'approved' && pStatus != 'accredited') continue;
+            final pid = p['id']?.toString().trim() ?? '';
+            if (pid.isNotEmpty) {
+              if (seenIds.contains(pid)) continue;
+              seenIds.add(pid);
+            }
+            newApproved.add(p);
+            mpTotal +=
+                double.tryParse(p['transaction_amount']?.toString() ?? '0') ??
+                    0.0;
           }
+        }
+
+        if (mpTotal > 0.01) {
+          fromMpApi = true;
+          double manualComp = 0.0;
+          if (meta['completion_payment_id']?.toString() == 'manual') {
+            manualComp = double.tryParse(
+                    meta['completion_payment_amount']?.toString() ?? '0') ??
+                0.0;
+          }
+          reconciledAmount =
+              double.parse((mpTotal + manualComp).toStringAsFixed(2));
+          approvedPayments = newApproved;
+          approvedPayments.sort((a, b) =>
+              (a['date_approved']?.toString() ?? '')
+                  .compareTo(b['date_approved']?.toString() ?? ''));
         }
       }
 
-      if (reconciledAmount < 0.01 || (reconciledAmount - currentPaid).abs() <= 0.01) return;
+      if (reconciledAmount < 0.01 ||
+          (reconciledAmount - currentPaid).abs() <= 0.01) {
+        return;
+      }
+      if (!isOverpaid && reconciledAmount < currentPaid - 0.01) {
+        return;
+      }
 
-      final novoRestante = (totalPayable - reconciledAmount).clamp(0.0, totalPayable);
-      final isParcial = novoRestante > 0.01;
-      
+      final double novoRestante = (totalPayable - reconciledAmount) > 0.01
+          ? double.parse((totalPayable - reconciledAmount).toStringAsFixed(2))
+          : 0.0;
+      final String newPaymentStatus = resolvePaymentStatus(
+        paidAmount: reconciledAmount,
+        totalPayable: totalPayable,
+      );
+      final String nowUtc = now.toUtc().toIso8601String();
+
       final updates = <String, dynamic>{
         'paid_amount': reconciledAmount,
-        'valor_pago': reconciledAmount,
         'remaining_amount': novoRestante,
-        'restante_a_pagar': novoRestante,
-        'payment_status': isParcial ? 'parcial' : 'pago',
+        'payment_status': newPaymentStatus,
+        'updated_at': nowUtc,
       };
 
       if (data['status'] != 'cancelado' && data['status'] != 'concluido') {
         updates['status'] = 'confirmado';
       }
 
-      // Reconstrói metadata a partir dos approvedPayments
-      if (approvedPayments.isNotEmpty) {
-         final firstP = approvedPayments.first;
-         final firstId = firstP['id']?.toString() ?? '';
-         final firstMethod = firstP['payment_type_id']?.toString() ?? 
-                             meta['full_payment_method']?.toString() ??
-                             meta['advance_payment_method']?.toString() ?? 'pix';
-         final firstAmt = double.tryParse(firstP['transaction_amount']?.toString() ?? '0') ?? 0.0;
-         final firstDate = firstP['date_approved']?.toString() ?? now.toIso8601String();
-         
-         if (approvedPayments.length == 1) {
-            if (isParcial) {
-               meta['advance_payment_id'] = firstId;
-               meta['advance_payment_amount'] = firstAmt;
-               meta['advance_payment_method'] = firstMethod;
-               meta['advance_paid_at'] = firstDate;
-            } else {
-               meta['full_payment_id'] = firstId;
-               meta['full_payment_amount'] = firstAmt;
-               meta['full_payment_method'] = firstMethod;
-               meta['full_paid_at'] = firstDate;
-               updates['payment_id'] = firstId;
-               updates['payment_method'] = firstMethod;
-            }
-         } else {
-            final secondP = approvedPayments[1];
-            final secondId = secondP['id']?.toString() ?? '';
-            final secondMethod = secondP['payment_type_id']?.toString() ?? meta['completion_payment_method']?.toString() ?? 'pix';
-            final secondAmt = double.tryParse(secondP['transaction_amount']?.toString() ?? '0') ?? 0.0;
-            final secondDate = secondP['date_approved']?.toString() ?? now.toIso8601String();
-            
+      if (fromMpApi && approvedPayments.isNotEmpty) {
+        final List<Map<String, dynamic>> rebuiltTxs = [];
+        final bool hasManualComp =
+            meta['completion_payment_id']?.toString() == 'manual' &&
+                (double.tryParse(
+                        meta['completion_payment_amount']?.toString() ?? '0') ??
+                    0.0) >
+                    0.01;
+
+        for (int i = 0; i < approvedPayments.length; i++) {
+          final p = approvedPayments[i];
+          final pid = p['id']?.toString() ?? '';
+          final method = p['payment_type_id']?.toString() ??
+              meta['advance_payment_method']?.toString() ??
+              meta['full_payment_method']?.toString() ??
+              'pix';
+          final amt =
+              double.tryParse(p['transaction_amount']?.toString() ?? '0') ?? 0.0;
+          final date = p['date_approved']?.toString() ?? nowUtc;
+          final collectorId = p['collector_id']?.toString() ?? '';
+          final isSingleTotal =
+              approvedPayments.length == 1 && !hasManualComp && novoRestante <= 0.05;
+
+          rebuiltTxs.add({
+            'payment_id': pid,
+            'amount': amt,
+            'method': method,
+            'origem': 'mercado_pago',
+            'label': isSingleTotal
+                ? 'Pagamento Total'
+                : (i == 0 ? 'Sinal' : 'Complemento'),
+            'status': 'approved',
+            'paid_at': date,
+            if (collectorId.isNotEmpty) 'mp_user_id': collectorId,
+          });
+        }
+
+        final firstP = approvedPayments.first;
+        final firstId = firstP['id']?.toString() ?? '';
+        final firstMethod = firstP['payment_type_id']?.toString() ??
+            meta['full_payment_method']?.toString() ??
+            meta['advance_payment_method']?.toString() ??
+            'pix';
+        final firstAmt =
+            double.tryParse(firstP['transaction_amount']?.toString() ?? '0') ??
+                0.0;
+        final firstDate = firstP['date_approved']?.toString() ?? nowUtc;
+        final firstCollector = firstP['collector_id']?.toString() ?? '';
+
+        if (approvedPayments.length == 1 && !hasManualComp) {
+          if (novoRestante > 0.05) {
             meta['advance_payment_id'] = firstId;
             meta['advance_payment_amount'] = firstAmt;
             meta['advance_payment_method'] = firstMethod;
             meta['advance_paid_at'] = firstDate;
-            meta['completion_payment_id'] = secondId;
-            meta['completion_payment_amount'] = secondAmt;
-            meta['completion_payment_method'] = secondMethod;
-            meta['completion_paid_at'] = secondDate;
-            updates['payment_id'] = secondId;
-            updates['payment_method'] = secondMethod;
-         }
-         updates['metadata'] = meta;
+            if (firstCollector.isNotEmpty) {
+              meta['advance_mp_user_id'] = firstCollector;
+              meta['mp_user_id'] = firstCollector;
+            }
+          } else {
+            meta['full_payment_id'] = firstId;
+            meta['full_payment_amount'] = firstAmt;
+            meta['full_payment_method'] = firstMethod;
+            meta['full_paid_at'] = firstDate;
+            if (firstCollector.isNotEmpty) {
+              meta['mp_user_id'] = firstCollector;
+            }
+            updates['payment_id'] = firstId;
+            updates['payment_method'] = firstMethod;
+          }
+        } else if (approvedPayments.length == 1 && hasManualComp) {
+          meta['advance_payment_id'] = firstId;
+          meta['advance_payment_amount'] = firstAmt;
+          meta['advance_payment_method'] = firstMethod;
+          meta['advance_paid_at'] = firstDate;
+          if (firstCollector.isNotEmpty) {
+            meta['advance_mp_user_id'] = firstCollector;
+          }
+          rebuiltTxs.add({
+            'payment_id': 'manual',
+            'amount': double.tryParse(
+                    meta['completion_payment_amount']?.toString() ?? '0') ??
+                0.0,
+            'method': meta['completion_payment_method']?.toString() ??
+                data['payment_method']?.toString() ??
+                'Dinheiro',
+            'origem': 'manual',
+            'label': 'Complemento',
+            'status': 'approved',
+            'paid_at': meta['completion_paid_at']?.toString() ?? nowUtc,
+          });
+        } else {
+          final secondP = approvedPayments[1];
+          final secondId = secondP['id']?.toString() ?? '';
+          final secondMethod = secondP['payment_type_id']?.toString() ??
+              meta['completion_payment_method']?.toString() ??
+              'pix';
+          final secondAmt =
+              double.tryParse(secondP['transaction_amount']?.toString() ?? '0') ??
+                  0.0;
+          final secondDate = secondP['date_approved']?.toString() ?? nowUtc;
+          final secondCollector = secondP['collector_id']?.toString() ?? '';
+
+          meta['advance_payment_id'] = firstId;
+          meta['advance_payment_amount'] = firstAmt;
+          meta['advance_payment_method'] = firstMethod;
+          meta['advance_paid_at'] = firstDate;
+          if (firstCollector.isNotEmpty) {
+            meta['advance_mp_user_id'] = firstCollector;
+          }
+          meta['completion_payment_id'] = secondId;
+          meta['completion_payment_amount'] = secondAmt;
+          meta['completion_payment_method'] = secondMethod;
+          meta['completion_paid_at'] = secondDate;
+          if (secondCollector.isNotEmpty) {
+            meta['completion_mp_user_id'] = secondCollector;
+          }
+          updates['payment_id'] = secondId;
+          updates['payment_method'] = secondMethod;
+        }
+        meta['transactions'] = rebuiltTxs;
       }
 
+      final pendingCompId = meta['pending_completion_payment_id']?.toString().trim() ?? '';
+      if (pendingCompId.isNotEmpty &&
+          approvedPayments.any((p) => p['id']?.toString().trim() == pendingCompId)) {
+        meta.remove('pending_completion_payment_id');
+      }
+
+      meta['valor_pago'] = reconciledAmount;
+      meta['restante_a_pagar'] = novoRestante;
+      updates['metadata'] = meta;
+
       if (currentPaid <= 0.01 && reconciledAmount > 0.01) {
-        updates['pago_em'] = now.toIso8601String();
+        updates['pago_em'] = nowUtc;
       }
 
       await Supabase.instance.client
           .from('appointments')
           .update(updates)
           .eq('id', appointmentId);
-          
-      debugPrint('Auto-Sync MP: Corrigido $appointmentId de $currentPaid para $reconciledAmount');
-      
+
+      debugPrint(
+          'Auto-Sync MP: Corrigido $appointmentId de $currentPaid para $reconciledAmount');
+
       if (mounted) {
-        _refreshFromDb();
+        await _refreshFromDb();
+        if (mounted) {
+          widget.onAppointmentUpdated?.call(_localDoc);
+        }
       }
     } catch (e) {
       debugPrint('Erro na auto-sincronização do Mercado Pago: $e');
@@ -389,13 +548,16 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     try {
       final doc = await Supabase.instance.client
           .from('shops')
-          .select('config')
+          .select('config, category')
           .eq('id', shopId)
           .maybeSingle();
 
       if (doc != null && mounted) {
         final config = doc['config'] as Map<String, dynamic>? ?? {};
         setState(() {
+          if (_shopCategory == null || _shopCategory!.isEmpty) {
+            _shopCategory = (doc['category'] ?? doc['niche'] ?? '').toString();
+          }
           _shopBirthdayDiscount = double.tryParse(config['birthday_discount_percent']?.toString() ?? '0') ?? 0.0;
         });
       }
@@ -448,6 +610,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
 
   void _loadData() {
     _localDoc = Map<String, dynamic>.from(widget.appointmentDoc);
+    _applyMetadataPaidAmount(_localDoc);
     final data = _localDoc;
     final rawDate = data['scheduled_at'];
     if (rawDate is DateTime) {
@@ -495,6 +658,9 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     _selectedPaymentMethod = data['payment_method']?.toString() ?? 'Pessoalmente';
     
     _priceController.text = _selectedPrice!.toStringAsFixed(2).replaceAll('.', ',');
+    final meta = _localDoc['metadata'] is Map ? (_localDoc['metadata'] as Map) : null;
+    final cor = meta?['cor']?.toString() ?? '';
+    _colorController.text = (cor == 'null' || cor == 'Null') ? '' : cor;
 
     // --- NOVA LÓGICA: Sincronizar dados do cliente em tempo real ---
     if (_selectedClientId != null) {
@@ -610,6 +776,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
 
   @override
   void dispose() {
+    _colorController.dispose();
     _priceController.dispose();
     super.dispose();
   }
@@ -787,6 +954,20 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
         // Edição administrativa: dono autorizado a sobrepor manualmente
         'bypass_overlap_check': true,
       };
+
+      final corText = _colorController.text.trim();
+      if (corText.isNotEmpty || _isTrancistaShop) {
+        final Map<String, dynamic> currentMeta = _localDoc['metadata'] is Map
+            ? Map<String, dynamic>.from(_localDoc['metadata'] as Map)
+            : <String, dynamic>{};
+        if (corText.isNotEmpty) {
+          currentMeta['cor'] = corText;
+        } else {
+          currentMeta.remove('cor');
+        }
+        updateData['metadata'] = currentMeta;
+      }
+      debugPrint('AppointmentDetails: Atualizando agendamento: $updateData');
 
       await Supabase.instance.client
           .from('appointments')
@@ -1785,41 +1966,17 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
   }
 
   Widget _buildFinancialHeroPanel(Map<String, dynamic> data) {
-    double total = getCalculatedTotal(data);
-    
-    // ─── RECONCILIAÇÃO POR METADATA (fonte primária, síncrona, sem API) ────
-    // O metadata é a fonte mais confiável: se o webhook/checkout gravou
-    // full_payment_amount, advance_payment_amount ou completion_payment_amount,
-    // usa esses valores para exibição, independente do paid_amount no DB.
-    final meta = (data['metadata'] as Map<String, dynamic>?) ?? {};
-    final double metaFullAmt = double.tryParse(meta['full_payment_amount']?.toString() ?? '') ?? 0.0;
-    final double metaAdvAmt = double.tryParse(meta['advance_payment_amount']?.toString() ?? '') ?? 0.0;
-    final double metaCompAmt = double.tryParse(meta['completion_payment_amount']?.toString() ?? '') ?? 0.0;
-    final double metaPaid = metaFullAmt + metaAdvAmt + metaCompAmt;
-    
-    final double dbPaid = double.tryParse(data['paid_amount']?.toString() ?? data['valor_pago']?.toString() ?? "0") ?? 0.0;
-    
-    // Prioridade de confiança: MP API > metadata > DB
-    // Se metadata tem amounts (escritos pelo webhook/checkout), confia neles.
-    // Se _mpFetchedPaid foi obtido direto do MP, confia nele acima de tudo.
-    double resolvedPaid = dbPaid;
-    if (metaPaid > 0.01 && (metaPaid - dbPaid).abs() > 0.01) {
-      resolvedPaid = metaPaid;
-    }
-    if (_mpFetchedPaid != null && _mpFetchedPaid! > 0.01 && (_mpFetchedPaid! - resolvedPaid).abs() > 0.01) {
-      resolvedPaid = _mpFetchedPaid!;
-    }
-    
-    final double pago = resolvedPaid;
-    final double restante = (total - pago).clamp(0.0, total);
-    
+    final summary = getPaymentSummary(data, mpFetchedPaid: _mpFetchedPaid);
+    final double total = summary.totalPayable;
+    final double pago = summary.paidAmount;
+    final double restante = summary.remainingAmount;
+
     String paymentMethod = _selectedPaymentMethod ?? data['payment_method']?.toString() ?? 'Não informado';
-    bool hasOnlinePayment = data['metadata'] != null && data['metadata'] is Map && data['metadata']['payment_id'] != null;
-    final paymentIdRoot = data['payment_id']?.toString() ?? '';
-    
-    if ((hasOnlinePayment || paymentIdRoot.isNotEmpty) && 
-        (paymentMethod.toLowerCase().contains('pessoal') || 
-         paymentMethod.toLowerCase().contains('dinheiro') || 
+    final bool hasOnlinePayment = summary.hasOnlinePayment;
+
+    if (hasOnlinePayment &&
+        (paymentMethod.toLowerCase().contains('pessoal') ||
+         paymentMethod.toLowerCase().contains('dinheiro') ||
          paymentMethod.toLowerCase().contains('manual'))) {
       paymentMethod = 'Pago no App';
     }
@@ -2169,71 +2326,52 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
             }),
           ],
 
-          // Indicador de Eventos de Pagamento
-          Builder(builder: (context) {
-            final summary = getPaymentSummary(data);
-            if (summary.events.isEmpty) return const SizedBox.shrink();
+          // Alerta de pagamento excedente (overpaid)
+          if (summary.isOverpaid) ...[
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.red.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.red.withValues(alpha: 0.35)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded,
+                      size: 16, color: Colors.red.shade700),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Valor pago excede o total em ${money(summary.overpaidAmount)} — confira os detalhes da transação.',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.red.shade800,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
 
-            // Separa eventos pagos dos pendentes para numerar corretamente
+          // Indicador compacto apenas de valores já pagos (sem duplicar "RESTANTE PENDENTE" ou "PAGAMENTO TOTAL" único)
+          Builder(builder: (context) {
             final paidEvents = summary.events.where((e) => !e.isPending).toList();
             final totalPaidCount = paidEvents.length;
+            if (paidEvents.isEmpty) return const SizedBox.shrink();
+            if (totalPaidCount == 1 && restante <= 0.01) return const SizedBox.shrink();
 
             return Padding(
               padding: const EdgeInsets.only(top: 10),
               child: Column(
-                children: summary.events.map((ev) {
-                  // ── Evento pendente: estilo diferenciado ──────────────────
-                  if (ev.isPending) {
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 4),
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: Colors.orange.withValues(alpha: 0.06),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border(
-                          top: BorderSide(color: Colors.orange.withValues(alpha: 0.4), width: 1),
-                          bottom: BorderSide(color: Colors.orange.withValues(alpha: 0.4), width: 1),
-                          left: BorderSide(color: Colors.orange.withValues(alpha: 0.4), width: 1),
-                          right: BorderSide(color: Colors.orange.withValues(alpha: 0.4), width: 1),
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Row(
-                            children: [
-                              Icon(Icons.hourglass_empty, size: 14, color: Colors.orange[700]),
-                              const SizedBox(width: 6),
-                              Text(
-                                'RESTANTE PENDENTE',
-                                style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.orange[700]),
-                              ),
-                            ],
-                          ),
-                          Text(
-                            money(ev.valor),
-                            style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.orange[700]),
-                          ),
-                        ],
-                      ),
-                    );
-                  }
-
-                  // ── Evento pago: estilo original com numeração correta ────
+                children: paidEvents.map((ev) {
                   final paidIdx = paidEvents.indexOf(ev);
                   final isSinal = ev.label.toLowerCase() == 'sinal';
-                  final Color color;
-                  final IconData icon;
-                  if (isSinal) {
-                    color = Colors.orange;
-                    icon = Icons.money_off;
-                  } else if (ev.label.toLowerCase() == 'pagamento total') {
-                    color = Colors.green;
-                    icon = Icons.check_circle;
-                  } else {
-                    color = Colors.green;
-                    icon = Icons.check_circle;
-                  }
+                  final Color color = isSinal ? Colors.orange : Colors.green;
+                  final IconData icon = isSinal ? Icons.payments_outlined : Icons.check_circle;
 
                   final prefix = totalPaidCount > 1 ? '${paidIdx + 1}º Pgto: ' : '';
                   final titleText = '$prefix${ev.label}'.toUpperCase();
@@ -2320,17 +2458,15 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
             }),
           ],
 
-          // 🔄 BOTÃO: PROCESSAR ESTORNO (aparece somente para agendamentos cancelados com pagamento pendente de estorno)
+          // 🔄 BOTÃO: REGISTRAR ESTORNO (MANUAL) — apenas para registro no histórico
           Builder(builder: (ctx) {
             final status = (data['status'] ?? '').toString().toLowerCase();
             final refundStatus = (data['refund_status'] ?? 'nao_aplicavel').toString();
-            final paymentId = data['payment_id']?.toString() ?? '';
-            final paidAmt = double.tryParse(data['paid_amount']?.toString() ?? '0') ?? 0;
 
             final bool canRefund = status == 'cancelado' &&
-                (refundStatus == 'pendente' || refundStatus == 'processando') &&
-                paymentId.isNotEmpty &&
-                paidAmt > 0.01;
+                pago > 0.01 &&
+                refundStatus != 'estornado' &&
+                refundStatus != 'retido';
 
             if (!canRefund) return const SizedBox.shrink();
 
@@ -2340,9 +2476,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
                 width: double.infinity,
                 child: ElevatedButton.icon(
                   icon: const Icon(Icons.currency_exchange, size: 16),
-                  label: Text(refundStatus == 'processando'
-                      ? 'Tentar Estorno Novamente'
-                      : 'Processar Estorno'),
+                  label: const Text('Registrar Estorno (Manual)'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.orange.withValues(alpha: 0.15),
                     foregroundColor: Colors.orange[800],
@@ -2361,10 +2495,9 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
           Builder(builder: (ctx) {
             final status = (data['status'] ?? '').toString().toLowerCase();
             final refundStatus = (data['refund_status'] ?? 'nao_aplicavel').toString();
-            final paidAmt = double.tryParse(data['paid_amount']?.toString() ?? '0') ?? 0;
 
             final bool canResolve = status == 'cancelado' &&
-                paidAmt > 0 &&
+                pago > 0.01 &&
                 refundStatus != 'estornado' &&
                 refundStatus != 'retido';
 
@@ -2391,10 +2524,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
             );
           }),
           
-          if ((data['metadata']?['payment_id'] != null) || 
-              (data['payment_id'] != null && data['payment_id'].toString().isNotEmpty) ||
-              (data['metadata']?['advance_payment_id'] != null) ||
-              (data['metadata']?['completion_payment_id'] != null)) ...[
+          if (summary.hasOnlinePayment || pago > 0.01) ...[
             const SizedBox(height: 15),
             SizedBox(
               width: double.infinity,
@@ -2408,8 +2538,8 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 ),
-                onPressed: () {
-                  Navigator.push(
+                onPressed: () async {
+                  final changed = await Navigator.push<bool>(
                     context,
                     MaterialPageRoute(
                       builder: (context) => TransactionDetailsPage(
@@ -2417,6 +2547,9 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
                       ),
                     ),
                   );
+                  if (changed == true && mounted) {
+                    _refreshFromDb();
+                  }
                 },
               ),
             ),
@@ -2481,16 +2614,15 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     }
   }
   Future<void> _processarEstorno(Map<String, dynamic> data) async {
-    final double paidAmt = double.tryParse(data['paid_amount']?.toString() ?? '0') ?? 0;
-    final amountController = TextEditingController(text: paidAmt.toStringAsFixed(2));
+    final double paidAmt =
+        getPaymentSummary(data, mpFetchedPaid: _mpFetchedPaid).paidAmount;
+    final amountController =
+        TextEditingController(text: paidAmt.toStringAsFixed(2));
+    final noteController = TextEditingController();
     bool isFullRefund = true;
 
-    final bool isPix = (data['payment_method']?.toString().toLowerCase().contains('pix') ?? false) || 
-                       (data['metadata']?['payment_method_id']?.toString().toLowerCase().contains('pix') ?? false);
-
-    final String helperText = isPix 
-      ? '⚠️ O estorno via PIX será solicitado ao Mercado Pago. Dependendo da instituição, pode haver aprovação manual ou limites diários no seu aplicativo do Mercado Pago.' 
-      : 'O valor será devolvido automaticamente à administradora do cartão do cliente via Mercado Pago.';
+    const String helperText =
+        'Faça a devolução manualmente pelo seu aplicativo do banco ou Mercado Pago. Este botão serve apenas para registrar o estorno no histórico do MarkaAI — nenhum valor é movimentado automaticamente.';
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -2498,55 +2630,73 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
         return StatefulBuilder(
           builder: (context, setStateSB) {
             return AlertDialog(
-              title: const Text('Processar Estorno'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Valor pago: R\$ ${paidAmt.toStringAsFixed(2)}',
-                      style: const TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 12),
-                  Text(helperText, style: TextStyle(fontSize: 13, color: isPix ? Colors.orange[800] : Colors.grey)),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Checkbox(
-                        value: !isFullRefund,
-                        onChanged: (val) {
-                          setStateSB(() {
-                            isFullRefund = !(val ?? false);
-                            if (isFullRefund) {
-                              amountController.text = paidAmt.toStringAsFixed(2);
-                            }
-                          });
-                        },
+              title: const Text('Registrar Estorno Manual'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Valor pago: R\$ ${paidAmt.toStringAsFixed(2)}',
+                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 12),
+                    Text(helperText,
+                        style: TextStyle(fontSize: 13, color: Colors.orange[800])),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Checkbox(
+                          value: !isFullRefund,
+                          onChanged: (val) {
+                            setStateSB(() {
+                              isFullRefund = !(val ?? false);
+                              if (isFullRefund) {
+                                amountController.text =
+                                    paidAmt.toStringAsFixed(2);
+                              }
+                            });
+                          },
+                        ),
+                        const Text('Estorno parcial',
+                            style: TextStyle(fontSize: 13)),
+                      ],
+                    ),
+                    if (!isFullRefund) ...[
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: amountController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Valor do estorno (R\$)',
+                          border: OutlineInputBorder(),
+                          prefixText: 'R\$ ',
+                        ),
                       ),
-                      const Text('Estorno parcial', style: TextStyle(fontSize: 13)),
                     ],
-                  ),
-                  if (!isFullRefund) ...[
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 12),
                     TextField(
-                      controller: amountController,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      controller: noteController,
+                      maxLines: 2,
                       decoration: const InputDecoration(
-                        labelText: 'Valor do estorno (R\$)',
+                        labelText: 'Observação (opcional)',
+                        hintText: 'Ex: Devolvido via PIX / Estornado no app do MP',
                         border: OutlineInputBorder(),
-                        prefixText: 'R\$ ',
                       ),
                     ),
                   ],
-                ],
+                ),
               ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(ctx, false),
-                  child: const Text('CANCELAR', style: TextStyle(color: Colors.grey)),
+                  child: const Text('CANCELAR',
+                      style: TextStyle(color: Colors.grey)),
                 ),
                 ElevatedButton(
                   onPressed: () => Navigator.pop(ctx, true),
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-                  child: const Text('ESTORNAR'),
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red, foregroundColor: Colors.white),
+                  child: const Text('REGISTRAR ESTORNO'),
                 ),
               ],
             );
@@ -2557,11 +2707,14 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
 
     if (confirmed != true) return;
 
-    // Validação do valor antes de enviar
-    final double refundValue = double.tryParse(amountController.text.replaceAll(',', '.')) ?? 0;
+    final double refundValue = isFullRefund
+        ? paidAmt
+        : (double.tryParse(amountController.text.replaceAll(',', '.')) ?? 0);
     if (refundValue <= 0 || refundValue > paidAmt + 0.05) {
       if (mounted) {
-        _showSnackBar('Valor de estorno inválido (deve ser entre R\$ 0.01 e R\$ ${paidAmt.toStringAsFixed(2)})', isError: true);
+        _showSnackBar(
+            'Valor de estorno inválido (deve ser entre R\$ 0.01 e R\$ ${paidAmt.toStringAsFixed(2)})',
+            isError: true);
       }
       return;
     }
@@ -2569,82 +2722,43 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     setState(() => _isLoading = true);
 
     try {
-      final body = {
-        'appointment_id': data['id'],
-      };
-      // Só envia amount se for parcial (para aproveitar estorno total automático do MP)
-      if (!isFullRefund) {
-        body['amount'] = refundValue.toString();
+      final nowUtc = DateTime.now().toUtc().toIso8601String();
+      final userId =
+          Supabase.instance.client.auth.currentUser?.id ?? 'manual';
+      final updatedMeta = data['metadata'] is Map
+          ? Map<String, dynamic>.from(data['metadata'] as Map)
+          : <String, dynamic>{};
+      updatedMeta['refund_origin'] = 'manual';
+      final noteText = noteController.text.trim();
+      if (noteText.isNotEmpty) {
+        updatedMeta['refund_note'] = noteText;
       }
 
-      FunctionResponse? response;
-      try {
-        response = await Supabase.instance.client.functions.invoke(
-          'processRefund',
-          body: body,
-        );
-      } on FunctionException catch (fe) {
-        // O Supabase SDK lança FunctionException para status 4xx/5xx
-        // Extraímos o corpo de erro para exibir mensagem específica
-        if (mounted) {
-          final details = fe.details;
-          String errorMsg = 'Erro desconhecido.';
-          if (details is Map) {
-            errorMsg = details['error']?.toString() ?? errorMsg;
-          } else if (details is String) {
-            errorMsg = details;
-          }
+      await Supabase.instance.client.from('appointments').update({
+        'refund_status': 'estornado',
+        'refund_amount': refundValue,
+        'refunded_at': nowUtc,
+        'refunded_by': userId,
+        'updated_at': nowUtc,
+        'metadata': updatedMeta,
+      }).eq('id', data['id']);
 
-          final status = fe.status;
-          if (status == 403) {
-            _showResultDialog('Sem Permissão', '🔒 Apenas o dono da loja pode realizar estornos financeiros.');
-          } else if (status == 401) {
-            _showResultDialog('Não Autenticado', '🔑 Sua sessão expirou. Faça login novamente.');
-          } else if (status == 404) {
-            _showResultDialog('Não Encontrado', '🔍 Agendamento não encontrado no sistema.');
-          } else if (status == 409) {
-            _showResultDialog('Em Processamento', '⏳ Este estorno já está sendo processado. Aguarde alguns instantes e atualize a tela.');
-          } else if (status == 412) {
-            _showResultDialog('Mercado Pago não configurado', '💳 A conta do Mercado Pago não está conectada a esta loja.\n\nAcesse Configurações → Mercado Pago para conectar sua conta.');
-          } else if (status == 400) {
-            _showResultDialog('Dados Inválidos', '⚠️ $errorMsg');
-          } else if (status == 502) {
-            _showResultDialog('Erro de Comunicação', '🌐 Falha na comunicação com o Mercado Pago.\n\n$errorMsg\n\nTente novamente em alguns instantes.');
-          } else if (status == 500 && errorMsg.contains('Mercado Pago com sucesso')) {
-            // MP processou mas banco falhou — atualizar UI parcialmente
-            setState(() { _localDoc['refund_status'] = 'processando'; });
-            widget.onAppointmentUpdated?.call(_localDoc);
-            _showResultDialog('Alerta Importante', '⚠️ $errorMsg');
-          } else {
-            // Erro genérico do MP com mensagem da API
-            _showResultDialog('Recusado pelo Mercado Pago', '❌ $errorMsg');
-          }
-        }
-        return;
-      }
-
-      final responseData = response.data;
-
-      if (response.status >= 200 && response.status < 300) {
-        // Sucesso
-        final refundedAmount = responseData?['refund_amount'] ?? refundValue;
-        setState(() {
-          _localDoc['refund_status'] = 'estornado';
-          _localDoc['refund_amount'] = refundedAmount;
-          _localDoc['refunded_at'] = DateTime.now().toIso8601String();
-        });
-        widget.onAppointmentUpdated?.call(_localDoc);
-        if (mounted) {
-          _showResultDialog('Sucesso', '✅ Estorno de R\$ ${double.tryParse(refundedAmount.toString())?.toStringAsFixed(2) ?? refundedAmount} processado com sucesso no Mercado Pago!');
-        }
-      } else {
-        // Casos de erro não lançados como exception (improvável, mas defensivo)
-        final errorMsg = responseData?['error']?.toString() ?? 'Erro desconhecido ao processar estorno.';
-        if (mounted) _showResultDialog('Erro no Mercado Pago', '❌ $errorMsg');
+      setState(() {
+        _localDoc['refund_status'] = 'estornado';
+        _localDoc['refund_amount'] = refundValue;
+        _localDoc['refunded_at'] = nowUtc;
+        _localDoc['refunded_by'] = userId;
+        _localDoc['metadata'] = updatedMeta;
+      });
+      widget.onAppointmentUpdated?.call(_localDoc);
+      if (mounted) {
+        _showResultDialog(
+            'Sucesso', '✅ Estorno registrado no histórico com sucesso!');
       }
     } catch (e) {
       if (mounted) {
-        _showResultDialog('Erro Inesperado', '❌ Ocorreu um erro interno: ${e.toString().replaceAll(RegExp(r'FunctionException\(.*?\)'), '').trim()}');
+        _showResultDialog('Erro ao Registrar Estorno',
+            '❌ Não foi possível salvar o registro: $e');
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -2868,32 +2982,58 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
 
     setState(() => _isLoading = true);
     try {
-      final novoPago = pago + valorRecebido;
-      final novoRestante = restante - valorRecebido;
-      final currentMeta = (_localDoc['metadata'] as Map<String, dynamic>?) ?? {};
-      Map<String, dynamic> newMeta = Map.from(currentMeta);
-      if (pago > 0.01) {
-        newMeta['advance_payment_id'] = currentMeta['advance_payment_id'] ?? currentMeta['payment_id'] ?? _localDoc['payment_id'];
-        newMeta['completion_payment_id'] = 'manual';
-        newMeta['completion_payment_method'] = selectedMethod;
-        newMeta['completion_paid_at'] = DateTime.now().toIso8601String();
-        newMeta['completion_payment_amount'] = valorRecebido;
-      }
+      final double total = getCalculatedTotal(_localDoc);
+      final double novoPago =
+          double.parse((pago + valorRecebido).toStringAsFixed(2));
+      final double novoRestante = (total - novoPago) > 0.01
+          ? double.parse((total - novoPago).toStringAsFixed(2))
+          : 0.0;
+      final String statusPag = resolvePaymentStatus(
+        paidAmount: novoPago,
+        totalPayable: total,
+      );
+      final String nowUtc = DateTime.now().toUtc().toIso8601String();
+      final bool isCompletion = pago > 0.01;
+      final Map<String, dynamic>? existingMeta = (_localDoc['metadata'] is Map)
+          ? Map<String, dynamic>.from(_localDoc['metadata'] as Map)
+          : null;
+
+      final Map<String, dynamic> newMeta = appendPaymentTransactionMetadata(
+        existingMetadata: existingMeta,
+        amount: valorRecebido,
+        method: selectedMethod,
+        origem: 'manual',
+        label: isCompletion
+            ? 'Complemento'
+            : (novoRestante > 0.05 ? 'Sinal' : 'Pagamento Total'),
+        paymentId: 'manual',
+        totalPayable: total,
+        newPaidTotal: novoPago,
+        paidAtIso: nowUtc,
+        isCompletion: isCompletion,
+        existingRootPaymentId: _localDoc['payment_id']?.toString(),
+        existingRootPaymentMethod: _localDoc['payment_method']?.toString(),
+        existingPaidBeforeCompletion: pago,
+      );
+
+      final String curStatus =
+          (_localDoc['status'] ?? '').toString().toLowerCase();
+      final String newApptStatus = curStatus == 'concluido'
+          ? 'concluido'
+          : (novoRestante > 0.01 ? 'agendado' : 'confirmado');
+
       final Map<String, dynamic> updatePayload = {
-        'status': novoRestante > 0.01 ? 'agendado' : 'confirmado',
-        'paid_amount': novoPago, 'remaining_amount': novoRestante,
-        'payment_status': novoRestante > 0.01 ? 'parcial' : 'pago', 'metadata': newMeta,
+        'status': newApptStatus,
+        'paid_amount': novoPago,
+        'remaining_amount': novoRestante,
+        'payment_status': statusPag,
+        'updated_at': nowUtc,
+        'metadata': newMeta,
       };
-      if (pago <= 0.01) {
+      if (!isCompletion) {
         updatePayload['payment_method'] = selectedMethod;
         updatePayload['payment_id'] = 'manual';
-        updatePayload['pago_em'] = DateTime.now().toIso8601String();
-        if (novoRestante > 0.01) updatePayload['payment_status'] = 'parcial';
-        
-        newMeta['full_payment_amount'] = valorRecebido;
-        newMeta['full_payment_method'] = selectedMethod;
-        newMeta['full_payment_origin'] = 'manual';
-        newMeta['full_paid_at'] = DateTime.now().toIso8601String();
+        updatePayload['pago_em'] = nowUtc;
       }
       await Supabase.instance.client.from('appointments').update(updatePayload).eq('id', widget.appointmentDoc['id']);
       if (mounted) {
@@ -2921,6 +3061,11 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
         const SizedBox(height: 8), // Espaçamento reduzido (15 -> 8)
         _buildEditableField("Serviço", Icons.content_cut_outlined, _isEditing,
             _buildServiceDropdown(shopId), _selectedServiceName ?? ""),
+        if (_isTrancistaShop &&
+            (_isEditing || _colorController.text.trim().isNotEmpty)) ...[
+          const SizedBox(height: 8),
+          _buildColorField(),
+        ],
         const SizedBox(height: 8),
         // Price editable field
         _buildPriceField(),
@@ -3094,6 +3239,72 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
         backgroundColor: Colors.grey.shade100,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
+    );
+  }
+
+  Widget _buildColorField() {
+    final String corText = _colorController.text.trim();
+    if (!_isEditing && corText.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: AppColors.primaryPurple.withValues(alpha: 0.05),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: const Icon(Icons.palette_outlined,
+              size: 18, color: AppColors.primaryPurple),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                "Cor das Tranças (Opcional)",
+                style: TextStyle(fontSize: 10, color: Colors.grey),
+              ),
+              const SizedBox(height: 1),
+              _isEditing
+                  ? SizedBox(
+                      height: 35,
+                      child: TextField(
+                        controller: _colorController,
+                        style: const TextStyle(
+                            fontSize: 13, fontWeight: FontWeight.w500),
+                        decoration: InputDecoration(
+                          hintText: "Ex: Preto 1B, Castanho, Mel, 613...",
+                          hintStyle: const TextStyle(
+                              fontSize: 12, color: Colors.grey),
+                          border: InputBorder.none,
+                          focusedBorder: OutlineInputBorder(
+                            borderSide: const BorderSide(
+                                color: AppColors.primaryPurple, width: 2),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          filled: true,
+                          fillColor: Colors.transparent,
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 6),
+                        ),
+                      ),
+                    )
+                  : Text(
+                      corText,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black87,
+                      ),
+                    ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -3746,9 +3957,10 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
 
   // --- LOG DO SISTEMA (AUDITORIA) ---
   Widget _buildSystemLog(Map<String, dynamic> data) {
-    final createdAt = data['created_at'] != null ? DateTime.tryParse(data['created_at'].toString()) : null;
-    final updatedAt = data['updated_at'] != null ? DateTime.tryParse(data['updated_at'].toString()) : null;
+    final createdAt = data['created_at'] != null ? DateTime.tryParse(data['created_at'].toString())?.toLocal() : null;
+    final updatedAt = data['updated_at'] != null ? DateTime.tryParse(data['updated_at'].toString())?.toLocal() : null;
     final scheduledAt = data['scheduled_at'] != null ? DateTime.tryParse(data['scheduled_at'].toString()) : null;
+    final appointmentId = (data['id'] ?? widget.appointmentDoc['id'])?.toString() ?? '';
 
     return Container(
       width: double.infinity,
@@ -3773,6 +3985,33 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
           _buildLogItem("Agendado para:", scheduledAt),
           if (updatedAt != null && updatedAt != createdAt) 
             _buildLogItem("Última modificação:", updatedAt),
+          if (appointmentId.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  AppointmentHistorySheet.show(
+                    context,
+                    appointmentId: appointmentId,
+                    clientName: _selectedClientName ?? data['client_name']?.toString(),
+                  );
+                },
+                icon: const Icon(Icons.timeline_rounded, size: 17),
+                label: const Text(
+                  'Ver histórico completo',
+                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.primaryPurple,
+                  side: BorderSide(color: AppColors.primaryPurple.withValues(alpha: 0.35)),
+                  backgroundColor: AppColors.primaryPurple.withValues(alpha: 0.04),
+                  padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 8),
           const Text(
             "* Esta trilha de auditoria é permanente e ajuda no resguardo financeiro da loja.",
@@ -3820,8 +4059,31 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     if (ok != true) return;
     setState(() => _isLoading = true);
     try {
-      meta.remove('advance_payment_id'); meta.remove('completion_payment_id'); meta.remove('completion_payment_method'); meta.remove('completion_paid_at'); meta.remove('completion_payment_amount');
-      meta.remove('full_payment_amount'); meta.remove('full_payment_method'); meta.remove('advance_payment_amount');
+      for (final key in [
+        'advance_payment_id',
+        'advance_payment_amount',
+        'advance_payment_method',
+        'advance_paid_at',
+        'advance_mp_user_id',
+        'completion_payment_id',
+        'completion_payment_method',
+        'completion_paid_at',
+        'completion_payment_amount',
+        'completion_mp_user_id',
+        'full_payment_id',
+        'full_payment_amount',
+        'full_payment_method',
+        'full_payment_origin',
+        'full_paid_at',
+        'valor_pago',
+        'restante_a_pagar',
+        'payment_id',
+        'transactions',
+        'mp_user_id',
+        'pending_completion_payment_id',
+      ]) {
+        meta.remove(key);
+      }
       await Supabase.instance.client.from('appointments').update({
         'status': 'agendado', 'paid_amount': 0, 'remaining_amount': total, 'payment_status': 'pendente',
         'payment_method': null, 'pago_em': null, 'payment_id': null, 'metadata': meta,
@@ -3848,11 +4110,29 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     if (ok != true) return;
     setState(() => _isLoading = true);
     try {
-      meta.remove('completion_payment_id'); meta.remove('completion_payment_method'); meta.remove('completion_paid_at'); meta.remove('completion_payment_amount');
+      for (final key in [
+        'completion_payment_id',
+        'completion_payment_method',
+        'completion_paid_at',
+        'completion_payment_amount',
+        'completion_mp_user_id',
+        'pending_completion_payment_id',
+      ]) {
+        meta.remove(key);
+      }
+      if (meta['transactions'] is List) {
+        meta['transactions'] = (meta['transactions'] as List)
+            .where((item) => !(item is Map &&
+                item['label']?.toString() == 'Complemento' &&
+                item['origem']?.toString() == 'manual'))
+            .toList();
+      }
       final double mpProtected = getProtectedMpAmount(_localDoc);
       final double nr = total - mpProtected > 0 ? total - mpProtected : 0.0;
+      meta['valor_pago'] = mpProtected;
+      meta['restante_a_pagar'] = nr;
       await Supabase.instance.client.from('appointments').update({
-        'paid_amount': mpProtected, 'remaining_amount': nr, 'payment_status': mpProtected > 0.01 ? 'parcial' : 'pendente', 
+        'paid_amount': mpProtected, 'remaining_amount': nr, 'payment_status': resolvePaymentStatus(paidAmount: mpProtected, totalPayable: total), 
         'payment_method': mpProtected > 0.01 ? _localDoc['payment_method'] : null, 'metadata': meta
       }).eq('id', widget.appointmentDoc['id']);
       if (mounted) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pagamento restante removido.'), backgroundColor: Colors.orange)); _refreshFromDb(); }
@@ -3864,6 +4144,7 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
     final meta = Map<String, dynamic>.from((_localDoc['metadata'] as Map?) ?? {});
     
     bool isEditingCompletion = false;
+    bool isEditingAdvance = false;
     double currentManualValue = 0.0;
     String currentMethod = 'Dinheiro';
     
@@ -3871,10 +4152,15 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
       isEditingCompletion = true;
       currentManualValue = double.tryParse(meta['completion_payment_amount']?.toString() ?? '0') ?? 0;
       currentMethod = meta['completion_payment_method']?.toString() ?? 'Dinheiro';
+    } else if (meta['advance_payment_id'] == 'manual') {
+      isEditingAdvance = true;
+      currentManualValue = double.tryParse(meta['advance_payment_amount']?.toString() ?? '0') ?? 0;
+      currentMethod = meta['advance_payment_method']?.toString() ?? _localDoc['payment_method']?.toString() ?? 'Dinheiro';
     } else {
       // Editar full_payment manual
-      if (meta['full_payment_origin'] == 'manual' || _localDoc['payment_id'] == 'manual' || (_localDoc['payment_id'] == null && _localDoc['paid_amount'] != null && _localDoc['paid_amount'] > 0)) {
-        currentManualValue = double.tryParse(meta['full_payment_amount']?.toString() ?? _localDoc['paid_amount']?.toString() ?? '0') ?? 0;
+      final double existingDbPaid = double.tryParse(_localDoc['paid_amount']?.toString() ?? '0') ?? 0.0;
+      if (meta['full_payment_origin'] == 'manual' || _localDoc['payment_id'] == 'manual' || (_localDoc['payment_id'] == null && existingDbPaid > 0)) {
+        currentManualValue = double.tryParse(meta['full_payment_amount']?.toString() ?? existingDbPaid.toString()) ?? 0;
         currentMethod = meta['full_payment_method']?.toString() ?? _localDoc['payment_method']?.toString() ?? 'Dinheiro';
       } else {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -3882,6 +4168,20 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
           backgroundColor: Colors.red,
         ));
         return;
+      }
+    }
+
+    const List<String> allowedMethods = ['Dinheiro', 'Cartao de Credito', 'Cartao de Debito', 'Pix'];
+    if (!allowedMethods.contains(currentMethod)) {
+      final low = currentMethod.toLowerCase();
+      if (low.contains('pix')) {
+        currentMethod = 'Pix';
+      } else if (low.contains('débito') || low.contains('debito')) {
+        currentMethod = 'Cartao de Debito';
+      } else if (low.contains('crédito') || low.contains('credito') || low.contains('cart')) {
+        currentMethod = 'Cartao de Credito';
+      } else {
+        currentMethod = 'Dinheiro';
       }
     }
 
@@ -4031,22 +4331,51 @@ class _AppointmentDetailsPageState extends State<AppointmentDetailsPage> {
 
       setState(() => _isLoading = true);
       try {
-        final nowTs = DateTime.now().toIso8601String();
+        final nowTs = DateTime.now().toUtc().toIso8601String();
+        final finalPaid = double.parse((mpProtected + nv).toStringAsFixed(2));
+        final finalRem = (total - finalPaid) > 0.01
+            ? double.parse((total - finalPaid).toStringAsFixed(2))
+            : 0.0;
+        final statusPag = resolvePaymentStatus(paidAmount: finalPaid, totalPayable: total);
+
+        String targetLabel = 'Pagamento Total';
         if (isEditingCompletion) {
+          targetLabel = 'Complemento';
           meta['completion_payment_amount'] = nv;
           meta['completion_payment_method'] = nm;
           meta['completion_payment_edited_at'] = nowTs;
           meta['completion_payment_edited_from'] = currentManualValue;
+        } else if (isEditingAdvance) {
+          targetLabel = 'Sinal';
+          meta['advance_payment_amount'] = nv;
+          meta['advance_payment_method'] = nm;
+          meta['advance_payment_edited_at'] = nowTs;
+          meta['advance_payment_edited_from'] = currentManualValue;
         } else {
           meta['full_payment_amount'] = nv;
           meta['full_payment_method'] = nm;
           meta['full_payment_edited_at'] = nowTs;
           meta['full_payment_edited_from'] = currentManualValue;
         }
-        
-        final finalPaid = mpProtected + nv;
-        final finalRem = total - finalPaid > 0 ? total - finalPaid : 0.0;
-        final statusPag = finalPaid >= total ? 'pago' : 'parcial';
+
+        if (meta['transactions'] is List) {
+          final List<dynamic> updatedTxs = [];
+          for (final item in (meta['transactions'] as List)) {
+            if (item is Map &&
+                item['origem']?.toString() == 'manual' &&
+                item['label']?.toString() == targetLabel) {
+              final copy = Map<String, dynamic>.from(item);
+              copy['amount'] = nv;
+              copy['method'] = nm;
+              updatedTxs.add(copy);
+            } else {
+              updatedTxs.add(item);
+            }
+          }
+          meta['transactions'] = updatedTxs;
+        }
+        meta['valor_pago'] = finalPaid;
+        meta['restante_a_pagar'] = finalRem;
 
         await Supabase.instance.client.from('appointments').update({
           'paid_amount': finalPaid, 

@@ -1,6 +1,14 @@
 import 'package:flutter/material.dart';
 
 class ShopCategoryHelper {
+  static bool isTrancista(String? category) {
+    if (category == null || category.trim().isEmpty) return false;
+    final cat = category.toLowerCase().trim();
+    return cat.contains('trancist') ||
+        cat.contains('trança') ||
+        cat.contains('tranca');
+  }
+
   static Color getCatColor(String category) {
     switch (category.toLowerCase()) {
       case 'trancista':

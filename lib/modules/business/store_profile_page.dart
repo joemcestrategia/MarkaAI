@@ -12,6 +12,7 @@ import '../../core/services/image_service.dart';
 import '../../core/services/plan_features_service.dart';
 import '../../core/constants/plan_features.dart';
 import '../../core/services/shop_data_cache_service.dart';
+import '../../core/services/heatmap_cache_service.dart';
 
 // Lista fixa das UFs brasileiras
 const List<String> _kStoreUFs = [
@@ -48,6 +49,7 @@ const List<String> _kStoreUFs = [
 const List<String> _kNichos = [
   'Salão de Beleza',
   'Barbearia',
+  'Trancista',
   'Estética e Spa',
   'Nail Design / Manicure',
   'Tatuagem e Piercing',
@@ -140,6 +142,16 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
   double _uploadProgress = 0.0;
   String? _shopId;
   PlanFeatures? _planFeatures;
+  String? _initialAddressSignature;
+
+  String _currentAddressSignature() => [
+        _streetController.text.trim().toLowerCase(),
+        _numberController.text.trim().toLowerCase(),
+        _neighborhoodController.text.trim().toLowerCase(),
+        _zipController.text.trim().toLowerCase(),
+        _cidadeController.text.trim().toLowerCase(),
+        (_estadoSelecionado ?? '').trim().toLowerCase(),
+      ].join('|');
 
   @override
   void initState() {
@@ -241,6 +253,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
                   _nichoOutrosController.text = nichoRaw;
                 }
                 _isLoading = false;
+                _initialAddressSignature = _currentAddressSignature();
               });
               // Scroll após carregar os dados se precisar destacar
               if (widget.highlightLocation) {
@@ -294,6 +307,7 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
               setState(() {
                 _shopId = id;
                 _isLoading = false;
+                _initialAddressSignature = _currentAddressSignature();
               });
             }
           }
@@ -472,7 +486,11 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
       final addressFull = addressParts.join(', ');
 
       // Atualização seletiva para evitar erros de colunas inexistentes ou sobrescrever dados
-      final updateData = {
+      final newAddressSig = _currentAddressSignature();
+      final addressChanged = _initialAddressSignature != null &&
+          newAddressSig != _initialAddressSignature;
+
+      final Map<String, dynamic> updateData = {
         'name': _nameController.text.trim(),
         'description': _descController.text.trim(),
         'address': addressFull,
@@ -495,6 +513,11 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
         'updated_at': DateTime.now().toIso8601String(),
       };
 
+      if (addressChanged) {
+        updateData['lat'] = null;
+        updateData['lng'] = null;
+      }
+
       // Adicionar Slug se preenchido
       updateData['slug'] = newSlug.isNotEmpty ? newSlug : null;
 
@@ -503,8 +526,12 @@ class _StoreProfilePageState extends State<StoreProfilePage> {
           .update(updateData)
           .eq('id', _shopId!);
 
-      // Invalida o cache de perfil/configuração da loja
+      // Invalida o cache de perfil/configuração da loja e do mapa de calor
       ShopDataCacheService().invalidate(_shopId!, 'config');
+      if (addressChanged) {
+        _initialAddressSignature = newAddressSig;
+        await HeatmapCacheService.clearSnapshot(_shopId!);
+      }
 
       if (mounted) {
         setState(() {
