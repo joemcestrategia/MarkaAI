@@ -1,7 +1,6 @@
 // ignore_for_file: unused_element, unused_field, unused_local_variable
 import 'dart:async';
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -33,6 +32,7 @@ import '../../core/utils/shop_category_helper.dart';
 import '../../core/widgets/pexels_image_widget.dart';
 import '../../core/widgets/shared_bottom_nav_bar.dart';
 import '../../services/update_service.dart';
+import '../../core/widgets/afro_comb_icon.dart';
 
 class ClientHomePage extends StatefulWidget {
   final int initialTabIndex;
@@ -81,6 +81,10 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
   final List<Map<String, dynamic>> _categories = [
     {"name": "Todos", "icon": Icons.grid_view},
+    {
+      "name": "Trancistas",
+      "isAfroComb": true,
+    },
     {"name": "Beleza", "icon": Icons.face},
     {"name": "Barbearia", "icon": Icons.content_cut},
     {"name": "Estética", "icon": Icons.spa},
@@ -238,6 +242,11 @@ class _ClientHomePageState extends State<ClientHomePage> {
   // Helper para cores de categoria (Smart Fallback)
   Color _getCategoryColor(String? category) {
     switch (category?.toLowerCase()) {
+      case 'trancista':
+      case 'trancistas':
+      case 'tranças':
+      case 'trancas':
+        return const Color(0xFFEDE7F6); // Lilás / Roxo suave
       case 'barbearia':
         return const Color(0xFFE3F2FD); // Azul claro
       case 'beleza':
@@ -254,6 +263,11 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
   IconData _getCategoryIcon(String? category) {
     switch (category?.toLowerCase()) {
+      case 'trancista':
+      case 'trancistas':
+      case 'tranças':
+      case 'trancas':
+        return Icons.auto_awesome;
       case 'barbearia':
         return Icons.content_cut;
       case 'beleza':
@@ -399,6 +413,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
   void _confirmLogout() {
     showModalBottomSheet(
       context: context,
+      useRootNavigator: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) => Container(
@@ -504,6 +519,246 @@ class _ClientHomePageState extends State<ClientHomePage> {
     );
   }
 
+  void _showProfileBottomSheet() {
+    showModalBottomSheet(
+      context: context,
+      useRootNavigator: true,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Container(
+          width: double.infinity,
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: SafeArea(
+            top: false,
+            bottom: true,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+              child: SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                        // Handle superior
+                        Center(
+                          child: Container(
+                            width: 38,
+                            height: 4,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[300],
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+
+                        // Cabeçalho com dados do usuário
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(2.5),
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: AppColors.primaryPurple.withValues(alpha: 0.25),
+                                  width: 1.5,
+                                ),
+                              ),
+                              child: CircleAvatar(
+                                radius: 26,
+                                backgroundColor: const Color(0xFFF3F4F6),
+                                backgroundImage: _userPhotoUrl != null
+                                    ? CachedNetworkImageProvider(_userPhotoUrl!)
+                                    : null,
+                                child: _userPhotoUrl == null
+                                    ? const Icon(Icons.person, size: 28, color: Colors.grey)
+                                    : null,
+                              ),
+                            ),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Flexible(
+                                        child: Text(
+                                          _userName.isNotEmpty ? _userName : 'Cliente',
+                                          style: const TextStyle(
+                                            fontSize: 17,
+                                            fontWeight: FontWeight.w700,
+                                            color: Color(0xFF1F2937),
+                                            letterSpacing: -0.2,
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 8, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: AppColors.primaryPurple
+                                              .withValues(alpha: 0.08),
+                                          borderRadius: BorderRadius.circular(20),
+                                        ),
+                                        child: const Text(
+                                          'Cliente',
+                                          style: TextStyle(
+                                            fontSize: 10.5,
+                                            fontWeight: FontWeight.w600,
+                                            color: AppColors.primaryPurple,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  if (_userEmail.isNotEmpty) ...[
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      _userEmail,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: Colors.grey[600],
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              onPressed: () => Navigator.pop(ctx),
+                              icon: const Icon(Icons.close, size: 20, color: Colors.grey),
+                              splashRadius: 20,
+                            ),
+                          ],
+                        ),
+
+                        const SizedBox(height: 18),
+                        Divider(height: 1, thickness: 1, color: Colors.grey[100]),
+                        const SizedBox(height: 12),
+
+                        // Opções modernas no padrão de UI do MarkaAI
+                        _buildProfileOptionTile(
+                          icon: Icons.person_outline_rounded,
+                          iconBgColor: AppColors.primaryPurple.withValues(alpha: 0.1),
+                          iconColor: AppColors.primaryPurple,
+                          title: 'Editar Perfil',
+                          subtitle: 'Altere seu nome, telefone e foto',
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            _handleProfileMenu('edit');
+                          },
+                        ),
+                        const SizedBox(height: 8),
+
+                        _buildProfileOptionTile(
+                          icon: Icons.shield_outlined,
+                          iconBgColor: const Color(0xFFE0F2FE),
+                          iconColor: const Color(0xFF0284C7),
+                          title: 'Privacidade & Dados',
+                          subtitle: 'Gerencie suas preferências e dados',
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            _handleProfileMenu('privacy');
+                          },
+                        ),
+                        const SizedBox(height: 8),
+
+                        _buildProfileOptionTile(
+                          icon: Icons.logout_rounded,
+                          iconBgColor: const Color(0xFFFEE2E2),
+                          iconColor: const Color(0xFFDC2626),
+                          title: 'Sair da Conta',
+                          subtitle: 'Encerrar sessão neste dispositivo',
+                          titleColor: Colors.red.shade700,
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            _handleProfileMenu('logout');
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      }
+
+  Widget _buildProfileOptionTile({
+    required IconData icon,
+    required Color iconBgColor,
+    required Color iconColor,
+    required String title,
+    required String subtitle,
+    Color? titleColor,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: Colors.grey[200]!, width: 1),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: iconBgColor,
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: Icon(icon, size: 20, color: iconColor),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w600,
+                        color: titleColor ?? const Color(0xFF1F2937),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[500],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, size: 20, color: Colors.grey[400]),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   void _handleProfileMenu(String value) {
     switch (value) {
       case 'edit':
@@ -537,6 +792,7 @@ class _ClientHomePageState extends State<ClientHomePage> {
   void _showPrivacySheet() {
     showModalBottomSheet(
       context: context,
+      useRootNavigator: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) => DraggableScrollableSheet(
@@ -1293,87 +1549,55 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
                       const SizedBox(width: 10),
 
-                      // Perfil Mini compacto com PopupMenu (apenas se logado)
+                      // Perfil Mini compacto (abre BottomSheet de Perfil moderno ao clicar)
                       if (_userId != null)
-                        PopupMenuButton<String>(
-                          onSelected: _handleProfileMenu,
-                          offset: const Offset(0, 44),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
-                          itemBuilder: (_) => [
-                            PopupMenuItem(
-                              value: 'edit',
-                              child: Row(children: const [
-                                Icon(Icons.person_outline,
-                                    size: 18, color: AppColors.primaryPurple),
-                                SizedBox(width: 10),
-                                Text('Editar Perfil',
-                                    style: TextStyle(fontSize: 13.5)),
-                              ]),
-                            ),
-                            const PopupMenuDivider(),
-                            PopupMenuItem(
-                              value: 'privacy',
-                              child: Row(children: const [
-                                Icon(Icons.privacy_tip_outlined,
-                                    size: 18, color: Colors.blueGrey),
-                                SizedBox(width: 10),
-                                Text('Privacidade & Dados',
-                                    style: TextStyle(fontSize: 13.5)),
-                              ]),
-                            ),
-                            const PopupMenuDivider(),
-                            PopupMenuItem(
-                              value: 'logout',
-                              child: Row(children: const [
-                                Icon(Icons.logout, size: 18, color: Colors.red),
-                                SizedBox(width: 10),
-                                Text('Sair da Conta',
-                                    style: TextStyle(
-                                        color: Colors.red, fontSize: 13.5)),
-                              ]),
-                            ),
-                          ],
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Container(
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: AppColors.primaryPurple
-                                        .withValues(alpha: 0.15),
-                                    width: 1,
+                        InkWell(
+                          onTap: _showProfileBottomSheet,
+                          borderRadius: BorderRadius.circular(20),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 4, vertical: 4),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: AppColors.primaryPurple
+                                          .withValues(alpha: 0.2),
+                                      width: 1.5,
+                                    ),
+                                  ),
+                                  child: CircleAvatar(
+                                    radius: 15,
+                                    backgroundColor: const Color(0xFFF3F4F6),
+                                    child: _userPhotoUrl != null
+                                        ? ClipOval(
+                                            child: CachedNetworkImage(
+                                              imageUrl: _userPhotoUrl!,
+                                              width: 30,
+                                              height: 30,
+                                              fit: BoxFit.cover,
+                                              placeholder: (_, __) => const Icon(
+                                                  Icons.person,
+                                                  color: Colors.grey,
+                                                  size: 16),
+                                              errorWidget: (_, __, ___) =>
+                                                  const Icon(Icons.person,
+                                                      color: Colors.grey,
+                                                      size: 16),
+                                            ),
+                                          )
+                                        : const Icon(Icons.person,
+                                            color: Colors.grey, size: 16),
                                   ),
                                 ),
-                                child: CircleAvatar(
-                                  radius: 15,
-                                  backgroundColor: const Color(0xFFF3F4F6),
-                                  child: _userPhotoUrl != null
-                                      ? ClipOval(
-                                          child: CachedNetworkImage(
-                                            imageUrl: _userPhotoUrl!,
-                                            width: 30,
-                                            height: 30,
-                                            fit: BoxFit.cover,
-                                            placeholder: (_, __) => const Icon(
-                                                Icons.person,
-                                                color: Colors.grey,
-                                                size: 16),
-                                            errorWidget: (_, __, ___) =>
-                                                const Icon(Icons.person,
-                                                    color: Colors.grey,
-                                                    size: 16),
-                                          ),
-                                        )
-                                      : const Icon(Icons.person,
-                                          color: Colors.grey, size: 16),
-                                ),
-                              ),
-                              const SizedBox(width: 2),
-                              Icon(Icons.keyboard_arrow_down_rounded,
-                                  size: 15, color: Colors.grey[500]),
-                            ],
+                                const SizedBox(width: 3),
+                                Icon(Icons.keyboard_arrow_down_rounded,
+                                    size: 16, color: Colors.grey[600]),
+                              ],
+                            ),
                           ),
                         )
                       else
@@ -1500,13 +1724,23 @@ class _ClientHomePageState extends State<ClientHomePage> {
                                             ]
                                           : null,
                                     ),
-                                    child: Icon(
-                                      cat['icon'],
-                                      size: 20,
-                                      color: isSelected
-                                          ? Colors.white
-                                          : AppColors.primaryPurple
-                                              .withValues(alpha: 0.85),
+                                    child: Center(
+                                      child: cat['isAfroComb'] == true
+                                          ? AfroCombIcon(
+                                              size: 20,
+                                              color: isSelected
+                                                  ? Colors.white
+                                                  : AppColors.primaryPurple
+                                                      .withValues(alpha: 0.85),
+                                            )
+                                          : Icon(
+                                              cat['icon'],
+                                              size: 20,
+                                              color: isSelected
+                                                  ? Colors.white
+                                                  : AppColors.primaryPurple
+                                                      .withValues(alpha: 0.85),
+                                            ),
                                     ),
                                   ),
                                   const SizedBox(height: 5),
@@ -1731,11 +1965,21 @@ class _ClientHomePageState extends State<ClientHomePage> {
 
                   final matchesCat = selectedCategory == "Todos" ||
                       (() {
-                        final cats = (d['category'] ?? '')
-                            .toString()
+                        final rawCategory = (d['category'] ?? d['categoria'] ?? d['nicho'] ?? '').toString();
+                        final cats = rawCategory
                             .split(';')
-                            .map((c) => c.trim());
-                        return cats.any((c) => c.contains(selectedCategory));
+                            .map((c) => StringUtils.removeDiacritics(c.trim().toLowerCase()));
+                        final sel = StringUtils.removeDiacritics(selectedCategory.trim().toLowerCase());
+
+                        // Match flexível para Trancistas / Tranças / Especialistas Afro
+                        if (sel.startsWith('tranc')) {
+                          final nameLower = StringUtils.removeDiacritics((d['name'] ?? '').toString().toLowerCase());
+                          return cats.any((c) => c.contains('tranc') || c.contains('afro')) ||
+                              nameLower.contains('tranc') ||
+                              nameLower.contains('afro');
+                        }
+
+                        return cats.any((c) => c.contains(sel) || sel.contains(c));
                       })();
 
                   return matchesCat && isActive;
@@ -2090,48 +2334,38 @@ class _ClientHomePageState extends State<ClientHomePage> {
             ),
           ),
           if (_userId != null)
-            PopupMenuButton<String>(
-              offset: const Offset(0, 44),
-              color: Colors.white,
-              surfaceTintColor: Colors.white,
-              onSelected: _handleProfileMenu,
-              child: Row(
-                children: [
-                  const SizedBox(width: 10),
-                  CircleAvatar(
-                    radius: 16,
-                    backgroundColor: const Color(0xFFF3F4F6),
-                    backgroundImage: _userPhotoUrl != null
-                        ? CachedNetworkImageProvider(_userPhotoUrl!)
-                        : null,
-                    child: (_userPhotoUrl == null)
-                        ? const Icon(Icons.person, size: 18, color: Colors.grey)
-                        : null,
-                  ),
-                  const SizedBox(width: 4),
-                  const Icon(Icons.keyboard_arrow_down_rounded,
-                      size: 16, color: Colors.grey),
-                ],
+            InkWell(
+              onTap: _showProfileBottomSheet,
+              borderRadius: BorderRadius.circular(20),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 16,
+                      backgroundColor: const Color(0xFFF3F4F6),
+                      backgroundImage: _userPhotoUrl != null
+                          ? CachedNetworkImageProvider(_userPhotoUrl!)
+                          : null,
+                      child: (_userPhotoUrl == null)
+                          ? const Icon(Icons.person, size: 18, color: Colors.grey)
+                          : null,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      _userName.isNotEmpty ? _userName.split(' ').first : 'Perfil',
+                      style: const TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF1F2937),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    const Icon(Icons.keyboard_arrow_down_rounded,
+                        size: 16, color: Colors.grey),
+                  ],
+                ),
               ),
-              itemBuilder: (context) => [
-                PopupMenuItem(
-                    value: 'edit',
-                    child: Row(children: const [
-                      Icon(Icons.person_outline,
-                          size: 16, color: AppColors.primaryPurple),
-                      SizedBox(width: 8),
-                      Text('Editar Perfil', style: TextStyle(fontSize: 13.5))
-                    ])),
-                const PopupMenuDivider(),
-                PopupMenuItem(
-                    value: 'logout',
-                    child: Row(children: const [
-                      Icon(Icons.logout, color: Colors.red, size: 16),
-                      SizedBox(width: 8),
-                      Text('Sair da Conta',
-                          style: TextStyle(color: Colors.red, fontSize: 13.5))
-                    ])),
-              ],
             )
           else
             TextButton.icon(

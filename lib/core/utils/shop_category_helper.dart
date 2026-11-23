@@ -3,6 +3,11 @@ import 'package:flutter/material.dart';
 class ShopCategoryHelper {
   static Color getCatColor(String category) {
     switch (category.toLowerCase()) {
+      case 'trancista':
+      case 'trancistas':
+      case 'tranças':
+      case 'trancas':
+        return const Color(0xFFEDE7F6);
       case 'barbearia':
         return const Color(0xFFE3F2FD);
       case 'beleza':
@@ -23,6 +28,11 @@ class ShopCategoryHelper {
 
   static IconData getCatIcon(String category) {
     switch (category.toLowerCase()) {
+      case 'trancista':
+      case 'trancistas':
+      case 'tranças':
+      case 'trancas':
+        return Icons.auto_awesome;
       case 'barbearia':
         return Icons.content_cut;
       case 'beleza':

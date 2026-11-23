@@ -2,6 +2,13 @@ class ShopImageKeywords {
   static String getEnglishKeyword(String category) {
     final lower = category.toLowerCase().trim();
 
+    if (lower.contains('trança') ||
+        lower.contains('tranca') ||
+        lower.contains('trancista') ||
+        lower.contains('afro') ||
+        lower.contains('braid')) {
+      return 'braids hair salon afro';
+    }
     if (lower.contains('barbearia') || lower.contains('barber')) {
       return 'barbershop interior';
     }
